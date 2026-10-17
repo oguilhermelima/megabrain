@@ -94,10 +94,10 @@ export interface DesktopApi {
   bootSimulator(udid: string, kind?: SimulatorKind): Promise<void>
   /** The booted simulators, phones and TVs (`native sim list --booted --json`). */
   simListBooted(): Promise<BootedSimulator[]>
-  /** Shuts a simulator down (`native sim shutdown <udid> --json`); already shut down is fine. */
-  simShutdown(udid: string): Promise<{ udid: string; state: 'Shutdown' }>
-  /** Shuts a simulator down, boots it and waits until it is booted (`native sim restart <udid> --json`). */
-  simRestart(udid: string): Promise<{ udid: string; state: 'Booted'; waitedMs: number }>
+  /** Shuts down one simulator by UDID. */
+  simShutdown(udid: string): Promise<void>
+  /** Restarts one simulator headless and waits for it to boot. */
+  simRestart(udid: string): Promise<void>
   /** The simulators megabrain shut down when idle, and a sign the Device tab shows (`native sim idle --touch --json`). */
   simulatorsAsleep(): Promise<string[]>
   /** A fresh screenshot of a booted simulator (`native sim screenshot`); resolves to the file's path. */

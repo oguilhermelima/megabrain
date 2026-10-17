@@ -146,6 +146,8 @@ export const USAGE_LINES = {
   "native-sim-ensure": "native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]",
   "native-sim-idle": "native sim idle [--sweep [--all]] [--touch] [--json]",
   "native-sim-screenshot": "native sim screenshot <udid> [--json]",
+  "native-sim-shutdown": "native sim shutdown <udid> [--json]",
+  "native-sim-restart": "native sim restart <udid> [--timeout <seconds>] [--json]",
   "native-app-reload": "native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]",
   "native-health": "native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]",
   "native-crashes": "native crashes <phone|tv> [--last N] [--json]",

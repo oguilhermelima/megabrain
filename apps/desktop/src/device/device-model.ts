@@ -147,6 +147,15 @@ export interface OpenDevice {
 
 const byKindThenName = (a: { kind: SimulatorKind; name: string }, b: { kind: SimulatorKind; name: string }) => Number(a.kind === 'tv') - Number(b.kind === 'tv') || a.name.localeCompare(b.name)
 
+/** The CLI reports CoreSimulator runtime identifiers; show the readable platform and version. */
+export function runtimeLabel(runtime: string | null): string | null {
+  if (runtime === null) return null
+  const identifier = runtime.match(/(?:^|\.)SimRuntime\.(iOS|tvOS)-(\d+(?:-\d+)*)$/)
+  const [, platform, version] = identifier ?? []
+  if (platform !== undefined && version !== undefined) return `${platform} ${version.replaceAll('-', '.')}`
+  return runtime
+}
+
 /** The sidebar's devices: the booted ones and the ones megabrain put to sleep, phones first, then by name. */
 export function openDevices(booted: readonly BootedSimulator[], available: readonly DeviceChoice[], asleep: readonly string[]): OpenDevice[] {
   const open: OpenDevice[] = booted.filter((row) => row.state === 'Booted').map((row) => ({ udid: row.udid, name: row.name, runtime: row.runtime, kind: row.kind, state: 'Booted' }))

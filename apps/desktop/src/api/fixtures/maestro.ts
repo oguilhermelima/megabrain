@@ -37,12 +37,12 @@ export function createMockMaestroApi(): MaestroApi {
   const runs = new Map<string, MaestroRun[]>()
   const live = new Map<string, () => void>()
   const devices: (Simulator & { kind: SimulatorKind; runtime: string })[] = [
-    { udid: 'B50AEA46-5013-445E-A3BB-4FB968ED0B13', name: 'iPhone 18 Pro', state: 'Booted', kind: 'phone', runtime: 'iOS 27.0' },
-    { udid: 'F9C3EADB-1E0B-499F-A423-EA83499DDF1D', name: 'iPhone 17 Pro', state: 'Shutdown', kind: 'phone', runtime: 'iOS 27.0' },
-    { udid: 'B86BFEB1-7A65-4459-980C-1C4104CC6FE2', name: 'iPhone 17e', state: 'Shutdown', kind: 'phone', runtime: 'iOS 27.0' },
-    { udid: '110E1BF2-99F9-4475-916E-32FBA7CED248', name: 'iPhone Air', state: 'Booted', kind: 'phone', runtime: 'iOS 26.5' },
-    { udid: '7C0D21A4-5B9E-4D1F-9E3A-2F6B8C4A1D05', name: 'Apple TV 4K (3rd generation)', state: 'Booted', kind: 'tv', runtime: 'tvOS 27.0' },
-    { udid: 'E3A9F6B2-0C47-4E8D-B1A5-93D2C7F4E816', name: 'Apple TV', state: 'Shutdown', kind: 'tv', runtime: 'tvOS 27.0' },
+    { udid: 'B50AEA46-5013-445E-A3BB-4FB968ED0B13', name: 'iPhone 18 Pro', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0' },
+    { udid: 'F9C3EADB-1E0B-499F-A423-EA83499DDF1D', name: 'iPhone 17 Pro', state: 'Shutdown', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0' },
+    { udid: 'B86BFEB1-7A65-4459-980C-1C4104CC6FE2', name: 'iPhone 17e', state: 'Shutdown', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0' },
+    { udid: '110E1BF2-99F9-4475-916E-32FBA7CED248', name: 'iPhone Air', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5' },
+    { udid: '7C0D21A4-5B9E-4D1F-9E3A-2F6B8C4A1D05', name: 'Apple TV 4K (3rd generation)', state: 'Booted', kind: 'tv', runtime: 'com.apple.CoreSimulator.SimRuntime.tvOS-27-0' },
+    { udid: 'E3A9F6B2-0C47-4E8D-B1A5-93D2C7F4E816', name: 'Apple TV', state: 'Shutdown', kind: 'tv', runtime: 'com.apple.CoreSimulator.SimRuntime.tvOS-27-0' },
   ]
   const deviceOf = (udid: string) => {
     const device = devices.find((entry) => entry.udid === udid)
@@ -159,15 +159,12 @@ export function createMockMaestroApi(): MaestroApi {
     simShutdown: async (udid) => {
       await wait(700)
       deviceOf(udid).state = 'Shutdown'
-      return { udid, state: 'Shutdown' as const }
     },
     simRestart: async (udid) => {
-      const started = Date.now()
       const device = deviceOf(udid)
       device.state = 'Shutdown'
       await wait(1800)
       device.state = 'Booted'
-      return { udid, state: 'Booted' as const, waitedMs: Date.now() - started }
     },
     simulatorsAsleep: async () => [],
     simulatorScreenshot: async (udid) => {

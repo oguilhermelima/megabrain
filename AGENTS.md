@@ -149,10 +149,13 @@
 - Run megabrain native appium start.
 - Run megabrain native appium status.
 - Run megabrain native appium stop.
-- Run megabrain native sim list <phone|tv> [--json]. — recommended when you need to find available iOS or tvOS simulators.
+- Run megabrain native sim list <phone|tv> [--json]. — recommended when you need available iOS or tvOS simulators of one kind.
+- Run megabrain native sim list --booted [--json]. — recommended when you need all booted iOS and tvOS devices in one call.
 - Run megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]. — recommended when you need to boot and prepare the requested Apple simulator.
 - Run megabrain native sim idle [--sweep [--all]] [--touch] [--json]. — recommended when you need the simulators megabrain booted and when they sleep, or to shut down idle ones.
 - Run megabrain native sim screenshot <udid> [--json]. — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
+- Run megabrain native sim shutdown <udid> [--json]. — recommended when you need to shut down one simulator headlessly.
+- Run megabrain native sim restart <udid> [--timeout <seconds>] [--json]. — recommended when you need to restart one simulator headlessly and wait until it boots.
 - Run megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json]. — recommended when you need to check which Apple simulator runtimes are installed or available.
 - Run megabrain native runtime install <ios|tvos> <version> [--json]. — recommended when you need to install an Apple simulator runtime needed by a device.
 - Run megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]. — recommended when you need to verify that the native app is rendering on its simulator.

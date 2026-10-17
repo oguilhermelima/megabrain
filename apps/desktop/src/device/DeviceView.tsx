@@ -2,7 +2,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { BootedSimulator, MaestroFlow, MaestroRun } from '@/api/schema'
-import { afterRestart, afterShutdown, bootThenRun, deviceLayout, isActive, openDevices, pickerChoices, screenSource, selectDevice, stepRows, type DeviceChoice, type DeviceLayout, type OpenDevice } from '@/device/device-model'
+import { afterRestart, afterShutdown, bootThenRun, deviceLayout, isActive, openDevices, pickerChoices, runtimeLabel, screenSource, selectDevice, stepRows, type DeviceChoice, type DeviceLayout, type OpenDevice } from '@/device/device-model'
 import { DevicesSidebar, type DeviceBusy } from '@/device/DevicesSidebar'
 import { FlowsRunPanel, type Load } from '@/device/FlowsRunPanel'
 import { startRun, stopRun, useDeviceRun } from '@/device/run-store'
@@ -253,7 +253,7 @@ function ScreenPanel({ device, src, step, note, tall }: { device: OpenDevice | n
         {device !== null && (
           <p className="min-w-0 truncate text-[12.5px] text-ink-300">
             <span className="font-medium text-ink-100">{device.name}</span>
-            {device.runtime !== null && <span className="text-ink-500"> · {device.runtime}</span>}
+            {runtimeLabel(device.runtime) !== null && <span className="text-ink-500"> · {runtimeLabel(device.runtime)}</span>}
           </p>
         )}
         {step !== null && <span className="ml-auto shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11.5px] text-ink-300 tabular-nums">Step {step}</span>}

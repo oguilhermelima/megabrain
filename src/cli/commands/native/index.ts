@@ -81,8 +81,8 @@ export { runtimeValue, formatEvaluation, cdpArguments, nativeEval, routerModuleE
 export type { RouteSnapshot, NativeNavigationResult } from "./inspector.js";
 import { nativeReload } from "./app.js";
 export { nativeReload } from "./app.js";
-import { nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure } from "./sim.js";
-export { nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure } from "./sim.js";
+import { nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure, nativeShutdown, nativeRestart } from "./sim.js";
+export { nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure, nativeShutdown, nativeRestart } from "./sim.js";
 import { nativeBuildUsage, buildConfigError, readExpoApp, generatedWorkspace, nativeBuild } from "./build.js";
 export { nativeBuildUsage, buildConfigError, readExpoApp, generatedWorkspace, nativeBuild } from "./build.js";
 import { nativeCrashes } from "./crashes.js";
@@ -103,6 +103,8 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "runtime" && operation === "install") result = await nativeRuntimeInstall(rest, processAdapter);
   else if (family === "sim" && operation === "list") result = await nativeList(rest, processAdapter);
   else if (family === "sim" && operation === "ensure") result = await nativeEnsure(rest, environment, processAdapter, clock);
+  else if (family === "sim" && operation === "shutdown") result = await nativeShutdown(rest, processAdapter);
+  else if (family === "sim" && operation === "restart") result = await nativeRestart(rest, processAdapter, clock);
   else if (family === "sim" && operation === "idle") result = await executeIdle(rest, environment, processAdapter, clock);
   else if (family === "sim" && operation === "screenshot") result = await nativeScreenshot(rest, environment, processAdapter);
   else if (family === "health") result = await nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
@@ -111,7 +113,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "navigate") result = await nativeNavigate([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "capture") result = await nativeCapture([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter, clock);
   else if (family === "app" && operation === "reload") result = await nativeReload(rest, environment, processAdapter);
-  else if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(`${nativeUsage("list")}${nativeUsage("ensure")}`);
+  else if (family === "sim" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(`${nativeUsage("list")}${nativeUsage("ensure")}${usageText("native-sim-shutdown")}\n${usageText("native-sim-restart")}\n`);
   else if (family === "app" && (operation === undefined || operation === "-h" || operation === "--help")) result = ok(nativeUsage("reload"));
   else result = error(`unknown native command: ${family}`, 2);
   return normalizeJsonResult(result, json);

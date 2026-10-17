@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../../adapters/proc.js";
-import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, DEFAULT_NATIVE_STABLE_WINDOW_MS, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateStableWindow, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../../core/native.js";
+import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, DEFAULT_NATIVE_STABLE_WINDOW_MS, evaluateNativeHealth, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateStableWindow, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../../core/native.js";
 import { sleep, systemClock, type Clock } from "../../../core/clock.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../../core/crash.js";
@@ -24,14 +24,81 @@ import { Environment, Config, ExpoApp, NativeCaptureScreen, error, refusalCode, 
 
 export async function nativeList(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(nativeUsage("list"));
+  const bootedOnly = args[0] === "--booted";
   let json = false;
   for (const arg of args.slice(1)) { if (arg === "--json") json = true; else if (arg === "-h" || arg === "--help") return ok(nativeUsage("list")); else return error(`unknown native sim list option: ${arg}`, 2); }
-  const kind = parseKind(args); if (kind.kind !== "ok") return kind;
-  const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
-  return ok(formatNativeList(kind.value, candidates.value, json));
+  if (bootedOnly && args.length > 2) return error(`unknown native sim list option: ${args[2]}`, 2);
+  const kind = bootedOnly ? undefined : parseKind(args);
+  if (kind !== undefined && kind.kind !== "ok") return kind;
+  const listed = await listAllCandidates(processAdapter);
+  if (listed.kind !== "ok") return listed;
+  const rows = listed.value.filter((device) => (kind?.kind !== "ok" || device.kind === kind.value) && (!bootedOnly || device.state === "Booted"));
+  if (json) return ok(`${JSON.stringify({ ...(bootedOnly ? {} : { kind: kind!.value }), devices: rows })}\n`);
+  return ok(rows.map((row) => `${row.name}\t${row.state}\t${row.udid}\n`).join(""));
+}
+
+export async function nativeShutdown(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("native-sim-shutdown")}\n`);
+  const udid = args.find((arg) => !arg.startsWith("--")) ?? "";
+  if (!SIMULATOR_UDID.test(udid)) return error(`native sim shutdown needs a simulator udid: ${udid}`, 2);
+  const listed = await listAllCandidates(processAdapter);
+  if (listed.kind !== "ok") return listed;
+  const device = listed.value.find((candidate) => candidate.udid === udid);
+  if (!device) return error(`unknown simulator udid: ${udid}`);
+  const stopped = await processAdapter.run("xcrun", ["simctl", "shutdown", udid]);
+  if (stopped.kind !== "ok" && device.state !== "Shutdown") return error(`failed to shut down simulator ${udid}: ${stopped.error}`);
+  return ok(`${JSON.stringify({ udid, state: "Shutdown" })}\n`);
+}
+
+async function listAllCandidates(processAdapter: ProcessAdapter): Promise<Result<Array<NativeCandidate & { kind: NativeKind; runtime: string }>>> {
+  const result = await processAdapter.run("xcrun", ["simctl", "list", "devices", "--json"]);
+  if (result.kind !== "ok") return error("failed to list simulators with simctl");
+  try {
+    const value = JSON.parse(result.value.stdout) as { devices?: Record<string, unknown> };
+    const candidates: Array<NativeCandidate & { kind: NativeKind; runtime: string }> = [];
+    for (const [runtime, entries] of Object.entries(value.devices ?? {})) {
+      const kind = runtime.includes("iOS") ? "phone" : runtime.includes("tvOS") ? "tv" : undefined;
+      if (!kind || !Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (typeof entry !== "object" || entry === null) continue;
+        const item = entry as Record<string, unknown>;
+        if (item.isAvailable === true && typeof item.udid === "string" && typeof item.state === "string" && typeof item.name === "string") candidates.push({ udid: item.udid, state: item.state === "Booted" ? "Booted" : "Shutdown", name: item.name, kind, runtime });
+      }
+    }
+    return ok(candidates);
+  } catch { return error("simctl returned invalid device data"); }
+}
+
+export async function nativeRestart(args: readonly string[], processAdapter: ProcessAdapter, clock: Clock): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("native-sim-restart")}\n`);
+  const udid = args.find((arg) => !arg.startsWith("--")) ?? "";
+  if (!SIMULATOR_UDID.test(udid)) return error(`native sim restart needs a simulator udid: ${udid}`, 2);
+  const timeout = validateTimeout(optionValue(args, "--timeout") ?? "30");
+  if (timeout.kind !== "ok") return timeout;
+  const listed = await listAllCandidates(processAdapter);
+  if (listed.kind !== "ok") return listed;
+  const device = listed.value.find((candidate) => candidate.udid === udid);
+  if (!device) return error(`unknown simulator udid: ${udid}`);
+  const stopped = await processAdapter.run("xcrun", ["simctl", "shutdown", udid]);
+  if (stopped.kind !== "ok" && device.state !== "Shutdown") return error(`failed to shut down simulator ${udid}: ${stopped.error}`);
+  const boot = await processAdapter.run("xcrun", ["simctl", "boot", udid]);
+  if (boot.kind !== "ok") return error(`failed to boot simulator ${udid}: ${boot.error}`);
+  const waited = await waitUntilBooted(device.kind, udid, timeout.value, processAdapter, clock);
+  if (waited.kind !== "ok") return waited;
+  return ok(`${JSON.stringify({ udid, state: "Booted", waitedMs: waited.value })}\n`);
 }
 
 export const SIMULATOR_UDID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+
+async function waitUntilBooted(kind: NativeKind, udid: string, timeoutSeconds: number, processAdapter: ProcessAdapter, clock: Clock): Promise<Result<number>> {
+  const startedAt = clock.now();
+  for (let attempt = 0; attempt < timeoutSeconds * 5; attempt += 1) {
+    const current = await simCandidates(processAdapter, kind); if (current.kind !== "ok") return current;
+    if (current.value.find((candidate) => candidate.udid === udid)?.state === "Booted") return ok(Math.max(0, clock.now() - startedAt));
+    await sleep(clock, 200);
+  }
+  return error(`timed out waiting for simulator ${udid} to become booted`);
+}
 
 /** A headless screenshot of a booted simulator (simctl io, no window), kept as one file per device. */
 
@@ -61,11 +128,7 @@ export async function nativeEnsure(args: readonly string[], environment: Environ
     if (boot.kind !== "ok") return error(`failed to boot simulator ${selected.value.udid}: ${boot.error.replace(/^xcrun exited with status \d+$/, "simctl exited")}`);
     await recordBooted(environment, selected.value.udid, clock.now());
   }
-  for (let attempt = 0; attempt < timeout.value * 5; attempt += 1) {
-    const current = await simCandidates(processAdapter, kind.value); if (current.kind !== "ok") return current;
-    const state = current.value.find((candidate) => candidate.udid === selected.value.udid)?.state;
-    if (state === "Booted") return args.includes("--json") ? ok(`${JSON.stringify({ ok: true, kind: kind.value, device: selected.value.udid, state: "Booted" })}\n`) : ok(`simulator ${selected.value.udid} is booted\n`);
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));
-  }
-  return error(`timed out waiting for simulator ${selected.value.udid} to become booted`);
+  const waited = await waitUntilBooted(kind.value, selected.value.udid, timeout.value, processAdapter, clock);
+  if (waited.kind !== "ok") return waited;
+  return args.includes("--json") ? ok(`${JSON.stringify({ ok: true, kind: kind.value, device: selected.value.udid, state: "Booted" })}\n`) : ok(`simulator ${selected.value.udid} is booted\n`);
 }

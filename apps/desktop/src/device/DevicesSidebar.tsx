@@ -4,7 +4,7 @@ import type { AnchorRect } from '@/advanced/menu-placement'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { Popover } from '@/components/Popover'
 import { Spinner } from '@/components/ui'
-import type { DeviceChoice, OpenDevice } from '@/device/device-model'
+import { runtimeLabel, type DeviceChoice, type OpenDevice } from '@/device/device-model'
 import { sidePanelBar, sidePanelButton, sidePanelGroup, sidePanelHeaderRow, sidePanelList, sidePanelNote, sidePanelRow, sidePanelSlot, sidePanelTitle, sidePanelTrailing } from '@/lib/side-panel'
 import { usePresence } from '@/lib/usePresence'
 
@@ -140,7 +140,8 @@ export function DevicesSidebar({
 function DeviceRow({ device, selected, locked, busy, onSelect, onRestart, onShutdown }: { device: OpenDevice; selected: boolean; locked: boolean; busy: DeviceBusy | null; onSelect: () => void; onRestart: () => void; onShutdown: () => void }) {
   const asleep = device.state === 'Asleep'
   // The group says phone or TV, so the row keeps the runtime's version and leaves the name its room.
-  const detail = busy !== null ? busyLabel[busy] : asleep ? 'Asleep' : (device.runtime?.replace(/^(iOS|tvOS)\s+/, '') ?? '')
+  const runtime = runtimeLabel(device.runtime)
+  const detail = busy !== null ? busyLabel[busy] : asleep ? 'Asleep' : (runtime?.replace(/^(iOS|tvOS)\s+/, '') ?? '')
   const dot = busy !== null ? 'animate-pulse bg-warn' : asleep ? 'bg-ink-500' : 'bg-ok'
   return (
     <div className="group relative">
@@ -149,7 +150,7 @@ function DeviceRow({ device, selected, locked, busy, onSelect, onRestart, onShut
         onClick={onSelect}
         disabled={locked && !selected}
         aria-current={selected || undefined}
-        title={`${device.name}${device.runtime === null ? '' : ` · ${device.runtime}`}${asleep ? '\nAsleep: boots when you run a flow' : ''}\n${device.udid}`}
+        title={`${device.name}${runtime === null ? '' : ` · ${runtime}`}${asleep ? '\nAsleep: boots when you run a flow' : ''}\n${device.udid}`}
         className={`${sidePanelRow(selected)} disabled:opacity-50`}
       >
         <span aria-hidden="true" className={sidePanelSlot} />

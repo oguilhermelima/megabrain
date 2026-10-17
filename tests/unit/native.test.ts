@@ -97,6 +97,83 @@ describe("native runtime commands", () => {
   });
 });
 
+describe("native simulator lifecycle commands", () => {
+  const phone = "11111111-1111-1111-1111-111111111111";
+  const tv = "22222222-2222-2222-2222-222222222222";
+  function simulatorProcess(options: { initiallyBooted?: boolean; neverBoots?: boolean; devices?: unknown } = {}) {
+    const calls: string[][] = [];
+    let booted = options.initiallyBooted ?? false;
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push([command, ...args]);
+        if (command === "xcrun" && args.join(" ") === "simctl list devices --json") {
+          const devices = options.devices ?? { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [{ udid: phone, state: booted ? "Booted" : "Shutdown", name: "iPhone", isAvailable: true }], "com.apple.CoreSimulator.SimRuntime.tvOS-27-0": [{ udid: tv, state: "Booted", name: "Apple TV", isAvailable: true }] };
+          return ok({ stdout: JSON.stringify({ devices }), stderr: "", exitCode: 0 });
+        }
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "shutdown") {
+          if (!booted) return failed("xcrun exited with status 149");
+          booted = false;
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        }
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "boot") {
+          if (!options.neverBoots) booted = true;
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        }
+        return failed(`${command} unavailable`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    return { process, calls };
+  }
+
+  test("shutdown succeeds when booted and already shut down", async () => {
+    const active = simulatorProcess({ initiallyBooted: true });
+    const shutdownResult = await executeNative(["sim", "shutdown", phone, "--json"], {}, active.process);
+    expect(shutdownResult.kind).toBe("ok");
+    expect(JSON.parse(shutdownResult.value)).toMatchObject({ udid: phone, state: "Shutdown", refusal: null });
+    expect(active.calls.some((call) => call.join(" ") === `xcrun simctl shutdown ${phone}`)).toBe(true);
+    const stopped = simulatorProcess();
+    const alreadyStoppedResult = await executeNative(["sim", "shutdown", phone, "--json"], {}, stopped.process);
+    expect(alreadyStoppedResult.kind).toBe("ok");
+    expect(JSON.parse(alreadyStoppedResult.value)).toMatchObject({ udid: phone, state: "Shutdown", refusal: null });
+  });
+
+  test("restart shuts down, boots, and waits for booted state", async () => {
+    const { process, calls } = simulatorProcess({ initiallyBooted: true });
+    const result = await executeNative(["sim", "restart", phone, "--timeout", "2", "--json"], {}, process);
+    expect(result.kind).toBe("ok");
+    expect(calls.findIndex((call) => call[2] === "shutdown")).toBeLessThan(calls.findIndex((call) => call[2] === "boot"));
+    expect(JSON.parse(result.value)).toMatchObject({ udid: phone, state: "Booted", waitedMs: expect.any(Number) });
+  });
+
+  test("restart reports timeout when boot never completes", async () => {
+    const { process, calls } = simulatorProcess({ initiallyBooted: true, neverBoots: true });
+    const result = await executeNative(["sim", "restart", phone, "--timeout", "1", "--json"], {}, process);
+    expect(result.kind).toBe("ok");
+    expect(JSON.parse(result.value).refusal.message).toContain("timed out");
+    expect(calls.some((call) => call[2] === "boot")).toBe(true);
+  });
+
+  test("lists booted devices across phone and tv runtimes", async () => {
+    const { process } = simulatorProcess({ initiallyBooted: true });
+    const result = await executeNative(["sim", "list", "--booted", "--json"], {}, process);
+    expect(result.kind).toBe("ok");
+    const rows = JSON.parse(result.value).devices;
+    expect(rows.map((row: { kind: string }) => row.kind)).toEqual(["phone", "tv"]);
+    expect(rows.map((row: { udid: string }) => row.udid)).toEqual([phone, tv]);
+    expect(rows[0]).toHaveProperty("runtime");
+    expect(rows[0]).toHaveProperty("state", "Booted");
+  });
+
+  test("unknown simulator errors name its udid", async () => {
+    const { process } = simulatorProcess();
+    const result = await executeNative(["sim", "shutdown", "33333333-3333-3333-3333-333333333333", "--json"], {}, process);
+    expect(result.kind).toBe("ok");
+    expect(JSON.parse(result.value).refusal.message).toContain("33333333-3333-3333-3333-333333333333");
+  });
+});
+
 describe("native build planning", () => {
   type BuildFixtureOptions = {
     readonly kind?: "phone" | "tv";

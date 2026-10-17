@@ -96,8 +96,11 @@ export const maestroEventSchema = z.discriminatedUnion('type', [
 ])
 export type MaestroEvent = z.infer<typeof maestroEventSchema>
 
-export const simulatorSchema = z.looseObject({ udid: z.string(), name: z.string(), state: z.string() })
+export const simulatorSchema = z.looseObject({ udid: z.string(), name: z.string(), runtime: z.string().optional(), state: z.string(), kind: z.enum(['phone', 'tv']).optional() })
 export type Simulator = z.infer<typeof simulatorSchema>
+
+export const simulatorShutdownSchema = z.looseObject({ udid: z.string(), state: z.literal('Shutdown') })
+export const simulatorRestartSchema = z.looseObject({ udid: z.string(), state: z.literal('Booted'), waitedMs: z.number() })
 
 /** `megabrain native sim list phone --json`: the available iOS simulators. */
 export const simulatorListSchema = z.looseObject({ devices: z.array(simulatorSchema) })
@@ -108,3 +111,4 @@ export type SimulatorKind = z.infer<typeof simulatorKindSchema>
 /** One row of `megabrain native sim list --booted --json`: a booted simulator, phone or tv. */
 export const bootedSimulatorSchema = z.looseObject({ udid: z.string(), name: z.string(), runtime: z.string(), state: z.string(), kind: simulatorKindSchema })
 export type BootedSimulator = z.infer<typeof bootedSimulatorSchema>
+export const bootedSimulatorListSchema = z.looseObject({ devices: z.array(bootedSimulatorSchema) })
