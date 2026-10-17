@@ -20,6 +20,7 @@ import { nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure } from "./si
 import { nativeBuildUsage, buildConfigError, readExpoApp, generatedWorkspace, nativeBuild } from "./build.js";
 import { nativeCrashes } from "./crashes.js";
 import { runtimePlatform, installedRuntimes, nativeRuntimeList, nativeRuntimeInstall } from "./runtime.js";
+import { recordSimulatorOwner } from "../../../core/native-sim-owner.js";
 
 import { Environment, Config, ExpoApp, NativeCaptureScreen, error, refusalCode, normalizeJsonResult, nativeWorktreeRoot, nativeConfigFile, config, setting, simCandidates, parseKind, optionValue, crashReportsDirectory, runtimeValue, formatEvaluation, cdpArguments, nativeEval, routerModuleExpression, logBoxExpression, devLoadingViewExpression, routeInfoExpression, navigationQueueExpression, navigationExpression, RouteSnapshot, NativeNavigationResult, routeSnapshot, routeChanged, nativeNavigationResult, pendingNavigationCount, nativeNavigate, nativeCaptureScreens, uniqueCaptureScreens, captureOptionNames, validateCaptureOptions, terminateNativeCaptureApp, resetNativeCaptureApp, captureNativeFrame, NativeSettledFrame, settleNativeFrame, NativeLogBoxStatus, NativeDevLoadingViewStatus, NativeResetOverlayStatus, silenceNativeLogBox, preventNativeDevLoadingView, silenceNativeOverlays, nativeOverlaySummary, nativeDevLoadingViewSummary, captureNavigationArgs, nativeCapture, appium, executeNative } from "./index.js";
 
@@ -41,6 +42,7 @@ export async function nativeReload(args: readonly string[], environment: Environ
   const validPort = validateMetroPort(metroPort); if (validPort.kind !== "ok") return validPort;
   const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
   const selected = selectDevice(kind.value, candidates.value, device, true); if (selected.kind !== "ok") return selected;
+  const ownerNotice = await recordSimulatorOwner(selected.value.udid, undefined, environment, processAdapter, systemClock);
   const url = renderNativeUrl(template, route, metroPort, bundleId, selected.value.udid); if (url.kind !== "ok") return url;
   if (metroPort) {
     let ready = false;
@@ -55,5 +57,5 @@ export async function nativeReload(args: readonly string[], environment: Environ
   if (terminate.kind !== "ok" && !/not running|no such process|does not exist|not found|nothing to terminate/i.test(terminate.error)) return error(`failed to terminate ${bundleId} on simulator ${selected.value.udid}: ${terminate.error}`);
   const open = await processAdapter.run("xcrun", ["simctl", "openurl", selected.value.udid, url.value]);
   if (open.kind !== "ok") return error(`failed to open URL on simulator ${selected.value.udid}: ${url.value}`);
-  return args.includes("--json") ? ok(`${JSON.stringify({ ok: true, kind: kind.value, device: selected.value.udid, bundleId, url: url.value, terminated: true, opened: true, renderObserved: false })}\n`) : ok(`reloaded ${bundleId} on simulator ${selected.value.udid}: terminated and opened ${url.value}; app rendering was not observed\n`);
+  return args.includes("--json") ? ok(`${JSON.stringify({ ok: true, kind: kind.value, device: selected.value.udid, bundleId, url: url.value, terminated: true, opened: true, renderObserved: false, ...(ownerNotice ? { notice: ownerNotice } : {}) })}\n`) : ok(`reloaded ${bundleId} on simulator ${selected.value.udid}: terminated and opened ${url.value}; app rendering was not observed${ownerNotice ? `\n${ownerNotice}` : ""}\n`);
 }

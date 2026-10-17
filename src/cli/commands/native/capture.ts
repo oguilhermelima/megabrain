@@ -23,6 +23,7 @@ import { nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure } from "./si
 import { nativeBuildUsage, buildConfigError, readExpoApp, generatedWorkspace, nativeBuild } from "./build.js";
 import { nativeCrashes } from "./crashes.js";
 import { runtimePlatform, installedRuntimes, nativeRuntimeList, nativeRuntimeInstall } from "./runtime.js";
+import { recordSimulatorOwner } from "../../../core/native-sim-owner.js";
 
 import { Environment, Config, ExpoApp, NativeCaptureScreen, error, refusalCode, normalizeJsonResult, nativeWorktreeRoot, nativeConfigFile, config, setting, simCandidates, parseKind, optionValue, crashReportsDirectory, appium, executeNative } from "./index.js";
 
@@ -165,6 +166,8 @@ export async function nativeCapture(args: readonly string[], environment: Enviro
   if (!neutralRoute.startsWith("/")) return error(`native capture requires an absolute neutral route: ${neutralRoute}`, 2);
   const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
   const selected = selectDevice(kind.value, candidates.value, requestedDevice, true); if (selected.kind !== "ok") return selected;
+  const ownerNotice = await recordSimulatorOwner(selected.value.udid, undefined, environment, processAdapter, clock);
+  if (ownerNotice) console.error(ownerNotice);
   const commit = await processAdapter.run("git", ["-C", root, "rev-parse", "HEAD"]);
   if (commit.kind !== "ok" || commit.value.stdout.trim().length === 0) return error(`could not determine repository commit: ${commit.kind === "failed" ? commit.error : "git returned no commit"}`);
 

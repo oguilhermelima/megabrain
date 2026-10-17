@@ -37,14 +37,14 @@ export function createMockMaestroApi(): MaestroApi {
   const runs = new Map<string, MaestroRun[]>()
   const live = new Map<string, () => void>()
   // Booted devices in two projects: one free, one in another megabrain worktree, two in canto's.
-  const devices: (Simulator & { kind: SimulatorKind; runtime: string; worktree: string | null })[] = [
-    { udid: 'B50AEA46-5013-445E-A3BB-4FB968ED0B13', name: 'iPhone 18 Pro', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', worktree: null },
-    { udid: 'F9C3EADB-1E0B-499F-A423-EA83499DDF1D', name: 'iPhone 17 Pro', state: 'Shutdown', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', worktree: null },
-    { udid: 'B86BFEB1-7A65-4459-980C-1C4104CC6FE2', name: 'iPhone 17e', state: 'Shutdown', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', worktree: null },
-    { udid: '110E1BF2-99F9-4475-916E-32FBA7CED248', name: 'iPhone Air', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5', worktree: '/Users/operator/Workspaces/Worktrees/feat-desktop-panel-columns' },
-    { udid: '7C0D21A4-5B9E-4D1F-9E3A-2F6B8C4A1D05', name: 'Apple TV 4K (3rd generation)', state: 'Booted', kind: 'tv', runtime: 'com.apple.CoreSimulator.SimRuntime.tvOS-27-0', worktree: '/Users/operator/Workspaces/canto' },
-    { udid: '5D2E8C10-3F4A-4B6E-9A7C-1E0F2B3C4D5E', name: 'iPhone 17', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', worktree: '/Users/operator/Workspaces/Worktrees/fix-player-seek' },
-    { udid: 'E3A9F6B2-0C47-4E8D-B1A5-93D2C7F4E816', name: 'Apple TV', state: 'Shutdown', kind: 'tv', runtime: 'com.apple.CoreSimulator.SimRuntime.tvOS-27-0', worktree: null },
+  const devices: (Simulator & { kind: SimulatorKind; runtime: string; worktree: string | null; project: string | null })[] = [
+    { udid: 'B50AEA46-5013-445E-A3BB-4FB968ED0B13', name: 'iPhone 18 Pro', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', worktree: null, project: null },
+    { udid: 'F9C3EADB-1E0B-499F-A423-EA83499DDF1D', name: 'iPhone 17 Pro', state: 'Shutdown', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', worktree: null, project: null },
+    { udid: 'B86BFEB1-7A65-4459-980C-1C4104CC6FE2', name: 'iPhone 17e', state: 'Shutdown', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', worktree: null, project: null },
+    { udid: '110E1BF2-99F9-4475-916E-32FBA7CED248', name: 'iPhone Air', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5', worktree: '/Users/operator/Workspaces/Worktrees/feat-desktop-panel-columns', project: '/Users/operator/Workspaces/canto' },
+    { udid: '7C0D21A4-5B9E-4D1F-9E3A-2F6B8C4A1D05', name: 'Apple TV 4K (3rd generation)', state: 'Booted', kind: 'tv', runtime: 'com.apple.CoreSimulator.SimRuntime.tvOS-27-0', worktree: '/Users/operator/Workspaces/canto', project: '/Users/operator/Workspaces/canto' },
+    { udid: '5D2E8C10-3F4A-4B6E-9A7C-1E0F2B3C4D5E', name: 'iPhone 17', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0', worktree: '/Users/operator/Workspaces/Worktrees/fix-player-seek', project: '/Users/operator/Workspaces/canto' },
+    { udid: 'E3A9F6B2-0C47-4E8D-B1A5-93D2C7F4E816', name: 'Apple TV', state: 'Shutdown', kind: 'tv', runtime: 'com.apple.CoreSimulator.SimRuntime.tvOS-27-0', worktree: null, project: null },
   ]
   const deviceOf = (udid: string) => {
     const device = devices.find((entry) => entry.udid === udid)
@@ -173,7 +173,7 @@ export function createMockMaestroApi(): MaestroApi {
     },
     simListBooted: async () => {
       await wait(150)
-      return devices.filter((device) => device.state === 'Booted').map(({ udid, name, runtime, state, kind, worktree }) => ({ udid, name, runtime, state, kind, worktree }))
+      return devices.filter((device) => device.state === 'Booted').map(({ udid, name, runtime, state, kind, worktree, project }) => ({ udid, name, runtime, state, kind, worktree, project }))
     },
     simShutdown: async (udid) => {
       await wait(700)

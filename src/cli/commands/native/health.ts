@@ -14,6 +14,7 @@ import { buildNativeCaptureFailureRecord, buildNativeCapturePaths, buildNativeCa
 import { resolveStateDirectory } from "../../../core/state.js";
 import { executeIdle, recordBooted } from "../native-idle.js";
 import { usageText } from "../../../core/usage.js";
+import { recordSimulatorOwner } from "../../../core/native-sim-owner.js";
 import { unknownProcess, unknownMetro, unknownTree, unknownFrame, APPIUM_SESSION_DEFAULTS, appiumSessionCapabilities, AppiumSession, AppiumSessionAttempt, AppiumResponse, appiumResponse, appiumMessage, appiumHttpFailure, createAppiumSession, appiumSession } from "./session.js";
 
 import { Environment, Config, ExpoApp, NativeCaptureScreen, error, refusalCode, normalizeJsonResult, nativeWorktreeRoot, nativeConfigFile, config, setting, simCandidates, parseKind, optionValue, crashReportsDirectory, runtimePlatform, installedRuntimes, nativeBuildUsage, buildConfigError, readExpoApp, generatedWorkspace, nativeBuild, nativeRuntimeList, nativeRuntimeInstall, nativeCrashes, nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure, nativeReload, runtimeValue, formatEvaluation, cdpArguments, nativeEval, routerModuleExpression, logBoxExpression, devLoadingViewExpression, routeInfoExpression, navigationQueueExpression, navigationExpression, RouteSnapshot, NativeNavigationResult, routeSnapshot, routeChanged, nativeNavigationResult, pendingNavigationCount, nativeNavigate, nativeCaptureScreens, uniqueCaptureScreens, captureOptionNames, validateCaptureOptions, terminateNativeCaptureApp, resetNativeCaptureApp, captureNativeFrame, NativeSettledFrame, settleNativeFrame, NativeLogBoxStatus, NativeDevLoadingViewStatus, NativeResetOverlayStatus, silenceNativeLogBox, preventNativeDevLoadingView, silenceNativeOverlays, nativeOverlaySummary, nativeDevLoadingViewSummary, captureNavigationArgs, nativeCapture, appium, executeNative } from "./index.js";
@@ -30,6 +31,8 @@ export async function nativeHealth(args: readonly string[], environment: Environ
   if (!bundleId) return error(`bundle id is required for ${kind.value}; pass --bundle-id`);
   const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
   const selected = selectDevice(kind.value, candidates.value, requested, true); if (selected.kind !== "ok") return selected;
+  const ownerNotice = await recordSimulatorOwner(selected.value.udid, undefined, environment, processAdapter, systemClock);
+  if (ownerNotice) console.error(ownerNotice);
   const udid = selected.value.udid;
 
   let process: NativeHealth["process"];

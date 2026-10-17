@@ -12,6 +12,7 @@ import { createNativeSessionStore } from "../../../adapters/native-session-store
 import { connectMetroInspector, waitForMetroInspectorTarget, type MetroEvaluation } from "../../../core/native-cdp.js";
 import { buildNativeCaptureFailureRecord, buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome, type NativeCaptureRecord, type NativeCaptureScreenRecord } from "../../../core/native-capture.js";
 import { resolveStateDirectory } from "../../../core/state.js";
+import { recordSimulatorOwner } from "../../../core/native-sim-owner.js";
 import { executeIdle, recordBooted } from "../native-idle.js";
 import { usageText } from "../../../core/usage.js";
 import { unknownProcess, unknownMetro, unknownTree, unknownFrame, APPIUM_SESSION_DEFAULTS, appiumSessionCapabilities, AppiumSession, AppiumSessionAttempt, AppiumResponse, appiumResponse, appiumMessage, appiumHttpFailure, createAppiumSession, appiumSession } from "./session.js";
@@ -106,6 +107,8 @@ export async function nativeBuild(args: readonly string[], environment: Environm
   }
   const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid]);
   if (boot.kind !== "ok" && !/already booted/i.test(boot.error)) return error(`failed to boot simulator ${selected.value.udid}: ${boot.error}`);
+  const ownerNotice = await recordSimulatorOwner(selected.value.udid, undefined, environment, processAdapter, systemClock);
+  if (ownerNotice) console.error(ownerNotice);
   const outcomes = {} as Record<NativeBuildStep, { ok: boolean; error?: string }>;
   const prebuild = await processAdapter.run("pnpm", ["exec", "expo", "prebuild"], { cwd: appPath, env: { ...(kind.value === "tv" ? { EXPO_TV: "1" } : {}), REACT_NATIVE_NODE_MODULES_DIR: resolve(appPath, "node_modules") } });
   outcomes.prebuild = prebuild.kind === "ok" ? { ok: true } : { ok: false, error: prebuild.error };

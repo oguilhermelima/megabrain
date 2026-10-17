@@ -107,7 +107,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "sim" && operation === "release") result = await nativeSimRelease(rest, environment);
   else if (family === "sim" && operation === "rename") result = await nativeSimRename(rest, processAdapter);
   else if (family === "sim" && operation === "shutdown") result = await nativeShutdown(rest, environment, processAdapter);
-  else if (family === "sim" && operation === "restart") result = await nativeRestart(rest, processAdapter, clock);
+  else if (family === "sim" && operation === "restart") result = await nativeRestart(rest, environment, processAdapter, clock);
   else if (family === "sim" && operation === "idle") result = await executeIdle(rest, environment, processAdapter, clock);
   else if (family === "sim" && operation === "screenshot") result = await nativeScreenshot(rest, environment, processAdapter);
   else if (family === "health") result = await nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);

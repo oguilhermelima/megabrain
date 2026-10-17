@@ -3,9 +3,45 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveStateDirectory } from "./state.js";
+import { openDatabase } from "../db/db.js";
+import { listRepositories } from "../db/queries/repositories.js";
+import type { ProcessAdapter } from "../adapters/proc.js";
+import type { Clock } from "./clock.js";
+import { resolve } from "node:path";
 
 export type SimulatorOwner = { worktree: string; since: string };
 export type SimulatorOwners = Record<string, SimulatorOwner>;
+
+/** Return the registered main checkout for a project root or one of its git worktrees. */
+export async function registeredProjectForWorktree(worktree: string, environment: Readonly<Record<string, string | undefined>>, processAdapter: ProcessAdapter): Promise<string | undefined> {
+  const opened = openDatabase(environment);
+  if (opened.kind !== "ok") return undefined;
+  try {
+    for (const repository of listRepositories(opened.value.db)) {
+      const listed = await processAdapter.run("git", ["-C", repository.path, "worktree", "list", "--porcelain"]);
+      if (listed.kind !== "ok") continue;
+      const paths = listed.value.stdout.split(/\n(?=worktree )/).map((entry) => /^worktree (.+)$/m.exec(entry)?.[1]).filter((path): path is string => path !== undefined);
+      if (paths.some((path) => resolve(path) === resolve(worktree))) return resolve(repository.path);
+    }
+  } finally { opened.value.close(); }
+  return undefined;
+}
+
+/** Record the first project owner. Existing claims are deliberately left to explicit `sim claim`. */
+export async function recordSimulatorOwner(udid: string, explicitWorktree: string | undefined, environment: Readonly<Record<string, string | undefined>>, processAdapter: ProcessAdapter, clock: Clock): Promise<string | undefined> {
+  const git = explicitWorktree === undefined
+    ? await processAdapter.run("git", ["rev-parse", "--show-toplevel"])
+    : await processAdapter.run("git", ["-C", explicitWorktree, "rev-parse", "--show-toplevel"]);
+  if (git.kind !== "ok" || !git.value.stdout.trim()) return undefined;
+  const worktree = resolve(git.value.stdout.trim());
+  if (await registeredProjectForWorktree(worktree, environment, processAdapter) === undefined) return undefined;
+  const owners = await readSimulatorOwners(environment);
+  const existing = owners[udid];
+  if (existing !== undefined) return existing.worktree === worktree ? undefined : `simulator ${udid} is owned by ${existing.worktree}; use native sim claim to move it`;
+  owners[udid] = { worktree, since: new Date(clock.now()).toISOString() };
+  await writeSimulatorOwners(environment, owners);
+  return undefined;
+}
 
 const ownersFile = (environment: Readonly<Record<string, string | undefined>>) => join(resolveStateDirectory(environment), "native", "sim-owners.json");
 

@@ -12,7 +12,9 @@ import { createNativeSessionStore } from "../../../adapters/native-session-store
 import { connectMetroInspector, waitForMetroInspectorTarget, type MetroEvaluation } from "../../../core/native-cdp.js";
 import { buildNativeCaptureFailureRecord, buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome, type NativeCaptureRecord, type NativeCaptureScreenRecord } from "../../../core/native-capture.js";
 import { resolveStateDirectory } from "../../../core/state.js";
-import { readSimulatorOwners, writeSimulatorOwners } from "../../../core/native-sim-owner.js";
+import { readSimulatorOwners, recordSimulatorOwner, registeredProjectForWorktree, writeSimulatorOwners } from "../../../core/native-sim-owner.js";
+import { readFile } from "node:fs/promises";
+import { parseIdleState } from "../../../core/native-idle.js";
 import { executeIdle, recordBooted } from "../native-idle.js";
 import { usageText } from "../../../core/usage.js";
 import { unknownProcess, unknownMetro, unknownTree, unknownFrame, APPIUM_SESSION_DEFAULTS, appiumSessionCapabilities, AppiumSession, AppiumSessionAttempt, AppiumResponse, appiumResponse, appiumMessage, appiumHttpFailure, createAppiumSession, appiumSession } from "./session.js";
@@ -35,11 +37,19 @@ export async function nativeList(args: readonly string[], environment: Environme
   if (listed.kind !== "ok") return listed;
   let rows = listed.value.filter((device) => (kind?.kind !== "ok" || device.kind === kind.value) && (!bootedOnly || device.state === "Booted"));
   const owners = await readSimulatorOwners(environment);
-  const live = new Set(listed.value.filter((device) => device.state === "Booted").map((device) => device.udid));
+  const devices = new Map(listed.value.map((device) => [device.udid, device]));
+  let asleep = new Set<string>();
+  try { asleep = new Set(parseIdleState(await readFile(join(resolveStateDirectory(environment), "native", "booted.json"), "utf8")).asleep); } catch { /* no megabrain-slept devices */ }
   let stale = false;
-  for (const udid of Object.keys(owners)) if (!live.has(udid)) { delete owners[udid]; stale = true; }
+  for (const udid of Object.keys(owners)) {
+    const device = devices.get(udid);
+    if (device === undefined || (device.state !== "Booted" && !asleep.has(udid))) { delete owners[udid]; stale = true; }
+  }
   if (stale) await writeSimulatorOwners(environment, owners);
-  if (bootedOnly) rows = rows.map((device) => ({ ...device, worktree: owners[device.udid]?.worktree ?? null }));
+  if (bootedOnly) rows = await Promise.all(rows.map(async (device) => {
+    const worktree = owners[device.udid]?.worktree;
+    return { ...device, worktree: worktree ?? null, project: worktree === undefined ? null : (await registeredProjectForWorktree(worktree, environment, processAdapter) ?? null) };
+  }));
   if (json) return ok(`${JSON.stringify({ ...(bootedOnly ? {} : { kind: kind!.value }), devices: rows })}\n`);
   return ok(rows.map((row) => `${row.name}\t${row.state}\t${row.udid}\n`).join(""));
 }
@@ -116,7 +126,7 @@ async function listAllCandidates(processAdapter: ProcessAdapter): Promise<Result
   } catch { return error("simctl returned invalid device data"); }
 }
 
-export async function nativeRestart(args: readonly string[], processAdapter: ProcessAdapter, clock: Clock): Promise<Result<string>> {
+export async function nativeRestart(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter, clock: Clock): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("native-sim-restart")}\n`);
   const udid = args.find((arg) => !arg.startsWith("--")) ?? "";
   if (!SIMULATOR_UDID.test(udid)) return error(`native sim restart needs a simulator udid: ${udid}`, 2);
@@ -132,7 +142,9 @@ export async function nativeRestart(args: readonly string[], processAdapter: Pro
   if (boot.kind !== "ok") return error(`failed to boot simulator ${udid}: ${boot.error}`);
   const waited = await waitUntilBooted(device.kind, udid, timeout.value, processAdapter, clock);
   if (waited.kind !== "ok") return waited;
-  return ok(`${JSON.stringify({ udid, state: "Booted", waitedMs: waited.value })}\n`);
+  const notice = await recordSimulatorOwner(udid, undefined, environment, processAdapter, clock);
+  if (notice) console.error(notice);
+  return ok(`${JSON.stringify({ udid, state: "Booted", waitedMs: waited.value, ...(notice ? { notice } : {}) })}\n`);
 }
 
 export const SIMULATOR_UDID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
@@ -172,6 +184,7 @@ export async function nativeEnsure(args: readonly string[], environment: Environ
   const device = optionValue(args, "--device") ?? setting(loaded.value, kind.value, "device");
   const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
   const selected = selectDevice(kind.value, candidates.value, device, false); if (selected.kind !== "ok") return selected;
+  let notice: string | undefined;
   if (selected.value.state !== "Booted") {
     const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid]);
     if (boot.kind !== "ok") return error(`failed to boot simulator ${selected.value.udid}: ${boot.error.replace(/^xcrun exited with status \d+$/, "simctl exited")}`);
@@ -179,10 +192,6 @@ export async function nativeEnsure(args: readonly string[], environment: Environ
   }
   const waited = await waitUntilBooted(kind.value, selected.value.udid, timeout.value, processAdapter, clock);
   if (waited.kind !== "ok") return waited;
-  if (worktree?.trim()) {
-    const owners = await readSimulatorOwners(environment);
-    owners[selected.value.udid] = { worktree: resolve(worktree), since: new Date(clock.now()).toISOString() };
-    await writeSimulatorOwners(environment, owners);
-  }
-  return args.includes("--json") ? ok(`${JSON.stringify({ ok: true, kind: kind.value, device: selected.value.udid, state: "Booted" })}\n`) : ok(`simulator ${selected.value.udid} is booted\n`);
+  notice = await recordSimulatorOwner(selected.value.udid, worktree, environment, processAdapter, clock);
+  return args.includes("--json") ? ok(`${JSON.stringify({ ok: true, kind: kind.value, device: selected.value.udid, state: "Booted", ...(notice ? { notice } : {}) })}\n`) : ok(`simulator ${selected.value.udid} is booted${notice ? `\n${notice}` : ""}\n`);
 }

@@ -8,6 +8,8 @@ import { awaitProcAdmission } from "../../core/proc-queue.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { findJavaHome, maestroBinary, maestroEnvironment, readMaestroRecord } from "../../core/maestro.js";
 import { usageText } from "../../core/usage.js";
+import { recordSimulatorOwner } from "../../core/native-sim-owner.js";
+import { systemClock } from "../../core/clock.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Emit = (text: string) => void;
@@ -168,6 +170,7 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   if (flow.startsWith("..") || isAbsolute(flow) || !existsSync(flowPath) || !statSync(flowPath).isFile()) return failed(`flow not found in ${worktree}: ${positional[0]}`);
   const device = await resolveDevice(values["--device"], process);
   if (device.kind !== "ok") return device;
+  const ownerNotice = await recordSimulatorOwner(device.value, values["--worktree"] ?? worktree, environment, process, systemClock);
   const admitted = await awaitProcAdmission({ name: "maestro-run", worktree, mode: admission ?? "wait" }, environment, process);
   if (admitted.kind !== "ok") return admitted;
 
@@ -190,6 +193,7 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   let current: RunRecord = { runId, flow, worktree, device: device.value, pid: child.pid ?? 0, state: "running", startedAt: new Date(startedMs).toISOString() };
   writeRecord(directory, current);
   send({ type: "start", state: "running", runId, flow, device: device.value, artifacts: directory });
+  if (ownerNotice) console.error(ownerNotice);
 
   let index = 0;
   let lastLine = startedMs;
