@@ -20,6 +20,7 @@ import { CheckGlyph, IssueStateIcon, LabelChip, PullRequestStateIcon, ReviewChip
 import type { GithubKind } from '@/github/useGithubCounts'
 import { mapLimited } from '@/lib/poll-model'
 import { useRunControls, type RunControls } from '@/run-panel/run-context'
+import { pageX } from '@/lib/page'
 
 // A project's page in a pane. A hero says who it is (picture, name, remote, the main checkout's
 // branch, its path) and what is live in it, with New chat as the one primary action and the rest in a
@@ -137,7 +138,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
 
   return (
     <div className="@container min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto flex max-w-[1320px] flex-col gap-6 px-5 pt-6 pb-14 @min-[720px]:px-8 @min-[720px]:pt-8">
+      <div className={`mx-auto flex max-w-[1320px] flex-col gap-6 pt-6 pb-14 @min-[720px]:pt-8 ${pageX}`}>
         <header className="relative overflow-hidden rounded-[32px] border border-white/[0.07] bg-ink-900 px-6 py-6 @min-[720px]:px-8 @min-[720px]:py-7">
           <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: `radial-gradient(90% 140% at 0% 0%, color-mix(in srgb, ${tint} 16%, transparent), transparent 62%)` }} />
           <div className="relative flex flex-col gap-6 @min-[900px]:flex-row @min-[900px]:items-end">

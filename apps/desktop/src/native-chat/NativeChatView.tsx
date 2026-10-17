@@ -28,6 +28,7 @@ import { useNow } from '@/github/parts'
 import { ArtifactPanel, ArtifactsRow, useChatArtifacts, useChatPanel, useHiddenChips } from '@/native-chat/ChatArtifacts'
 import { artifactRow, closeChip, openArtifact, panelLayout, type ArtifactChip } from '@/native-chat/chat-artifacts'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
+import { pageMx } from '@/lib/page'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
@@ -315,30 +316,30 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
       />
       {/* A follow that dropped comes back by itself; until then the view says so quietly instead of freezing. */}
       {reconnecting !== null && (
-        <p className="mx-8 mt-3 text-[12.5px] text-ink-400" title={reconnecting === '' ? undefined : reconnecting}>
+        <p className={`${pageMx} mt-3 text-[12.5px] text-ink-400`} title={reconnecting === '' ? undefined : reconnecting}>
           Reconnecting…
         </p>
       )}
       {actionError !== null && (
-        <div className="mx-8 mt-3">
+        <div className={`${pageMx} mt-3`}>
           <ErrorNote error={actionError} />
         </div>
       )}
       {confirming !== null && (
-        <div className="mx-8 mt-3 flex items-center gap-3 text-[13px] text-warn">
+        <div className={`${pageMx} mt-3 flex items-center gap-3 text-[13px] text-warn`}>
           <span className="min-w-0 flex-1">{confirming.text}</span>
           <button type="button" onClick={() => setConfirming(null)} className="shrink-0 rounded-full px-3 py-1 text-ink-300 hover:bg-white/[0.07]">Cancel</button>
           <button type="button" onClick={confirming.run} className="shrink-0 rounded-full px-3 py-1 text-ink-100 hover:bg-white/[0.07]">{confirming.action}</button>
         </div>
       )}
       {switchError !== null && (
-        <div className="mx-8 mt-3 flex items-start gap-3">
+        <div className={`${pageMx} mt-3 flex items-start gap-3`}>
           <div className="min-w-0 flex-1"><ErrorNote error={switchError} /></div>
           <button type="button" onClick={() => void switchMode()} className="shrink-0 rounded-full px-3 py-1 text-[13px] text-ink-100 hover:bg-white/[0.07]">Retry</button>
         </div>
       )}
       {resumable(chat.state) && chat.error != null && (
-        <div className="mx-8 mt-3 flex items-center gap-3 text-[13px] text-warn">
+        <div className={`${pageMx} mt-3 flex items-center gap-3 text-[13px] text-warn`}>
           <span className={`min-w-0 flex-1 ${heldElsewhere ? 'break-words' : 'truncate'}`} title={chat.error}>Could not resume: {chat.error}</span>
           {heldElsewhere && (
             <button type="button" disabled={retryingResume} onClick={() => void retryResume()} className="shrink-0 rounded-full px-3 py-1 text-ink-100 hover:bg-white/[0.07] disabled:opacity-50">
@@ -352,7 +353,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
       )}
       {waitingTerminal ? (
         <>
-          <div className="mx-8 mt-3 flex items-center gap-3 text-[13px] text-ink-300">
+          <div className={`${pageMx} mt-3 flex items-center gap-3 text-[13px] text-ink-300`}>
             <span className="min-w-0 flex-1">{TERMINAL_WAIT_NOTICE}</span>
             <button type="button" onClick={() => follow(stopAndOpen(true))} className="shrink-0 text-[12.5px] text-ink-400 underline-offset-2 hover:text-ink-100 hover:underline">
               Stop the turn and open now
@@ -363,7 +364,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
       ) : inTerminal ? (
         <>
           {exited !== undefined && (
-            <p className="mx-8 mt-3 text-[13px] text-ink-400">
+            <p className={`${pageMx} mt-3 text-[13px] text-ink-400`}>
               The terminal exited{exited === null ? '' : ` with code ${exited}`}. Switch back to Chat to continue here.
             </p>
           )}
@@ -395,7 +396,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
               {/* On a narrow pane the artifact lies over the transcript; the composer below stays in reach. */}
               {opened !== null && layout.mode === 'overlay' && artifactPanel(opened, true)}
             </div>
-            {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
+            {pending !== null && <p className={`${pageMx} -mb-1 px-3 text-[12.5px] text-warn`}>{pending.tool} waits for your approval above.</p>}
             <div onKeyDown={onComposerKey} className="contents">
               <Composer
                 placeholder={resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}

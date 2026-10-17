@@ -18,7 +18,7 @@ export function WikiProjectPicture({ project, name }: { project: Project | undef
   )
 }
 
-/** The bar's first control: the project shown, its picture and name, opening a menu of the others. */
+/** The bar's first control: the project shown, its picture and name, opening a menu of the others. Its hover fill overhangs the page inset by 3px, so the picture starts on it. */
 export function ProjectSwitcher({ name, path, listed, options }: { name: string; path: string; listed: Project | undefined; options: { label: string; title: string; onSelect: () => void }[] }) {
   const { menu, open, close } = useContextMenu()
   return (
@@ -28,7 +28,7 @@ export function ProjectSwitcher({ name, path, listed, options }: { name: string;
         onClick={(event) => open(event, [options])}
         aria-haspopup="menu"
         title={`${name}\n${path}`}
-        className="flex h-[30px] max-w-[240px] min-w-0 shrink-0 items-center gap-2 rounded-full pr-2 pl-[3px] text-left transition-colors select-none hover:bg-white/[0.08]"
+        className="-ml-[3px] flex h-[30px] max-w-[240px] min-w-0 shrink-0 items-center gap-2 rounded-full pr-2 pl-[3px] text-left transition-colors select-none hover:bg-white/[0.08]"
       >
         <WikiProjectPicture project={listed} name={name} />
         <span className="min-w-0 truncate text-[13px] font-semibold tracking-[-0.01em] text-ink-200 @max-[520px]/header:hidden">{name}</span>

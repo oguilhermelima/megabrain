@@ -322,7 +322,7 @@ function ArchivedBranches({ project }: { project: Project }) {
 /** One project's page in Settings: who it is, the commands its chats run, and its archived branches. */
 export function ProjectPage({ project, onChanged }: { project: Project; onChanged: () => void }) {
   return (
-    <div className="mx-auto grid max-w-[640px] gap-6">
+    <div className="grid gap-6">
       <Appearance project={project} onChanged={onChanged} />
       <Runners project={project} />
       <ArchivedBranches project={project} />

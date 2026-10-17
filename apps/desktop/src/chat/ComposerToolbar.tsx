@@ -32,7 +32,8 @@ export function ComposerToolbar({ picker, disabled, agent, hasSkills, skillAncho
   onAttachFiles: (files: File[]) => void
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-1.5 px-2.5 pt-1.5 pb-2.5">
+    // The first ghost button's fill overhangs the page inset by its glyph's 8px, so the glyph starts on it; the send button ends on it.
+    <div className="flex min-w-0 items-center gap-1.5 pt-1.5 pr-6 pb-2.5 pl-4">
       <button type="button" onClick={() => picker.current?.click()} disabled={disabled} aria-label="Attach images or PDFs" title="Attach images or PDFs" className={ghost}>
         <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m21.4 11.6-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8" /></svg>
       </button>

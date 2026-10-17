@@ -75,7 +75,7 @@ export function QueueStrip({ queue, editing, onEdit }: { queue: QueueControls; e
   }
 
   return (
-    <ol aria-label="Queued messages" className="mb-1.5 flex max-h-40 flex-col gap-1 overflow-y-auto px-1">
+    <ol aria-label="Queued messages" className="-mx-1 mb-1.5 flex max-h-40 flex-col gap-1 overflow-y-auto px-1">
       {shown.map((item, index) => {
         const { line, images } = queueSummary(item.parts)
         const isEditing = item.id === editing

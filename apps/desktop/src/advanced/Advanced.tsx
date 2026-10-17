@@ -66,6 +66,7 @@ import { usePanePersistence } from '@/advanced/usePanePersistence'
 import { useCodeLifecycle } from '@/advanced/useCodeLifecycle'
 import { focusPaneInput, usePaneShortcuts, worktreeChoices } from '@/advanced/usePaneShortcuts'
 import { useSplitInteractions } from '@/advanced/useSplitInteractions'
+import { pageX } from '@/lib/page'
 
 // Code, the GitHub pages and settings load the first time they open,
 // so starting the app parses only the sidebar and chats.
@@ -844,7 +845,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       <main data-window-content="" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
         {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} joined={windowRow !== null || sharedJoined} />}
         {error !== null && (
-          <div className="px-8 pt-4">
+          <div className={`${pageX} pt-4`}>
             <ErrorNote error={error} />
           </div>
         )}
@@ -945,7 +946,7 @@ function hasActionBar(item: string): boolean {
 /** A pane whose item is no longer listed: a dispatch that was pruned, a chat that ended elsewhere. */
 function GoneNote() {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center px-8 text-center text-[13.5px] text-ink-400">
+    <div className={`flex min-h-0 flex-1 items-center justify-center ${pageX} text-center text-[13.5px] text-ink-400`}>
       This is no longer listed. Pick something in the sidebar or close the pane.
     </div>
   )

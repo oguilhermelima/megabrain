@@ -9,6 +9,7 @@ import { RemoveFromSplitIcon } from '@/panes/PaneArea'
 import type { AgentActivity } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
 import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
+import { pageInset, pageRight } from '@/lib/page'
 
 /**
  * The top bar every chat view and the launcher share. Its first row is the agent's mark, live while it works (none on the launcher), and the title on one line (header-model),
@@ -77,8 +78,8 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
 
   // In the window row: 4px above and below the 36px title make the 44px band; the padding slides between the two with the sidebar.
   const band = inset === null ? 'pt-3' : 'pt-1'
-  const slide: CSSProperties = { transition: 'padding var(--motion-panel) var(--motion-ease-panel)', paddingLeft: inset ?? 24 }
-  const side = chrome === null ? 'pr-6' : 'cursor-grab pr-3 active:cursor-grabbing'
+  const slide: CSSProperties = { transition: 'padding var(--motion-panel) var(--motion-ease-panel)', paddingLeft: inset ?? pageInset }
+  const side = chrome === null ? pageRight : 'cursor-grab pr-3 active:cursor-grabbing'
 
   // Under a split's shared bar (panes/group-bar) the pane keeps only what is its own: no view tabs, no Run, one short row.
   if (chrome?.slim === true) {

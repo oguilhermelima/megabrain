@@ -25,6 +25,7 @@ import { LinkedText, PathLinksContext, type PathLinks } from '@/chat/path-links'
 import { firstPath } from '@/code/chat-paths'
 import { reuse } from '@/lib/reuse'
 import { isMissingLog } from '@/chat/session-open-model'
+import { pageMx } from '@/lib/page'
 
 const noLive: LiveRow[] = []
 
@@ -421,8 +422,8 @@ export function Conversation({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, live])
 
-  if (error !== null && missingLog !== undefined && isMissingLog(error)) return <div className="mx-8 my-5">{missingLog}</div>
-  if (error !== null) return <div className="mx-8 my-5"><ErrorNote error={error} /></div>
+  if (error !== null && missingLog !== undefined && isMissingLog(error)) return <div className={`${pageMx} my-5`}>{missingLog}</div>
+  if (error !== null) return <div className={`${pageMx} my-5`}><ErrorNote error={error} /></div>
   if (transcript === null) {
     return <TranscriptSkeleton />
   }
@@ -599,7 +600,7 @@ export function ConversationList({
   }
 
   if (count === 0) {
-    return <div className="mx-8 my-5 text-[13px] text-ink-400">Nothing here yet.</div>
+    return <div className={`${pageMx} my-5 text-[13px] text-ink-400`}>Nothing here yet.</div>
   }
 
   return (
@@ -614,7 +615,7 @@ export function ConversationList({
           onMouseDown={(event) => {
             if (event.button === 2) event.preventDefault()
           }}
-          className="mx-8 min-h-0 flex-1 overflow-y-auto select-text"
+          className={`${pageMx} min-h-0 flex-1 overflow-y-auto select-text`}
         >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((row) => {

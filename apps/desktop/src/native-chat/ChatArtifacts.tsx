@@ -170,7 +170,7 @@ export function ArtifactsRow({ chips, now, onOpen, onClose }: { chips: ArtifactC
       onWheel={(event) => {
         if (event.deltaX === 0 && event.deltaY !== 0) event.currentTarget.scrollLeft += event.deltaY
       }}
-      className="artifact-row mb-1.5 flex gap-1 overflow-x-auto px-1 py-0.5"
+      className="artifact-row -mx-1 mb-1.5 flex gap-1 overflow-x-auto px-1 py-0.5"
     >
       {chips.map((chip) => {
         const { artifact } = chip

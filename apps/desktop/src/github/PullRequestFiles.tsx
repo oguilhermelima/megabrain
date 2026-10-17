@@ -11,6 +11,7 @@ import { diffWindow, filesToFetch, isLargeDiff, isViewed, shownFiles, startsFold
 import { ReviewThread, type ThreadActions, type ThreadFocus } from '@/github/ReviewThread'
 import { commentTarget, fileRows, parsePatch, pendingAt, placeThreads, unresolvedCount, type CommentTarget, type DiffLine, type FileRow, type PendingComment } from '@/github/review-model'
 import type { PullRequestFiles as Files } from '@/github/usePullRequestFiles'
+import { pageInset, pageLeft, pageRight, pageX } from '@/lib/page'
 
 // A pull request's Files tab: the changed files with a filter on the left, and on the right each
 // file's unified diff, syntax-coloured and collapsible. Both columns are virtual: only the files and
@@ -462,14 +463,14 @@ export function PullRequestFiles({ files, review }: { files: Files; review: Revi
 
   if (pages.pages === 0) {
     return files.pagesError !== null ? (
-      <div className="space-y-3 px-6 py-6">
+      <div className={`space-y-3 ${pageX} py-6`}>
         <ErrorNote error={files.pagesError} />
         <button type="button" onClick={files.reload} className="rounded-full bg-white/[0.08] px-3.5 py-1.5 text-[12.5px] font-semibold text-ink-100 hover:bg-white/[0.14]">
           Try again
         </button>
       </div>
     ) : (
-      <div className="flex min-h-0 flex-1 gap-4 px-6 py-5">
+      <div className={`flex min-h-0 flex-1 gap-4 ${pageX} py-5`}>
         <RowsSkeleton count={6} label="Reading the changed files" className="w-[260px] shrink-0" />
         <div className="min-w-0 flex-1">
           <CodeSkeleton />
@@ -489,7 +490,7 @@ export function PullRequestFiles({ files, review }: { files: Files; review: Revi
   return (
     <div className="flex min-h-0 flex-1">
       <nav aria-label="Changed files" className="flex w-[280px] shrink-0 flex-col border-r border-white/[0.06]">
-        <div className="space-y-2 pt-4 pr-4 pb-2 pl-6">
+        <div className={`space-y-2 pt-4 pr-4 pb-2 ${pageLeft}`}>
           <p className="flex items-center gap-2 text-[12px] text-ink-400">
             {total.toLocaleString()} {total === 1 ? 'file' : 'files'}
             {pages.files.length < total && <span className="text-ink-500">· {pages.files.length.toLocaleString()} listed</span>}
@@ -517,7 +518,7 @@ export function PullRequestFiles({ files, review }: { files: Files; review: Revi
           />
         </div>
         {files.pagesError !== null && (
-          <div className="space-y-2 pr-4 pb-2 pl-6">
+          <div className={`space-y-2 pr-4 pb-2 ${pageLeft}`}>
             <ErrorNote error={files.pagesError} />
             <button type="button" onClick={() => files.needPage(pages.files.length, true)} className="rounded-full bg-white/[0.08] px-3 py-1 text-[12px] font-semibold text-ink-100 hover:bg-white/[0.14]">
               Try again
@@ -533,7 +534,7 @@ export function PullRequestFiles({ files, review }: { files: Files; review: Revi
             const pending = controls.pending.filter((comment) => comment.path === file.path).length
             const seen = isViewed(file, marks)
             return (
-              <li key={item.key} style={{ transform: `translateY(${item.start}px)`, height: navRowHeight }} className="absolute top-0 right-2 left-6">
+              <li key={item.key} style={{ transform: `translateY(${item.start}px)`, height: navRowHeight, left: pageInset }} className="absolute top-0 right-2">
                 <button
                   type="button"
                   title={file.path}
@@ -556,14 +557,14 @@ export function PullRequestFiles({ files, review }: { files: Files; review: Revi
           {shown.length === 0 && !pages.loading && <li className="py-3 pr-2 pl-4 text-[12.5px] text-ink-500">{pages.files.length === 0 ? 'No files changed.' : hideViewed && query.trim() === '' ? 'Every file is viewed.' : 'No file matches.'}</li>}
         </ul>
       </nav>
-      <div ref={setScroller} className="relative min-h-0 min-w-0 flex-1 overflow-y-auto pr-6 pl-5">
+      <div ref={setScroller} className={`relative min-h-0 min-w-0 flex-1 overflow-y-auto ${pageRight} pl-5`}>
         <div style={{ height: diffs.getTotalSize() }} />
         {diffs.getVirtualItems().map((item) => {
           const file = shown[item.index]
           if (file === undefined) return null
           return (
             // Placed with top, not a transform: a transform would shift the sticky file header off the top.
-            <div key={item.key} ref={diffs.measureElement} data-index={item.index} style={{ top: item.start }} className="absolute right-6 left-5">
+            <div key={item.key} ref={diffs.measureElement} data-index={item.index} style={{ top: item.start, right: pageInset }} className="absolute left-5">
               <FileSection
                 file={file}
                 patched={files.patchOf(file.path)}

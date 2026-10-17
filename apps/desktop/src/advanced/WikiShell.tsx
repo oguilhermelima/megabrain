@@ -3,6 +3,7 @@ import { SearchIcon } from '@/advanced/SidebarTools'
 import { readPanelOpen, wikiPanelLimits, wikiPanelSurface, wikiShellLayout, writePanelOpen, type WikiPanel } from '@/advanced/wiki-shell-model'
 import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { SlidePanel } from '@/components/SlidePanel'
+import { pageX } from '@/lib/page'
 import { sidePanelButton, sidePanelHeader, sidePanelHeaderRow, sidePanelList, sidePanelTitle } from '@/lib/side-panel'
 
 // The shell the Knowledge and Artifacts pages share: the page's navigation in a panel on the right that
@@ -84,7 +85,7 @@ export function WikiShell({
     <div className="@container flex h-full min-h-0">
       {/* The column paints the black itself: the pane under the panel is see-through (styles.css). */}
       <div className="flex min-w-0 flex-1 flex-col bg-ink-950">
-        <header data-tauri-drag-region className="@container/header flex shrink-0 items-center gap-2 border-b border-white/[0.06] pt-3 pr-6 pb-2.5 pl-6">
+        <header data-tauri-drag-region className={`@container/header flex shrink-0 items-center gap-2 border-b border-white/[0.06] pt-3 pb-2.5 ${pageX}`}>
           <div data-tauri-drag-region className="flex h-9 min-w-0 flex-1 items-center gap-2">
             {crumb}
           </div>

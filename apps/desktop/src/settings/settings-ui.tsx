@@ -129,7 +129,7 @@ export function Switch({ checked, onChange, label, disabled = false }: { checked
 /** The page of one section: its title with icon, its one line, then its groups. */
 export function SectionPage({ icon, title, description, children }: { icon: SectionIcon; title: string; description: string; children: ReactNode }) {
   return (
-    <div className="mx-auto grid max-w-[640px] gap-6">
+    <div className="grid gap-6">
       <header className="flex items-start gap-3">
         <span className="mt-0.5 grid size-8 place-items-center rounded-[10px] bg-white/[0.06] text-ink-200">
           <SettingsIcon name={icon} />

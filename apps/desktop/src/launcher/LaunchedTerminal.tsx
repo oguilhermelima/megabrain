@@ -6,6 +6,7 @@ import { bracketedPaste } from '@/launcher/launch-model'
 import { terminalEngine } from '@/terminal/terminal-engine'
 import { restoredGone, terminalLabel, type AppTerminal } from '@/terminal/terminal-list'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
+import { pageMx } from '@/lib/page'
 
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
 
@@ -89,9 +90,9 @@ export function LaunchedTerminal({
     <div className="flex min-h-0 flex-1 flex-col">
       <ChatHeader agent={agent} title={terminalLabel(terminal)} />
       {launch.firstInput !== null && terminal.status !== 'exited' && (
-        <p className="mx-8 mt-3 text-[13px] text-ink-400">{waiting ? 'Your message goes into the terminal once it is ready.' : 'Your message is typed in the terminal. Press Enter there to send it.'}</p>
+        <p className={`${pageMx} mt-3 text-[13px] text-ink-400`}>{waiting ? 'Your message goes into the terminal once it is ready.' : 'Your message is typed in the terminal. Press Enter there to send it.'}</p>
       )}
-      {terminal.status === 'exited' && <p className="mx-8 mt-3 text-[13px] text-ink-400">The terminal exited{terminal.exitCode === null ? '' : ` with code ${terminal.exitCode}`}.</p>}
+      {terminal.status === 'exited' && <p className={`${pageMx} mt-3 text-[13px] text-ink-400`}>The terminal exited{terminal.exitCode === null ? '' : ` with code ${terminal.exitCode}`}.</p>}
       {!restoredGone(terminal) && (
         <Suspense fallback={<TerminalSkeleton label={startingLabel(terminal, place)} />}>
           <TerminalView key={launch.id} connect={connect} onOutput={onOutput} onExit={onExit} startingLabel={startingLabel(terminal, place)} onFailed={onFailed} onRetry={onRetry} />

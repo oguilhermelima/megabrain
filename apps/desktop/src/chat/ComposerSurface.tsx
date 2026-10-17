@@ -9,6 +9,7 @@ import { QueueStrip, type QueueControls } from '@/chat/QueueStrip'
 import { ComposerToolbar } from '@/chat/ComposerToolbar'
 import type { QueueState } from '@/chat/queue-model'
 import type { MenuNotice } from '@/chat/slash-commands'
+import { pageInset, pageX } from '@/lib/page'
 
 export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, queue, editing, onEdit, menu, banner, send, onDismiss, box, frame, editor, placeholder, empty, disabled, onInput, onFocus, onKeyDown, onPaste, onContextMenu, onClick, onPointerDown, onPointerMove, onPointerLeave, onDragOver, onDragLeave, onDrop, onDragEnd, dropCaret, toolbar }: {
   dispatchId?: string
@@ -46,7 +47,7 @@ export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, qu
 }) {
   return (
     <>
-      <div className="px-3">
+      <div className={pageX}>
         {dispatchId !== undefined && <QueuePills state={dispatchQueue} empty={!sendable} />}
         {above}
         {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => onEdit(item.id)} />}
@@ -56,8 +57,8 @@ export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, qu
         {banner !== null && <NoticeBanner banner={banner} onRetry={send} onDismiss={onDismiss} />}
         {/* Docked: the pane's full width, set apart by a hairline on top. */}
         <div ref={box} className="border-t border-white/[0.06] bg-ink-900">
-          <div ref={frame} className="relative min-w-0 px-4 pt-3">
-            {empty && <span className="pointer-events-none absolute top-3 right-4 left-4 truncate text-[14.5px] leading-6 text-ink-400">{placeholder}</span>}
+          <div ref={frame} className={`relative min-w-0 pt-3 ${pageX}`}>
+            {empty && <span style={{ left: pageInset, right: pageInset }} className="pointer-events-none absolute top-3 truncate text-[14.5px] leading-6 text-ink-400">{placeholder}</span>}
             <div ref={editor} role="textbox" aria-multiline="true" aria-label="Message" aria-disabled={disabled} aria-placeholder={placeholder} contentEditable={disabled ? false : 'plaintext-only'} onInput={onInput} onFocus={onFocus} onKeyDown={onKeyDown} onPaste={onPaste} onContextMenu={onContextMenu} onClick={onClick} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerLeave={onPointerLeave} onDragStart={(event) => event.preventDefault()} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} onDragEnd={onDragEnd} className="max-h-[40vh] min-h-12 overflow-y-auto text-[14.5px] leading-6 break-words whitespace-pre-wrap text-ink-100 outline-none" />
             {dropCaret !== null && <span className="pointer-events-none absolute w-0.5 rounded-full bg-accent" style={{ left: dropCaret.left - 1, top: dropCaret.top, height: dropCaret.height }} />}
           </div>

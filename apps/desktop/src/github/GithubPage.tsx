@@ -25,6 +25,7 @@ import { Avatar, ChecksList, ConversationThread, OpenLink, IssueStateIcon, Label
 import { BranchFlow, StatPill } from '@/github/ItemHero'
 import type { GithubKind } from '@/github/useGithubCounts'
 import { reuse } from '@/lib/reuse'
+import { pageMx, pageX } from '@/lib/page'
 
 // A repository's pull requests or issues, read through `megabrain github … --json`: tabs with every
 // state's total, one light page of the tab at a time (the next one loads on scroll), search and
@@ -130,9 +131,10 @@ function OwnerPicture({ owner }: { owner: string }) {
   return <img src={`https://github.com/${owner}.png?size=96`} alt="" draggable={false} onError={() => setFailed(true)} className="size-11 shrink-0 rounded-[14px] bg-white/[0.06] object-cover" />
 }
 
+/** A 36px round icon button; the header's last one overhangs by its glyph's inset so the glyph ends on the page inset (lib/page). */
 function IconButton({ label, onClick, children, spinning }: { label: string; onClick: () => void; children: ReactNode; spinning?: boolean }) {
   return (
-    <button type="button" onClick={onClick} aria-label={label} title={label} className="flex size-9 shrink-0 items-center justify-center rounded-full text-ink-300 hover:bg-white/[0.08] hover:text-ink-100">
+    <button type="button" onClick={onClick} aria-label={label} title={label} className="flex size-9 shrink-0 items-center justify-center rounded-full text-ink-300 last:-mr-[11px] hover:bg-white/[0.08] hover:text-ink-100">
       <span className={spinning === true ? 'animate-spin' : ''}>{children}</span>
     </button>
   )
@@ -225,7 +227,7 @@ const fromAny = (value: string) => (value === anyValue ? null : value)
 
 function Empty({ title, detail, action }: { title: string; detail?: string; action?: ReactNode }) {
   return (
-    <div className="mx-6 my-6 rounded-[24px] border border-dashed border-white/[0.12] px-6 py-10 text-center">
+    <div className={`${pageMx} my-6 rounded-[24px] border border-dashed border-white/[0.12] px-6 py-10 text-center`}>
       <p className="text-[15px] font-semibold text-ink-200">{title}</p>
       {detail !== undefined && <p className="mt-1 text-[13.5px] text-ink-400">{detail}</p>}
       {action !== undefined && <div className="mt-3">{action}</div>}
@@ -359,7 +361,7 @@ function DetailPane({ project, kind, number, pullRequest, issue, onMaximise, onC
 
   return (
     <aside className="flex min-h-0 w-[min(580px,50%)] shrink-0 flex-col border-l border-white/[0.06] bg-ink-950">
-      <header className="space-y-3.5 px-6 pt-6 pb-5">
+      <header className={`space-y-3.5 ${pageX} pt-6 pb-5`}>
         <div className="flex items-center gap-2">
           <StatePill kind={kind === 'prs' ? 'pr' : 'issue'} state={state} draft={pullRequest?.isDraft ?? detail?.isDraft ?? false} />
           <span className="text-[13px] font-semibold text-ink-400 tabular-nums">#{number}</span>
@@ -414,7 +416,7 @@ function DetailPane({ project, kind, number, pullRequest, issue, onMaximise, onC
           </div>
         )}
       </header>
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 pb-8">
+      <div className={`min-h-0 flex-1 space-y-4 overflow-y-auto ${pageX} pb-8`}>
         {detail?.checks !== undefined && <ChecksList checks={detail.checks} />}
         {error !== null && <ErrorNote error={error} />}
         {detail === null && error === null && (
@@ -471,7 +473,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose, onMaximise }
 
   if (repository === null) {
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto px-10 pt-12">
+      <div className={`min-h-0 flex-1 overflow-y-auto ${pageX} pt-12`}>
         <Empty title={`${project.name} has no GitHub remote`} detail="Pull requests and issues are read from the repository's github.com origin." action={<button type="button" onClick={onClose} className={pillButton}>Back</button>} />
       </div>
     )
@@ -479,7 +481,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose, onMaximise }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex items-center gap-4 px-8 pt-6 pb-4">
+      <header className={`flex items-center gap-4 ${pageX} pt-6 pb-4`}>
         <OwnerPicture owner={repository.owner} />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[24px] font-semibold tracking-[-0.02em] text-ink-100">{kind === 'prs' ? 'Pull requests' : 'Issues'}</h1>
@@ -503,7 +505,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose, onMaximise }
           <CloseIcon size={14} />
         </IconButton>
       </header>
-      <div className="flex flex-wrap items-center gap-2 px-8 pb-4">
+      <div className={`flex flex-wrap items-center gap-2 ${pageX} pb-4`}>
         {kind === 'prs' ? (
           <Tabs
             value={prTab}
@@ -560,7 +562,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose, onMaximise }
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto py-5">
           {!known && loading && <SkeletonRows />}
           {!known && !loading && error !== null && (
-            <div className="space-y-3 px-6 py-4">
+            <div className={`space-y-3 ${pageX} py-4`}>
               <ErrorNote error={error} />
               <button type="button" onClick={() => void reload()} className={pillButton}>
                 Try again
@@ -568,7 +570,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose, onMaximise }
             </div>
           )}
           {known && error !== null && (
-            <div className="px-6 pb-2">
+            <div className={`${pageX} pb-2`}>
               <ErrorNote error={error} />
             </div>
           )}
@@ -579,7 +581,7 @@ export function GithubPage({ project, kind, focus, onKind, onClose, onMaximise }
               <Empty title={`No ${tabName === 'all' ? '' : `${tabName} `}${noun}`} detail={`${repository.nameWithOwner} has none right now.`} />
             ))}
           {known && (
-            <ul className="mx-6 divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60">
+            <ul className={`${pageMx} divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60`}>
               {kind === 'prs'
                 ? shownPrs.map((item) => (
                     <li key={item.number}>

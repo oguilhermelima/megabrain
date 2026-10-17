@@ -7,6 +7,7 @@ import { native } from '@/lib/surface'
 import { attachmentKind } from '@/chat/composer-model'
 import { initialQueueState, queueReducer, type QueueAction, type QueueState } from '@/chat/queue-model'
 import type { Banner } from '@/chat/composer-look'
+import { pageMx } from '@/lib/page'
 
 // An image or PDF going with the next message. Pasted and picked files are saved through
 // saveAttachment when the message is sent; a file dropped on the window already has a path.
@@ -98,7 +99,7 @@ export function useChatQueue(dispatchId: string | undefined, sent: number): [Que
 export function QueuePills({ state, empty }: { state: QueueState; empty: boolean }) {
   if (state.pending.length === 0 && state.taking === null && state.hint === null) return null
   return (
-    <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
+    <div className="-mx-1 mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
       {state.pending.map((item) => (
         <span key={item.id} title={item.text} className="flex max-w-64 items-center gap-1.5 rounded-full border border-accent/25 bg-accent/[0.08] px-2.5 py-0.5 text-[12px] text-ink-200">
           <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
@@ -200,7 +201,7 @@ export function NoticeBanner({ banner, onRetry, onDismiss }: { banner: Banner; o
   return (
     <div
       role={banner.role}
-      className={`mx-4 flex min-w-0 items-center gap-2 rounded-t-[14px] border border-b-0 py-1 pr-1 pl-3 text-[12.5px] ${bad ? 'border-bad/25 bg-bad/[0.08] text-bad' : 'border-white/[0.08] bg-white/[0.03] text-ink-300'}`}
+      className={`${pageMx} flex min-w-0 items-center gap-2 rounded-t-[14px] border border-b-0 py-1 pr-1 pl-3 text-[12.5px] ${bad ? 'border-bad/25 bg-bad/[0.08] text-bad' : 'border-white/[0.08] bg-white/[0.03] text-ink-300'}`}
     >
       <svg viewBox="0 0 16 16" className={`size-3.5 shrink-0 ${bad ? 'text-bad' : 'text-ok'}`} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <circle cx="8" cy="8" r="6.25" />

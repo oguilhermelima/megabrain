@@ -17,6 +17,7 @@ import { defaultAgentSettings, parseAgentSettings, type AgentSettings } from '@/
 import { defaultModelSettings, parseModelSettings, startPick, type ModelSettings } from '@/settings/models-model'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
 import type { TerminalLaunch } from '@/terminal/terminal-list'
+import { pageMx } from '@/lib/page'
 
 export interface WorktreeChoice {
   path: string
@@ -237,7 +238,7 @@ export function Launcher({
           )
         }
       />
-      <div className="@container mx-8 flex min-h-0 flex-1 flex-col overflow-y-auto">
+      <div className={`@container ${pageMx} flex min-h-0 flex-1 flex-col overflow-y-auto`}>
         {start !== undefined ? (
           <div className="pt-6">
             <StartingCard entry={start} icon={tile === 'terminal' ? undefined : <AgentIcon agent={tile} size={20} activity="working" />} onRetry={() => void actions.retry(startKey)} onDismiss={() => actions.dismiss(startKey)} />

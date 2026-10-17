@@ -18,6 +18,7 @@ import { ThreadsList, type ThreadActions, type ThreadFocus } from '@/github/Revi
 import { useReviewers, useReviewThreads } from '@/github/usePullRequestReview'
 import { usePullRequestFiles } from '@/github/usePullRequestFiles'
 import { addPending, editPending, issueStateActions, removePending, reviewPayload, unresolvedCount, type IssueStateAction, type PendingComment } from '@/github/review-model'
+import { pageX } from '@/lib/page'
 
 // One pull request or issue maximised as a pane item: a hero with its state, title, author, branches,
 // stat pills and an action bar (see ItemHero), its reviewers, and tabs that stick under the top of the
@@ -496,7 +497,7 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
       : [{ value: 'conversation', label: 'Conversation', ...(detail === null ? {} : { count: detail.comments.length }) }]
 
   const tabBar = (
-    <div className="px-6 pt-1 pb-3">
+    <div className={`${pageX} pt-1 pb-3`}>
       <TabBar value={tab} tabs={tabs} onChange={setTab} />
     </div>
   )
@@ -514,7 +515,7 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
           {header}
           {/* The tabs stay under the top of the pane once the hero scrolls away. */}
           <div className="sticky top-0 z-20 border-b border-white/[0.06] bg-ink-950">{tabBar}</div>
-          <div className="space-y-4 px-6 pt-6 pb-10">
+          <div className={`space-y-4 ${pageX} pt-6 pb-10`}>
             {error !== null && (
               <div className="space-y-3">
                 <ErrorNote error={error} />

@@ -20,6 +20,7 @@ import { TerminalSection } from '@/settings/TerminalSection'
 import { setKnownTerminalEngine } from '@/terminal/terminal-engine'
 import { UsageSection } from '@/settings/UsageSection'
 import { WorktreesSection } from '@/settings/WorktreesSection'
+import { pageX } from '@/lib/page'
 
 /** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. `focusChat` is the native chat focused behind the window, for Summarize now. */
 export function SettingsWindow({ onClose, onSetup, focusProject = null, focusChat = null, initialSection = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null; focusChat?: { id: string; title: string } | null; initialSection?: Section | null }) {
@@ -157,7 +158,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
             </div>
           ))}
         </nav>
-        <main ref={content} className="min-h-0 flex-1 overflow-y-auto px-8 pt-8 pb-10">
+        <main ref={content} className={`min-h-0 flex-1 overflow-y-auto pt-8 pb-10 ${pageX}`}>
           {projectPath !== null ? (
             project !== null ? (
               <ProjectPage key={project.path} project={project} onChanged={() => void reloadProjects()} />

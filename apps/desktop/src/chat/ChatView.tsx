@@ -11,6 +11,7 @@ import { ErrorNote, Mono } from '@/components/ui'
 import { Composer } from '@/chat/Composer'
 import { useComposeChannel } from '@/chat/chat-menu'
 import { messagePartsToText } from '@/chat/composer-parts'
+import { pageMx } from '@/lib/page'
 
 // Memoised: a status poll that left this chat unchanged keeps the same chat object (see reuse.ts).
 export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }: { chat: Dispatch; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
@@ -62,7 +63,7 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }:
         title={chatName(chat)}
       />
       {finding !== null && (
-        <div className="mx-8 mt-3 rounded-[20px] border border-warn/25 bg-warn/[0.08] px-5 py-3.5 text-[13.5px]">
+        <div className={`${pageMx} mt-3 rounded-[20px] border border-warn/25 bg-warn/[0.08] px-5 py-3.5 text-[13.5px]`}>
           <span className="font-semibold text-warn">{finding.cause}</span>
           {finding.errorText !== undefined && <span className="text-ink-300"> · {finding.errorText}</span>}
           {finding.recommendation !== undefined && (
@@ -72,7 +73,7 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }:
           )}
         </div>
       )}
-      <div className="mx-8 mt-3 flex gap-1 self-start rounded-full border border-white/10 bg-white/[0.05] p-1">
+      <div className={`${pageMx} mt-3 flex gap-1 self-start rounded-full border border-white/10 bg-white/[0.05] p-1`}>
         {(['conversation', 'terminal'] as const).map((value) => (
           <button
             key={value}
@@ -92,19 +93,19 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }:
         </div>
       )}
       {tab === 'terminal' && read === null && readError === null && (
-        <div className="mx-8 my-5 rounded-[24px] border border-white/[0.06] bg-[#050506] px-5 py-4">
+        <div className={`${pageMx} my-5 rounded-[24px] border border-white/[0.06] bg-[#050506] px-5 py-4`}>
           <TextSkeleton lines={6} />
         </div>
       )}
       <pre
         hidden={tab !== 'terminal' || read === null}
         ref={pane}
-        className="mx-8 my-5 min-h-0 flex-1 overflow-auto rounded-[24px] border border-white/[0.06] bg-[#050506] px-5 py-4 font-mono text-[12.5px] leading-[1.65] whitespace-pre text-ink-300 select-text"
+        className={`${pageMx} my-5 min-h-0 flex-1 overflow-auto rounded-[24px] border border-white/[0.06] bg-[#050506] px-5 py-4 font-mono text-[12.5px] leading-[1.65] whitespace-pre text-ink-300 select-text`}
       >
         {read?.text || '(no output yet)'}
       </pre>
       {readError !== null && (
-        <div className="mx-8 -mt-2 mb-3">
+        <div className={`${pageMx} -mt-2 mb-3`}>
           <ErrorNote error={readError} />
         </div>
       )}

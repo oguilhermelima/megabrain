@@ -13,6 +13,7 @@ import { noLogState } from '@/chat/session-open-model'
 import { ViewSwitch } from '@/chat/ViewSwitch'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { Button, ErrorNote } from '@/components/ui'
+import { pageMx } from '@/lib/page'
 
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
 
@@ -66,7 +67,7 @@ export function SessionView({
       {view === 'terminal' && terminalTarget !== null ? (
         <>
           {exited !== undefined && (
-            <p className="mx-8 mt-3 text-[13px] text-ink-400">
+            <p className={`${pageMx} mt-3 text-[13px] text-ink-400`}>
               The terminal exited{exited === null ? '' : ` with code ${exited}`}. Switch to Chat and back to attach again.
             </p>
           )}
@@ -152,7 +153,7 @@ function ResumeBar({ session, onResumed }: { session: ProjectSession; onResumed:
     })
   }
   return (
-    <div className="mx-8 mb-4 flex flex-col items-start gap-2 text-[13px] text-ink-300">
+    <div className={`${pageMx} mb-4 flex flex-col items-start gap-2 text-[13px] text-ink-300`}>
       <div className="flex items-center gap-3">
         <span>This conversation ended.</span>
         <Button disabled={resuming} onClick={resume}>

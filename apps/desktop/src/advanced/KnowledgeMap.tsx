@@ -4,6 +4,7 @@ import { kindColors, kindGroups, statusLabels } from '@/advanced/knowledge-model
 import { type Box, type Direction, type LinkType, type MapFilter, type MapLayout, type PlacedTopic, type View, fitView, labelSize, layoutMap, linkPath, linkTypes, showAll, stepFrom, zoomAt } from '@/advanced/knowledge-map'
 import { relativeAge } from '@/advanced/projects-model'
 import { tokenMs } from '@/lib/motion'
+import { pageMx, pageX } from '@/lib/page'
 
 // The Knowledge map: a project's topics as a graph, one region per kind (knowledge-map.ts lays it
 // out). A node is a topic, sized by its activity, coloured by its kind and drawn by its status; a
@@ -238,7 +239,7 @@ export function KnowledgeMap({ project, topics, selectedId, onPick }: { project:
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* The page's top bar closes the map; this header names it, says what it shows and filters it. */}
-      <header className="shrink-0 space-y-3 px-6 pt-4 pb-3">
+      <header className={`shrink-0 space-y-3 ${pageX} pt-4 pb-3`}>
         <div className="space-y-1">
           <h2 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">Map of {project}</h2>
           <p className="text-[12.5px] text-ink-400">
@@ -276,7 +277,7 @@ export function KnowledgeMap({ project, topics, selectedId, onPick }: { project:
       </header>
       <div
         ref={setArea}
-        className={`relative mx-3 mb-3 min-h-0 flex-1 overflow-hidden rounded-[20px] border border-white/[0.06] bg-ink-900/40 ${panning ? 'cursor-grabbing' : 'cursor-grab'}`}
+        className={`relative ${pageMx} mb-3 min-h-0 flex-1 overflow-hidden rounded-[20px] border border-white/[0.06] bg-ink-900/40 ${panning ? 'cursor-grabbing' : 'cursor-grab'}`}
         style={view === null ? undefined : grid(view)}
       >
         {topics.length === 0 ? (

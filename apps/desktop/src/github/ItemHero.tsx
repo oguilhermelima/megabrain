@@ -5,6 +5,7 @@ import { Spinner } from '@/components/ui'
 import { heroLayout, type HeroLayout } from '@/github/item-hero-model'
 import { ArrowRightIcon, CheckPassIcon, CopyIcon, LinkIcon, MoreIcon, RefreshIcon } from '@/github/icons'
 import { Avatar, StatePill, ago, openOnGithub } from '@/github/parts'
+import { pageX } from '@/lib/page'
 
 // The hero at the top of a maximised pull request or issue: the state and number above a large
 // title, who opened it and when with the branch flow beside it, a row of small stat pills, and the
@@ -199,7 +200,7 @@ export function ItemHero({
   )
 
   return (
-    <header ref={ref} className={`relative px-6 ${compact ? 'pt-5 pb-3' : 'pt-7 pb-5'}`}>
+    <header ref={ref} className={`relative ${pageX} ${compact ? 'pt-5 pb-3' : 'pt-7 pb-5'}`}>
       <div className={layout === 'wide' ? 'grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-8' : 'space-y-4'}>
         <div className="min-w-0 space-y-3">
           <div className="flex items-center gap-2.5">

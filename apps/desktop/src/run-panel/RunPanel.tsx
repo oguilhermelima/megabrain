@@ -126,7 +126,7 @@ function PortChoice({ worktree, tab, runs }: { worktree: string; tab: RunTab; ru
   const button =
     'h-7 shrink-0 rounded-full px-3 text-[12.5px] font-semibold transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:opacity-50 motion-reduce:transition-none'
   return (
-    <div role="alert" className="mx-3 mb-2 grid shrink-0 gap-2 rounded-[12px] border border-bad/25 bg-bad/[0.06] px-3 py-2.5">
+    <div role="alert" className="mx-2.5 mb-2 grid shrink-0 gap-2 rounded-[12px] border border-bad/25 bg-bad/[0.06] px-2.5 py-2.5">
       <div className="flex items-start gap-2">
         <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-ink-200">{conflict.body}</p>
         <button type="button" onClick={() => runs.dismissConflict(worktree, tab)} aria-label="Dismiss" title="Dismiss" className={`${ghost} size-6`}>
@@ -177,8 +177,9 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
 
   return (
     <div className={visible ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
-      <header data-tauri-drag-region className="flex shrink-0 flex-col gap-2 px-3 pt-3 pb-2">
-        <div data-tauri-drag-region className="flex items-center gap-2 pl-1">
+      {/* Laid out as the support panels are (lib/side-panel): the title and the tabs start 20px from the edge and the close glyph ends 20px from it; the command and a port choice are boxes 10px in, as a row's highlight. */}
+      <header data-tauri-drag-region className="flex shrink-0 flex-col gap-2 px-5 pt-3 pb-2">
+        <div data-tauri-drag-region className="flex items-center gap-2">
           <span className="text-ink-400">
             <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="4.5" cy="3.5" r="1.5" />
@@ -190,7 +191,7 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
           <h2 title={worktree} className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-100">
             {name}
           </h2>
-          <button type="button" onClick={() => runs.setOpen(worktree, false)} aria-label="Close run panel" title="Hide panel (runs keep going)" className={ghost}>
+          <button type="button" onClick={() => runs.setOpen(worktree, false)} aria-label="Close run panel" title="Hide panel (runs keep going)" className={`${ghost} -mr-[6px]`}>
             <Icon>
               <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
               <path d="M10 2.5v11" />
@@ -237,7 +238,7 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
         )}
       </header>
       {active !== null && activeView !== null && (
-        <div className="mx-3 mb-2 flex shrink-0 items-center gap-1 rounded-[12px] border border-white/[0.06] bg-white/[0.03] py-1 pr-1 pl-3">
+        <div className="mx-2.5 mb-2 flex shrink-0 items-center gap-1 rounded-[12px] border border-white/[0.06] bg-white/[0.03] py-1 pr-1 pl-2.5">
           <span className="shrink-0 font-mono text-[12px] text-ink-500 select-none" aria-hidden="true">
             $
           </span>
