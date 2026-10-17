@@ -1,5 +1,5 @@
 import type { LiveRow } from '@/chat/conversation-model'
-import { nativeChatStateSchema, type ChatApproval, type ChatDeltaEvent, type ChatEventLine, type ChatStateEvent, type NativeChat, type MessagePart, type ProjectSession, type TranscriptEvent, type TranscriptImage } from '@/api/schema'
+import { nativeChatStateSchema, type ChatApproval, type ChatDeltaEvent, type ChatEventLine, type ChatProgressEvent, type ChatStateEvent, type NativeChat, type MessagePart, type ProjectSession, type TranscriptEvent, type TranscriptImage } from '@/api/schema'
 
 // Pure logic for native chats: folding the lines of megabrain chat events into what the view shows,
 // which approval waits for an answer, when the conversation may move to the terminal, and where
@@ -27,6 +27,18 @@ export interface Outgoing {
   order?: number
 }
 
+/** What the running turn reported besides its messages. */
+export interface TurnProgress {
+  /** The turn's output tokens so far, as the agent counts them; null until it reports any. */
+  tokens: number | null
+  retry: NonNullable<ChatProgressEvent['progress']['retry']> | null
+  compacting: boolean
+  /** When a chunk or a report last arrived, by the time the daemon stamped on it. */
+  liveAt: string | null
+}
+
+const noProgress: TurnProgress = { tokens: null, retry: null, compacting: false, liveAt: null }
+
 export interface FollowState {
   chat: NativeChat | null
   /** The last cursor applied; the subscription resumes after it. */
@@ -44,10 +56,11 @@ export interface FollowState {
   outgoing: Outgoing[]
   /** The next arrival order to hand out. */
   order: number
+  progress: TurnProgress
 }
 
 export function followState(chat: NativeChat | null): FollowState {
-  return { chat, cursor: null, events: [], approvals: {}, answered: [], turnStartedAt: null, drafts: [], finished: [], outgoing: [], order: 0 }
+  return { chat, cursor: null, events: [], approvals: {}, answered: [], turnStartedAt: null, drafts: [], finished: [], outgoing: [], order: 0, progress: noProgress }
 }
 
 const numeric = /^\d+$/
@@ -67,7 +80,9 @@ const turnEnded = (state: NativeChat['state']) => state === 'idle' || state === 
 // One message streams its thinking and its text under the same id, each a draft of its own.
 const draftKey = (messageId: string, stream: ChatDeltaEvent['stream']) => `${stream}:${messageId}`
 
-function applyDelta(state: FollowState, delta: ChatDeltaEvent): FollowState {
+function applyDelta(current: FollowState, delta: ChatDeltaEvent): FollowState {
+  // Text arriving means the agent is past whatever it was retrying or compacting.
+  const state: FollowState = { ...current, progress: { ...current.progress, retry: null, compacting: false, liveAt: delta.at ?? current.progress.liveAt } }
   if (state.finished.includes(draftKey(delta.messageId, delta.stream))) return state
   const known = state.drafts.find((draft) => draft.messageId === delta.messageId && draft.stream === delta.stream)
   if (known !== undefined) {
@@ -76,14 +91,33 @@ function applyDelta(state: FollowState, delta: ChatDeltaEvent): FollowState {
   return { ...state, drafts: state.drafts.concat({ messageId: delta.messageId, stream: delta.stream, text: delta.text, order: state.order }), order: state.order + 1 }
 }
 
+/** A report folds into the turn's progress; a higher token count also ends a retry or a compaction. */
+function applyProgress(state: FollowState, event: ChatProgressEvent): FollowState {
+  const { tokens, retry, status } = event.progress
+  const previous = state.progress
+  const moved = tokens !== undefined && tokens > (previous.tokens ?? 0)
+  return {
+    ...state,
+    progress: {
+      tokens: tokens ?? previous.tokens,
+      retry: retry ?? (moved ? null : previous.retry),
+      compacting: status === undefined ? previous.compacting && !moved : status === 'compacting',
+      liveAt: event.at ?? previous.liveAt,
+    },
+  }
+}
+
 function applyState(state: FollowState, event: ChatStateEvent): FollowState {
   const parsed = nativeChatStateSchema.safeParse(event.text)
   if (!parsed.success) return state
   const value = parsed.data
   const next: FollowState = { ...state, turnStartedAt: turnEnded(value) || value === 'starting' ? null : (event.turnStartedAt ?? state.turnStartedAt) }
   if (state.chat !== null) next.chat = { ...state.chat, state: value }
-  // A turn that ended took its unfinished messages with it.
-  if (turnEnded(value)) next.drafts = []
+  // A turn that ended took its unfinished messages and its progress with it.
+  if (turnEnded(value)) {
+    next.drafts = []
+    next.progress = noProgress
+  }
   return next
 }
 
@@ -106,6 +140,7 @@ function confirmOutgoing(outgoing: Outgoing[], event: TranscriptEvent): Outgoing
 export function applyLine(state: FollowState, line: ChatEventLine): FollowState {
   const event = line.event
   if (event?.kind === 'delta') return applyDelta(state, event)
+  if (event?.kind === 'progress') return applyProgress(state, event)
   const order = state.cursor === null ? 1 : compareCursors(line.cursor, state.cursor)
   if (order < 0 || (order === 0 && event?.kind !== 'state')) return state
   let next: FollowState = { ...state, cursor: line.cursor }
@@ -197,6 +232,55 @@ export function workingStatus(state: FollowState): WorkingStatus | null {
     return { label: `Running ${tool}`, since, tool }
   }
   return { label: 'Thinking', since }
+}
+
+/** What the indicator adds while a turn runs; each part only when the agent reports it. */
+export interface ThinkingProgress {
+  tokens: number | null
+  /** Tokens or text arrived in the last moment. */
+  receiving: boolean
+  /** Claude streams while it thinks, so a long silence outside a tool means the API has not answered. */
+  waiting: boolean
+  /** A retry or a compaction the agent reported. */
+  notice: string | null
+  /** The thinking text streaming now, when the agent sends any. */
+  thinking: string | null
+}
+
+const receivingMs = 1500
+const waitingMs = 15_000
+
+function retryNotice(retry: NonNullable<TurnProgress['retry']>): string {
+  const attempt = retry.attempt === undefined ? '' : retry.maxAttempts === undefined ? `, attempt ${retry.attempt}` : `, attempt ${retry.attempt} of ${retry.maxAttempts}`
+  return `Retrying${attempt}${retry.reason === undefined ? '' : `: ${retry.reason}`}`
+}
+
+/** The progress of the followed chat's running turn at the instant now, or null when nothing runs. */
+export function thinkingProgress(state: FollowState, now: number): ThinkingProgress | null {
+  const chat = state.chat
+  if (chat === null || chat.state !== 'working') return null
+  const { tokens, retry, compacting, liveAt } = state.progress
+  const lastLive = liveAt === null ? Number.NaN : Date.parse(liveAt)
+  let last: TranscriptEvent | undefined
+  for (let index = state.events.length - 1; index >= 0 && last === undefined; index--) if (state.events[index]?.parentId === undefined) last = state.events[index]
+  const signs = [lastLive, Date.parse(state.turnStartedAt ?? ''), Date.parse(last?.at ?? '')].filter((value) => !Number.isNaN(value))
+  const quietSince = signs.length === 0 ? Number.NaN : Math.max(...signs)
+  const thinking = state.drafts.filter((draft) => draft.stream === 'thinking' && draft.text.trim() !== '').reduce<Draft | undefined>((newest, draft) => (newest === undefined || draft.order > newest.order ? draft : newest), undefined)
+  return {
+    tokens,
+    receiving: now - lastLive < receivingMs,
+    waiting: chat.agent === 'claude' && last?.kind !== 'tool-call' && now - quietSince >= waitingMs,
+    notice: retry !== null ? retryNotice(retry) : compacting ? 'Compacting the conversation' : null,
+    thinking: thinking?.text ?? null,
+  }
+}
+
+/** A token count as Claude Code shows it: 850 tokens, 2.3k tokens, 1.3M tokens. */
+export function formatTokens(count: number): string {
+  const unit = count === 1 ? 'token' : 'tokens'
+  if (count < 1000) return `${count} ${unit}`
+  if (count < 1_000_000) return `${Math.round(count / 100) / 10}k ${unit}`
+  return `${Math.round(count / 100_000) / 10}M ${unit}`
 }
 
 /** Elapsed time as the indicator shows it: 42s, 1m 05s, 1h 02m. */

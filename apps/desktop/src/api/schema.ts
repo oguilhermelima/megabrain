@@ -680,8 +680,20 @@ export const chatDeltaEventSchema = z.looseObject({
   stream: z.enum(['assistant', 'thinking']),
   messageId: z.string(),
   text: z.string(),
+  at: z.string().optional(),
 })
-export const chatEventSchema = z.union([chatStateEventSchema, chatDeltaEventSchema, z.lazy(() => transcriptEventSchema)])
+// What a running turn reports besides its messages, sent to followers only: its output tokens so far, a
+// retry the agent waits on (each part when the agent says it), or what it is doing (requesting, compacting).
+export const chatProgressEventSchema = z.looseObject({
+  kind: z.literal('progress'),
+  at: z.string().optional(),
+  progress: z.looseObject({
+    tokens: z.number().optional(),
+    retry: z.looseObject({ attempt: z.number().optional(), maxAttempts: z.number().optional(), delayMs: z.number().optional(), reason: z.string().optional() }).optional(),
+    status: z.string().optional(),
+  }),
+})
+export const chatEventSchema = z.union([chatStateEventSchema, chatDeltaEventSchema, chatProgressEventSchema, z.lazy(() => transcriptEventSchema)])
 // A message sent while the native chat's turn ran, waiting in its queue (`chat queue ... --json`).
 export const chatQueueItemSchema = z.looseObject({
   id: z.string(),
@@ -885,6 +897,7 @@ export type ChatEventLine = z.infer<typeof chatEventLineSchema>
 export type ChatEvent = z.infer<typeof chatEventSchema>
 export type ChatStateEvent = z.infer<typeof chatStateEventSchema>
 export type ChatDeltaEvent = z.infer<typeof chatDeltaEventSchema>
+export type ChatProgressEvent = z.infer<typeof chatProgressEventSchema>
 export type MessagePart = z.infer<typeof messagePartSchema>
 export type TerminalEngine = z.infer<typeof terminalEngineSchema>
 export type TerminalSession = z.infer<typeof terminalSessionSchema>

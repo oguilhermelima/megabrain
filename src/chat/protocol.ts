@@ -31,7 +31,7 @@ async function claudeContent(parts: MessagePart[]): Promise<unknown[]> {
 
 const claude: ChatProtocolAdapter = {
   async prepare(chat, stateDir) {
-    const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--verbose"];
+    const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--thinking-display", "summarized"];
     if (chat.model) args.push("--model", chat.model);
     if (chat.effort) args.push("--effort", chat.effort);
     if (chat.agentSessionId) args.push("--resume", chat.agentSessionId);
@@ -60,7 +60,8 @@ const codex: ChatProtocolAdapter = {
   async prepare() { return { command: "codex", args: ["app-server"] }; },
   async send(chat, child, parts, request) {
     const input = codexInput(parts);
-    const response = await request("turn/start", { threadId: chat.agentSessionId, input, ...(chat.model ? { model: chat.model } : {}), ...(chat.effort ? { effort: chat.effort } : {}) });
+    // A summary is the only reasoning text Codex streams; without asking for one each reasoning item is empty.
+    const response = await request("turn/start", { threadId: chat.agentSessionId, input, summary: "auto", ...(chat.model ? { model: chat.model } : {}), ...(chat.effort ? { effort: chat.effort } : {}) });
     const turn = typeof response === "object" && response !== null ? (response as Record<string, unknown>).turn : undefined;
     const turnId = typeof turn === "object" && turn !== null ? (turn as Record<string, unknown>).id : undefined;
     return typeof turnId === "string" ? turnId : undefined;

@@ -15,7 +15,7 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
-import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, shouldInterrupt, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
+import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, shouldInterrupt, thinkingProgress, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
@@ -243,7 +243,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
           <ConversationList
             events={state.events}
             live={live}
-            footer={working === null ? null : <WorkingIndicator agent={chat.agent} status={working} />}
+            footer={working === null ? null : <WorkingIndicator agent={chat.agent} status={working} progress={(now) => thinkingProgress(state, now)} />}
             onOpenChat={onOpenChat}
             root={chat.cwd}
             onOpenPath={onOpenPath}

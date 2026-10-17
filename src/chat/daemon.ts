@@ -9,7 +9,7 @@ import { chmod, mkdir, open, readFile, rm, stat, unlink, writeFile } from "node:
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type QueuedChatMessage } from "./store.js";
+import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from "./store.js";
 import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
 import { discoverSessionId, readSessionTurns } from "./session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from "./subagents.js";
@@ -87,6 +87,12 @@ function withImages(parts: readonly Part[]): Partial<ChatEvent> {
 function withMessage(messageId: string): Partial<ChatEvent> { return messageId === "" ? {} : { messageId }; }
 /** The text of a tool result or a reasoning summary, given as a string or as parts. */
 function flattenContent(value: unknown): string { return Array.isArray(value) ? value.map(flattenContent).join("") : typeof value === "object" && value !== null ? text((value as Record<string, unknown>).text) : text(value); }
+/** A Codex reasoning item's text: its summary parts as paragraphs (each streamed as a part of its own), else its raw content. */
+function codexReasoning(item: Record<string, unknown>): string {
+  const parts = Array.isArray(item.summary) ? item.summary.map(flattenContent).filter((part) => part !== "") : [];
+  return parts.join("\n\n") || flattenContent(item.content);
+}
+const count = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 
 /** Owns every chat child. The CLI is a short-lived socket client; chatd keeps this object alive. */
 export class ChatDaemon {
@@ -113,6 +119,13 @@ export class ChatDaemon {
   private readonly publishedState = new Map<string, Chat["state"]>();
   private readonly turnStarted = new Map<string, string>();
   private readonly currentMessage = new Map<string, string>();
+  /**
+   * A Claude turn's output tokens: the exact count of its finished messages, and the current message's estimate
+   * from Claude's own thinking estimate plus its text so far at four characters a token.
+   */
+  private readonly claudeTokens = new Map<string, { done: number; thinking: number; textChars: number }>();
+  /** A Codex turn counts from the thread's output tokens before it, which a resumed thread carries from earlier turns. */
+  private readonly codexTokenBase = new Map<string, number>();
   private readonly toolNames = new Map<string, Map<string, string>>();
   /** Each chat's subagents by id: the tool that started one, whether it runs in the background, whether it ended. */
   private readonly subagents = new Map<string, Map<string, { name: string; background: boolean; ended: boolean }>>();
@@ -450,12 +463,21 @@ export class ChatDaemon {
 
   private async handleClaudeStream(id: string, streamEvent: Record<string, unknown>): Promise<void> {
     const kind = text(streamEvent.type);
-    if (kind === "message_start") { this.currentMessage.set(id, text(object(streamEvent.message).id)); return; }
+    if (kind === "message_start") { this.currentMessage.set(id, text(object(streamEvent.message).id)); this.countClaude(id, (tokens) => ({ ...tokens, thinking: 0, textChars: 0 }), false); return; }
     if (kind === "content_block_delta") {
       const delta = object(streamEvent.delta);
       const messageId = this.currentMessage.get(id) ?? "";
-      if (delta.type === "text_delta") this.publishLive(id, event("delta", text(delta.text), undefined, { stream: "assistant", ...withMessage(messageId) }));
-      else if (delta.type === "thinking_delta") this.publishLive(id, event("delta", text(delta.thinking), undefined, { stream: "thinking", ...withMessage(messageId) }));
+      if (delta.type === "text_delta") {
+        this.publishLive(id, event("delta", text(delta.text), undefined, { stream: "assistant", ...withMessage(messageId) }));
+        this.countClaude(id, (tokens) => ({ ...tokens, textChars: tokens.textChars + text(delta.text).length }));
+      }
+      // Without summarized display a chunk carries only a token estimate, which system/thinking_tokens reports too.
+      else if (delta.type === "thinking_delta" && text(delta.thinking) !== "") this.publishLive(id, event("delta", text(delta.thinking), undefined, { stream: "thinking", ...withMessage(messageId) }));
+      return;
+    }
+    if (kind === "message_delta") {
+      const output = count(object(streamEvent.usage).output_tokens);
+      if (output !== undefined) this.countClaude(id, (tokens) => ({ done: tokens.done + output, thinking: 0, textChars: 0 }));
       return;
     }
     const block = object(streamEvent.content_block);
@@ -510,6 +532,17 @@ export class ChatDaemon {
     if (item.type === "stream_event") { if (parentId === "") await this.handleClaudeStream(id, object(item.event)); return; }
     const chat = await this.requireChat(id);
     if (parentId !== "" && (item.type === "assistant" || item.type === "user")) { await this.publishClaudeStep(chat, parentId, item); return; }
+    if (item.type === "system" && item.subtype === "thinking_tokens") {
+      const estimate = count(item.estimated_tokens);
+      if (estimate !== undefined) this.countClaude(id, (tokens) => ({ ...tokens, thinking: estimate }));
+      return;
+    }
+    if (item.type === "system" && item.subtype === "api_retry") {
+      const retry = { attempt: count(item.attempt), maxAttempts: count(item.max_retries), delayMs: count(item.retry_delay_ms), reason: text(item.error) || undefined };
+      this.publishProgress(id, { retry: Object.fromEntries(Object.entries(retry).filter(([, value]) => value !== undefined)) });
+      return;
+    }
+    if (item.type === "system" && item.subtype === "status") { if (text(item.status) !== "") this.publishProgress(id, { status: text(item.status) }); return; }
     if (item.type === "system" && item.subtype === "task_notification") {
       // A foreground subagent ends on its hand-back, which carries the whole report; a background one only here.
       const end = claudeNotified(item);
@@ -597,15 +630,28 @@ export class ChatDaemon {
     if (method === "thread/tokenUsage/updated") {
       const usage = object(params.tokenUsage);
       const last = object(usage.last ?? usage.total);
-      const count = last.inputTokens;
+      const input = count(last.inputTokens);
       const window = usage.modelContextWindow;
-      if (typeof count === "number" && Number.isSafeInteger(count) && count >= 0) chat.contextTokens = count;
+      if (input !== undefined) chat.contextTokens = input;
       if (typeof window === "number" && Number.isSafeInteger(window) && window > 0) chat.contextWindow = window;
       await this.save(chat);
+      const total = count(object(usage.total).outputTokens);
+      const latest = count(object(usage.last).outputTokens) ?? 0;
+      if (total !== undefined) {
+        const base = this.codexTokenBase.get(id) ?? Math.max(0, total - latest);
+        this.codexTokenBase.set(id, base);
+        this.publishProgress(id, { tokens: total - base });
+      }
+    } else if (method === "error") {
+      if (params.willRetry === true) this.publishProgress(id, { retry: { reason: text(object(params.error).message) || "error" } });
+    } else if (method === "item/reasoning/summaryPartAdded") {
+      // Each summary part is a paragraph of its own, as the stored reasoning shows it.
+      const index = count(params.summaryIndex);
+      if (index !== undefined && index > 0) this.publishLive(id, event("delta", "\n\n", undefined, { stream: "thinking", ...withMessage(text(params.itemId)) }));
     } else if (/delta$/i.test(method) && /reasoning|thinking|agentMessage|assistantMessage/.test(method)) {
       const stream = /reasoning|thinking/.test(method) ? "thinking" : "assistant";
       this.publishLive(id, event("delta", text(params.delta ?? params.text), undefined, { stream, ...withMessage(text(params.itemId)) }));
-    } else if (method.includes("reasoning") || method.includes("thinking")) await this.publish(chat, event("thinking", text(params.delta ?? params.text)));
+    } else if (method.includes("reasoning") || method.includes("thinking")) { if (text(params.delta ?? params.text) !== "") await this.publish(chat, event("thinking", text(params.delta ?? params.text))); }
     else if (method.includes("agentMessage") || method.includes("assistantMessage")) await this.publish(chat, event("assistant", text(params.delta ?? params.text)));
     else if (method === "item/started") {
       const itemData = object(params.item);
@@ -615,9 +661,8 @@ export class ChatDaemon {
       const type = text(itemData.type).toLowerCase();
       for (const subagent of codexSpawned(itemData)) await this.startSubagent(chat, subagent, text(itemData.tool), text(itemData.prompt));
       for (const end of codexEnded(itemData)) await this.endSubagent(chat, end);
-      const flatten = (value: unknown): string => Array.isArray(value) ? value.map(flatten).join("") : text(value);
       if (type === "agentmessage" && text(itemData.text)) await this.publish(chat, event("assistant", text(itemData.text), undefined, withMessage(text(itemData.id))));
-      if (type === "reasoning" && (flatten(itemData.summary) || flatten(itemData.content))) await this.publish(chat, event("thinking", flatten(itemData.summary) || flatten(itemData.content), undefined, withMessage(text(itemData.id))));
+      if (type === "reasoning" && codexReasoning(itemData)) await this.publish(chat, event("thinking", codexReasoning(itemData), undefined, withMessage(text(itemData.id))));
       if (type.includes("command")) await this.publish(chat, event("tool-result", text(itemData.aggregatedOutput ?? itemData.output), { name: "command", status: itemData.exitCode === 0 ? "ok" : "error" }));
       if (type.includes("approval") && typeof params.id === "number") await this.resolveApproval(id, params.id, { decision: "accept" });
     } else if (method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval") {
@@ -649,7 +694,7 @@ export class ChatDaemon {
     if (method === "item/started" && type.includes("command")) await this.publish(chat, event("tool-call", text(itemData.command), { name: "command", input: text(itemData.command) }, parent));
     if (method !== "item/completed") return;
     if (type === "agentmessage" && text(itemData.text)) await this.publish(chat, event("assistant", text(itemData.text), undefined, { ...parent, ...withMessage(text(itemData.id)) }));
-    const reasoning = flattenContent(itemData.summary) || flattenContent(itemData.content);
+    const reasoning = codexReasoning(itemData);
     if (type === "reasoning" && reasoning) await this.publish(chat, event("thinking", reasoning, undefined, { ...parent, ...withMessage(text(itemData.id)) }));
     if (type.includes("command")) await this.publish(chat, event("tool-result", text(itemData.aggregatedOutput ?? itemData.output), { name: "command", status: itemData.exitCode === 0 ? "ok" : "error" }, parent));
   }
@@ -782,7 +827,7 @@ export class ChatDaemon {
     this.clearStartTimer(id);
     if (child) child.kill("SIGTERM");
     await Promise.allSettled([this.eventChains.get(id), this.appendChains.get(id), this.queueWrites.get(id)]);
-    for (const map of [this.queues, this.queued, this.queueWrites, this.drainChains, this.activeTurns, this.eventChains, this.appendChains, this.publishedState, this.turnStarted, this.currentMessage, this.toolNames, this.subagents, this.subscribers]) map.delete(id);
+    for (const map of [this.queues, this.queued, this.queueWrites, this.drainChains, this.activeTurns, this.eventChains, this.appendChains, this.publishedState, this.turnStarted, this.currentMessage, this.claudeTokens, this.codexTokenBase, this.toolNames, this.subagents, this.subscribers]) map.delete(id);
     this.queueHeld.delete(id);
     this.interrupting.delete(id);
     this.interruptedEvents.delete(id);
@@ -1020,7 +1065,9 @@ export class ChatDaemon {
     this.track(chat);
     if (this.publishedState.get(chat.id) === chat.state) return;
     this.publishedState.set(chat.id, chat.state);
-    if (chat.state === "working") { if (!this.turnStarted.has(chat.id)) this.turnStarted.set(chat.id, new Date().toISOString()); }
+    if (chat.state === "working") {
+      if (!this.turnStarted.has(chat.id)) { this.turnStarted.set(chat.id, new Date().toISOString()); this.claudeTokens.delete(chat.id); this.codexTokenBase.delete(chat.id); }
+    }
     else if (chat.state !== "waiting-approval") this.turnStarted.delete(chat.id);
     await this.publish(chat, this.stateEvent(chat));
     if (chat.state === "idle") void this.summarizer.turnEnded(chat.id);
@@ -1031,6 +1078,13 @@ export class ChatDaemon {
   }
   /** Sends an event to current followers only; the cursor is the last stored one, so a resume never skips history. */
   private publishLive(id: string, value: ChatEvent): void { this.broadcast(id, { cursor: "", event: value }); }
+  private publishProgress(id: string, progress: ChatProgress): void { this.publishLive(id, event("progress", "", undefined, { progress })); }
+  /** Moves a Claude turn's token count and, unless told not to, tells followers the new total. */
+  private countClaude(id: string, change: (tokens: { done: number; thinking: number; textChars: number }) => { done: number; thinking: number; textChars: number }, publish = true): void {
+    const tokens = change(this.claudeTokens.get(id) ?? { done: 0, thinking: 0, textChars: 0 });
+    this.claudeTokens.set(id, tokens);
+    if (publish) this.publishProgress(id, { tokens: tokens.done + tokens.thinking + Math.ceil(tokens.textChars / 4) });
+  }
   private broadcast(id: string, line: ChatLine): void {
     for (const listener of this.subscribers.get(id) ?? []) listener(line, true);
   }

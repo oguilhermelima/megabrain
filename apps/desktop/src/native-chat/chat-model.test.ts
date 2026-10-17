@@ -8,6 +8,7 @@ import {
   dropOutgoing,
   followState,
   formatElapsed,
+  formatTokens,
   liveTail,
   markAnswered,
   modeToggle,
@@ -15,6 +16,7 @@ import {
   queueOutgoing,
   rowStatus,
   shouldInterrupt,
+  thinkingProgress,
   withModel,
   withSwitchResult,
   workingStatus,
@@ -568,5 +570,71 @@ describe('images in sent messages', () => {
     const state = applyLine(queued, line('1', { event: sent }))
     expect(state.outgoing).toEqual([])
     expect(state.events.at(-1)?.images).toEqual([image])
+  })
+})
+
+describe('thinkingProgress', () => {
+  const started = '2026-10-15T12:00:00Z'
+  const at = (seconds: number) => new Date(Date.parse(started) + seconds * 1000).toISOString()
+  const ms = (seconds: number) => Date.parse(started) + seconds * 1000
+  const working = (lines: ChatEventLine[], agent: NativeChat['agent'] = 'claude') => lines.reduce(applyLine, applyLine(followState({ ...chat, agent, state: 'idle' }), stateLine('1', 'working', started)))
+  const progress = (seconds: number, value: { tokens?: number; retry?: { attempt?: number; maxAttempts?: number; delayMs?: number; reason?: string }; status?: string }): ChatEventLine => ({ cursor: '', event: { kind: 'progress', at: at(seconds), progress: value } })
+  const thinkingAt = (seconds: number, text: string): ChatEventLine => ({ cursor: '', event: { kind: 'delta', stream: 'thinking', messageId: 't1', text, at: at(seconds) } })
+
+  test('nothing outside a turn', () => {
+    expect(thinkingProgress(followState({ ...chat, state: 'idle' }), ms(0))).toBeNull()
+  })
+
+  test('the turn has no count until the agent reports one, then the latest', () => {
+    expect(thinkingProgress(working([]), ms(1))?.tokens).toBeNull()
+    expect(thinkingProgress(working([progress(2, { tokens: 50 }), progress(3, { tokens: 2300 })]), ms(3))?.tokens).toBe(2300)
+  })
+
+  test('tokens arriving pulse; a quiet second and a half later they do not', () => {
+    const state = working([progress(2, { tokens: 50 })])
+    expect(thinkingProgress(state, ms(2.5))?.receiving).toBe(true)
+    expect(thinkingProgress(state, ms(4))?.receiving).toBe(false)
+  })
+
+  test('Claude with nothing arriving for 15 seconds is waiting for the API, counted from the last sign of life', () => {
+    expect(thinkingProgress(working([]), ms(14))?.waiting).toBe(false)
+    expect(thinkingProgress(working([]), ms(15))?.waiting).toBe(true)
+    expect(thinkingProgress(working([progress(10, { tokens: 50 })]), ms(20))?.waiting).toBe(false)
+    expect(thinkingProgress(working([thinkingAt(10, 'Checking')]), ms(26))?.waiting).toBe(true)
+  })
+
+  test('a running tool or a Codex turn is never waiting for the API: neither streams while it works', () => {
+    const call: TranscriptEvent = { id: 'c1', at: at(1), kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: 'sleep 60' } }
+    expect(thinkingProgress(working([line('2', { event: call })]), ms(60))?.waiting).toBe(false)
+    expect(thinkingProgress(working([], 'codex'), ms(60))?.waiting).toBe(false)
+  })
+
+  test('a retry is a notice until tokens or text arrive again', () => {
+    const retrying = working([progress(2, { tokens: 50 }), progress(3, { retry: { attempt: 2, maxAttempts: 10, delayMs: 4000, reason: 'overloaded' } })])
+    expect(thinkingProgress(retrying, ms(4))?.notice).toBe('Retrying, attempt 2 of 10: overloaded')
+    expect(thinkingProgress(applyLine(retrying, progress(8, { tokens: 80 })), ms(8))?.notice).toBeNull()
+    expect(thinkingProgress(applyLine(retrying, thinkingAt(8, 'Back')), ms(8))?.notice).toBeNull()
+    expect(thinkingProgress(working([progress(3, { retry: { reason: 'Reconnecting... 1/5' } })], 'codex'), ms(4))?.notice).toBe('Retrying: Reconnecting... 1/5')
+  })
+
+  test('compacting is a notice while it lasts', () => {
+    expect(thinkingProgress(working([progress(2, { status: 'compacting' })]), ms(3))?.notice).toBe('Compacting the conversation')
+    expect(thinkingProgress(working([progress(2, { status: 'compacting' }), progress(9, { status: 'requesting' })]), ms(9))?.notice).toBeNull()
+  })
+
+  test('the thinking text streaming now, and none when the stream carries none', () => {
+    expect(thinkingProgress(working([thinkingAt(2, 'There'), thinkingAt(3, ' are 62')]), ms(3))?.thinking).toBe('There are 62')
+    expect(thinkingProgress(working([thinkingAt(2, '')]), ms(3))?.thinking).toBeNull()
+    expect(thinkingProgress(working([progress(2, { tokens: 50 })]), ms(3))?.thinking).toBeNull()
+  })
+
+  test('a new turn starts with no count and no notice', () => {
+    const ended = applyLine(working([progress(2, { tokens: 900, retry: { reason: 'x' } })]), stateLine('2', 'idle'))
+    const next = applyLine(ended, stateLine('3', 'working', at(30)))
+    expect(thinkingProgress(next, ms(31))).toMatchObject({ tokens: null, notice: null })
+  })
+
+  test('counts read the way Claude Code shows them', () => {
+    expect([formatTokens(0), formatTokens(850), formatTokens(1000), formatTokens(2340), formatTokens(12_400), formatTokens(1_250_000)]).toEqual(['0 tokens', '850 tokens', '1k tokens', '2.3k tokens', '12.4k tokens', '1.3M tokens'])
   })
 })

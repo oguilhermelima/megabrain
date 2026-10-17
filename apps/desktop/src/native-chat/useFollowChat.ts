@@ -61,7 +61,8 @@ export function useFollowChat(chat: NativeChat): {
             if (line.queue !== undefined) setQueue(line.queue)
             update((current) => applyLine(current, line))
             if (line.event?.kind === 'state') switchState(chat.id, line.event.text)
-            if (line.event !== undefined) startEvent(chat.id, line.event)
+            // A progress report is no output of the agent's start.
+            if (line.event !== undefined && line.event.kind !== 'progress') startEvent(chat.id, line.event)
           },
           (ended) => {
             if (stopped) return
