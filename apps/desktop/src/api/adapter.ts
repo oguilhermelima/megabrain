@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, Summary, SummariesList, SummarySearch, ArtifactContent, ArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
+import type { AgentDefaults, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -31,8 +31,6 @@ export type ChatQueueChange =
   | { action: 'move'; itemId: string; to: number }
   | { action: 'remove' | 'send-now' | 'steer'; itemId: string }
 
-/** Narrows a summaries read to one repository (name or path) or branch; `limit` caps each branch, or the results of a search. */
-export type SummaryQuery = { repo?: string; branch?: string; limit?: number }
 
 export interface DesktopApi {
   readonly kind: 'tauri' | 'mock'
@@ -253,12 +251,14 @@ export interface DesktopApi {
   setChatModel(chatId: string, model: string, effort?: string): Promise<void>
   /** Summarizes a native chat now, whatever the schedule (`chat summarize <id> --json`). */
   summarizeChat(chatId: string): Promise<void>
-  /** Chat summaries by project and branch (`summaries list --json`); `limit` is per branch. */
-  summaries(options?: SummaryQuery): Promise<SummariesList>
-  /** Summaries matching the text, best first (`summaries search`). */
-  searchSummaries(text: string, options?: SummaryQuery): Promise<SummarySearch>
-  /** One summary (`summaries show <id>`). */
-  summary(id: string): Promise<Summary>
+  /** Each project's knowledge topics (`knowledge list --json`), or one repository's. */
+  knowledge(repo?: string): Promise<KnowledgeList>
+  /** Topics matching the text, best first (`knowledge search`). */
+  searchKnowledge(text: string, repo?: string): Promise<KnowledgeSearch>
+  /** One topic in full, with the chats that built it (`knowledge show <id>`). */
+  knowledgeTopic(id: string): Promise<KnowledgeTopic>
+  /** A chat's distilled transcript (`knowledge transcript <chat-id>`). */
+  knowledgeTranscript(chatId: string): Promise<KnowledgeTranscript>
   /** Artifacts newest change first, of one project (its path) or topic (`artifact list --json`). */
   artifacts(options?: { project?: string; topic?: string }): Promise<ArtifactList>
   /** One artifact with its content (`artifact show <id> --json`). */
@@ -306,6 +306,9 @@ export interface DesktopApi {
   /** Who summarizes native chats and how often (`settings get chat-summaries`); settings/summaries-model.ts reads the shape. */
   chatSummaries(): Promise<unknown>
   setChatSummaries(json: string): Promise<void>
+  /** Which projects the knowledge base reads (`settings get knowledge`); settings/knowledge-model.ts reads the shape. */
+  knowledgeSettings(): Promise<unknown>
+  setKnowledgeSettings(json: string): Promise<void>
   /** The default agent for New chat and the agents turned off for the app (`settings get agents`); settings/agents-model.ts reads the shape. */
   agentSettings(): Promise<unknown>
   setAgentSettings(json: string): Promise<void>

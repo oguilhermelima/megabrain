@@ -655,28 +655,80 @@ export const nativeChatSchema = z.looseObject({
   /** The slash command names the agent reported when it started (Claude's init), absent before. */
   slashCommands: z.array(z.string()).optional(),
 })
-// Chat summaries, kept per worktree branch: the branch stays after its worktree is gone (live false).
-export const summarySchema = z.looseObject({
+// The knowledge base, per project (`knowledge list|search|show|transcript --json`): topics a curator
+// builds from every chat's summaries, each with its sections, decisions, refs, key messages and the
+// chats that built it, and each chat's distilled transcript.
+export const knowledgeKindSchema = z.enum(['feat', 'fix', 'refactor', 'decision', 'investigation'])
+export const knowledgeStatusSchema = z.enum(['active', 'shipped', 'dropped'])
+export const knowledgeRefSchema = z.looseObject({
+  kind: z.enum(['issue', 'pr', 'commit', 'branch', 'file']),
+  /** An issue or pull request number, a commit sha, a branch name or a file path. */
   id: z.string(),
-  /** The repository root path, and its display name. */
-  repo: z.string(),
+  url: z.string().optional(),
+  title: z.string().optional(),
+  state: z.string().optional(),
+})
+export const knowledgeTopicSummarySchema = z.looseObject({
+  id: z.string(),
+  /** The repository path. */
   project: z.string(),
-  worktree: z.string(),
-  branch: z.string(),
-  chatId: z.string(),
-  /** The chat's agent; `model` is the summarizer's. */
-  agent: z.string(),
   title: z.string(),
-  text: z.string(),
-  model: z.string(),
+  kind: knowledgeKindSchema,
+  status: knowledgeStatusSchema,
   createdAt: z.string(),
+  updatedAt: z.string(),
+  /** Old titles, kept for search and merges. */
+  aliases: z.array(z.string()),
+  /** One line of the overview. */
+  overview: z.string(),
+  /** The chats that built the topic. */
+  chats: z.array(z.string()),
+  refs: z.array(knowledgeRefSchema),
+  /** Key messages plus chats: how much work went into the topic. */
+  activity: z.number(),
 })
-export const summaryBranchSchema = z.looseObject({ branch: z.string(), worktree: z.string(), live: z.boolean(), summaries: z.array(summarySchema) })
-/** `summaries list --json`: projects by latest activity, each branch's summaries newest first. */
-export const summariesListSchema = z.looseObject({
-  projects: z.array(z.looseObject({ repo: z.string(), project: z.string(), branches: z.array(summaryBranchSchema) })),
+export const knowledgeListSchema = z.looseObject({
+  projects: z.array(z.looseObject({ repo: z.string(), project: z.string(), enabled: z.boolean(), topics: z.array(knowledgeTopicSummarySchema) })),
 })
-export const summarySearchSchema = z.looseObject({ results: z.array(summarySchema.extend({ score: z.number() })) })
+export const knowledgeSearchSchema = z.looseObject({ results: z.array(knowledgeTopicSummarySchema.extend({ score: z.number() })) })
+export const knowledgeDecisionSchema = z.looseObject({
+  id: z.string(),
+  text: z.string(),
+  why: z.string(),
+  at: z.string(),
+  chatId: z.string(),
+  /** The decision that replaced this one; a decision is never deleted. */
+  supersededBy: z.string().nullable().optional(),
+})
+export const knowledgeKeyMessageSchema = z.looseObject({ chatId: z.string(), eventCursor: z.string(), at: z.string(), role: z.string(), text: z.string(), why: z.string() })
+export const knowledgeChatSchema = z.looseObject({
+  id: z.string(),
+  title: z.string(),
+  summary: z.string(),
+  agent: z.string(),
+  model: z.string(),
+  branch: z.string(),
+  worktree: z.string(),
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+  topics: z.array(z.string()),
+  refs: z.array(knowledgeRefSchema),
+  /** The chat that dispatched this one, for a dispatch worker. */
+  parent: z.string().optional(),
+  lastMessages: z.array(z.looseObject({ role: z.string(), text: z.string(), at: z.string() })),
+})
+export const knowledgeTopicSchema = knowledgeTopicSummarySchema.extend({
+  /** Markdown, each. */
+  sections: z.looseObject({ overview: z.string(), state: z.string(), pitfalls: z.string(), open: z.string() }),
+  decisions: z.array(knowledgeDecisionSchema),
+  keyMessages: z.array(knowledgeKeyMessageSchema),
+  chatRecords: z.array(knowledgeChatSchema),
+})
+export const knowledgeTranscriptSchema = z.looseObject({
+  chat: knowledgeChatSchema,
+  /** The distilled conversation: person and agent messages in full, each tool call as one line. */
+  events: z.array(z.looseObject({ cursor: z.string(), at: z.string(), role: z.enum(['person', 'agent', 'tool']), text: z.string() })),
+})
 // Artifacts: diagrams, plans and docs agents file per project (`artifact list|show --json`). A diagram
 // is HTML; a plan or doc is HTML or Markdown. `path` is the content file under the state directory.
 export const artifactSchema = z.looseObject({
@@ -935,10 +987,16 @@ export type HistorySession = z.infer<typeof historySessionSchema>
 export type Transcript = z.infer<typeof transcriptSchema>
 export type SendResult = z.infer<typeof sendResultSchema>
 export type NativeChat = z.infer<typeof nativeChatSchema>
-export type Summary = z.infer<typeof summarySchema>
-export type SummaryBranch = z.infer<typeof summaryBranchSchema>
-export type SummariesList = z.infer<typeof summariesListSchema>
-export type SummarySearch = z.infer<typeof summarySearchSchema>
+export type KnowledgeKind = z.infer<typeof knowledgeKindSchema>
+export type KnowledgeStatus = z.infer<typeof knowledgeStatusSchema>
+export type KnowledgeRef = z.infer<typeof knowledgeRefSchema>
+export type KnowledgeTopicSummary = z.infer<typeof knowledgeTopicSummarySchema>
+export type KnowledgeList = z.infer<typeof knowledgeListSchema>
+export type KnowledgeSearch = z.infer<typeof knowledgeSearchSchema>
+export type KnowledgeDecision = z.infer<typeof knowledgeDecisionSchema>
+export type KnowledgeChat = z.infer<typeof knowledgeChatSchema>
+export type KnowledgeTopic = z.infer<typeof knowledgeTopicSchema>
+export type KnowledgeTranscript = z.infer<typeof knowledgeTranscriptSchema>
 export type Artifact = z.infer<typeof artifactSchema>
 export type ArtifactKind = Artifact['kind']
 export type ArtifactList = z.infer<typeof artifactListSchema>

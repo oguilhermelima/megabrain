@@ -9,7 +9,7 @@ import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { displayName, projectTint } from '@/advanced/appearance-model'
 import { archiveDone, archiveFailed, beginArchive, beginRestore, reconcileArchives, restoreDone, restoreFailed, withoutArchived, type ArchiveMap, type ArchiveTarget } from '@/advanced/archive-model'
 import { createFolder, deleteFolder, folderOf, layoutDropTarget, moveEntry, moveToFolder, renameFolder, sidebarEntries, stepEntry, toggleFolder, type DropPlacement, type LayoutRow, type SidebarFolder, type SidebarLayout } from '@/advanced/sidebar-folders'
-import { ArtifactsIcon, BranchIcon, Chevron, CodeIcon, PlusIcon, SummariesIcon } from '@/advanced/chrome'
+import { ArtifactsIcon, BranchIcon, Chevron, CodeIcon, KnowledgeIcon, PlusIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { projectActivity, projectRowClick, projectRowKey } from '@/advanced/project-row-model'
@@ -1224,15 +1224,15 @@ export const Sidebar = memo(function Sidebar({
   onCreateWorktree,
   onRetryCreation,
   onDismissCreation,
-  summariesSelected,
-  onOpenSummaries,
+  knowledgeSelected,
+  onOpenKnowledge,
   artifactsSelected,
   onOpenArtifacts,
 }: {
-  /** The Summaries page is in the focused pane. */
-  summariesSelected: boolean
-  /** Shows the Summaries page. */
-  onOpenSummaries: () => void
+  /** The Knowledge page is in the focused pane. */
+  knowledgeSelected: boolean
+  /** Shows the Knowledge page. */
+  onOpenKnowledge: () => void
   /** The Artifacts page is in the focused pane. */
   artifactsSelected: boolean
   /** Shows the Artifacts page. */
@@ -1777,18 +1777,18 @@ export const Sidebar = memo(function Sidebar({
         openSearch()
       }}
     >
-      {/* One entry each for the Summaries and Artifacts pages, padded and shaped like a project row above the Projects header. */}
+      {/* One entry each for the Knowledge and Artifacts pages, padded and shaped like a project row above the Projects header. */}
       <div style={{ paddingRight: 4 + gutter }} className="shrink-0 space-y-0.5 pt-1 pl-2.5">
         <button
           type="button"
-          onClick={onOpenSummaries}
-          aria-current={summariesSelected ? 'page' : undefined}
-          className={`flex h-9 w-full min-w-0 items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 text-left transition-colors select-none ${summariesSelected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
+          onClick={onOpenKnowledge}
+          aria-current={knowledgeSelected ? 'page' : undefined}
+          className={`flex h-9 w-full min-w-0 items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 text-left transition-colors select-none ${knowledgeSelected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
         >
           <span className="grid size-6 shrink-0 place-items-center">
-            <SummariesIcon />
+            <KnowledgeIcon />
           </span>
-          <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-[-0.01em]">Summaries</span>
+          <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-[-0.01em]">Knowledge</span>
         </button>
         <button
           type="button"

@@ -4,7 +4,7 @@
 import { compareByDisplayName, displayName } from '@/advanced/appearance-model'
 import type { ProjectAppearance } from '@/api/schema'
 
-export type Section = 'usage' | 'agents' | 'shortcuts' | 'models' | 'chains' | 'summaries' | 'supervisor' | 'limits' | 'terminal' | 'worktrees'
+export type Section = 'usage' | 'agents' | 'shortcuts' | 'models' | 'chains' | 'knowledge' | 'supervisor' | 'limits' | 'terminal' | 'worktrees'
 
 /** A section, or one project's page by its repository path. */
 export type NavKey = Section | `project:${string}`
@@ -27,7 +27,7 @@ export const settingsSections: SectionInfo[] = [
   { key: 'agents', label: 'Agents', description: 'The agents installed here, the command each starts with, and the one New chat uses.', icon: 'agents', group: 'Agents' },
   { key: 'models', label: 'Models', description: 'Which models each agent offers in the picker, and what new chats start on.', icon: 'cpu', group: 'Agents' },
   { key: 'chains', label: 'Chains', description: 'Which agent and model a dispatch tries first, and what it falls back to.', icon: 'link', group: 'Agents' },
-  { key: 'summaries', label: 'Summaries', description: 'A short summary of each chat as it goes, and the model that writes it.', icon: 'note', group: 'Agents' },
+  { key: 'knowledge', label: 'Knowledge', description: 'What each project keeps from its chats, and the model that writes it up.', icon: 'note', group: 'Agents' },
   { key: 'supervisor', label: 'Supervisor', description: 'The watcher that reports stuck, finished or dead children, and setup.', icon: 'eye', group: 'Agents' },
   { key: 'limits', label: 'Limits', description: 'When a new agent may start, by machine load, and resource history.', icon: 'sliders', group: 'System' },
   { key: 'terminal', label: 'Terminal', description: 'The terminal engine inside the app and the one opened outside it.', icon: 'terminal', group: 'System' },

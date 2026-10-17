@@ -61,12 +61,14 @@ export function CodeIcon({ size = 14 }: { size?: number }) {
   )
 }
 
-/** The Summaries page's mark: an open book. */
-export function SummariesIcon() {
+/** The Knowledge page's mark: topics joined into a small graph. */
+export function KnowledgeIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M8 4.25C6.6 3.2 4.6 2.75 2 2.75v9.5c2.6 0 4.6.45 6 1.5 1.4-1.05 3.4-1.5 6-1.5v-9.5c-2.6 0-4.6.45-6 1.5Z" />
-      <path d="M8 4.25v9.5" />
+    <svg viewBox="0 0 16 16" width={size} height={size} fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="4" cy="4.5" r="2" />
+      <circle cx="12" cy="6" r="2" />
+      <circle cx="6.5" cy="12" r="2" />
+      <path d="M5.95 4.9 10.05 5.6M10.7 7.55 7.85 10.5M4.7 6.4l1.1 3.7" />
     </svg>
   )
 }

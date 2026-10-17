@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import type { MenuItem } from '@/components/ContextMenu'
 import { AgentIcon } from '@/components/agent-icons'
 import { MenuIconGlyph } from '@/components/menu-icons'
-import { ArtifactsIcon, CodeIcon, PlusIcon, SummariesIcon } from '@/advanced/chrome'
+import { ArtifactsIcon, CodeIcon, KnowledgeIcon, PlusIcon } from '@/advanced/chrome'
 import { visibleMarks, type GroupMember, type GroupRow, type MemberMark, type MemberState } from '@/advanced/split-rows'
 import type { SidebarDrag } from '@/advanced/Sidebar'
 import type { JoinTarget, MapCell, RowDragStart, RowDragState } from '@/advanced/useRowDrag'
@@ -97,10 +97,10 @@ export function MemberMarkIcon({ mark, state }: { mark: MemberMark; state: Membe
           <MenuIconGlyph icon="folder" />
         </span>
       )
-    case 'summary':
+    case 'knowledge':
       return (
         <span className="shrink-0 text-ink-400">
-          <SummariesIcon />
+          <KnowledgeIcon />
         </span>
       )
     case 'artifact':

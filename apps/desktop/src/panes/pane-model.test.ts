@@ -55,9 +55,14 @@ describe('item keys', () => {
     expect(parseItem(itemKey('project', '/work/canto'))).toEqual({ kind: 'project', id: '/work/canto' })
   })
 
-  test('the Summaries page is an item keyed by the summary it shows, so a restored layout reopens it there', () => {
-    expect(parseItem(itemKey('summary', 'sum-0001'))).toEqual({ kind: 'summary', id: 'sum-0001' })
-    expect(parseItem(itemKey('summary', 'latest'))).toEqual({ kind: 'summary', id: 'latest' })
+  test('the Knowledge page is an item keyed by what it shows, so a restored layout reopens it there', () => {
+    expect(parseItem(itemKey('knowledge', 'home'))).toEqual({ kind: 'knowledge', id: 'home' })
+    expect(parseItem(itemKey('knowledge', 'repo=%2Fwork%2Fcanto&topic=t1'))).toEqual({ kind: 'knowledge', id: 'repo=%2Fwork%2Fcanto&topic=t1' })
+  })
+
+  test('a Summaries page a past run left restores as the Knowledge home page', () => {
+    expect(parseItem('summary:sum-0001')).toEqual({ kind: 'knowledge', id: 'home' })
+    expect(parseItem('summary:latest')).toEqual({ kind: 'knowledge', id: 'home' })
   })
 
   test('an unknown kind or a key without an id is not an item', () => {

@@ -8,9 +8,9 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
-import { CliError, type DesktopApi, type SummaryQuery, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
+import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
 import { chatStreamReader, streamMarkerSchema } from '@/api/chat-stream'
-import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, summariesListSchema, summarySchema, summarySearchSchema, artifactListSchema, artifactContentSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema } from '@/api/schema'
+import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactListSchema, artifactContentSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -20,14 +20,11 @@ interface CliOutput {
 
 const firstLine = (text: string): string => text.trim().split('\n').at(-1) ?? ''
 
+/** Narrows a knowledge read to one repository. */
+const repoArgs = (repo: string | undefined): string[] => (repo === undefined ? [] : ['--repo', repo])
+
 // Some verbs report a problem through their exit code and still print the JSON (doctor exits 1 when a
 // module is unhealthy), so the JSON wins whenever there is some.
-const summaryArgs = (options: SummaryQuery = {}): string[] => [
-  ...(options.repo === undefined ? [] : ['--repo', options.repo]),
-  ...(options.branch === undefined ? [] : ['--branch', options.branch]),
-  ...(options.limit === undefined ? [] : ['--limit', String(options.limit)]),
-]
-
 async function cliJson<T>(args: string[], schema: z.ZodType<T>): Promise<T> {
   const output = await invoke<CliOutput>('run_cli', { args })
   if (output.stdout.trim() === '') throw new CliError(firstLine(output.stderr) || `megabrain ${args[0]} exited ${output.code}`, output.code)
@@ -381,9 +378,10 @@ export function createTauriApi(): DesktopApi {
     stopChat: async (chatId) => void (await cliText(['chat', 'stop', chatId])),
     removeChat: async (chatId) => void (await cliText(['chat', 'remove', chatId, '--json'])),
     summarizeChat: async (chatId) => void (await cliText(['chat', 'summarize', chatId, '--json'])),
-    summaries: (options) => cliJson(['summaries', 'list', ...summaryArgs(options), '--json'], summariesListSchema),
-    searchSummaries: (text, options) => cliJson(['summaries', 'search', text, ...summaryArgs(options), '--json'], summarySearchSchema),
-    summary: (id) => cliJson(['summaries', 'show', id, '--json'], summarySchema),
+    knowledge: (repo) => cliJson(['knowledge', 'list', ...repoArgs(repo), '--json'], knowledgeListSchema),
+    searchKnowledge: (text, repo) => cliJson(['knowledge', 'search', text, ...repoArgs(repo), '--json'], knowledgeSearchSchema),
+    knowledgeTopic: (id) => cliJson(['knowledge', 'show', id, '--json'], knowledgeTopicSchema),
+    knowledgeTranscript: (chatId) => cliJson(['knowledge', 'transcript', chatId, '--json'], knowledgeTranscriptSchema),
     artifacts: (options = {}) => cliJson(['artifact', 'list', ...(options.project === undefined ? [] : ['--project', options.project]), ...(options.topic === undefined ? [] : ['--topic', options.topic]), '--json'], artifactListSchema),
     artifact: (id) => cliJson(['artifact', 'show', id, '--json'], artifactContentSchema),
     setChatModel: async (chatId, model, effort) => void (await cliText(['chat', 'model', chatId, model, ...(effort === undefined ? [] : ['--effort', effort])])),
@@ -418,6 +416,8 @@ export function createTauriApi(): DesktopApi {
     setWorktreeLocation: async (json) => void (await cliText(['settings', 'set', 'worktree-location', json])),
     chatSummaries: () => cliJson(['settings', 'get', 'chat-summaries'], z.unknown()),
     setChatSummaries: async (json) => void (await cliText(['settings', 'set', 'chat-summaries', json])),
+    knowledgeSettings: () => cliJson(['settings', 'get', 'knowledge'], z.unknown()),
+    setKnowledgeSettings: async (json) => void (await cliText(['settings', 'set', 'knowledge', json])),
     agentSettings: () => cliJson(['settings', 'get', 'agents'], z.unknown()),
     setAgentSettings: async (json) => void (await cliText(['settings', 'set', 'agents', json])),
     modelSettings: () => cliJson(['settings', 'get', 'models'], z.unknown()),

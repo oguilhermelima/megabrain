@@ -14,7 +14,7 @@ import { groupReadingsByProvider } from '@/settings/settings-model'
 import { adjacentKey, initialKey, navGroups, navKeys, projectKey, projectPathOf, sectionInfo, type NavKey, type Section } from '@/settings/settings-nav'
 import { ghostIcon, SectionPage, SettingsIcon } from '@/settings/settings-ui'
 import { ShortcutsSection } from '@/settings/ShortcutsSection'
-import { SummariesSection } from '@/settings/SummariesSection'
+import { KnowledgeSection } from '@/settings/KnowledgeSection'
 import { SupervisorSection } from '@/settings/SupervisorSection'
 import { TerminalSection } from '@/settings/TerminalSection'
 import { setKnownTerminalEngine } from '@/terminal/terminal-engine'
@@ -202,7 +202,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
                   run={act}
                 />
               )}
-              {section === 'summaries' && <SummariesSection models={settings.models} chat={focusChat} />}
+              {section === 'knowledge' && <KnowledgeSection models={settings.models} chat={focusChat} projects={listed} focusProject={focusProject} />}
               {section === 'supervisor' && (
                 <SupervisorSection
                   running={settings.supervisor.running}

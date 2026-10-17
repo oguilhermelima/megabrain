@@ -78,8 +78,8 @@ describe('the Artifacts page item', () => {
   })
 
   test('finds the Artifacts page among a layout items, and only it', () => {
-    expect(artifactsItemIn([itemKey('native', 'chat-1'), itemKey('summary', 'latest'), artifactsItem('art-2')])).toBe(artifactsItem('art-2'))
-    expect(artifactsItemIn([itemKey('summary', 'latest')])).toBeNull()
+    expect(artifactsItemIn([itemKey('native', 'chat-1'), itemKey('knowledge', 'home'), artifactsItem('art-2')])).toBe(artifactsItem('art-2'))
+    expect(artifactsItemIn([itemKey('knowledge', 'home')])).toBeNull()
   })
 })
 

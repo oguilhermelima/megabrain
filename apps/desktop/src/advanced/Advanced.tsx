@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent
 import { api } from '@/api'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import { chatPaneStays, readyToPrune } from '@/advanced/restore-panes'
-import type { Artifact, Dispatch, HistorySession, NativeChat, Project, ProjectSession, Summary } from '@/api/schema'
+import type { Artifact, Dispatch, HistorySession, NativeChat, Project, ProjectSession } from '@/api/schema'
 import { joinLabel } from '@/advanced/item-menus'
 import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, stacksOn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
@@ -17,7 +17,7 @@ import type { WorktreeOpen } from '@/advanced/project-page-model'
 import type { ProjectPageActions } from '@/advanced/ProjectPage'
 import { ChatView } from '@/chat/ChatView'
 import { SidebarUsage } from '@/advanced/SidebarUsage'
-import { summariesItem, summariesItemIn } from '@/advanced/summaries-model'
+import { homeView, knowledgeItem, knowledgeItemIn, knowledgeView, type KnowledgeView } from '@/advanced/knowledge-model'
 import { artifactsItem, artifactsItemIn } from '@/advanced/artifacts-model'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
@@ -79,7 +79,7 @@ const CodeLayer = lazy(() => import('@/code/CodeLayer').then((module) => ({ defa
 const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ default: module.GithubPage })))
 const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
 const ProjectPage = lazy(() => import('@/advanced/ProjectPage').then((module) => ({ default: module.ProjectPage })))
-const SummariesPage = lazy(() => import('@/advanced/SummariesPage').then((module) => ({ default: module.SummariesPage })))
+const KnowledgePage = lazy(() => import('@/advanced/KnowledgePage').then((module) => ({ default: module.KnowledgePage })))
 const ArtifactsPage = lazy(() => import('@/advanced/ArtifactsPage').then((module) => ({ default: module.ArtifactsPage })))
 const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
 
@@ -217,9 +217,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   // The project whose commands Settings opens on, from Edit commands or Set up in a chat's run menu.
   const [settingsProject, setSettingsProject] = useState<string | null>(null)
-  // The page Settings opens on, from the Summaries section's link.
-  const [settingsSection, setSettingsSection] = useState<'summaries' | null>(null)
-  // The titles of the summaries opened this run, for their panes' names; a restored one reads Summary.
+  // The page Settings opens on, from the Knowledge page's link.
+  const [settingsSection, setSettingsSection] = useState<'knowledge' | null>(null)
   const [filters, setFilters] = useState<SidebarFilters>(readFilters)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(storedSidebarCollapsed)
   const sidebarWidth = usePanelWidth('megabrain.sidebar.width', sidebarLimits)
@@ -551,7 +550,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return keyOf(terminalsInWorktrees, (terminal) => terminal.id === parsed.id)
       // A project's page spans its worktrees, so its group sits with no one worktree.
       case 'project':
-      case 'summary':
+      case 'knowledge':
       case 'artifact':
         return null
       default: {
@@ -596,8 +595,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         const project = projects.find((entry) => entry.path === parsed.id)
         return { title: project === undefined ? 'Project' : displayName(project), mark: { kind: 'project' }, state: 'idle', worktree }
       }
-      case 'summary':
-        return { title: 'Summaries', mark: { kind: 'summary' }, state: 'idle', worktree }
+      case 'knowledge':
+        return { title: 'Knowledge', mark: { kind: 'knowledge' }, state: 'idle', worktree }
       case 'artifact':
         return { title: 'Artifacts', mark: { kind: 'artifact' }, state: 'idle', worktree }
     }
@@ -722,12 +721,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setGithubPage({ path: project.path, kind, focus: focus ?? null })
   })
   const openProject = useStableCallback((project: Project) => showItem(itemKey('project', project.path)))
-  /** The Summaries page, one in the layout: shown where it already is, on `summary` when given, else in the focused pane. */
-  const openSummary = useStableCallback((summary: Summary | null) => {
+  /** The Knowledge page, one in the layout: shown where it already is, on `view` when given, else in the focused pane. */
+  const openKnowledge = useStableCallback((view: KnowledgeView | null) => {
     setGithubPage(null)
     setLayout((current) => {
-      const open = summariesItemIn([current.single, ...current.groups.map((group) => group.panes)].flatMap((panes) => paneList(panes.root).map((leaf) => leaf.item)))
-      const item = summary === null ? (open ?? summariesItem(null)) : summariesItem(summary.id)
+      const open = knowledgeItemIn([current.single, ...current.groups.map((group) => group.panes)].flatMap((panes) => paneList(panes.root).map((leaf) => leaf.item)))
+      const item = view === null ? (open ?? knowledgeItem(homeView)) : knowledgeItem(view)
       if (open === null || open === item) return openLayoutItem(current, item)
       const swap = (panes: Panes) => {
         const leaf = paneOfItem(panes, open)
@@ -737,8 +736,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       return openLayoutItem(group === null ? { ...current, single: swap(current.single) } : changeGroupPanes(current, group.id, swap), item)
     })
   })
-  const openSummaries = useStableCallback(() => openSummary(null))
-  /** The Artifacts page, one in the layout like the Summaries page: shown where it already is, on `artifact` when given. */
+  const openKnowledgeHome = useStableCallback(() => openKnowledge(null))
+  /** The Artifacts page, one in the layout like the Knowledge page: shown where it already is, on `artifact` when given. */
   const openArtifact = useStableCallback((artifact: Artifact | null) => {
     setGithubPage(null)
     setLayout((current) => {
@@ -754,8 +753,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     })
   })
   const openArtifacts = useStableCallback(() => openArtifact(null))
-  const openSummarySettings = useStableCallback(() => {
-    setSettingsSection('summaries')
+  /** Settings on its Knowledge page, at a project's row when given. */
+  const openKnowledgeSettings = useStableCallback((repo: string | null) => {
+    setSettingsProject(repo)
+    setSettingsSection('knowledge')
     setSettingsOpen(true)
   })
   /** A worktree or chat picked on a project's page: its chat, or the worktree's launcher. */
@@ -793,8 +794,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       // The page runs the project's commands in its main checkout.
       case 'project':
         return parsed.id
-      // A summary's worktree may be gone, so its page runs nothing; nor does the Artifacts page.
-      case 'summary':
+      // The page spans a project's worktrees, so it runs nothing; nor does the Artifacts page.
+      case 'knowledge':
       case 'artifact':
         return null
     }
@@ -854,9 +855,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return true
       case 'project':
         return projects.some((project) => project.path === parsed.id)
-      // A summary is kept after its chat and worktree are gone; its page says so if it is not. An
-      // artifact outlives its chat too, and the page says when one is no longer listed.
-      case 'summary':
+      // The page says so itself when its project or topic is gone. An artifact outlives its chat
+      // too, and the page says when one is no longer listed.
+      case 'knowledge':
       case 'artifact':
         return true
     }
@@ -960,12 +961,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         }
         return { title: displayName(project), node: <ProjectPage key={project.path} project={project} chats={chatsInWorktrees} actions={actions} /> }
       }
-      case 'summary':
+      case 'knowledge':
         return {
-          title: 'Summaries',
+          title: 'Knowledge',
           node: (
             <Suspense fallback={<Loading />}>
-              <SummariesPage id={parsed.id} projects={projects} chats={nativeChats} onPick={openSummary} onOpenChat={selectNativeChat} onOpenSettings={openSummarySettings} />
+              <KnowledgePage view={knowledgeView(parsed.id)} projects={projects} onView={openKnowledge} onOpenGithub={maximiseGithub} onOpenArtifact={openArtifact} onOpenSettings={openKnowledgeSettings} />
             </Suspense>
           ),
         }
@@ -1242,8 +1243,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             onCreateWorktree={createWorktree}
             onRetryCreation={retryWorktree}
             onDismissCreation={dismissWorktree}
-            summariesSelected={focusedParsed?.kind === 'summary'}
-            onOpenSummaries={openSummaries}
+            knowledgeSelected={focusedParsed?.kind === 'knowledge'}
+            onOpenKnowledge={openKnowledgeHome}
             artifactsSelected={focusedParsed?.kind === 'artifact'}
             onOpenArtifacts={openArtifacts}
           />
