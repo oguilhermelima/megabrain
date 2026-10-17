@@ -5,6 +5,8 @@ import { mockWorktreeApi, tauriWorktreeApi } from '@/api/worktree-create'
 import { announceAction } from '@/lib/app-events'
 import { native } from '@/lib/surface'
 
+const webBridge = Boolean(import.meta.env.VITE_MEGABRAIN_BRIDGE)
+
 // The calls that change what status and projects report; the reads refresh once one settles.
 const actions = ['reply', 'setHidden', 'removeProject', 'removeWorktree', 'unqueue', 'sendToSession', 'releaseSession', 'ownSession', 'removeChat', 'importFolder', 'importClone', 'setProjectScripts', 'setProjectAppearance', 'archiveWorktree', 'unarchiveWorktree', 'createWorktree', 'setPrState', 'setPrReady', 'stackRun'] as const
 
@@ -21,4 +23,4 @@ function announcingActions(base: AppApi): AppApi {
   return wrapped
 }
 
-export const api: AppApi = announcingActions(native ? { ...createTauriApi(), ...tauriWorktreeApi() } : { ...createMockApi(), ...mockWorktreeApi() })
+export const api: AppApi = announcingActions(native || webBridge ? { ...createTauriApi(), ...tauriWorktreeApi() } : { ...createMockApi(), ...mockWorktreeApi() })
