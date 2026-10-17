@@ -6,6 +6,7 @@ import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequest
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { createMockMaestroApi } from '@/api/fixtures/maestro'
 import { mockUsageStats } from '@/api/fixtures/usage'
+import { mockSummaries, mockSummariesList, mockSummarySearch } from '@/api/fixtures/summaries'
 import { createMockReviewApi } from '@/api/fixtures/github-review'
 import { validateRule } from '@/settings/chain-rules'
 
@@ -27,7 +28,7 @@ export function createMockApi(): DesktopApi {
   let sidebarState: unknown = { version: 1, collapsed: [], rows: {} }
   let shortcuts: unknown = { version: 1, bindings: {} }
   let usageOrder: unknown = { version: 1, order: [], hidden: [] }
-  let chatSummaries: unknown = null
+  let chatSummaries: unknown = { enabled: true, agent: 'claude', model: 'claude-haiku-5-5', effort: null, everyMessages: 6, everyMinutes: 10, retitle: true }
   let agentSettings: unknown = { version: 1, default: null, disabled: [] }
   let modelSettings: unknown = { version: 1, models: {}, defaults: {} }
   let worktreeLocation: unknown = null
@@ -382,6 +383,16 @@ export function createMockApi(): DesktopApi {
     removeChat: async () => {},
     setChatModel: async () => {},
     summarizeChat: async () => {},
+    summaries: async (options) => {
+      await wait(200)
+      return mockSummariesList(options)
+    },
+    searchSummaries: async (text, options) => mockSummarySearch(text, options),
+    summary: async (id) => {
+      const found = mockSummaries.find((entry) => entry.id === id)
+      if (found === undefined) throw new CliError(`no summary ${id}`, 1)
+      return found
+    },
     setChatMode: async (chatId, mode) => ({
       chat: { ...mockNativeChat, id: chatId, mode },
       terminal: mode === 'terminal' ? { id: 'term-mock', engine: 'native', cwd: mockNativeChat.cwd, title: 'claude', tmuxSession: null } : null,

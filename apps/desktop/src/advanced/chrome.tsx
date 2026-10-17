@@ -134,3 +134,23 @@ export function CollapsedChrome({ onExpand, onSettings, joined }: { onExpand: ()
     </div>
   )
 }
+
+export function BranchIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+      <circle cx="4" cy="3.2" r="1.6" />
+      <circle cx="4" cy="12.8" r="1.6" />
+      <circle cx="12" cy="7.5" r="1.6" />
+      <path d="M4 4.8v6.4" />
+      <path d="M4 7.5c0 2.5 2 2.5 6.4 2.5" />
+    </svg>
+  )
+}
+
+export function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`transition-transform duration-[180ms] ease-out motion-reduce:transition-none ${open ? 'rotate-90' : ''}`}>
+      <path d="M6 3.5 10.5 8 6 12.5" />
+    </svg>
+  )
+}

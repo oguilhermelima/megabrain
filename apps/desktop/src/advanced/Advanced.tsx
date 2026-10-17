@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent
 import { api } from '@/api'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import { chatPaneStays, readyToPrune } from '@/advanced/restore-panes'
-import type { Dispatch, HistorySession, NativeChat, Project, ProjectSession } from '@/api/schema'
+import type { Dispatch, HistorySession, NativeChat, Project, ProjectSession, Summary } from '@/api/schema'
 import { joinLabel } from '@/advanced/item-menus'
 import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, stacksOn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
@@ -77,6 +77,7 @@ const CodeLayer = lazy(() => import('@/code/CodeLayer').then((module) => ({ defa
 const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ default: module.GithubPage })))
 const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
 const ProjectPage = lazy(() => import('@/advanced/ProjectPage').then((module) => ({ default: module.ProjectPage })))
+const SummaryPage = lazy(() => import('@/advanced/SummaryPage').then((module) => ({ default: module.SummaryPage })))
 const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
 
 function Loading() {
@@ -213,6 +214,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   // The project whose commands Settings opens on, from Edit commands or Set up in a chat's run menu.
   const [settingsProject, setSettingsProject] = useState<string | null>(null)
+  // The page Settings opens on, from the Summaries section's link.
+  const [settingsSection, setSettingsSection] = useState<'summaries' | null>(null)
+  // The titles of the summaries opened this run, for their panes' names; a restored one reads Summary.
+  const [summaryTitles, setSummaryTitles] = useState<Record<string, string>>({})
   const [filters, setFilters] = useState<SidebarFilters>(readFilters)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(storedSidebarCollapsed)
   const sidebarWidth = usePanelWidth('megabrain.sidebar.width', sidebarLimits)
@@ -544,6 +549,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return keyOf(terminalsInWorktrees, (terminal) => terminal.id === parsed.id)
       // A project's page spans its worktrees, so its group sits with no one worktree.
       case 'project':
+      case 'summary':
         return null
       default: {
         const root = rootOf(item)
@@ -587,6 +593,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         const project = projects.find((entry) => entry.path === parsed.id)
         return { title: project === undefined ? 'Project' : displayName(project), mark: { kind: 'project' }, state: 'idle', worktree }
       }
+      case 'summary':
+        return { title: summaryTitles[parsed.id] ?? 'Summary', mark: { kind: 'summary' }, state: 'idle', worktree }
     }
   }
   // A split never runs out of room: its columns scroll (panes/strip), so no layout is refused for size.
@@ -709,6 +717,14 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setGithubPage({ path: project.path, kind, focus: focus ?? null })
   })
   const openProject = useStableCallback((project: Project) => showItem(itemKey('project', project.path)))
+  const openSummary = useStableCallback((summary: Summary) => {
+    setSummaryTitles((current) => (current[summary.id] === summary.title ? current : { ...current, [summary.id]: summary.title }))
+    showItem(itemKey('summary', summary.id))
+  })
+  const openSummarySettings = useStableCallback(() => {
+    setSettingsSection('summaries')
+    setSettingsOpen(true)
+  })
   /** A worktree or chat picked on a project's page: its chat, or the worktree's launcher. */
   const openFromPage = (open: WorktreeOpen, path: string) => {
     if (open.kind === 'launcher') openNewChat(path)
@@ -744,6 +760,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       // The page runs the project's commands in its main checkout.
       case 'project':
         return parsed.id
+      // A summary's worktree may be gone, so its page runs nothing.
+      case 'summary':
+        return null
     }
   }
   // The shown split's members, and the worktree they all work in when it shares one bar.
@@ -801,6 +820,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return true
       case 'project':
         return projects.some((project) => project.path === parsed.id)
+      // A summary is kept after its chat and worktree are gone; its page says so if it is not.
+      case 'summary':
+        return true
     }
   }
 
@@ -902,6 +924,15 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         }
         return { title: displayName(project), node: <ProjectPage key={project.path} project={project} chats={chatsInWorktrees} actions={actions} /> }
       }
+      case 'summary':
+        return {
+          title: summaryTitles[parsed.id] ?? 'Summary',
+          node: (
+            <Suspense fallback={<Loading />}>
+              <SummaryPage id={parsed.id} projects={projects} chats={nativeChats} onOpen={openSummary} onOpenChat={selectNativeChat} />
+            </Suspense>
+          ),
+        }
     }
   }
   // Every terminal stays mounted, shown or not, so it keeps running and reports its exit; a restored
@@ -912,12 +943,14 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const settingsOverlay = settingsOpen && (
     <Suspense fallback={null}>
       <SettingsWindow
-        key={settingsProject ?? ''}
+        key={`${settingsProject ?? ''}\n${settingsSection ?? ''}`}
         focusProject={settingsProject}
+        initialSection={settingsSection}
         focusChat={focusedNativeChat}
         onClose={() => {
           setSettingsOpen(false)
           setSettingsProject(null)
+          setSettingsSection(null)
         }}
         onSetup={onSetup}
       />
@@ -1164,6 +1197,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             onCreateWorktree={createWorktree}
             onRetryCreation={retryWorktree}
             onDismissCreation={dismissWorktree}
+            selectedSummaryId={focusedParsed?.kind === 'summary' ? focusedParsed.id : null}
+            onOpenSummary={openSummary}
+            onSummarySettings={openSummarySettings}
           />
         </SplitRowsContext.Provider>
         <SidebarUsage onOpenSettings={() => setSettingsOpen(true)} />

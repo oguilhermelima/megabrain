@@ -22,8 +22,8 @@ import { UsageSection } from '@/settings/UsageSection'
 import { WorktreesSection } from '@/settings/WorktreesSection'
 
 /** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. `focusChat` is the native chat focused behind the window, for Summarize now. */
-export function SettingsWindow({ onClose, onSetup, focusProject = null, focusChat = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null; focusChat?: { id: string; title: string } | null }) {
-  const [section, setSection] = useState<NavKey>(initialKey(focusProject, []))
+export function SettingsWindow({ onClose, onSetup, focusProject = null, focusChat = null, initialSection = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null; focusChat?: { id: string; title: string } | null; initialSection?: Section | null }) {
+  const [section, setSection] = useState<NavKey>(initialSection ?? initialKey(focusProject, []))
   const [error, setError] = useState<unknown>(null)
   // Every listed project but the missing ones, for the Projects group and its pages.
   const [projects, setProjects] = useState<Project[] | null>(null)

@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
+import type { AgentDefaults, NativeChat, Summary, SummariesList, SummarySearch, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -30,6 +30,9 @@ export type ChatQueueChange =
   | { action: 'edit'; itemId: string; parts: MessagePart[] }
   | { action: 'move'; itemId: string; to: number }
   | { action: 'remove' | 'send-now' | 'steer'; itemId: string }
+
+/** Narrows a summaries read to one repository (name or path) or branch; `limit` caps each branch, or the results of a search. */
+export type SummaryQuery = { repo?: string; branch?: string; limit?: number }
 
 export interface DesktopApi {
   readonly kind: 'tauri' | 'mock'
@@ -250,6 +253,12 @@ export interface DesktopApi {
   setChatModel(chatId: string, model: string, effort?: string): Promise<void>
   /** Summarizes a native chat now, whatever the schedule (`chat summarize <id> --json`). */
   summarizeChat(chatId: string): Promise<void>
+  /** Chat summaries by project and branch (`summaries list --json`); `limit` is per branch. */
+  summaries(options?: SummaryQuery): Promise<SummariesList>
+  /** Summaries matching the text, best first (`summaries search`). */
+  searchSummaries(text: string, options?: SummaryQuery): Promise<SummarySearch>
+  /** One summary (`summaries show <id>`). */
+  summary(id: string): Promise<Summary>
   /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */
   setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null }>
   /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */

@@ -55,6 +55,10 @@ describe('item keys', () => {
     expect(parseItem(itemKey('project', '/work/canto'))).toEqual({ kind: 'project', id: '/work/canto' })
   })
 
+  test('a summary page is an item keyed by the summary id, so a restored layout reopens it', () => {
+    expect(parseItem(itemKey('summary', 'sum-0001'))).toEqual({ kind: 'summary', id: 'sum-0001' })
+  })
+
   test('an unknown kind or a key without an id is not an item', () => {
     expect(parseItem('window:1')).toBeNull()
     expect(parseItem('terminal:')).toBeNull()

@@ -97,6 +97,12 @@ export function MemberMarkIcon({ mark, state }: { mark: MemberMark; state: Membe
           <MenuIconGlyph icon="folder" />
         </span>
       )
+    case 'summary':
+      return (
+        <span className="shrink-0 text-ink-400">
+          <MenuIconGlyph icon="quote" />
+        </span>
+      )
   }
 }
 

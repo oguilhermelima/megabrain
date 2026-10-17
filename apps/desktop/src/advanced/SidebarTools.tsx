@@ -50,7 +50,21 @@ export function HeaderButton({ label, on, expanded, keepFocus, onClick, children
 }
 
 /** The search field under the header; Escape clears and closes it, leaving it empty closes it. */
-export function SearchField({ inputRef, query, onQuery, onClose }: { inputRef: RefObject<HTMLInputElement | null>; query: string; onQuery: (query: string) => void; onClose: () => void }) {
+export function SearchField({
+  inputRef,
+  query,
+  onQuery,
+  onClose,
+  placeholder = 'Search projects, branches, chats',
+  label = 'Search projects, branches and chats',
+}: {
+  inputRef: RefObject<HTMLInputElement | null>
+  query: string
+  onQuery: (query: string) => void
+  onClose: () => void
+  placeholder?: string
+  label?: string
+}) {
   return (
     <div className="px-1">
       <input
@@ -68,8 +82,8 @@ export function SearchField({ inputRef, query, onQuery, onClose }: { inputRef: R
         onBlur={() => {
           if (query === '') onClose()
         }}
-        placeholder="Search projects, branches, chats"
-        aria-label="Search projects, branches and chats"
+        placeholder={placeholder}
+        aria-label={label}
         className="h-8 w-full rounded-[10px] border border-white/[0.08] bg-white/[0.04] px-3 text-[13px] text-ink-100 placeholder:text-ink-400 focus:border-accent/60 focus:outline-none"
       />
     </div>

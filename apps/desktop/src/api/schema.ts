@@ -655,6 +655,28 @@ export const nativeChatSchema = z.looseObject({
   /** The slash command names the agent reported when it started (Claude's init), absent before. */
   slashCommands: z.array(z.string()).optional(),
 })
+// Chat summaries, kept per worktree branch: the branch stays after its worktree is gone (live false).
+export const summarySchema = z.looseObject({
+  id: z.string(),
+  /** The repository root path, and its display name. */
+  repo: z.string(),
+  project: z.string(),
+  worktree: z.string(),
+  branch: z.string(),
+  chatId: z.string(),
+  /** The chat's agent; `model` is the summarizer's. */
+  agent: z.string(),
+  title: z.string(),
+  text: z.string(),
+  model: z.string(),
+  createdAt: z.string(),
+})
+export const summaryBranchSchema = z.looseObject({ branch: z.string(), worktree: z.string(), live: z.boolean(), summaries: z.array(summarySchema) })
+/** `summaries list --json`: projects by latest activity, each branch's summaries newest first. */
+export const summariesListSchema = z.looseObject({
+  projects: z.array(z.looseObject({ repo: z.string(), project: z.string(), branches: z.array(summaryBranchSchema) })),
+})
+export const summarySearchSchema = z.looseObject({ results: z.array(summarySchema.extend({ score: z.number() })) })
 // A pending approval inside a native chat; it arrives as a transcript event of kind "approval".
 export const chatApprovalSchema = z.looseObject({
   id: z.string(),
@@ -893,6 +915,10 @@ export type HistorySession = z.infer<typeof historySessionSchema>
 export type Transcript = z.infer<typeof transcriptSchema>
 export type SendResult = z.infer<typeof sendResultSchema>
 export type NativeChat = z.infer<typeof nativeChatSchema>
+export type Summary = z.infer<typeof summarySchema>
+export type SummaryBranch = z.infer<typeof summaryBranchSchema>
+export type SummariesList = z.infer<typeof summariesListSchema>
+export type SummarySearch = z.infer<typeof summarySearchSchema>
 export type ChatApproval = z.infer<typeof chatApprovalSchema>
 export type ChatEventLine = z.infer<typeof chatEventLineSchema>
 export type ChatEvent = z.infer<typeof chatEventSchema>
