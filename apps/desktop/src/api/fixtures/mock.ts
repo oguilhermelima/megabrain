@@ -215,6 +215,7 @@ export const mockDispatchReport = [
   'git log: 4f2a1c90 feat(tv): add the seek scrubber; 9b3e7d12 test(tv): pin scrubber seeking',
 ].join('\n')
 
+const seekRoot = '/Users/operator/Workspaces/Worktrees/fix-player-seek'
 const at = (minute: number) => `2026-10-14T21:${String(minute).padStart(2, '0')}:00.000Z`
 
 export const mockTranscript: Transcript = {
@@ -242,6 +243,21 @@ export const mockTranscript: Transcript = {
     { id: 'n8', at: at(6), kind: 'system', text: 'Message from megabrain: ℹ️ the supervisor restarted', notice: { kind: 'other', agent: null, label: null, dispatchId: null, summary: 'The supervisor restarted after an update.' } },
     { id: 'e6', at: at(7), kind: 'tool-call', text: 'apply_patch apps/tv/player/use-player-seek.test.ts', tool: { name: 'apply_patch', input: '*** Add File: apps/tv/player/use-player-seek.test.ts' } },
     { id: 'e7', at: at(7), kind: 'tool-result', text: 'Success. Updated 1 file.', tool: { name: 'apply_patch', status: 'ok' } },
+    // One edit call of each kind: the run's rows show their lines added and removed, and open to the diff.
+    { id: 'ed1', at: at(8), kind: 'tool-call', text: 'Edit', tool: { name: 'Edit', input: JSON.stringify({ file_path: `${seekRoot}/apps/tv/player/use-player-seek.ts`, old_string: 'export function usePlayerSeek(player: Player) {\n  return (seconds: number) => {\n    const item = player.currentItem()\n    player.replaceCurrentItem(item)\n    player.setRate(1)\n    player.seek(player.time() + seconds)\n  }\n}', new_string: 'export function usePlayerSeek(player: Player) {\n  return (seconds: number) => {\n    const rate = player.rate()\n    const target = Math.max(0, player.time() + seconds)\n    player.seek(target)\n    player.setRate(rate)\n  }\n}' }) } },
+    { id: 'ed1r', at: at(8), kind: 'tool-result', text: 'The file has been updated.', tool: { name: 'Edit', status: 'ok' } },
+    { id: 'ed2', at: at(8), kind: 'tool-call', text: 'MultiEdit', tool: { name: 'MultiEdit', input: JSON.stringify({ file_path: `${seekRoot}/apps/tv/player/seek-bar.tsx`, edits: [{ old_string: "import { Bar } from './bar'", new_string: "import { Bar } from './bar'\nimport { Scrubber } from './scrubber'" }, { old_string: '  return <Bar value={time} max={duration} />', new_string: '  return useScrubber ? <Scrubber value={time} max={duration} onSeek={seek} /> : <Bar value={time} max={duration} />' }] }) } },
+    { id: 'ed2r', at: at(8), kind: 'tool-result', text: 'Applied 2 edits.', tool: { name: 'MultiEdit', status: 'ok' } },
+    { id: 'ed3', at: at(8), kind: 'tool-call', text: 'Write', tool: { name: 'Write', input: JSON.stringify({ file_path: `${seekRoot}/apps/tv/player/SEEKING.md`, content: '# Seeking\n\nA seek keeps the playback rate.\nA seek back past 0 stops at 0.\n' }) } },
+    { id: 'ed3r', at: at(8), kind: 'tool-result', text: 'File created successfully.', tool: { name: 'Write', status: 'ok' } },
+    { id: 'ed4', at: at(8), kind: 'tool-call', text: 'Write', tool: { name: 'Write', input: JSON.stringify({ file_path: `${seekRoot}/apps/tv/player/SEEKING.md`, content: '# Seeking\n\nA seek keeps the playback rate.\nA seek back past 0 stops at 0.\nA seek forward past the end stops at the end.\n' }) } },
+    { id: 'ed4r', at: at(8), kind: 'tool-result', text: 'File updated successfully.', tool: { name: 'Write', status: 'ok' } },
+    { id: 'ed5', at: at(8), kind: 'tool-call', text: 'apply_patch', tool: { name: 'apply_patch', input: '*** Begin Patch\n*** Update File: apps/tv/player/adapter.ts\n@@ export function tvosAdapter(native: NativePlayer): Player {\n   return {\n     time: () => native.currentTime,\n+    rate: () => native.rate,\n     seek: (seconds) => native.seek(seconds),\n-    setRate: (rate) => native.setRate(1),\n+    setRate: (rate) => native.setRate(rate),\n   }\n*** Add File: apps/tv/player/clamp.ts\n+export const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))\n*** End Patch' } },
+    { id: 'ed5r', at: at(8), kind: 'tool-result', text: 'Success. Updated the following files:\nM apps/tv/player/adapter.ts\nA apps/tv/player/clamp.ts', tool: { name: 'apply_patch', status: 'ok' } },
+    { id: 'ed6', at: at(8), kind: 'tool-call', text: 'Edit', tool: { name: 'Edit', input: JSON.stringify({ file_path: `${seekRoot}/apps/tv/player/use-player-seek.test.ts`, old_string: "test('seeks', () => {})", new_string: "test('keeps the rate across a forward seek', () => {\n  expect(seekForward(rate2)).toKeepRate()\n})" }) } },
+    { id: 'ed6r', at: at(8), kind: 'tool-result', text: 'String to replace not found in file.', tool: { name: 'Edit', status: 'error' } },
+    { id: 'ed7', at: at(8), kind: 'tool-call', text: 'Write', tool: { name: 'Write', input: JSON.stringify({ file_path: `${seekRoot}/apps/tv/player/seek-table.ts`, content: Array.from({ length: 450 }, (_, index) => `  [${index}, ${index * 10}],`).join('\n') }) } },
+    { id: 'ed7r', at: at(8), kind: 'tool-result', text: 'File created successfully.', tool: { name: 'Write', status: 'ok' } },
     { id: 'e8', at: at(9), kind: 'tool-call', text: 'bun test apps/tv/player', tool: { name: 'shell', input: 'bun test apps/tv/player' } },
     { id: 'e9', at: at(9), kind: 'tool-result', text: '2 pass\n0 fail', tool: { name: 'shell', status: 'ok' } },
     { id: 'e10', at: at(10), kind: 'thinking', text: 'The seek bar question is a design decision, not mine. Two designs disagree; ask the coordinator.' },

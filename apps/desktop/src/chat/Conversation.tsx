@@ -12,6 +12,9 @@ import { mergeEvents, relayedPreview, relayedTarget, thoughtLabel, type Conversa
 import { ToolIcon } from '@/chat/ToolIcon'
 import { groupToolRuns, toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
 import { clipText, toolLabel, toolRunLine } from '@/chat/tool-sentence'
+import { editDiffs, editTotals, writeBases } from '@/chat/edit-diff'
+import { EditDiff } from '@/chat/EditDiff'
+import { LineCounts } from '@/github/parts'
 import { subagentGroupSummary, subagentSummary, visibleSteps, type SubagentItem, type SubagentState } from '@/chat/subagent-model'
 import { formatElapsed } from '@/native-chat/chat-model'
 import { MarkdownText } from '@/chat/markdown'
@@ -33,6 +36,10 @@ import { usePaneWidth } from '@/native-chat/usePaneWidth'
 import { cutLine, taskDurationMs, taskRows, taskStateLabel, taskTool, type BackgroundTask } from '@/chat/background-tasks'
 
 const noLive: LiveRow[] = []
+const noBases = new Map<string, string>()
+
+/** For each Write over a file the chat wrote before, the content it replaced (see writeBases). */
+const WriteBasesContext = createContext<ReadonlyMap<string, string>>(noBases)
 
 export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
 /** Opens a file under a chat's worktree in Code, at a line when one was named. */
@@ -211,6 +218,10 @@ function ToolItem({ item }: { item: ToolRow }) {
   const input = item.call.tool?.input
   const name = toolName(item)
   const label = toolLabel(name, input) || toolDetail(item)
+  const base = useContext(WriteBasesContext).get(item.id)
+  const edits = useMemo(() => editDiffs(name, input, base), [name, input, base])
+  const totals = edits === null ? null : editTotals(edits)
+  const failed = item.status === 'error'
   const links = useContext(PathLinksContext)
   // The row toggles open, so its path opens through a button of its own beside it.
   const target = links === null ? null : firstPath(toolDetail(item), links.root)
@@ -223,6 +234,11 @@ function ToolItem({ item }: { item: ToolRow }) {
           <ToolIcon name={name} status={item.status} size={13} />
           <span className="shrink-0 text-ink-300">{name}</span>
           <span title={toolDetail(item)} className="min-w-0 truncate font-mono text-[12px] text-ink-400">{label}</span>
+          {totals !== null && (
+            <span className={failed ? 'opacity-50 grayscale' : ''}>
+              <LineCounts additions={totals.added} deletions={totals.removed} />
+            </span>
+          )}
           <span className="ml-auto flex shrink-0 items-center pl-2">
             <StateMark state={callState(item.status)} />
           </span>
@@ -240,8 +256,10 @@ function ToolItem({ item }: { item: ToolRow }) {
       </div>
       {open && (
         <div className="mt-1 mb-2 ml-7 space-y-2">
-          {input !== undefined && input !== '' && <CallText label="Input" text={prettyInput(input)} />}
-          {item.result !== null && item.result.text !== '' && <CallText label={item.status === 'error' ? 'Error' : 'Output'} text={item.result.text} failed={item.status === 'error'} />}
+          {/* An edit reads as its diff; what came back matters only when it failed. */}
+          {edits !== null && <EditDiff files={edits} failed={failed} />}
+          {edits === null && input !== undefined && input !== '' && <CallText label="Input" text={prettyInput(input)} />}
+          {item.result !== null && item.result.text !== '' && (edits === null || failed) && <CallText label={failed ? 'Error' : 'Output'} text={item.result.text} failed={failed} />}
           {item.status === 'running' && <p className="text-[12px] text-ink-400">Running…</p>}
         </div>
       )}
@@ -588,6 +606,10 @@ export function ConversationList({
     () => (live.length === 0 ? settled : settled.concat(live.map((row) => ({ type: 'message', event: row.event, streaming: row.streaming, pending: row.pending })))),
     [settled, live],
   )
+  const bases = useMemo(
+    () => writeBases(events.flatMap((event) => (event.kind === 'tool-call' && event.tool !== undefined ? [{ id: event.id, name: event.tool.name, input: event.tool.input }] : []))),
+    [events],
+  )
   const hasFooter = footer !== null
   const turns = useMemo(() => (navigator ? chatTurns(items) : []), [navigator, items])
   const width = usePaneWidth()
@@ -774,7 +796,9 @@ export function ConversationList({
               // Each row is a one-item list, so the message components keep rendering an <li>.
               return (
                 <ol key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${row.start}px)` }}>
-                  <Item item={item} onOpenChat={onOpenChat} />
+                  <WriteBasesContext.Provider value={bases}>
+                    <Item item={item} onOpenChat={onOpenChat} />
+                  </WriteBasesContext.Provider>
                 </ol>
               )
             })}

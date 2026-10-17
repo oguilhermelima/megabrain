@@ -5,6 +5,7 @@ import { languageForPath } from '@/code/code-model'
 import { CodeSkeleton, RowsSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Spinner } from '@/components/ui'
 import { highlightPatch, type PatchHighlight } from '@/github/diff-highlight'
+import { lineTone, markers } from '@/github/diff-tones'
 import { ChevronIcon, CommentIcon, FileStatusIcon } from '@/github/icons'
 import { LineCounts } from '@/github/parts'
 import { diffWindow, filesToFetch, isLargeDiff, isViewed, shownFiles, startsFolded, viewedCount } from '@/github/pr-files-model'
@@ -35,16 +36,6 @@ function StatusGlyph({ status }: { status: GithubPullRequestFile['status'] }) {
     </span>
   )
 }
-
-const lineTone: Record<DiffLine['kind'], string> = {
-  add: 'bg-ok/[0.10]',
-  del: 'bg-bad/[0.10]',
-  context: '',
-  hunk: 'bg-accent/[0.08] text-ink-400',
-  note: 'text-ink-500 italic',
-}
-
-const markers: Record<DiffLine['kind'], string> = { add: '+', del: '-', context: ' ', hunk: '', note: '' }
 
 /** Fixed heights the virtual lists count with; a file's header and each diff line never change size. */
 const headerHeight = 41
