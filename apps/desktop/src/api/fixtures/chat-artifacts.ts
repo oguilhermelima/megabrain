@@ -1,8 +1,9 @@
 import type { ChatArtifact, ChatArtifactContent, ChatArtifactList } from '@/api/schema'
-import { mockArtifact } from '@/api/fixtures/artifacts'
+import { mockArtifact, qaBatch } from '@/api/fixtures/artifacts'
 
 // A native chat's artifacts for the mock, shaped like `chat artifacts|artifact --json`: one per source,
-// so the row above the composer shows every mark. Only the mock's original chat has them; each message
+// so the row above the composer shows every mark, and two megabrain filed under one title, so it shows
+// them as one chip. The megabrain ones keep their earlier revisions, read with `--revision`. Only the mock's original chat has them; each message
 // sent there updates the Codex plan a moment later, the way an agent edits an artifact mid-conversation.
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
@@ -64,8 +65,11 @@ tests: 48 passed, 0 failed (pnpm --filter web test)
 
 const pipeline = mockArtifact('art-20261017-a1b2c3d4')
 const lanePlan = mockArtifact('art-20261017-0f1e2d3c')
+const qaOlder = mockArtifact('art-20261017-qa0older')
+const qaNewer = mockArtifact('art-20261017-qa1newer')
 
-type Entry = { artifact: ChatArtifact; content: string | null; reason?: string }
+/** `earlier` holds the content of the revisions an update replaced, by number. */
+type Entry = { artifact: ChatArtifact; content: string | null; reason?: string; earlier?: Record<number, string> }
 
 const original = 'chat-0001'
 let planSteps = 4
@@ -74,7 +78,13 @@ const entries: Entry[] = [
   { artifact: { id: 'codex-plan-onboarding', source: 'codex-plan', title: 'Tidy the onboarding steps', format: 'markdown', updatedAt: ago(2), revision: 4, editable: false }, content: codexPlan(planSteps) },
   { artifact: { id: 'claude-artifact-steps', source: 'claude-artifact', title: 'Onboarding steps', format: 'html', updatedAt: ago(9), revision: 2, editable: false }, content: claudeArtifact },
   { artifact: { id: 'claude-design-onboarding', source: 'claude-design', title: 'Onboarding redesign', format: 'url', url: 'https://claude.ai/design/p/onboarding-redesign', updatedAt: ago(18), revision: null, editable: false }, content: null, reason: 'Claude Design keeps the project on claude.ai' },
-  { artifact: { id: 'art-20261017-a1b2c3d4', source: 'megabrain', title: 'Knowledge pipeline', format: 'html', path: pipeline?.path, updatedAt: ago(26), revision: 3, editable: false }, content: pipeline?.content ?? null },
+  { artifact: { id: 'art-20261017-qa1newer', source: 'megabrain', title: 'Leva de correções do QA Social', format: 'markdown', path: qaNewer?.path, updatedAt: ago(3), revision: 3, editable: false }, content: qaNewer?.content ?? null, earlier: { 1: qaBatch(3, 5), 2: qaBatch(4, 7) } },
+  { artifact: { id: 'art-20261017-qa0older', source: 'megabrain', title: 'Leva de correções do QA Social', format: 'markdown', path: qaOlder?.path, updatedAt: ago(24), revision: 2, editable: false }, content: qaOlder?.content ?? null, earlier: { 1: qaBatch(1, 0) } },
+  {
+    artifact: { id: 'art-20261017-a1b2c3d4', source: 'megabrain', title: 'Knowledge pipeline', format: 'html', path: pipeline?.path, updatedAt: ago(26), revision: 3, editable: false },
+    content: pipeline?.content ?? null,
+    earlier: { 1: (pipeline?.content ?? '').replace('Knowledge pipeline', 'Knowledge flow'), 2: (pipeline?.content ?? '').replace('</body>', '<p>Draft</p></body>') },
+  },
   { artifact: { id: 'agy-notes', source: 'agy', title: 'Session notes', format: 'text', updatedAt: ago(70), revision: null, editable: false }, content: agyNotes },
   { artifact: { id: 'art-20261017-0f1e2d3c', source: 'megabrain', title: 'Artifacts lane', format: 'markdown', path: lanePlan?.path, updatedAt: ago(95), revision: 1, editable: false }, content: lanePlan?.content ?? null },
   { artifact: { id: 'grok-research', source: 'grok', title: 'Onboarding research', format: 'text', updatedAt: ago(300), revision: 1, editable: false }, content: 'Three of five first-run sessions stopped at the module picker.\nNone stopped at the plan.\n' },
@@ -86,9 +96,16 @@ export function mockChatArtifacts(chatId: string): ChatArtifactList {
   return { artifacts: chatId === original ? entries.slice().sort(newestFirst).map((entry) => entry.artifact) : [] }
 }
 
-export function mockChatArtifact(chatId: string, artifactId: string): ChatArtifactContent | null {
+/** The artifact's current content, or the revision named; null for an artifact or revision not kept. */
+export function mockChatArtifact(chatId: string, artifactId: string, revision?: number): ChatArtifactContent | null {
   const entry = chatId === original ? entries.find((candidate) => candidate.artifact.id === artifactId) : undefined
   if (entry === undefined) return null
+  if (revision !== undefined && revision !== entry.artifact.revision) {
+    const content = entry.earlier?.[revision]
+    const listed = mockArtifact(artifactId)?.revisions?.find((candidate) => candidate.revision === revision)
+    if (content === undefined || listed === undefined) return null
+    return { artifact: { ...entry.artifact, title: listed.title, updatedAt: listed.updatedAt, revision }, content, updatedAt: listed.updatedAt }
+  }
   return { artifact: entry.artifact, content: entry.content, updatedAt: entry.artifact.updatedAt, ...(entry.reason === undefined ? {} : { reason: entry.reason }) }
 }
 

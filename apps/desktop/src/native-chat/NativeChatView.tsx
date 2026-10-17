@@ -26,7 +26,7 @@ import { beginSwitch, endSwitch, switchEngine, switchStep } from '@/native-chat/
 import { endKeptSession } from '@/terminal/kept-terminals'
 import { useNow } from '@/github/parts'
 import { ArtifactPanel, ArtifactsRow, useChatArtifacts, useChatPanel } from '@/native-chat/ChatArtifacts'
-import { artifactRow, panelLayout } from '@/native-chat/chat-artifacts'
+import { artifactGroup, artifactRow, panelLayout } from '@/native-chat/chat-artifacts'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
@@ -72,8 +72,9 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
   const now = useNow(30_000)
   const artifacts = useChatArtifacts(chat.id, artifactsChanged)
   const panel = useChatPanel(chat.id)
-  const openArtifact = artifacts.artifacts?.find((artifact) => artifact.id === panel.artifactId) ?? null
-  const chips = artifacts.artifacts === null ? null : artifactRow(artifacts.artifacts, artifacts.previous, openArtifact?.id ?? null)
+  // Artifacts sharing a title are one: the panel shows the newest of the open one's.
+  const openGroup = artifacts.artifacts === null ? null : artifactGroup(artifacts.artifacts, panel.artifactId)
+  const chips = artifacts.artifacts === null ? null : artifactRow(artifacts.artifacts, artifacts.previous, panel.artifactId)
   const paneWidth = usePaneWidth()
   const layout = panelLayout(paneWidth.width, panel.width)
 
@@ -262,17 +263,17 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     stop()
   }
 
-  const artifactPanel = (artifact: ChatArtifact, overlay: boolean) => (
+  const artifactPanel = (members: [ChatArtifact, ...ChatArtifact[]], overlay: boolean) => (
     <ArtifactPanel
-      key={artifact.id}
+      key={members[0].id}
       chatId={chat.id}
-      artifact={artifact}
+      members={members}
       width={layout.width}
       overlay={overlay}
       now={now}
       onResize={{ preview: panel.preview, commit: panel.resize }}
       onClose={() => panel.open(null)}
-      onOpenPage={artifact.source === 'megabrain' && onOpenArtifact !== undefined ? () => onOpenArtifact(artifact.id) : null}
+      onOpenPage={onOpenArtifact ?? null}
     />
   )
 
@@ -389,7 +390,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
             <div className="relative flex min-h-0 flex-1 flex-col">
               {transcript}
               {/* On a narrow pane the artifact lies over the transcript; the composer below stays in reach. */}
-              {openArtifact !== null && layout.mode === 'overlay' && artifactPanel(openArtifact, true)}
+              {openGroup !== null && layout.mode === 'overlay' && artifactPanel(openGroup, true)}
             </div>
             {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
             <div onKeyDown={onComposerKey} className="contents">
@@ -408,11 +409,11 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
                 channel={compose}
                 initCommands={chat.slashCommands}
                 queue={queueControls}
-                above={chips === null ? undefined : <ArtifactsRow chips={chips} now={now} onOpen={(artifact) => panel.open(artifact.id === openArtifact?.id ? null : artifact.id)} />}
+                above={chips === null ? undefined : <ArtifactsRow chips={chips} now={now} onOpen={(chip) => panel.open(chip.active ? null : chip.artifact.id)} />}
               />
             </div>
           </div>
-          {openArtifact !== null && layout.mode === 'split' && artifactPanel(openArtifact, false)}
+          {openGroup !== null && layout.mode === 'split' && artifactPanel(openGroup, false)}
         </div>
       )}
     </div>

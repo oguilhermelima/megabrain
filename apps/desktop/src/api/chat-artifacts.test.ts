@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { chatArtifactContentSchema, chatArtifactListSchema, chatEventLineSchema } from '@/api/schema'
+import { artifactContentSchema, chatArtifactContentSchema, chatArtifactListSchema, chatEventLineSchema } from '@/api/schema'
+import { mockChatArtifact, mockChatArtifacts } from '@/api/fixtures/chat-artifacts'
 
 // The contract of megabrain chat artifacts <chat-id> --json, chat artifact <chat-id> <artifact-id> --json,
 // and the live-only artifacts event on the chat's event stream.
@@ -51,6 +52,51 @@ describe('chat artifact --json', () => {
     const parsed = chatArtifactContentSchema.parse({ artifact: listed.artifacts[0], content: null, updatedAt: '2026-10-17T12:40:00Z', reason: 'url only' })
     expect(parsed.content).toBeNull()
     expect(parsed.reason).toBe('url only')
+  })
+})
+
+describe('chat artifact --revision <n> --json', () => {
+  test('parses an earlier revision with its artifact as it was', () => {
+    const parsed = chatArtifactContentSchema.parse({ artifact: { ...listed.artifacts[1], revision: 1, updatedAt: '2026-10-17T11:00:00Z' }, content: '<p>first</p>', updatedAt: '2026-10-17T11:00:00Z' })
+    expect(parsed.artifact.revision).toBe(1)
+    expect(parsed.content).toBe('<p>first</p>')
+    expect(parsed.updatedAt).toBe('2026-10-17T11:00:00Z')
+  })
+
+  test('a revision with no content to read carries the reason', () => {
+    const parsed = chatArtifactContentSchema.parse({ artifact: listed.artifacts[1], content: null, updatedAt: '2026-10-17T12:30:00Z', reason: 'revision 9 is not kept' })
+    expect(parsed.reason).toBe('revision 9 is not kept')
+  })
+})
+
+describe('artifact show --json revisions', () => {
+  const shown = { id: 'art-1', title: 'Leva', kind: 'doc', format: 'markdown', project: '/repo', projectName: 'repo', projectId: 'repo', topics: [], chatId: 'chat-1', createdAt: '2026-10-17T10:00:00Z', updatedAt: '2026-10-17T12:00:00Z', revision: 3, path: '/state/doc.md', content: '# Leva' }
+
+  test('lists the replaced versions, oldest first', () => {
+    const parsed = artifactContentSchema.parse({ ...shown, revisions: [{ revision: 1, title: 'Leva', updatedAt: '2026-10-17T10:00:00Z', replacedAt: '2026-10-17T11:00:00Z' }, { revision: 2, title: 'Leva', updatedAt: '2026-10-17T11:00:00Z', replacedAt: '2026-10-17T12:00:00Z' }] })
+    expect(parsed.revisions?.map((entry) => entry.revision)).toEqual([1, 2])
+  })
+
+  test('an older megabrain lists none', () => {
+    expect(artifactContentSchema.parse(shown).revisions).toBeUndefined()
+  })
+})
+
+describe('the mock chat artifacts', () => {
+  test('two artifacts of the mock chat share a title, for the grouped chip', () => {
+    const titles = mockChatArtifacts('chat-0001').artifacts.map((artifact) => artifact.title.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim())
+    expect(titles.length - new Set(titles).size).toBeGreaterThanOrEqual(1)
+  })
+
+  test('reads an earlier revision of a megabrain artifact', () => {
+    const grouped = mockChatArtifacts('chat-0001').artifacts.find((artifact) => artifact.source === 'megabrain' && (artifact.revision ?? 0) > 1)
+    expect(grouped).toBeDefined()
+    if (grouped === undefined) return
+    const current = mockChatArtifact('chat-0001', grouped.id)
+    const first = mockChatArtifact('chat-0001', grouped.id, 1)
+    expect(first?.artifact.revision).toBe(1)
+    expect(first?.content).not.toBe(current?.content)
+    expect(mockChatArtifact('chat-0001', grouped.id, 99)).toBeNull()
   })
 })
 

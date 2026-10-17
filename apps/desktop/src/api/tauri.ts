@@ -371,7 +371,7 @@ export function createTauriApi(): DesktopApi {
     artifacts: (options = {}) => cliJson(['artifact', 'list', ...(options.project === undefined ? [] : ['--project', options.project]), ...(options.topic === undefined ? [] : ['--topic', options.topic]), '--json'], artifactListSchema),
     artifact: (id) => cliJson(['artifact', 'show', id, '--json'], artifactContentSchema),
     chatArtifacts: (chatId) => cliJson(['chat', 'artifacts', chatId, '--json'], chatArtifactListSchema),
-    chatArtifact: (chatId, artifactId) => cliJson(['chat', 'artifact', chatId, artifactId, '--json'], chatArtifactContentSchema),
+    chatArtifact: (chatId, artifactId, revision) => cliJson(['chat', 'artifact', chatId, artifactId, ...(revision === undefined ? [] : ['--revision', String(revision)]), '--json'], chatArtifactContentSchema),
     setChatModel: async (chatId, model, effort) => void (await cliText(['chat', 'model', chatId, model, ...(effort === undefined ? [] : ['--effort', effort])])),
     setChatMode: (chatId, mode) =>
       cliJson(['chat', 'mode', chatId, mode, '--json'], z.looseObject({ chat: nativeChatSchema, terminal: terminalSessionSchema.nullable(), command: z.array(z.string()).nullable().default(null) })),

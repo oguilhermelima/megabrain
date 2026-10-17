@@ -116,7 +116,22 @@ const offlineDoc = `# Offline playback notes
 - \`pnpm test downloads\` covers expiry and refresh.
 `
 
+/** The QA batch a chat filed twice under one title, each revised since: the chat's row shows it once. */
+export const qaBatch = (revision: number, fixed: number) => `# Leva de correções do QA Social
+
+Doze defeitos que a QA de 15/10 achou no app viraram uma leva só. Revisão ${revision}: ${fixed} de 12 corrigidos.
+
+${Array.from({ length: 12 }, (_, index) => `- [${index < fixed ? 'x' : ' '}] ${['Feed social repete o mesmo card ao voltar', 'Avatar some no perfil após editar', 'Curtida não atualiza a contagem', 'Comentário longo corta a última linha', 'Busca de amigos ignora acentos', 'Convite expira sem aviso', 'Notificação abre a tela errada', 'Seguir e deixar de seguir piscam', 'Foto de capa estica no iPad', 'Lista de seguidores não pagina', 'Botão compartilhar sem rótulo', 'Modo escuro com texto ilegível no chat'][index]}`).join('\n')}
+`
+
 const entries: ArtifactContent[] = [
+  { id: 'art-20261017-qa0older', title: 'Leva de correções do QA Social', kind: 'plan', format: 'markdown', ...canto, topics: [], chatId: 'chat-0001', createdAt: ago(40), updatedAt: ago(24), revision: 2, path: `${state}/${canto.projectId}/artifacts/art-20261017-qa0older/doc.md`, content: qaBatch(2, 3), revisions: [
+    { revision: 1, title: 'Leva de correções do QA Social', updatedAt: ago(40), replacedAt: ago(24) },
+  ] },
+  { id: 'art-20261017-qa1newer', title: 'Leva de correções do QA Social', kind: 'plan', format: 'markdown', ...canto, topics: [], chatId: 'chat-0001', createdAt: ago(20), updatedAt: ago(3), revision: 3, path: `${state}/${canto.projectId}/artifacts/art-20261017-qa1newer/doc.md`, content: qaBatch(5, 9), revisions: [
+    { revision: 1, title: 'Leva de correções do QA Social', updatedAt: ago(20), replacedAt: ago(11) },
+    { revision: 2, title: 'Leva de correções do QA Social', updatedAt: ago(11), replacedAt: ago(3) },
+  ] },
   { id: 'art-20261017-a1b2c3d4', title: 'Knowledge pipeline', kind: 'diagram', format: 'html', ...megabrain, topics: ['topic-knowledge'], chatId: 'chat-0001', createdAt: ago(240), updatedAt: ago(6), revision: 3, path: `${state}/${megabrain.projectId}/artifacts/art-20261017-a1b2c3d4/index.html`, content: pipeline, revisions: [
     { revision: 1, title: 'Knowledge flow', updatedAt: ago(240), replacedAt: ago(150) },
     { revision: 2, title: 'Knowledge pipeline', updatedAt: ago(150), replacedAt: ago(6) },

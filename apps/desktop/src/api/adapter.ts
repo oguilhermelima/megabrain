@@ -253,12 +253,12 @@ export interface DesktopApi {
   knowledgeTranscript(chatId: string): Promise<KnowledgeTranscript>
   /** Artifacts newest change first, of one project (its path) or topic (`artifact list --json`). */
   artifacts(options?: { project?: string; topic?: string }): Promise<ArtifactList>
-  /** One artifact with its content (`artifact show <id> --json`). */
+  /** One artifact with its content and the revisions its updates replaced (`artifact show <id> --json`). */
   artifact(id: string): Promise<ArtifactContent>
   /** A native chat's artifacts, newest change first (`chat artifacts <chat-id> --json`). */
   chatArtifacts(chatId: string): Promise<ChatArtifactList>
-  /** One of a chat's artifacts with its content (`chat artifact <chat-id> <artifact-id> --json`). */
-  chatArtifact(chatId: string, artifactId: string): Promise<ChatArtifactContent>
+  /** One of a chat's artifacts with its content, or an earlier revision's (`chat artifact <chat-id> <artifact-id> [--revision <n>] --json`). */
+  chatArtifact(chatId: string, artifactId: string, revision?: number): Promise<ChatArtifactContent>
   /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */
   setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null }>
   /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */
