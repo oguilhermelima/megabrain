@@ -53,18 +53,18 @@ export function useWorktreeChanges(facts: WorktreeFacts | null): WorktreeChanges
 }
 
 /**
- * Agent, Code, PR, Diff and Device as a strip of tabs, the row under a pane's title, each its icon and name.
- * The strip starts at the bar's content edge: a tab's 8px padding hangs left of it, so the first icon
- * lines up with the agent's mark above. A tab is a 28px pill (lit on hover) over a 4px gap; under the
- * shown one a 2px rounded line, the width of its icon and name, sits on the bar's hairline and slides
- * to the next tab with the motion tokens. The PR number and the Diff count follow the name as small
- * counters. Only a disabled tab keeps a tooltip, for its reason. The shown tab takes the keyboard's
- * Tab; Left and Right then move between tabs (action-bar-model's tabStep) and Enter or Space opens
- * one. A strip wider than its pane scrolls sideways.
+ * Agent, Code, PR, Diff and Device as one segmented control, the row under a pane's title: the bar's
+ * 30px track (bar-control, as the chat or terminal switch beside the title), each segment a 24px pill
+ * with its icon and name, the PR number and the Diff count after the name as small counters. The
+ * track starts at the bar's content edge, under the agent's mark. The shown segment sits on a raised
+ * pill that slides to the next one with the motion tokens. A disabled segment is dimmed and keeps a
+ * tooltip, for its reason. The shown segment takes the keyboard's Tab; Left and Right then move
+ * between segments (action-bar-model's tabStep) and Enter or Space opens one. A control wider than its
+ * pane scrolls sideways.
  */
 export function ActionBar({ segments, shown, onSelect }: { segments: readonly Segment[]; shown: PaneView; onSelect: (view: PaneView) => void }) {
   const strip = useRef<HTMLDivElement>(null)
-  const [line, setLine] = useState<{ left: number; width: number } | null>(null)
+  const [pill, setPill] = useState<{ left: number; width: number } | null>(null)
   const icons: Record<PaneView, ReactNode> = {
     agent: <ChatGlyph />,
     code: <CodeIcon size={16} />,
@@ -72,18 +72,18 @@ export function ActionBar({ segments, shown, onSelect }: { segments: readonly Se
     diff: <DiffIcon />,
     device: <PhoneIcon />,
   }
-  // The line follows the shown tab's pill, measured again whenever the strip or a tab changes size (a badge appearing, the pane resizing).
+  // The pill follows the shown segment, measured again whenever the control or a segment changes size (a badge appearing, the pane resizing).
   useLayoutEffect(() => {
     const element = strip.current
     if (element === null) return
     const measure = () => {
-      const pill = element.querySelector<HTMLElement>(`[data-view="${shown}"] [data-pill]`)
-      setLine(pill === null ? null : { left: pill.offsetLeft + 8, width: pill.offsetWidth - 16 })
+      const segment = element.querySelector<HTMLElement>(`[data-view="${shown}"]`)
+      setPill(segment === null ? null : { left: segment.offsetLeft, width: segment.offsetWidth })
     }
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(element)
-    for (const pill of element.querySelectorAll('[data-pill]')) observer.observe(pill)
+    for (const segment of element.querySelectorAll('[data-view]')) observer.observe(segment)
     return () => observer.disconnect()
   }, [shown, segments])
   const move = (event: KeyboardEvent<HTMLButtonElement>, from: PaneView) => {
@@ -95,47 +95,44 @@ export function ActionBar({ segments, shown, onSelect }: { segments: readonly Se
     tab?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }
   return (
-    <div ref={strip} role="tablist" aria-label="Views" className="relative -mb-px -ml-2 flex max-w-[calc(100%+8px)] min-w-0 gap-0.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      {segments.map((segment) => {
-        const current = segment.view === shown
-        return (
-          <button
-            key={segment.view}
-            type="button"
-            role="tab"
-            data-view={segment.view}
-            aria-label={segment.badge === null ? segment.label : `${segment.label} ${segment.badge}`}
-            aria-selected={current}
-            tabIndex={current ? 0 : -1}
-            title={segment.enabled ? undefined : segment.title}
-            disabled={!segment.enabled}
-            onClick={() => onSelect(segment.view)}
-            onKeyDown={(event) => move(event, segment.view)}
-            className={`group/tab flex h-8 shrink-0 items-start pb-1 text-[12px] leading-4 font-medium outline-none disabled:cursor-default disabled:text-ink-500 ${current ? 'text-ink-100' : 'text-ink-400 enabled:hover:text-ink-200'}`}
-          >
-            <span
-              data-pill=""
-              className="flex h-7 items-center gap-1.5 rounded-md px-2 transition-colors duration-[var(--motion-enter)] ease-[var(--motion-ease-out)] group-enabled/tab:group-hover/tab:bg-white/[0.06] group-focus-visible/tab:outline-2 group-focus-visible/tab:-outline-offset-2 group-focus-visible/tab:outline-accent"
+    <div className="flex min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div ref={strip} role="tablist" aria-label="Views" className="bar-control bar-group relative">
+        {pill !== null && (
+          <span
+            aria-hidden="true"
+            data-tab-pill=""
+            style={{ width: pill.width, translate: `${pill.left}px 0`, transition: 'translate var(--motion-panel) var(--motion-ease-panel), width var(--motion-panel) var(--motion-ease-panel)' }}
+            className="pointer-events-none absolute top-0.5 left-0 h-6 rounded-[9999px] bg-white/[0.14]"
+          />
+        )}
+        {segments.map((segment) => {
+          const current = segment.view === shown
+          return (
+            <button
+              key={segment.view}
+              type="button"
+              role="tab"
+              data-view={segment.view}
+              aria-label={segment.badge === null ? segment.label : `${segment.label} ${segment.badge}`}
+              aria-selected={current}
+              tabIndex={current ? 0 : -1}
+              title={segment.enabled ? undefined : segment.title}
+              disabled={!segment.enabled}
+              onClick={() => onSelect(segment.view)}
+              onKeyDown={(event) => move(event, segment.view)}
+              className={`bar-segment relative shrink-0 gap-1.5 pr-2.5 pl-2 ${current ? 'text-ink-100 hover:bg-transparent' : ''}`}
             >
               {icons[segment.view]}
               <span aria-hidden="true">{segment.label}</span>
               {segment.badge !== null && (
-                <span aria-hidden="true" className={`min-w-4 rounded-full px-1 text-center text-[10px] leading-4 tabular-nums ${current ? 'bg-white/[0.14] text-ink-100' : 'bg-white/[0.06] text-ink-300'}`}>
+                <span aria-hidden="true" className={`min-w-4 rounded-full px-1 text-center text-[10px] leading-4 tabular-nums ${!segment.enabled ? 'bg-white/[0.04]' : current ? 'bg-white/[0.14] text-ink-100' : 'bg-white/[0.08] text-ink-300'}`}>
                   {segment.badge}
                 </span>
               )}
-            </span>
-          </button>
-        )
-      })}
-      {line !== null && (
-        <span
-          aria-hidden="true"
-          data-tab-line=""
-          style={{ width: line.width, translate: `${line.left}px 0`, transition: 'translate var(--motion-panel) var(--motion-ease-panel), width var(--motion-panel) var(--motion-ease-panel)' }}
-          className="pointer-events-none absolute bottom-0 left-0 h-0.5 rounded-full bg-ink-100"
-        />
-      )}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

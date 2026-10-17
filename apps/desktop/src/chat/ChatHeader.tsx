@@ -14,7 +14,7 @@ import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
  * The top bar every chat view and the launcher share. Its first row is the agent's mark, live while it works (none on the launcher), and the title on one line (header-model),
  * truncating before the controls on the right: the view's own controls (the chat or terminal switch, shown only in Agent), the Run button and the run panel's toggle once
  * anything ran. An item with a worktree (a launcher once it has one) also gets a second row, the view tabs (Agent, Code, PR, Diff and Device, each shown in the pane under the bar),
- * starting at the mark's left edge and scrolling sideways when the pane is too narrow for them; the bar's hairline runs under them. The first row sits about 12px below
+ * one segmented control starting at the mark's left edge and scrolling sideways when the pane is too narrow for it. The first row sits about 12px below
  * the window top. When the sidebar is hidden and this bar joins the window row (panes/window-row) that row shrinks to the lights' 44px band, centred on their line, and
  * both rows leave room at their left for the lights and the show-sidebar button. In a split it is also the pane's header (panes/pane-chrome): its empty space drags the
  * pane instead of the window, and the button at its right end takes the pane out of the split. Under a split's shared bar (panes/group-bar) it is slim instead: one 36px
@@ -116,7 +116,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
 
   const body = shown !== 'agent' && <PaneViewBody view={shown} facts={pane.facts} changes={changes} code={pane.code} openFile={pane.openFile} header={header} />
 
-  // Both rows share one left edge, the bar's padding: the first tab's icon sits under the mark. The view's controls belong to Agent and show only there.
+  // Both rows share one left edge, the bar's padding: the tabs' track starts under the mark. The view's controls belong to Agent and show only there.
   return (
     <>
       <header ref={header} {...region} onPointerDown={grab} style={slide} className={`@container/header group/pane shrink-0 border-b border-white/[0.06] ${side} ${band}`}>
@@ -124,7 +124,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
           {identity}
           {controls(shown === 'agent' && actions)}
         </div>
-        <div {...region} className="mt-1 flex min-w-0">
+        <div {...region} className="mt-1 flex min-w-0 pb-2">
           <ActionBar segments={available} shown={shown} onSelect={select} />
         </div>
       </header>

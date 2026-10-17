@@ -72,7 +72,7 @@ export function SplitFrame({ shared, inset, children }: { shared: SharedBar | nu
             </div>
           </div>
           {/* The tabs start at the picture's left edge, the bar's padding, as a pane's own bar does. */}
-          <div data-tauri-drag-region className="mt-1 flex min-w-0">
+          <div data-tauri-drag-region className="mt-1 flex min-w-0 pb-2">
             <ActionBar segments={bar.available} shown={shown} onSelect={bar.shared.setView} />
           </div>
         </header>
