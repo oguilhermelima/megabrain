@@ -92,13 +92,13 @@ describe("subject-first summary prompt", () => {
 });
 
 describe("knowledge settings", () => {
-  test("every toggle is on by default and a project value beats the default", () => {
+  test("a saved file fills the toggles it leaves out with on, and a project value beats the default", () => {
     const h = harness();
     writeFileSync(join(h.state, "knowledge-settings.json"), JSON.stringify({ defaults: { retitle: false }, projects: { "/a": { retitle: true, context: false } } }));
     const settings = readKnowledgeSettings(h.state);
     expect(effectiveToggles(settings, "/a")).toEqual({ summaries: true, retitle: true, topics: true, sessions: true, context: false });
     expect(effectiveToggles(settings, "/b")).toEqual({ summaries: true, retitle: false, topics: true, sessions: true, context: true });
-    expect(effectiveToggles(defaultKnowledgeSettings, "/x")).toEqual({ summaries: true, retitle: true, topics: true, sessions: true, context: true });
+    expect(effectiveToggles(defaultKnowledgeSettings, "/x")).toEqual({ summaries: false, retitle: false, topics: false, sessions: false, context: false });
   });
 
   test("with summaries off nothing else applies, however it is set", () => {

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { projectId } from "./project-id.js";
 import type { ChatRecord, Topic, TranscriptLine } from "./types.js";
@@ -62,6 +62,8 @@ export function openProject(stateDir: string, repo: string) {
       if (previous !== null) appendFileSync(join(folder, "revisions.jsonl"), `${JSON.stringify(previous)}\n`, { mode: 0o600 });
       writeAtomic(join(folder, "topic.json"), `${JSON.stringify(topic, null, 2)}\n`);
     },
+    /** Drops a topic with its revisions; a merge calls this after the target has taken everything. */
+    removeTopic(id: string): void { rmSync(topicDir(id), { recursive: true, force: true }); },
     chats(): ChatRecord[] { return names(join(dir, "chats"), false).flatMap((name) => { const chat = readJson<ChatRecord>(join(dir, "chats", name)); return chat === null ? [] : [chat]; }); },
     chat(id: string): ChatRecord | null { return readJson<ChatRecord>(chatFile(id)); },
     chatBySession(key: string): ChatRecord | null { return this.chats().find((chat) => chat.sessionKeys.includes(key)) ?? null; },

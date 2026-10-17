@@ -10,7 +10,9 @@ export type Toggles = Record<Toggle, boolean>;
 export type KnowledgeSettings = { defaults: Toggles; projects: Record<string, Partial<Toggles>> };
 
 export const allOn: Toggles = { summaries: true, retitle: true, topics: true, sessions: true, context: true };
-export const defaultKnowledgeSettings: KnowledgeSettings = { defaults: allOn, projects: {} };
+/** Nothing reaches a model until the person turns summaries on. */
+export const allOff: Toggles = { summaries: false, retitle: false, topics: false, sessions: false, context: false };
+export const defaultKnowledgeSettings: KnowledgeSettings = { defaults: allOff, projects: {} };
 
 export function knowledgeSettingsPath(stateDir: string): string { return join(stateDir, "knowledge-settings.json"); }
 
@@ -51,6 +53,7 @@ export function parseKnowledgeSettings(raw: string): Result<KnowledgeSettings> {
 /**
  * The settings, migrating the old chat summary switch once: with no knowledge file yet, the chat-summaries enabled
  * and retitle fields become the defaults for summaries and retitle, the file is written, and those fields are ignored from then on.
+ * With neither file, nobody has chosen anything: every toggle is off and nothing is written.
  */
 export function readKnowledgeSettings(stateDir: string): KnowledgeSettings {
   const path = knowledgeSettingsPath(stateDir);
@@ -58,11 +61,11 @@ export function readKnowledgeSettings(stateDir: string): KnowledgeSettings {
     const parsed = parseKnowledgeSettings(readFileSync(path, "utf8"));
     return parsed.kind === "ok" ? parsed.value : defaultKnowledgeSettings;
   } catch { /* no file yet: migrate */ }
-  let defaults = allOn;
+  let defaults: Toggles;
   try {
     const old: unknown = JSON.parse(readFileSync(join(stateDir, "chat-summaries.json"), "utf8"));
-    if (isRecord(old)) defaults = { ...allOn, ...(typeof old.enabled === "boolean" ? { summaries: old.enabled } : {}), ...(typeof old.retitle === "boolean" ? { retitle: old.retitle } : {}) };
-    else return defaultKnowledgeSettings;
+    if (!isRecord(old)) return defaultKnowledgeSettings;
+    defaults = { ...allOn, summaries: old.enabled === true, ...(typeof old.retitle === "boolean" ? { retitle: old.retitle } : {}) };
   } catch { return defaultKnowledgeSettings; }
   const migrated: KnowledgeSettings = { defaults, projects: {} };
   try {

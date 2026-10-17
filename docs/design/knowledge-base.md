@@ -1,6 +1,6 @@
 # Knowledge base and artifacts — design
 
-Status: approved 2026-10-17. Replaces the branch-first summaries view.
+Status: approved 2026-10-17, updated 2026-10-17 with the decisions made while building it. Replaces the branch-first summaries view.
 
 ## Why
 
@@ -50,12 +50,47 @@ so the knowledge base reads those logs, read-only. One session id is processed o
 ran it. A dispatch worker's session is linked to its parent session (dispatch records know both) and
 shown under the parent's chat card, not as a separate chat.
 
-Per-project toggle in Settings (Knowledge page), on by default: settings key knowledge
-{ enabled: boolean, projects: { [repoPath]: { enabled: boolean } } }. A disabled project is never
-scanned and its sessions are never sent to the summary model.
+Sessions of grok and agy are listed by sessions history but their logs have no turn reader yet, so the
+scanner reads Claude and Codex sessions only.
 
-A scanner (inside chatd, which already runs the summarizer) finds new or grown sessions in enabled
-projects and feeds them to the same summarizer trigger (every N messages or M minutes of new content).
+**Switches.** Settings key knowledge = { defaults, projects }: five toggles, each with a default and an
+optional per-project override (`projects[repoPath]`):
+
+- summaries: summarise the project's chats and sessions (the master switch; with it off nothing else applies);
+- retitle: rename chats from their summaries (a title a person set is kept);
+- topics: file summaries into topics (needs summaries);
+- sessions: also read sessions opened outside the app (needs summaries and topics);
+- context: give agents the topics for their branch (needs summaries).
+
+chat-summaries keeps the model and the cadence (agent, model, effort, everyMessages, everyMinutes); its
+enabled and retitle fields are read once, to migrate (below), and ignored afterwards. A project whose
+summaries, topics and sessions toggles are not all on is never scanned, and its sessions are never sent
+to the summary model.
+
+**Fresh install: everything off.** With neither a knowledge file nor a chat-summaries file nothing has
+been chosen, so every toggle is off and nothing is written. The first read with an old chat-summaries
+file and no knowledge file migrates once: enabled becomes the summaries default (a file that never set
+it means off), retitle becomes the retitle default, the others default to on, and knowledge-settings.json
+is written. A knowledge file the person saved applies as saved; toggles it leaves out default to on.
+
+A scanner (inside chatd, which already runs the summarizer: a backfill once, then a scan every 10
+minutes starting 60 seconds after boot) finds new or grown sessions in enabled projects and feeds them
+to the same summarizer trigger (every N messages or M minutes of new content).
+
+**Bounds.** Turning summaries on must not send a machine's whole history to a model:
+
+- Horizon: the first time the scanner sees a project with the switches on it stores, in
+  knowledge/scan.json, a horizon of now minus 7 days. Only sessions whose last activity is after it are
+  taken, so later scans pick up new or grown sessions only.
+- Older history is opt-in: `megabrain knowledge scan --repo <path> --since <ISO date|Nd>` takes sessions
+  active since then, once, without moving the stored horizon. `--dry-run` prints, per project, the sessions
+  in range, the older ones and the estimated model calls (two per session, none for dispatch workers) and
+  calls no model, writes no knowledge and stores no horizon.
+- Cap: a scan sends at most 20 sessions to the model across all projects, newest first (`--limit <n>`
+  changes it for one run); the rest wait for the next scan. Dispatch workers are linked, not summarised,
+  and do not count.
+- Size: the summariser clips every event to 1,500 characters and a prompt's conversation to its last
+  14,000, whoever sent the session, so a huge session costs the same as a long one.
 
 ## Pipeline
 
@@ -74,20 +109,27 @@ projects and feeds them to the same summarizer trigger (every N messages or M mi
    - input: the new summary + refs + key messages, the project's topic list (id, title, kind, aliases,
      one-line overview), and the full text of the 1–2 candidate topics (picked by branch name, refs and
      text match);
-   - output: ASSIGN <topic-id> or NEW <kind> <title>, then section patches (replace a section's
-     markdown, append decisions, mark one superseded), plus refs and key messages to attach;
+   - output: one JSON object: topic ({ assign: id } or { new: { kind, title } }), sections (the ones to
+     replace), decisions ({ add, supersede }), refs and an optional status; key messages come from the
+     summary's KEY lines;
    - megabrain validates the patch (sections known, decisions never removed, refs well formed) before
      writing; a bad answer is logged and retried at the next summary, never written half.
    - the branch name is a strong hint, not the rule: feat/summaries-wiki and feat/summaries-by-branch
      land in one topic.
-3. **Hand edits**: rename, change kind/status, merge two topics (union of everything, aliases kept),
-   move a chat to another topic, edit a section. Hand edits are revisions too; the curator sees them as
-   current text and keeps them.
+3. **Hand edits**, as verbs: `knowledge rename <topic-id> <title>` (the old title becomes an alias),
+   `kind <topic-id> <kind>`, `status <topic-id> <status>`, `merge <topic-id> <into-topic-id>` (the target keeps
+   its title, sections and status and gains the other's aliases, refs, chats, decisions renumbered after its
+   own, and key messages; the source topic is removed and its chats point at the target) and
+   `move-chat <chat-id> <topic-id>` (the chat leaves its other topics). Each writes a revision of every topic
+   it changes; the curator sees the result as current text and keeps it. Editing a section by hand and the
+   app UI for these verbs are not built yet.
 
 ## Agents
 
-- megabrain knowledge list|show|search|topic-for --cwd <path> (replaces summaries list|search|show|context;
-  old verbs kept as aliases for one release).
+- megabrain knowledge list|show|search|transcript|topic-for|context (replaces summaries list|search|show|context;
+  old verbs kept as aliases for one release). list gives { projects: [{ repo, project, enabled, topics }] },
+  show a topic with its chatRecords (cards, each dispatch worker under its parent), transcript a chat
+  record and its distilled events.
 - Context injection (native chats now, hook module for terminals as today): the topic(s) for the cwd's
   branch and recent work — overview, state, live decisions, pitfalls, open — capped at ~3 KB, instead of
   the latest raw summaries.
@@ -120,7 +162,9 @@ tested commit; the module's skill note tells agents to save output with megabrai
 ## Migration
 
 Existing summaries.jsonl entries are fed once through the curator in order, oldest first, so the
-first topics come from real history. Summaries stay on disk.
+first topics come from real history (`knowledge backfill`, recorded in knowledge/backfill.json so a rerun
+skips what is done). Summaries stay on disk. Sessions older than the scan horizon are not part of it;
+`knowledge scan --since` brings them in on request.
 
 ## Lanes (after approval)
 

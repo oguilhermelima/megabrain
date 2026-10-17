@@ -206,8 +206,13 @@ megabrain knowledge search <text> [--repo <name|path>] [--limit <n>] --json — 
 megabrain knowledge transcript <chat-id> --json — the distilled conversation of a chat.
 megabrain knowledge topic-for --cwd <path> [--json] — the topics of that folder's branch.
 megabrain knowledge context --cwd <path> [--json] — those topics as a short Markdown block (about 3 KB).
-megabrain knowledge scan [--json] — read new sessions of enabled projects and curate them into topics.
+megabrain knowledge scan [--repo <name|path>] [--since <ISO date|Nd>] [--limit <n>] [--dry-run] [--json] — read sessions of enabled projects and curate them into topics. Only sessions active in the last 7 days (counted from the first scan of a project), at most 20 per scan, newest first. --since takes older ones on demand, --limit changes the cap, --dry-run counts sessions and model calls and calls no model.
 megabrain knowledge backfill [--json] — curate the summaries already on disk into topics, once.
+megabrain knowledge rename <topic-id> <title> [--json] — retitle a topic; the old title stays as an alias. Writes a revision.
+megabrain knowledge kind <topic-id> <kind> [--json] — set feat, fix, refactor, decision or investigation. Writes a revision.
+megabrain knowledge status <topic-id> <status> [--json] — set active, shipped or dropped. Writes a revision.
+megabrain knowledge merge <topic-id> <into-topic-id> [--json] — fold a topic into another of the same project: aliases, refs, chats, decisions and key messages of both are kept, the first topic is removed.
+megabrain knowledge move-chat <chat-id> <topic-id> [--json] — file a chat under that topic only. Writes a revision of each topic touched.
 megabrain summaries list [--repo <name|path>] [--branch <branch>] [--limit <n per branch>] --json — summaries grouped by project, then worktree branch, newest first.
 megabrain summaries search <text> [--repo <name|path>] [--branch <branch>] [--limit <n>] --json — look up older development work (title and branch hits rank first). Run it when you need to know what was done or decided before, instead of re-deriving it.
 megabrain summaries show <id> --json — one summary in full.

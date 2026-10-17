@@ -1,25 +1,35 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
+import { mergeTopics, moveChat, renameTopic, setTopicKind, setTopicStatus } from "../../knowledge/edit.js";
 import { backfillSummaries } from "../../knowledge/backfill.js";
 import { knowledgeContext, listKnowledge, readTranscript, searchKnowledge, showTopic, summarizeTopic, topicFor } from "../../knowledge/library.js";
 import { KnowledgePipeline } from "../../knowledge/pipeline.js";
-import { scanProjects } from "../../knowledge/scanner.js";
+import { registeredProjects, scanProjects } from "../../knowledge/scanner.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import type { Topic } from "../../knowledge/types.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
-type Flags = { positional: string[]; values: Record<string, string>; json: boolean };
+type Flags = { positional: string[]; values: Record<string, string>; json: boolean; dryRun: boolean };
 
-const VALUE_FLAGS = ["--repo", "--limit", "--cwd"];
+const VALUE_FLAGS = ["--repo", "--limit", "--cwd", "--since"];
 
 function stateDir(environment: Environment): string { return environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? homedir(), ".megabrain"); }
 function print(value: unknown): Result<string> { return ok(`${JSON.stringify(value, null, 2)}\n`); }
 
+/** "30d" is that many days back from now; anything else must be a date Date can read. */
+function parseSince(value: string, now: Date): Date | null {
+  const days = /^(\d+)d$/.exec(value);
+  const at = days === null ? new Date(value) : new Date(now.getTime() - Number(days[1]) * 86_400_000);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
+
 function parse(args: readonly string[]): Flags | null {
-  const flags: Flags = { positional: [], values: {}, json: false };
+  const flags: Flags = { positional: [], values: {}, json: false, dryRun: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
     if (arg === "--json") flags.json = true;
+    else if (arg === "--dry-run") flags.dryRun = true;
     else if (VALUE_FLAGS.includes(arg)) {
       const value = args[index + 1];
       if (value === undefined || value.startsWith("--")) return null;
@@ -66,6 +76,14 @@ export async function executeKnowledge(args: readonly string[], environment: Env
     if (flags.json) return print(found);
     return ok(found.events.map((event) => `[${event.cursor}] ${event.role}: ${event.text}`).join("\n").concat("\n"));
   }
+  const edited = (result: Result<Topic>): Result<string> => result.kind !== "ok" ? result : flags.json ? print({ topic: summarizeTopic(result.value) }) : ok(`${result.value.id} ${result.value.kind} ${result.value.status} ${result.value.title}\n`);
+  const [first, second] = flags.positional;
+  const now = new Date();
+  if (verb === "rename" && flags.positional.length >= 2) return edited(renameTopic(dir, first as string, flags.positional.slice(1).join(" "), now));
+  if (verb === "kind" && flags.positional.length === 2) return edited(setTopicKind(dir, first as string, second as string, now));
+  if (verb === "status" && flags.positional.length === 2) return edited(setTopicStatus(dir, first as string, second as string, now));
+  if (verb === "merge" && flags.positional.length === 2) return edited(mergeTopics(dir, first as string, second as string, now));
+  if (verb === "move-chat" && flags.positional.length === 2) return edited(moveChat(dir, first as string, second as string, now));
   const cwd = flags.values["--cwd"];
   if (verb === "topic-for" && flags.positional.length === 0 && cwd !== undefined) {
     const topics = (await topicFor(dir, cwd)).map(summarizeTopic);
@@ -75,9 +93,21 @@ export async function executeKnowledge(args: readonly string[], environment: Env
     const context = await knowledgeContext(dir, cwd);
     return flags.json ? print({ context }) : ok(context);
   }
-  if ((verb === "scan" || verb === "backfill") && flags.positional.length === 0) {
+  if (verb === "scan" && flags.positional.length === 0) {
+    const since = flags.values["--since"] === undefined ? undefined : parseSince(flags.values["--since"], new Date());
+    if (since === null) return usage();
+    const registered = registeredProjects(environment);
+    const projects = repo === undefined ? registered : registered.filter((path) => path === repo || basename(path) === repo);
+    if (repo !== undefined && projects.length === 0 && isAbsolute(repo)) projects.push(resolve(repo));
+    if (repo !== undefined && projects.length === 0) return failed(`unknown project: ${repo}`, 1);
     const pipeline = new KnowledgePipeline({ stateDir: dir, environment });
-    const outcome = verb === "scan" ? await scanProjects({ stateDir: dir, home: environment.HOME ?? homedir(), environment, pipeline }) : await backfillSummaries({ stateDir: dir, pipeline });
+    const outcome = await scanProjects({ stateDir: dir, home: environment.HOME ?? homedir(), environment, pipeline, projects, ...(since === undefined ? {} : { since }), ...(limit === undefined ? {} : { maxSessions: limit }), dryRun: flags.dryRun });
+    if (flags.json) return print(outcome);
+    const lines = outcome.projects.map((plan) => `${plan.repo}: ${plan.inHorizon} sessions in range, ${plan.older} older, about ${plan.estimatedCalls} model calls`);
+    return ok(`${[...lines, ...(flags.dryRun ? [] : [`processed ${outcome.processed}`])].join("\n")}\n`);
+  }
+  if (verb === "backfill" && flags.positional.length === 0 && !flags.dryRun && flags.values["--since"] === undefined) {
+    const outcome = await backfillSummaries({ stateDir: dir, pipeline: new KnowledgePipeline({ stateDir: dir, environment }) });
     return flags.json ? print(outcome) : ok(`${JSON.stringify(outcome)}\n`);
   }
   return usage();
