@@ -72,7 +72,7 @@ describe("mechanical refs", () => {
       "Opened https://github.com/o/r/pull/214 and PR #214 again.",
       "Closes issue #198, fixes #7. [feat/summaries-wiki 3fa91c2] feat(x): add",
       "see commit 9ab12cd4e5f6 on branch feat/summaries-by-branch",
-    ].join("\n"));
+    ].join("\n"), { source: "git-output" });
     expect(refs).toContainEqual({ kind: "pr", id: "214", url: "https://github.com/o/r/pull/214" });
     expect(refs.filter((ref) => ref.kind === "pr" && ref.id === "214")).toHaveLength(1);
     expect(refs.map((ref) => `${ref.kind}:${ref.id}`)).toEqual(expect.arrayContaining(["issue:198", "issue:7", "commit:3fa91c2", "commit:9ab12cd4e5f6", "branch:feat/summaries-by-branch", "branch:feat/summaries-wiki"]));
@@ -81,6 +81,15 @@ describe("mechanical refs", () => {
   test("things that only look like refs are ignored", () => {
     const refs = extractRefs("color #ff00aa, version 1234567, port :8787, the word deadbeef alone, a/b/c path");
     expect(refs).toEqual([]);
+  });
+
+  test("colours and invalid issue numbers never become refs, while issue-like contexts do", () => {
+    const refs = extractRefs("#111111 #282828 #fff #0 #000000 issue #42 PR #43 https://github.com/o/r/issues/44");
+    expect(refs.map(({ kind, id }) => `${kind}:${id}`)).toEqual(["issue:42", "pr:43", "issue:44"]);
+  });
+
+  test("only hashes in git output become commits", () => {
+    expect(extractRefs("prose mentions abcdef0; commit abcdef0123456789 from git log", { source: "git-output" }).map((ref) => ref.id)).toEqual(["abcdef0123456789"]);
   });
 
   test("a ref is well formed by kind", () => {
@@ -148,22 +157,40 @@ describe("curator patch validation", () => {
 
   test("a good answer creates a topic with a decision, refs and the key messages it points at", () => {
     const { repo, project } = workspace();
-    const result = applyCuratorOutput(project, newTopic, CONTEXT);
+    const result = applyCuratorOutput(project, newTopic, { ...CONTEXT, refs: [{ kind: "issue", id: "42" }] });
     expect(result.kind).toBe("ok");
     const created = result.kind === "ok" ? result.value : null;
     expect(created).toMatchObject({ title: "Chat summaries", kind: "feat", status: "active", project: repo, chats: ["c1"], sections: { overview: "Summaries become a wiki.", state: "Curator written.", pitfalls: "", open: "" } });
     expect(created?.decisions).toEqual([{ id: "d1", text: "Topics, not branches", why: "branches rot", at: NOW, chatId: "c1" }]);
     expect(created?.refs).toContainEqual({ kind: "issue", id: "42", title: "Wiki" });
-    expect(created?.refs).toContainEqual({ kind: "branch", id: "feat/summaries-wiki" });
+    expect(created?.refs).toContainEqual(expect.objectContaining({ kind: "branch", id: "feat/summaries-wiki" }));
     expect(created?.keyMessages).toEqual([{ chatId: "c1", eventCursor: "0", at: NOW, role: "person", text: "make summaries a wiki, grouped by topic", why: "sets the direction" }]);
     expect(project.topics()).toHaveLength(1);
+  });
+
+  test("curator proposals are intersected with mechanically verified refs", () => {
+    const { project } = workspace();
+    const output = JSON.stringify({ topic: { new: { kind: "feat", title: "Verified refs" } }, refs: [{ kind: "issue", id: "42" }, { kind: "issue", id: "900" }] });
+    const result = applyCuratorOutput(project, output, { ...CONTEXT, branch: "(no branch)", refs: [{ kind: "issue", id: "42" }] });
+    expect(result.kind === "ok" ? result.value.refs.map((ref) => ref.id) : []).toEqual(["42"]);
+  });
+
+  test("topic refs rank session-created refs first and cap each kind at twelve", () => {
+    const { project } = workspace();
+    const refs = Array.from({ length: 15 }, (_, index) => ({ kind: "issue" as const, id: String(index + 1), lastAt: `2026-10-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`, count: 1 }));
+    refs[0] = { ...refs[0]!, origin: "created" };
+    const output = JSON.stringify({ topic: { new: { kind: "feat", title: "Capped refs" } }, refs: refs.map(({ kind, id }) => ({ kind, id })) });
+    const result = applyCuratorOutput(project, output, { ...CONTEXT, refs });
+    const issues = result.kind === "ok" ? result.value.refs.filter((ref) => ref.kind === "issue") : [];
+    expect(issues).toHaveLength(12);
+    expect(issues[0]?.id).toBe("1");
   });
 
   test("assigning to an existing topic patches it, supersedes a decision, keeps the rest and writes a revision", () => {
     const { repo, project } = workspace();
     project.saveTopic(topic(repo, { decisions: [{ id: "d1", text: "Group by branch", why: "simple", at: NOW, chatId: "c0" }], sections: { overview: "Edited by hand.", state: "Draft.", pitfalls: "", open: "" }, chats: ["c0"] }));
     const output = "```json\n" + JSON.stringify({ topic: { assign: "t1" }, sections: { state: "Curator in place." }, decisions: { add: [{ text: "Group by topic", why: "branches repeat" }], supersede: [{ id: "d1", by: 0 }] } }) + "\n```";
-    const result = applyCuratorOutput(project, output, CONTEXT);
+    const result = applyCuratorOutput(project, output, { ...CONTEXT, refs: [{ kind: "issue", id: "42" }] });
     expect(result.kind).toBe("ok");
     const saved = project.topic("t1");
     expect(saved?.sections.overview).toBe("Edited by hand.");

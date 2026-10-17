@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { mergeTopics, moveChat, renameTopic, setTopicKind, setTopicStatus } from "../../knowledge/edit.js";
 import { backfillSummaries } from "../../knowledge/backfill.js";
+import { repairKnowledgeRefs } from "../../knowledge/repair-refs.js";
 import { knowledgeContext, listKnowledge, readTranscript, searchKnowledge, showTopic, summarizeTopic, topicFor } from "../../knowledge/library.js";
 import { KnowledgePipeline } from "../../knowledge/pipeline.js";
 import { registeredProjects, scanProjects } from "../../knowledge/scanner.js";
@@ -109,6 +110,10 @@ export async function executeKnowledge(args: readonly string[], environment: Env
   if (verb === "backfill" && flags.positional.length === 0 && !flags.dryRun && flags.values["--since"] === undefined) {
     const outcome = await backfillSummaries({ stateDir: dir, pipeline: new KnowledgePipeline({ stateDir: dir, environment }) });
     return flags.json ? print(outcome) : ok(`${JSON.stringify(outcome)}\n`);
+  }
+  if (verb === "repair-refs" && flags.positional.length === 0 && flags.values["--since"] === undefined && flags.values["--limit"] === undefined && flags.values["--cwd"] === undefined) {
+    const outcome = await repairKnowledgeRefs({ stateDir: dir, ...(repo === undefined ? {} : { repo }), dryRun: flags.dryRun });
+    return flags.json ? print(outcome) : ok(`${outcome.topicsChanged} topics repaired\n`);
   }
   return usage();
 }

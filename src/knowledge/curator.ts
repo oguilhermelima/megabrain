@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../core/result.js";
-import { isWellFormedRef, mergeRefs } from "./refs.js";
+import { isWellFormedRef, mergeRefs, rankAndCapRefs } from "./refs.js";
 import type { KnowledgeProject } from "./store.js";
 import { SECTIONS, TOPIC_KINDS, TOPIC_STATUSES, type Decision, type KeyMessage, type Ref, type SectionName, type Topic, type TopicKind, type TopicStatus, type TranscriptLine } from "./types.js";
 
@@ -17,8 +17,10 @@ export type CuratorContext = {
   chatId: string;
   at: string;
   branch: string;
-  /** Refs found mechanically and named by the summary. */
+  /** Refs verified mechanically from session text and tool output. */
   refs: readonly Ref[];
+  /** Additional refs proposed by the summary pass; still intersected with verified evidence. */
+  proposedRefs?: readonly Ref[];
   lines: readonly TranscriptLine[];
   /** Cursors the summary marked as setting direction, each with its one-line why. */
   keyMessages: ReadonlyArray<{ cursor: string; why: string }>;
@@ -146,14 +148,20 @@ export function applyCuratorOutput(project: KnowledgeProject, output: string, co
     keyMessages.push({ chatId: context.chatId, eventCursor: key.cursor, at: line.at, role: line.role === "person" ? "person" : "agent", text: line.text, why: key.why });
   }
 
-  const branch: Ref[] = context.branch === NO_BRANCH || context.branch === "main" || context.branch === "master" ? [] : [{ kind: "branch", id: context.branch }];
+  const branchRef: Ref = { kind: "branch", id: context.branch, origin: "created", source: "git-output", firstAt: context.at, lastAt: context.at, count: 1 };
+  const branch: Ref[] = context.branch === NO_BRANCH || context.branch === "main" || context.branch === "master" || !isWellFormedRef(branchRef) || context.refs.some((ref) => ref.kind === "branch" && ref.id === context.branch) ? [] : [branchRef];
+  const verified = mergeRefs(context.refs, branch);
+  const proposals = new Set([...answer.refs, ...(context.proposedRefs ?? [])].map((ref) => `${ref.kind}:${ref.id}`));
+  const relevant = verified.filter((ref) => ref.origin === "created" || proposals.has(`${ref.kind}:${ref.id}`));
+  const proposalByKey = new Map([...answer.refs, ...(context.proposedRefs ?? [])].map((ref) => [`${ref.kind}:${ref.id}`, { kind: ref.kind, id: ref.id, ...(ref.title === undefined ? {} : { title: ref.title }), ...(ref.state === undefined ? {} : { state: ref.state }) }]));
+  const proposed = verified.flatMap((ref) => { const proposal = proposalByKey.get(`${ref.kind}:${ref.id}`); return proposal === undefined ? [] : [proposal]; });
   const topic: Topic = {
     ...base,
     status: answer.status ?? base.status,
     updatedAt: context.at,
     sections: { ...base.sections, ...answer.sections },
     decisions,
-    refs: mergeRefs(base.refs, context.refs, branch, answer.refs),
+    refs: rankAndCapRefs(mergeRefs(base.refs, relevant, proposed)),
     chats: base.chats.includes(context.chatId) ? base.chats : [...base.chats, context.chatId],
     keyMessages,
   };

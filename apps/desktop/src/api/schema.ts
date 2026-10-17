@@ -667,6 +667,11 @@ export const knowledgeRefSchema = z.looseObject({
   url: z.string().optional(),
   title: z.string().optional(),
   state: z.string().optional(),
+  origin: z.enum(['created', 'mentioned']).optional(),
+  source: z.enum(['git-output', 'gh-output', 'megabrain-output', 'text']).optional(),
+  firstAt: z.string().optional(),
+  lastAt: z.string().optional(),
+  count: z.number().int().positive().optional(),
 })
 export const knowledgeTopicSummarySchema = z.looseObject({
   id: z.string(),

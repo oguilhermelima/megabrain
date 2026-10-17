@@ -17,6 +17,7 @@ import { discoverSessionId, readSessionTurns, sessionLogPath, sessionTurnOpen } 
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from "./subagents.js";
 import { selfInvocation } from "../core/self-invocation.js";
 import { backfillSummaries } from "../knowledge/backfill.js";
+import { repairKnowledgeRefs } from "../knowledge/repair-refs.js";
 import { KnowledgePipeline } from "../knowledge/pipeline.js";
 import { scanProjects } from "../knowledge/scanner.js";
 import { ChatSummarizer } from "./summaries.js";
@@ -210,7 +211,10 @@ export class ChatDaemon {
       if (this.scanning || this.draining) return;
       this.scanning = true;
       try {
-        if (backfill) await backfillSummaries({ stateDir: this.stateDir, pipeline: this.knowledge });
+        if (backfill) {
+          await repairKnowledgeRefs({ stateDir: this.stateDir, once: true });
+          await backfillSummaries({ stateDir: this.stateDir, pipeline: this.knowledge });
+        }
         await scanProjects({ stateDir: this.stateDir, home: this.environment.HOME ?? process.env.HOME ?? "", environment: this.environment, pipeline: this.knowledge });
       } catch (error) { process.stderr.write(`knowledge scan failed: ${error instanceof Error ? error.message : String(error)}\n`); }
       finally { this.scanning = false; }

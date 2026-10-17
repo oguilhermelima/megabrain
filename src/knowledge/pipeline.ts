@@ -1,5 +1,5 @@
 import { applyCuratorOutput, buildCuratorPrompt, candidateTopics } from "./curator.js";
-import { distill, editedFiles, linesAfter, rawText, type DistillTurn } from "./distill.js";
+import { distill, editedFiles, linesAfter, type DistillTurn } from "./distill.js";
 import { extractRefs, mergeRefs } from "./refs.js";
 import { askModel, buildSummaryPrompt, parseSummaryAnswer, readSummarySettings, type SummaryKey } from "../chat/summaries.js";
 import { openProject } from "./store.js";
@@ -37,6 +37,14 @@ export type ProcessResult =
   | { status: "worker" | "curated" | "curator-failed"; chatId: string; topicId?: string; error?: string };
 
 export type PipelineOptions = { stateDir: string; environment: Environment; ask?: Ask; now?: () => Date };
+
+function commandSource(command: string): Ref["source"] | undefined {
+  const segments = command.split(/&&|\|\||[;|]/).map((segment) => segment.trim());
+  if (segments.some((segment) => /^git\b/.test(segment))) return "git-output";
+  if (segments.some((segment) => /^(?:gh|github)\b/.test(segment))) return "gh-output";
+  if (segments.some((segment) => /^megabrain\s+worktree\b/.test(segment))) return "megabrain-output";
+  return undefined;
+}
 
 function recordId(input: SessionInput): string {
   return input.chatId ?? (input.sessionKeys[0] ?? "session").replace(/[^\w-]+/g, "-");
@@ -103,6 +111,8 @@ export class KnowledgePipeline {
     const existing = input.sessionKeys.map((key) => project.chatBySession(key)).find((chat) => chat !== null && chat !== undefined) ?? null;
     const id = existing?.id ?? recordId(input);
     const lines = distill(input.turns);
+    const sessionRefs = this.refsOf(input);
+    const verifiedRefs = input.turns.length === 0 ? mergeRefs(existing?.verifiedRefs ?? [], sessionRefs) : sessionRefs;
     const record: ChatRecord = {
       ...(existing ?? this.blank(input, id)),
       sessionKeys: [...new Set([...(existing?.sessionKeys ?? []), ...input.sessionKeys])],
@@ -112,11 +122,13 @@ export class KnowledgePipeline {
       branch: input.branch,
       worktree: input.worktree,
       endedAt: input.endedAt,
-      refs: mergeRefs(existing?.refs ?? [], this.refsOf(input), summary.refs),
+      refs: mergeRefs(existing?.refs ?? [], sessionRefs, summary.refs),
+      verifiedRefs,
       userTurns: Math.max(summary.userTurns, existing?.userTurns ?? 0),
       summarizedAt: this.now().toISOString(),
       curated: false,
       pendingKeys: summary.keys,
+      pendingRefs: summary.refs,
     };
     project.saveChat(record);
     if (lines.length > 0) project.writeTranscript(id, lines);
@@ -127,9 +139,33 @@ export class KnowledgePipeline {
     return { id, sessionKeys: input.sessionKeys, title: input.title ?? null, summary: "", agent: input.agent, model: input.model, branch: input.branch, worktree: input.worktree, startedAt: input.startedAt, endedAt: input.endedAt, topics: [], refs: [], userTurns: 0, summarizedAt: this.now().toISOString(), curated: false };
   }
 
-  /** Mechanical refs: patterns over everything the session said and ran, and the files it edited. */
+  /** Mechanical refs: issue mentions in session text and refs supported by command output, plus edited files. */
   private refsOf(input: SessionInput): Ref[] {
-    return mergeRefs(extractRefs(rawText(input.turns)), editedFiles(input.turns, input.cwd));
+    const refs: Ref[] = [];
+    let previous: DistillTurn | undefined;
+    for (const turn of input.turns) {
+      if (turn.kind === "tool-call") { previous = turn; continue; }
+      if (turn.kind === "tool-result") {
+        const command = previous?.tool?.input ?? "";
+        let parsed: Record<string, unknown> = {};
+        try { parsed = JSON.parse(command) as Record<string, unknown>; } catch { /* an unavailable command is not evidence */ }
+        const shell = String(parsed.command ?? parsed.cmd ?? "");
+        const source = commandSource(shell);
+        if (source !== undefined) {
+          const created = /\b(?:issue|pr)\s+create\b|\b(?:git\s+)?(?:commit|checkout\s+-b|switch\s+-c|branch\s+(?!-))\b/.test(shell);
+          refs.push(...extractRefs(turn.text, { source, origin: created ? "created" : "mentioned", at: turn.at }));
+        } else if (/https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+/i.test(turn.text)) {
+          const created = /\b(?:created|opened)\b/i.test(turn.text);
+          refs.push(...extractRefs(turn.text, { source: "gh-output", origin: created ? "created" : "mentioned", at: turn.at }));
+        }
+        previous = undefined;
+        continue;
+      }
+      if (turn.kind === "user" || turn.kind === "assistant") refs.push(...extractRefs(turn.text, { source: "text", origin: "mentioned", at: turn.at }));
+    }
+    const branch = input.branch.trim();
+    if (/^(?:feat|fix|refactor|chore|docs|test|perf|polish)\//.test(branch)) refs.push({ kind: "branch", id: branch, origin: "created", source: "git-output", firstAt: input.startedAt, lastAt: input.endedAt || input.startedAt, count: 1 });
+    return mergeRefs(refs, editedFiles(input.turns, input.cwd));
   }
 
   private async curate(input: SessionInput, record: ChatRecord, lines: readonly TranscriptLine[]): Promise<ProcessResult> {
@@ -139,20 +175,20 @@ export class KnowledgePipeline {
       title: record.title,
       summary: record.summary,
       branch: record.branch,
-      refs: record.refs.filter((ref) => ref.kind !== "file"),
+      refs: (record.verifiedRefs ?? record.refs).filter((ref) => ref.kind !== "file"),
       keys: keys.flatMap((key) => { const line = lines.find((candidate) => candidate.cursor === key.cursor); return line === undefined ? [] : [{ ...key, text: line.text }]; }),
       topics: project.topics(),
-      candidates: candidateTopics(project.topics(), { branch: record.branch, refs: record.refs, text: `${record.title ?? ""} ${record.summary}` }),
+      candidates: candidateTopics(project.topics(), { branch: record.branch, refs: record.verifiedRefs ?? record.refs, text: `${record.title ?? ""} ${record.summary}` }),
     });
     let output: string;
     try { output = await this.ask(prompt, "curator"); }
     catch (error) { return { status: "curator-failed", chatId: record.id, error: error instanceof Error ? error.message : String(error) }; }
-    const applied = applyCuratorOutput(project, output, { chatId: record.id, at: this.now().toISOString(), branch: record.branch, refs: record.refs, lines, keyMessages: keys });
+    const applied = applyCuratorOutput(project, output, { chatId: record.id, at: this.now().toISOString(), branch: record.branch, refs: record.verifiedRefs ?? record.refs, proposedRefs: record.pendingRefs ?? [], lines, keyMessages: keys });
     if (applied.kind !== "ok") {
       process.stderr.write(`knowledge: curator answer for ${record.id} rejected: ${applied.error}\n`);
       return { status: "curator-failed", chatId: record.id, error: applied.error };
     }
-    const { pendingKeys: _pending, ...rest } = record;
+    const { pendingKeys: _pending, pendingRefs: _pendingRefs, ...rest } = record;
     project.saveChat({ ...rest, topics: [...new Set([...record.topics, applied.value.id])], curated: true });
     return { status: "curated", chatId: record.id, topicId: applied.value.id };
   }

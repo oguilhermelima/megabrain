@@ -9,7 +9,7 @@ export type TopicStatus = (typeof TOPIC_STATUSES)[number];
 export type SectionName = (typeof SECTIONS)[number];
 export type RefKind = (typeof REF_KINDS)[number];
 
-export type Ref = { kind: RefKind; id: string; url?: string; title?: string; state?: string };
+export type Ref = { kind: RefKind; id: string; url?: string; title?: string; state?: string; origin?: "created" | "mentioned"; source?: "git-output" | "gh-output" | "megabrain-output" | "text"; firstAt?: string; lastAt?: string; count?: number };
 /** Never deleted; a later decision supersedes it. */
 export type Decision = { id: string; text: string; why: string; at: string; chatId: string; supersededBy?: string };
 export type KeyMessage = { chatId: string; eventCursor: string; at: string; role: "person" | "agent"; text: string; why: string };
@@ -49,6 +49,8 @@ export type ChatRecord = {
   endedAt: string;
   topics: string[];
   refs: Ref[];
+  /** Mechanical evidence used to validate topic refs; distinct from summary proposals retained in refs. */
+  verifiedRefs?: Ref[];
   /** User turns the summary covers; the next summary counts from here. */
   userTurns: number;
   summarizedAt: string;
@@ -58,4 +60,6 @@ export type ChatRecord = {
   parentSessionKey?: string;
   /** Key messages the summary named, waiting for the curator. */
   pendingKeys?: Array<{ cursor: string; why: string }>;
+  /** Refs proposed by the summary until the curator has selected relevant, verified ones. */
+  pendingRefs?: Ref[];
 };
