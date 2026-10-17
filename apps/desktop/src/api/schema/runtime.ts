@@ -109,6 +109,6 @@ export const simulatorKindSchema = z.enum(['phone', 'tv'])
 export type SimulatorKind = z.infer<typeof simulatorKindSchema>
 
 /** One row of `megabrain native sim list --booted --json`: a booted simulator, phone or tv. */
-export const bootedSimulatorSchema = z.looseObject({ udid: z.string(), name: z.string(), runtime: z.string(), state: z.string(), kind: simulatorKindSchema })
+export const bootedSimulatorSchema = z.looseObject({ udid: z.string(), name: z.string(), runtime: z.string(), state: z.string(), kind: simulatorKindSchema, worktree: z.string().nullable().optional() })
 export type BootedSimulator = z.infer<typeof bootedSimulatorSchema>
 export const bootedSimulatorListSchema = z.looseObject({ devices: z.array(bootedSimulatorSchema) })

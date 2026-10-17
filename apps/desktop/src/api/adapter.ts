@@ -91,7 +91,13 @@ export interface DesktopApi {
   /** The iPhone or Apple TV simulators (`native sim list phone|tv --json`); phones when no kind is given. */
   simulators(kind?: SimulatorKind): Promise<Simulator[]>
   /** Boots a simulator headless and waits for it (`native sim ensure phone|tv --device`). */
-  bootSimulator(udid: string, kind?: SimulatorKind): Promise<void>
+  bootSimulator(udid: string, kind?: SimulatorKind, worktree?: string): Promise<void>
+  /** Assigns a booted simulator to this worktree. */
+  simClaim(udid: string, worktree: string): Promise<void>
+  /** Removes a simulator's worktree assignment. */
+  simRelease(udid: string): Promise<void>
+  /** Renames a simulator in CoreSimulator. */
+  simRename(udid: string, name: string): Promise<void>
   /** The booted simulators, phones and TVs (`native sim list --booted --json`). */
   simListBooted(): Promise<BootedSimulator[]>
   /** Shuts down one simulator by UDID. */

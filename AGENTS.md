@@ -150,8 +150,11 @@
 - Run megabrain native appium status.
 - Run megabrain native appium stop.
 - Run megabrain native sim list <phone|tv> [--json]. — recommended when you need available iOS or tvOS simulators of one kind.
-- Run megabrain native sim list --booted [--json]. — recommended when you need all booted iOS and tvOS devices in one call.
-- Run megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]. — recommended when you need to boot and prepare the requested Apple simulator.
+- Run megabrain native sim list --booted [--json]. — recommended when you need all booted iOS and tvOS devices, with worktree owners, in one call.
+- Run megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--worktree <path>] [--timeout <seconds>] [--json]. — recommended when you need to boot and prepare the requested Apple simulator for a worktree.
+- Run megabrain native sim claim <udid> --worktree <path> [--json]. — recommended when you need to assign a booted simulator to a worktree.
+- Run megabrain native sim release <udid> [--json]. — recommended when you need to remove a simulator's worktree assignment.
+- Run megabrain native sim rename <udid> <name> [--json]. — recommended when you need to rename an Apple simulator.
 - Run megabrain native sim idle [--sweep [--all]] [--touch] [--json]. — recommended when you need the simulators megabrain booted and when they sleep, or to shut down idle ones.
 - Run megabrain native sim screenshot <udid> [--json]. — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
 - Run megabrain native sim shutdown <udid> [--json]. — recommended when you need to shut down one simulator headlessly.

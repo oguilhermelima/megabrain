@@ -501,8 +501,11 @@ and `device`; `health` reads `bundleId`, `device`, `metroPort`, and `controlFram
 ```
 megabrain native appium start|stop|status — recommended when you need to check, start, or stop the shared Appium server for simulator work.
 megabrain native sim list <phone|tv> [--json] — recommended when you need to find available iOS or tvOS simulators of one kind.
-megabrain native sim list --booted [--json] — recommended when you need all currently booted iOS and tvOS simulators.
-megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json] — recommended when you need to boot and prepare the requested Apple simulator.
+megabrain native sim list --booted [--json] — recommended when you need all booted iOS and tvOS simulators with their worktree owners.
+megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--worktree <path>] [--timeout <seconds>] [--json] — recommended when you need to boot and prepare the requested Apple simulator for a worktree.
+megabrain native sim claim <udid> --worktree <path> [--json] — recommended when you need to assign a booted simulator to a worktree.
+megabrain native sim release <udid> [--json] — recommended when you need to remove a simulator's worktree assignment.
+megabrain native sim rename <udid> <name> [--json] — recommended when you need to rename an Apple simulator.
 megabrain native sim idle [--sweep [--all]] [--touch] [--json] — recommended when you need the simulators megabrain booted and when they sleep, or to shut down idle ones.
 megabrain native sim screenshot <udid> [--json] — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
 megabrain native sim shutdown <udid> [--json] — recommended when you need to shut down one simulator headlessly.

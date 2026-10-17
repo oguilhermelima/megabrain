@@ -12,6 +12,7 @@ import { createNativeSessionStore } from "../../../adapters/native-session-store
 import { connectMetroInspector, waitForMetroInspectorTarget, type MetroEvaluation } from "../../../core/native-cdp.js";
 import { buildNativeCaptureFailureRecord, buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome, type NativeCaptureRecord, type NativeCaptureScreenRecord } from "../../../core/native-capture.js";
 import { resolveStateDirectory } from "../../../core/state.js";
+import { readSimulatorOwners, writeSimulatorOwners } from "../../../core/native-sim-owner.js";
 import { executeIdle, recordBooted } from "../native-idle.js";
 import { usageText } from "../../../core/usage.js";
 import { unknownProcess, unknownMetro, unknownTree, unknownFrame, APPIUM_SESSION_DEFAULTS, appiumSessionCapabilities, AppiumSession, AppiumSessionAttempt, AppiumResponse, appiumResponse, appiumMessage, appiumHttpFailure, createAppiumSession, appiumSession } from "./session.js";
@@ -22,7 +23,7 @@ import { runtimePlatform, installedRuntimes, nativeRuntimeList, nativeRuntimeIns
 
 import { Environment, Config, ExpoApp, NativeCaptureScreen, error, refusalCode, normalizeJsonResult, nativeWorktreeRoot, nativeConfigFile, config, setting, simCandidates, parseKind, optionValue, crashReportsDirectory, nativeReload, runtimeValue, formatEvaluation, cdpArguments, nativeEval, routerModuleExpression, logBoxExpression, devLoadingViewExpression, routeInfoExpression, navigationQueueExpression, navigationExpression, RouteSnapshot, NativeNavigationResult, routeSnapshot, routeChanged, nativeNavigationResult, pendingNavigationCount, nativeNavigate, nativeCaptureScreens, uniqueCaptureScreens, captureOptionNames, validateCaptureOptions, terminateNativeCaptureApp, resetNativeCaptureApp, captureNativeFrame, NativeSettledFrame, settleNativeFrame, NativeLogBoxStatus, NativeDevLoadingViewStatus, NativeResetOverlayStatus, silenceNativeLogBox, preventNativeDevLoadingView, silenceNativeOverlays, nativeOverlaySummary, nativeDevLoadingViewSummary, captureNavigationArgs, nativeCapture, appium, executeNative } from "./index.js";
 
-export async function nativeList(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
+export async function nativeList(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(nativeUsage("list"));
   const bootedOnly = args[0] === "--booted";
   let json = false;
@@ -32,12 +33,18 @@ export async function nativeList(args: readonly string[], processAdapter: Proces
   if (kind !== undefined && kind.kind !== "ok") return kind;
   const listed = await listAllCandidates(processAdapter);
   if (listed.kind !== "ok") return listed;
-  const rows = listed.value.filter((device) => (kind?.kind !== "ok" || device.kind === kind.value) && (!bootedOnly || device.state === "Booted"));
+  let rows = listed.value.filter((device) => (kind?.kind !== "ok" || device.kind === kind.value) && (!bootedOnly || device.state === "Booted"));
+  const owners = await readSimulatorOwners(environment);
+  const live = new Set(listed.value.filter((device) => device.state === "Booted").map((device) => device.udid));
+  let stale = false;
+  for (const udid of Object.keys(owners)) if (!live.has(udid)) { delete owners[udid]; stale = true; }
+  if (stale) await writeSimulatorOwners(environment, owners);
+  if (bootedOnly) rows = rows.map((device) => ({ ...device, worktree: owners[device.udid]?.worktree ?? null }));
   if (json) return ok(`${JSON.stringify({ ...(bootedOnly ? {} : { kind: kind!.value }), devices: rows })}\n`);
   return ok(rows.map((row) => `${row.name}\t${row.state}\t${row.udid}\n`).join(""));
 }
 
-export async function nativeShutdown(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
+export async function nativeShutdown(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("native-sim-shutdown")}\n`);
   const udid = args.find((arg) => !arg.startsWith("--")) ?? "";
   if (!SIMULATOR_UDID.test(udid)) return error(`native sim shutdown needs a simulator udid: ${udid}`, 2);
@@ -47,7 +54,47 @@ export async function nativeShutdown(args: readonly string[], processAdapter: Pr
   if (!device) return error(`unknown simulator udid: ${udid}`);
   const stopped = await processAdapter.run("xcrun", ["simctl", "shutdown", udid]);
   if (stopped.kind !== "ok" && device.state !== "Shutdown") return error(`failed to shut down simulator ${udid}: ${stopped.error}`);
+  const owners = await readSimulatorOwners(environment);
+  if (owners[udid]) { delete owners[udid]; await writeSimulatorOwners(environment, owners); }
   return ok(`${JSON.stringify({ udid, state: "Shutdown" })}\n`);
+}
+
+export async function nativeSimClaim(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter, clock: Clock): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("native-sim-claim")}\n`);
+  const udid = args.find((arg) => !arg.startsWith("--")) ?? "";
+  if (!SIMULATOR_UDID.test(udid)) return error(`native sim claim needs a simulator udid: ${udid}`, 2);
+  const worktree = optionValue(args, "--worktree");
+  if (!worktree?.trim() || worktree.startsWith("--")) return error("native sim claim needs --worktree <path>", 2);
+  const listed = await listAllCandidates(processAdapter);
+  if (listed.kind !== "ok") return listed;
+  if (!listed.value.some((device) => device.udid === udid && device.state === "Booted")) return error(`simulator ${udid} must be booted before it can be claimed`);
+  const path = resolve(worktree);
+  const owners = await readSimulatorOwners(environment);
+  owners[udid] = { worktree: path, since: new Date(clock.now()).toISOString() };
+  await writeSimulatorOwners(environment, owners);
+  return ok(`${JSON.stringify({ udid, worktree: path })}\n`);
+}
+
+export async function nativeSimRelease(args: readonly string[], environment: Environment): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("native-sim-release")}\n`);
+  const udid = args.find((arg) => !arg.startsWith("--")) ?? "";
+  if (!SIMULATOR_UDID.test(udid)) return error(`native sim release needs a simulator udid: ${udid}`, 2);
+  const owners = await readSimulatorOwners(environment);
+  delete owners[udid];
+  await writeSimulatorOwners(environment, owners);
+  return ok(`${JSON.stringify({ udid, worktree: null })}\n`);
+}
+
+export async function nativeSimRename(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("native-sim-rename")}\n`);
+  const positional = args.filter((arg) => arg !== "--json" && arg !== "-h" && arg !== "--help");
+  const [udid, name] = positional;
+  if (!udid || !SIMULATOR_UDID.test(udid)) return error(`native sim rename needs a simulator udid: ${udid ?? ""}`, 2);
+  if (!name?.trim()) return error("simulator name must not be empty", 2);
+  if ([...name].length > 64) return error("simulator name must be 64 characters or fewer", 2);
+  const renamed = await processAdapter.run("xcrun", ["simctl", "rename", udid, name]);
+  if (renamed.kind !== "ok") return error(`failed to rename simulator ${udid}: ${renamed.error}`);
+  return ok(`${JSON.stringify({ udid, name })}\n`);
 }
 
 async function listAllCandidates(processAdapter: ProcessAdapter): Promise<Result<Array<NativeCandidate & { kind: NativeKind; runtime: string }>>> {
@@ -118,6 +165,8 @@ export async function nativeEnsure(args: readonly string[], environment: Environ
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
   const timeoutRaw = optionValue(args, "--timeout") ?? environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30";
   const timeout = validateTimeout(timeoutRaw); if (timeout.kind !== "ok") return timeout;
+  const worktree = optionValue(args, "--worktree");
+  if (args.includes("--worktree") && (!worktree?.trim() || worktree.startsWith("--"))) return error("native sim ensure needs a path after --worktree", 2);
   const root = await nativeWorktreeRoot(environment, processAdapter);
   const loaded = config(root); if (loaded.kind !== "ok") return loaded;
   const device = optionValue(args, "--device") ?? setting(loaded.value, kind.value, "device");
@@ -130,5 +179,10 @@ export async function nativeEnsure(args: readonly string[], environment: Environ
   }
   const waited = await waitUntilBooted(kind.value, selected.value.udid, timeout.value, processAdapter, clock);
   if (waited.kind !== "ok") return waited;
+  if (worktree?.trim()) {
+    const owners = await readSimulatorOwners(environment);
+    owners[selected.value.udid] = { worktree: resolve(worktree), since: new Date(clock.now()).toISOString() };
+    await writeSimulatorOwners(environment, owners);
+  }
   return args.includes("--json") ? ok(`${JSON.stringify({ ok: true, kind: kind.value, device: selected.value.udid, state: "Booted" })}\n`) : ok(`simulator ${selected.value.udid} is booted\n`);
 }

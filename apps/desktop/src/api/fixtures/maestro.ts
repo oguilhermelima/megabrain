@@ -5,7 +5,7 @@ import type { MaestroFlow, MaestroRun, Simulator, SimulatorKind } from '@/api/sc
 // (the Device tab's empty state). A run queues briefly, then prints a step about every second; a flow
 // whose path names "login" fails on its third step.
 
-type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot'>
+type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simClaim' | 'simRelease' | 'simRename' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot'>
 
 const seedFlows: MaestroFlow[] = [
   { path: '.maestro/smoke.yaml', name: 'Smoke', appId: 'com.megabrain.desktop' },
@@ -36,6 +36,7 @@ export function createMockMaestroApi(): MaestroApi {
   const flows = new Map<string, MaestroFlow[]>()
   const runs = new Map<string, MaestroRun[]>()
   const live = new Map<string, () => void>()
+  const owners = new Map<string, string>()
   const devices: (Simulator & { kind: SimulatorKind; runtime: string })[] = [
     { udid: 'B50AEA46-5013-445E-A3BB-4FB968ED0B13', name: 'iPhone 18 Pro', state: 'Booted', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0' },
     { udid: 'F9C3EADB-1E0B-499F-A423-EA83499DDF1D', name: 'iPhone 17 Pro', state: 'Shutdown', kind: 'phone', runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-27-0' },
@@ -148,17 +149,22 @@ export function createMockMaestroApi(): MaestroApi {
       await wait(200)
       return devices.filter((device) => device.kind === kind).map(({ udid, name, state }) => ({ udid, name, state }))
     },
-    bootSimulator: async (udid) => {
+    bootSimulator: async (udid, _kind, worktree) => {
       await wait(1500)
       deviceOf(udid).state = 'Booted'
+      if (worktree !== undefined) owners.set(udid, worktree)
     },
+    simClaim: async (udid, worktree) => { if (deviceOf(udid).state !== 'Booted') throw new CliError(`simulator ${udid} must be booted before it can be claimed`, 1); owners.set(udid, worktree) },
+    simRelease: async (udid) => { owners.delete(udid) },
+    simRename: async (udid, name) => { deviceOf(udid).name = name },
     simListBooted: async () => {
       await wait(150)
-      return devices.filter((device) => device.state === 'Booted').map(({ udid, name, runtime, state, kind }) => ({ udid, name, runtime, state, kind }))
+      return devices.filter((device) => device.state === 'Booted').map(({ udid, name, runtime, state, kind }) => ({ udid, name, runtime, state, kind, worktree: owners.get(udid) ?? null }))
     },
     simShutdown: async (udid) => {
       await wait(700)
       deviceOf(udid).state = 'Shutdown'
+      owners.delete(udid)
     },
     simRestart: async (udid) => {
       const device = deviceOf(udid)
