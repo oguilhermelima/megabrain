@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { buildTree, languageForPath, matchingPaths, statusLetter } from '@/code/code-model'
+import { buildTree, diffColumns, languageForPath, matchingPaths, statusLetter } from '@/code/code-model'
 import type { CodeEntry } from '@/api/schema'
 
 const entries: CodeEntry[] = [
@@ -105,5 +105,23 @@ describe('statusLetter', () => {
     ['untracked', 'U'],
   ] as const)('maps %s to %s', (status, letter) => {
     expect(statusLetter(status)).toBe(letter)
+  })
+})
+
+describe('diffColumns', () => {
+  test('a new file shows once', () => {
+    expect(diffColumns('', '# Title\n\nBody')).toBe('one')
+  })
+
+  test('a modified file shows side by side', () => {
+    expect(diffColumns('a\nb', 'a\nc')).toBe('two')
+  })
+
+  test('a deleted file keeps its original beside the empty side', () => {
+    expect(diffColumns('a\nb', '')).toBe('two')
+  })
+
+  test('two empty sides stay side by side', () => {
+    expect(diffColumns('', '')).toBe('two')
   })
 })

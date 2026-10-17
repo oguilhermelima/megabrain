@@ -199,7 +199,7 @@ export function ItemHero({
   )
 
   return (
-    <header ref={ref} className={`relative px-8 ${compact ? 'pt-5 pb-3' : 'pt-7 pb-5'}`}>
+    <header ref={ref} className={`relative px-6 ${compact ? 'pt-5 pb-3' : 'pt-7 pb-5'}`}>
       <div className={layout === 'wide' ? 'grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-8' : 'space-y-4'}>
         <div className="min-w-0 space-y-3">
           <div className="flex items-center gap-2.5">

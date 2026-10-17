@@ -35,7 +35,7 @@ export function ApprovalCard({ approval, pending, onAnswer }: { approval: ChatAp
         <span className="text-ink-400"> · </span>
         <span className="font-semibold text-ink-100">{approval.tool}</span>
       </p>
-      <pre className="mt-2 max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] whitespace-pre-wrap text-ink-200 select-text">{approval.input}</pre>
+      <pre className="mt-2 max-h-48 overflow-y-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] whitespace-pre-wrap text-ink-200 select-text">{approval.input}</pre>
       {approval.reason !== undefined && approval.reason !== null && approval.reason !== '' && <p className="mt-2 text-[13px] text-ink-300">{approval.reason}</p>}
       {pending && (
         <div className="mt-3 flex flex-wrap gap-2">

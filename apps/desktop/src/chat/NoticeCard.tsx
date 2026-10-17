@@ -214,7 +214,7 @@ export function NoticeCard({ card, onOpenChat }: { card: NoticeCardItem; onOpenC
                 <MarkdownText text={panel.text} />
               </div>
             ) : (
-              <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] whitespace-pre-wrap text-ink-200">{panel.text}</pre>
+              <pre className="max-h-48 overflow-y-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] whitespace-pre-wrap text-ink-200">{panel.text}</pre>
             ))}
         </div>
       )}

@@ -279,9 +279,12 @@ export const mockCodeFiles: Record<string, string> = {
   'README.md': '# canto\n\nMedia apps for web, phone and TV.',
 }
 
+// More files than the Diff tab's list shows at once, so it scrolls.
 export const mockCodeChanges: CodeChange[] = [
   { path: 'apps/tv/player/use-player-seek.ts', status: 'modified' },
   { path: 'apps/tv/player/use-player-seek.test.ts', status: 'added' },
+  { path: '.notes/player-seek-inventory.md', status: 'untracked' },
+  ...Array.from({ length: 36 }, (_, index): CodeChange => ({ path: `apps/tv/player/controls/control-${String(index + 1).padStart(2, '0')}.tsx`, status: index % 3 === 0 ? 'added' : 'modified' })),
 ]
 
 export const mockBranchChanges: BranchChanges = {
@@ -308,6 +311,26 @@ export const mockCodeDiff: CodeDiff = {
     '}',
   ].join('\n'),
   modified: mockCodeFiles['apps/tv/player/use-player-seek.ts'] ?? '',
+  binary: false,
+  tooLarge: false,
+}
+
+// A new file: nothing on the original side, longer than the view and with lines wider than it.
+export const mockNewFileDiff: CodeDiff = {
+  path: '.notes/player-seek-inventory.md',
+  original: '',
+  modified: [
+    '# Player seek inventory',
+    '',
+    'Scope: the seek controls as observed on 2026-10-15, on the TV and the phone players, with every path that moves the playhead and what each one does to the rate, the buffer and the captions while it runs.',
+    ...Array.from({ length: 30 }, (_, section) => [
+      '',
+      `## ${section + 1}. Control ${section + 1}`,
+      '',
+      `- Seeks by ${(section + 1) * 5} seconds and keeps the rate the person chose (\`use-player-seek.ts:${section + 7}\`), then reports the new position to the scrubber, the captions and the remote's progress ring in one update.`,
+      '- Leaves the buffer as it is when the target is already loaded.',
+    ]).flat(),
+  ].join('\n'),
   binary: false,
   tooLarge: false,
 }

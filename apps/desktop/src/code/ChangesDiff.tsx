@@ -80,7 +80,7 @@ export function ChangesDiff({ root, uncommitted, branch }: { root: string; uncom
           onClick={() => setSelection({ section, path: change.path })}
           aria-current={selected || undefined}
           title={change.path}
-          className={`flex w-full items-center gap-2 truncate px-3 py-1.5 text-left text-[13px] ${selected ? 'bg-white/[0.1] text-ink-100' : 'text-ink-300 hover:bg-white/[0.06] hover:text-ink-100'}`}
+          className={`flex w-full items-center gap-2 truncate px-6 py-1.5 text-left text-[13px] ${selected ? 'bg-white/[0.1] text-ink-100' : 'text-ink-300 hover:bg-white/[0.06] hover:text-ink-100'}`}
         >
           <span className={`w-4 shrink-0 text-center text-[12px] font-bold ${statusColor[change.status]}`}>{statusLetter(change.status)}</span>
           <span className="truncate">{change.path}</span>
@@ -90,14 +90,14 @@ export function ChangesDiff({ root, uncommitted, branch }: { root: string; uncom
 
   return (
     <div className="flex min-h-0 flex-1">
-      <aside aria-label="Changed files" className="flex w-[300px] min-w-[240px] shrink-0 flex-col overflow-auto border-r border-white/[0.08] py-2">
+      <aside aria-label="Changed files" className="w-[300px] min-w-[240px] shrink-0 overflow-y-auto border-r border-white/[0.08] py-2">
         <SectionTitle title="Uncommitted" count={uncommitted.length} />
-        {uncommitted.length === 0 ? <p className="px-3 pb-2 text-[13px] text-ink-500">Nothing uncommitted.</p> : list('uncommitted', uncommitted)}
+        {uncommitted.length === 0 ? <p className="px-6 pb-2 text-[13px] text-ink-500">Nothing uncommitted.</p> : list('uncommitted', uncommitted)}
         <SectionTitle title={branch?.base === null || branch?.base === undefined ? 'Committed on this branch' : `Committed on this branch (vs ${branch.base})`} count={committed.length} />
         {branch?.base === null ? (
-          <p className="px-3 pb-2 text-[13px] text-ink-500">No base branch to compare with.</p>
+          <p className="px-6 pb-2 text-[13px] text-ink-500">No base branch to compare with.</p>
         ) : committed.length === 0 ? (
-          <p className="px-3 pb-2 text-[13px] text-ink-500">Nothing committed on this branch.</p>
+          <p className="px-6 pb-2 text-[13px] text-ink-500">Nothing committed on this branch.</p>
         ) : (
           list('branch', committed)
         )}
@@ -109,7 +109,7 @@ export function ChangesDiff({ root, uncommitted, branch }: { root: string; uncom
 
 function SectionTitle({ title, count }: { title: string; count: number }) {
   return (
-    <h3 className="flex items-center gap-2 px-3 pt-2 pb-1 text-[11px] font-semibold tracking-[0.04em] text-ink-400 uppercase">
+    <h3 className="flex items-center gap-2 px-6 pt-2 pb-1 text-[11px] font-semibold tracking-[0.04em] text-ink-400 uppercase">
       <span className="truncate">{title}</span>
       {count > 0 && <span className="rounded-full bg-white/[0.1] px-1.5 text-[11px] text-ink-200 tabular-nums">{count}</span>}
     </h3>

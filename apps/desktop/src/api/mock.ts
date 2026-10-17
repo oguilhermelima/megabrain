@@ -2,8 +2,8 @@ import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat,
 import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/api/fixtures/chat-artifacts'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
-import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
-import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
+import type { ArchivedWorktree, CodeChange, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
+import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockNewFileDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { createMockMaestroApi } from '@/api/fixtures/maestro'
 import { mockUsageStats } from '@/api/fixtures/usage'
@@ -14,6 +14,9 @@ import { validateRule } from '@/settings/chain-rules'
 import { effectiveToggles, inEffect, parseKnowledgeSettings } from '@/settings/knowledge-model'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** A file the change list shows as new, whose diff has nothing on the original side. */
+const isNew = (changes: readonly CodeChange[], path: string) => changes.some((change) => change.path === path && (change.status === 'added' || change.status === 'untracked'))
 
 // Runs the UI in a plain browser (`bun run dev`) with fixed data and believable timing.
 export function createMockApi(): DesktopApi {
@@ -361,9 +364,9 @@ export function createMockApi(): DesktopApi {
       return { path, text: text ?? `// ${path}`, binary: false, tooLarge: false }
     },
     codeChanges: async () => mockCodeChanges,
-    codeDiff: async (_root, path) => ({ ...mockCodeDiff, path }),
+    codeDiff: async (_root, path) => ({ ...(isNew(mockCodeChanges, path) ? mockNewFileDiff : mockCodeDiff), path }),
     codeBranchChanges: async () => mockBranchChanges,
-    codeBranchDiff: async (_root, _mergeBase, path) => ({ ...mockCodeDiff, path }),
+    codeBranchDiff: async (_root, _mergeBase, path) => ({ ...(isNew(mockBranchChanges.changes, path) ? mockNewFileDiff : mockCodeDiff), path }),
     chats: async () => [mockNativeChat],
     startChat: async ({ agent, model, cwd }) => ({ ...mockNativeChat, id: `chat-${Date.now()}`, agent, model: model ?? null, cwd, title: null, state: 'starting' }),
     sendChat: async (chatId, parts) => {

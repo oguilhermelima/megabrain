@@ -155,7 +155,7 @@ function ReviewPanel({ pending, error, onSubmit, onConfirmChanges, onClose }: { 
       onKeyDown={(keyEvent) => {
         if (keyEvent.key === 'Escape' && !running) onClose()
       }}
-      className="absolute top-full right-8 z-30 -mt-2 w-[min(460px,calc(100%-4rem))] space-y-3 rounded-[20px] border border-white/[0.12] bg-ink-900 p-4 shadow-2xl"
+      className="absolute top-full right-6 z-30 -mt-2 w-[min(460px,calc(100%-3rem))] space-y-3 rounded-[20px] border border-white/[0.12] bg-ink-900 p-4 shadow-2xl"
     >
       <Segmented value={event} options={reviewEvents} onChange={setEvent} disabled={running} />
       <textarea
@@ -496,7 +496,7 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
       : [{ value: 'conversation', label: 'Conversation', ...(detail === null ? {} : { count: detail.comments.length }) }]
 
   const tabBar = (
-    <div className="px-8 pt-1 pb-3">
+    <div className="px-6 pt-1 pb-3">
       <TabBar value={tab} tabs={tabs} onChange={setTab} />
     </div>
   )
@@ -514,7 +514,7 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
           {header}
           {/* The tabs stay under the top of the pane once the hero scrolls away. */}
           <div className="sticky top-0 z-20 border-b border-white/[0.06] bg-ink-950">{tabBar}</div>
-          <div className="space-y-4 px-8 pt-6 pb-10">
+          <div className="space-y-4 px-6 pt-6 pb-10">
             {error !== null && (
               <div className="space-y-3">
                 <ErrorNote error={error} />

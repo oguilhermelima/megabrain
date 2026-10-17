@@ -79,8 +79,20 @@ body {
   overflow: hidden;
   overscroll-behavior: none;
 }
-* {
-  overscroll-behavior: none;
+
+/* Only on the axes a box scrolls: any other scroll container, a card that clips or a row that
+   scrolls sideways, would end the wheel's way to the panel around it, so nothing would scroll. */
+@layer base {
+  .overflow-auto {
+    overscroll-behavior: none;
+  }
+  .overflow-y-auto,
+  .overflow-y-scroll {
+    overscroll-behavior-y: none;
+  }
+  .overflow-x-auto {
+    overscroll-behavior-x: none;
+  }
 }
 
 body {

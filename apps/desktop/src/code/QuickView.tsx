@@ -177,7 +177,7 @@ export function QuickView({ root, title, onClose }: { root: string; title: strin
                   className="w-full rounded-lg border border-white/10 bg-white/[0.05] px-3 py-1.5 text-[13px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
                 />
               </div>
-              <div className="min-h-0 flex-1 overflow-auto">
+              <div className="min-h-0 flex-1 overflow-y-auto">
                 {treeError !== null ? (
                   <div className="p-3">
                     <ErrorNote error={treeError} />
@@ -200,7 +200,7 @@ export function QuickView({ root, title, onClose }: { root: string; title: strin
               </div>
             </div>
           ) : (
-            <div className="min-h-0 flex-1 overflow-auto py-1">
+            <div className="min-h-0 flex-1 overflow-y-auto py-1">
               {changes.length === 0 ? (
                 <p className="p-3 text-[13px] text-ink-500">No changes.</p>
               ) : (

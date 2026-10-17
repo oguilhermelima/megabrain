@@ -128,3 +128,8 @@ const statusLetters: Record<CodeChange['status'], string> = {
 export function statusLetter(status: CodeChange['status']): string {
   return statusLetters[status]
 }
+
+/** How many columns a diff takes: a new file has nothing on its original side, so it shows once. */
+export function diffColumns(original: string, modified: string): 'one' | 'two' {
+  return original === '' && modified !== '' ? 'one' : 'two'
+}
