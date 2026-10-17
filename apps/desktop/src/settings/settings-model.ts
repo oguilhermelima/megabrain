@@ -24,25 +24,35 @@ export function resetsIn(resetsAt: string | null, now: Date = new Date()): strin
 
 export interface ProviderReadings {
   provider: string
+  bucket?: string | null
   fiveHour: UsageReading | null
   weekly: UsageReading | null
+  pools?: { bucket: string | null; fiveHour: UsageReading | null; weekly: UsageReading | null }[]
 }
 
-/** Groups usage readings by provider, keeping the order providers first appear in. */
+/** Groups pools under providers, keeping provider and pool order from the CLI response. */
 export function groupReadingsByProvider(readings: UsageReading[]): ProviderReadings[] {
   const order: string[] = []
   const byProvider = new Map<string, ProviderReadings>()
   for (const reading of readings) {
-    let group = byProvider.get(reading.provider)
+    const bucket = reading.bucket ?? null
+    const key = `${reading.provider}:${bucket ?? ''}`
+    let group = byProvider.get(key)
     if (group === undefined) {
-      group = { provider: reading.provider, fiveHour: null, weekly: null }
-      byProvider.set(reading.provider, group)
-      order.push(reading.provider)
+      const pool = { bucket, fiveHour: null, weekly: null }
+      group = { provider: reading.provider, bucket, fiveHour: null, weekly: null, pools: [pool] }
+      byProvider.set(key, group)
+      order.push(key)
     }
-    if (reading.window === '5h') group.fiveHour = reading
-    else if (reading.window === 'weekly') group.weekly = reading
+    const pool = group.pools![0]!
+    if (reading.window === '5h') pool.fiveHour = reading
+    else if (reading.window === 'weekly') pool.weekly = reading
+    if (group.pools!.length === 1) {
+      if (reading.window === '5h') group.fiveHour = reading
+      else if (reading.window === 'weekly') group.weekly = reading
+    }
   }
-  return order.map((provider) => byProvider.get(provider) as ProviderReadings)
+  return order.map((key) => byProvider.get(key) as ProviderReadings)
 }
 
 export function stepText(step: ChainStep): string {

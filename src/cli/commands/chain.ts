@@ -301,7 +301,7 @@ function formatList(config: ChainConfig, asJson: boolean): string {
   for (const [name, chain] of Object.entries(config.chains)) lines.push(`${name.padEnd(20)} ${JSON.stringify(chain.when ?? {}).padEnd(36)} ${chain.steps.length}`);
   return lines.join("\n") + "\n";
 }
-type LimitRow = { provider: string; window: string; status: string; usedPercent: number | null; resetsAt: string | null; source: string; fetchedAt: number | null; reason: string | null; retryAt: number | null; bucket: string | null; reading: { kind: string; basis: string | null } | null };
+type LimitRow = { provider: string; window: string; status: string; usedPercent: number | null; resetsAt: string | null; source: string; fetchedAt: number | null; reason: string | null; retryAt: number | null; bucket: string | null; stale?: boolean; staleReason?: string; reading: { kind: string; basis: string | null } | null };
 const limitAgents = ["codex", "claude", "agy", "grok"] as const;
 const liveProviders = ["claude", "agy", "grok"] as const;
 const limitWindows = ["5h", "weekly"] as const;
@@ -313,18 +313,20 @@ const limitWindows = ["5h", "weekly"] as const;
 // (agy groups models by family) and this row shape only has room for one per
 // (provider, window): it shows the bucket the reader answered for, the most used
 // one when no model is given.
-function rowFor(provider: LimitAgent, window: LimitWindowName, reading: LimitReading): LimitRow {
+function rowsFor(provider: LimitAgent, window: LimitWindowName, reading: LimitReading): LimitRow[] {
   if (reading.status === "unknown") {
-    return { provider, window, status: "unknown", usedPercent: null, resetsAt: null, source: "unknown", fetchedAt: null, reason: reading.reason, retryAt: null, bucket: null, reading: null };
+    return [{ provider, window, status: "unknown", usedPercent: null, resetsAt: null, source: "unknown", fetchedAt: null, reason: reading.reason, retryAt: null, bucket: null, reading: null }];
   }
   const resultReading = reading.result.reading;
-  return {
-    provider, window, status: reading.status, usedPercent: reading.usedPercent, resetsAt: reading.resetsAt,
-    source: reading.source, fetchedAt: reading.fetchedAt, reason: reading.reason,
+  const entries = reading.result.windows.filter((entry) => entry.name === window);
+  return entries.map((entry) => ({
+    provider, window, status: reading.status, usedPercent: entry.usedPercent, resetsAt: entry.resetsAt,
+    source: reading.source, fetchedAt: reading.fetchedAt, reason: reading.status === "stale" ? reading.staleReason : reading.reason,
     retryAt: reading.status === "stale" ? reading.retryAt ?? null : null,
-    bucket: reading.bucket,
+    bucket: entry.bucket,
+    ...(reading.status === "stale" ? { stale: true, staleReason: reading.staleReason } : {}),
     reading: resultReading ? { kind: resultReading.kind, basis: resultReading.basis } : null,
-  };
+  }));
 }
 export async function readLimitRows(environment: ChainEnvironment, config: ChainConfig, processAdapter: ProcessAdapter): Promise<LimitRow[]> {
   const root = resolveStateDirectory(environment);
@@ -335,7 +337,7 @@ export async function readLimitRows(environment: ChainEnvironment, config: Chain
     limitAgents.map(async (provider) => {
       const rows: LimitRow[] = [];
       for (const window of limitWindows) {
-        rows.push(rowFor(provider, window, await readLimit(provider, window, config, environment, processAdapter, root)));
+        rows.push(...rowsFor(provider, window, await readLimit(provider, window, config, environment, processAdapter, root)));
       }
       return rows;
     }),

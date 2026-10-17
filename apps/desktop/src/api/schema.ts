@@ -190,6 +190,7 @@ export const chainValidationSchema = z.looseObject({
 export const usageReadingSchema = z.looseObject({
   provider: z.string(),
   window: z.string(),
+  bucket: z.string().nullable().optional(),
   status: z.string(),
   usedPercent: z.number().nullable(),
   /** Unix seconds as a string, as chain limits reports it. */
@@ -198,8 +199,6 @@ export const usageReadingSchema = z.looseObject({
   reason: z.string(),
   /** Unix seconds of the next live attempt, when the status is stale; absent from an older CLI. */
   retryAt: z.number().nullable().optional(),
-  /** The pool of models the window counts ("Gemini Models"); "default" or absent when the provider has one, null when it could not be read. */
-  bucket: z.string().nullable().optional(),
   /** Where the reading came from: disk, cache or live. */
   source: z.string().optional(),
   /** Set when the value is the last one known rather than a current reading, with why. */

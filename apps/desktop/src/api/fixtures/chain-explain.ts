@@ -32,7 +32,7 @@ function condition(rule: Condition, input: ChainExplainInput, readings: UsageRea
   if (rule.usage !== undefined) {
     specificity += 1
     const { provider, window, below, above } = rule.usage
-    const used = readings.find((reading) => reading.provider === provider && reading.window === window)?.usedPercent ?? null
+    const used = readings.filter((reading) => reading.provider === provider && reading.window === window).reduce<number | null>((highest, reading) => reading.usedPercent === null ? highest : highest === null ? reading.usedPercent : Math.max(highest, reading.usedPercent), null)
     const ok = used !== null && (below === undefined || used < below) && (above === undefined || used > above)
     reasons.push(`${provider} ${window} usage ${used === null ? 'is unknown' : `is ${used}%`}`)
     if (!ok) return { matched: false, specificity, reasons }

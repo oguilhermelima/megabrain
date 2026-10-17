@@ -10,7 +10,7 @@ export function keepKnownReadings(previous: Settings | null, next: Settings): Se
   // A provider with several pools of models (agy) has a reading per pool for each window.
   const key = (reading: UsageReading) => `${reading.provider}:${reading.bucket ?? 'default'}:${reading.window}`
   const known = new Map(previous.limits.readings.filter((reading) => reading.usedPercent !== null).map((reading) => [key(reading), reading]))
-  const asStale = (reading: UsageReading): UsageReading => (reading.status === 'current' ? { ...reading, status: 'stale' } : reading)
+  const asStale = (reading: UsageReading): UsageReading => (reading.status === 'current' ? { ...reading, status: 'stale', stale: true, staleReason: reading.reason } : reading)
   const readings = next.limits.readings.map((reading) => {
     const before = known.get(key(reading))
     return reading.usedPercent === null && before !== undefined ? asStale(before) : reading

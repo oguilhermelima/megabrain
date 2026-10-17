@@ -36,7 +36,7 @@ export type LimitReading =
   | Readonly<{ readonly status: "current"; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "disk" | "cache" | "live"; readonly result: LimitResult; readonly fetchedAt: number }>
   // The provider could not be asked just now (rate limited, timed out, in backoff); this is its last
   // good snapshot, `fetchedAt` old, and `retryAt` (unix seconds) is the earliest the next live call may go out.
-  | Readonly<{ readonly status: "stale"; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "cache"; readonly result: LimitResult; readonly fetchedAt: number; readonly retryAt?: number }>
+  | Readonly<{ readonly status: "stale"; readonly stale: true; readonly staleReason: string; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "cache"; readonly result: LimitResult; readonly fetchedAt: number; readonly retryAt?: number }>
   | Readonly<{ readonly status: "unknown"; readonly reason: string; readonly transient?: Readonly<{ readonly retryAfterSeconds?: number }> }>;
 
 export type ChainLimitEnvironment = Readonly<Record<string, string | undefined>>;
@@ -190,10 +190,19 @@ function resolveCodexLimit(sessionsDir: string, window: LimitWindowName, now: nu
 // that names the step's model family; without a model the most used bucket is the safe answer.
 function entryFor(result: LimitResult, window: LimitWindowName, model: string | undefined): LimitEntry | undefined {
   const entries = result.windows.filter((candidate) => candidate.name === window);
-  const family = model?.toLowerCase().split(/[-_ ]/)[0];
   const shared = new Set(result.windows.map((entry) => entry.bucket)).size <= 1;
-  const chosen = shared || family === undefined || family === "" ? entries : entries.filter((entry) => `${entry.bucket} ${entry.models ?? ""}`.toLowerCase().includes(family));
-  return chosen.reduce<LimitEntry | undefined>((most, entry) => most === undefined || entry.usedPercent > most.usedPercent ? entry : most, undefined);
+  if (shared || model === undefined || model === "") return mostUsed(entries);
+  const terms = model.toLowerCase().split(/[-_ .]+/).filter((term) => term.length > 1 && !/^\d+$/.test(term));
+  const ranked = entries.map((entry) => {
+    const description = `${entry.bucket} ${entry.models ?? ""}`.toLowerCase();
+    return { entry, score: terms.reduce((score, term) => score + (description.includes(term) ? 1 : 0), 0) };
+  }).filter(({ score }) => score > 0).sort((a, b) => b.score - a.score);
+  if (ranked.length === 0 || (ranked[1] !== undefined && ranked[0]!.score === ranked[1].score)) return undefined;
+  return ranked[0]!.entry;
+}
+
+function mostUsed(entries: readonly LimitEntry[]): LimitEntry | undefined {
+  return entries.reduce<LimitEntry | undefined>((most, entry) => most === undefined || entry.usedPercent > most.usedPercent ? entry : most, undefined);
 }
 
 function applyLimitResult(result: LimitResult, agent: LimitAgent, window: LimitWindowName, source: "cache" | "live", model?: string): LimitReading {
@@ -484,7 +493,7 @@ export async function readLimit(agent: LimitAgent, window: LimitWindowName, conf
     return staleReading(agent, window, stateDir, model, innerReason(reading.reason), retryAt) ?? reading;
   }
   settleLiveCall(agent, stateDir, { kind: "neutral" });
-  return reading;
+  return staleReading(agent, window, stateDir, model, innerReason(reading.reason), undefined) ?? reading;
 }
 
 // The wait after consecutive failures: the provider's Retry-After when it sent one, else 60 seconds
@@ -583,7 +592,7 @@ function staleReading(agent: LimitAgent, window: LimitWindowName, stateDir: stri
   if (!isObject(parsed) || parsed.provider !== agent || typeof parsed.fetchedAt !== "number" || !Array.isArray(parsed.windows)) return undefined;
   const reading = applyLimitResult(parsed as unknown as LimitResult, agent, window, "cache", model);
   if (reading.status !== "current") return undefined;
-  return { ...reading, status: "stale", source: "cache", reason: `${agent} ${window} window is stale (${why})`, ...(retryAt === undefined ? {} : { retryAt }) };
+  return { ...reading, status: "stale", stale: true, staleReason: why, source: "cache", reason: `${agent} ${window} window is stale (${why})`, ...(retryAt === undefined ? {} : { retryAt }) };
 }
 
 // Ports megabrain_chain_reset_display: codex's resetsAt is a stringified epoch

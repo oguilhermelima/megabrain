@@ -70,6 +70,16 @@ describe('groupReadingsByProvider', () => {
     expect(grouped[1]?.fiveHour?.usedPercent).toBe(17)
     expect(grouped[1]?.weekly).toBe(null)
   })
+
+  test('keeps Antigravity quota buckets distinct within the same windows', () => {
+    const grouped = groupReadingsByProvider([
+      { provider: 'agy', window: 'weekly', bucket: 'Gemini Models', status: 'current', usedPercent: 12, resetsAt: '1', fetchedAt: 1, reason: 'gemini' },
+      { provider: 'agy', window: 'weekly', bucket: 'Claude and GPT models', status: 'current', usedPercent: 45, resetsAt: '2', fetchedAt: 1, reason: 'third party' },
+    ])
+    expect(grouped.filter((item) => item.provider === 'agy').map((item) => [item.bucket, item.weekly?.usedPercent])).toEqual([
+      ['Gemini Models', 12], ['Claude and GPT models', 45],
+    ])
+  })
   test('no readings is an empty list', () => {
     expect(groupReadingsByProvider([])).toEqual([])
   })

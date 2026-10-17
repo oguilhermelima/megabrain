@@ -116,7 +116,10 @@ export interface ProviderCard extends ProviderReadings {
 export function providerCards(usage: readonly ProviderUsage[] | null, readings: readonly ProviderReadings[], enabled: readonly string[]): ProviderCard[] {
   const names = [...(usage ?? []).map((entry) => entry.provider), ...readings.map((group) => group.provider)].filter((name, index, all) => all.indexOf(name) === index)
   return names.map((name) => {
-    const group = readings.find((entry) => entry.provider === name)
-    return { provider: name, usage: usage?.find((entry) => entry.provider === name) ?? null, fiveHour: group?.fiveHour ?? null, weekly: group?.weekly ?? null, liveEnabled: enabled.includes(name) }
+    const groups = readings.filter((entry) => entry.provider === name)
+    const group = groups[0]
+    const pools = groups.flatMap((entry) => entry.pools ?? [])
+    const bucketed = groups.some((entry) => entry.bucket !== null && entry.bucket !== undefined)
+    return { provider: name, ...(bucketed ? { bucket: null, pools } : {}), usage: usage?.find((entry) => entry.provider === name) ?? null, fiveHour: group?.fiveHour ?? null, weekly: group?.weekly ?? null, liveEnabled: enabled.includes(name) }
   })
 }

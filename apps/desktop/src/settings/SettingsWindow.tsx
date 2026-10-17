@@ -197,7 +197,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
                 <ChainsSection
                   chains={settings.chains}
                   models={settings.models}
-                  providers={groupReadingsByProvider(settings.limits.readings).map((group) => group.provider)}
+                  providers={[...new Set(groupReadingsByProvider(settings.limits.readings).map((group) => group.provider))]}
                   error={error}
                   run={act}
                 />

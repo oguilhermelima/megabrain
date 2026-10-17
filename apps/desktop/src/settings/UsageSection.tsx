@@ -210,7 +210,7 @@ function LimitBar({ label, reading }: { label: string; reading: UsageReading | n
       <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.07]" role="meter" aria-label={`${label} used`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined}>
         <div className={`h-full rounded-full ${barColor[usageLevel(percent)]}`} style={{ width: `${percent ?? 0}%` }} />
       </div>
-      <p className="min-h-4 truncate text-[11.5px] text-ink-500">{resets ?? reading?.reason ?? ''}</p>
+      <p className={`min-h-4 truncate text-[11.5px] ${reading?.stale === true || reading?.status === 'stale' ? 'text-warn' : 'text-ink-500'}`}>{reading?.stale === true || reading?.status === 'stale' ? `Stale · ${reading.staleReason ?? reading.reason}` : resets ?? reading?.reason ?? ''}</p>
     </div>
   )
 }
@@ -221,7 +221,8 @@ const folder = (path: string) => path.split('/').filter(Boolean).at(-1) ?? path
 
 function ProviderPanel({ card, loading, onToggle }: { card: ProviderCard; loading: boolean; onToggle: (enabled: boolean) => void }) {
   const usage = card.usage
-  const hasLimits = card.fiveHour !== null || card.weekly !== null
+  const pools = (card.pools ?? []).length > 0 ? card.pools! : [{ bucket: null, fiveHour: card.fiveHour, weekly: card.weekly }]
+  const hasLimits = pools.some((pool) => pool.fiveHour !== null || pool.weekly !== null)
   return (
     <section className="grid content-start gap-3 rounded-[16px] border border-white/[0.08] bg-ink-900/80 p-4" aria-label={card.provider}>
       <header className="flex items-center gap-2">
@@ -279,8 +280,10 @@ function ProviderPanel({ card, loading, onToggle }: { card: ProviderCard; loadin
       )}
       {hasLimits && (
         <div className="grid gap-2 border-t border-white/[0.06] pt-3">
-          <LimitBar label="5 hours" reading={card.fiveHour} />
-          <LimitBar label="Weekly" reading={card.weekly} />
+          {pools.flatMap((pool) => [
+            ...(pool.fiveHour === null ? [] : [<LimitBar key={`${pool.bucket ?? 'default'}-5h`} label={`${pool.bucket ? `${pool.bucket} · ` : ''}5 hours`} reading={pool.fiveHour} />]),
+            ...(pool.weekly === null ? [] : [<LimitBar key={`${pool.bucket ?? 'default'}-weekly`} label={`${pool.bucket ? `${pool.bucket} · ` : ''}Weekly`} reading={pool.weekly} />]),
+          ])}
         </div>
       )}
     </section>

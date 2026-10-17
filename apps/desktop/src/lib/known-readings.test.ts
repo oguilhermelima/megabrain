@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { Settings, UsageReading } from '@/api/schema'
 import { keepKnownReadings } from '@/lib/known-readings'
 
-const reading = (provider: string, window: string, usedPercent: number | null, status = usedPercent === null ? 'unknown' : 'current'): UsageReading => ({
+const reading = (provider: string, window: string, usedPercent: number | null, status = usedPercent === null ? 'unknown' : 'current', bucket: string | null = null): UsageReading => ({
   provider,
   window,
   status,
@@ -10,6 +10,7 @@ const reading = (provider: string, window: string, usedPercent: number | null, s
   resetsAt: usedPercent === null ? null : '2099-01-01T00:00:00Z',
   fetchedAt: usedPercent === null ? null : 1000,
   reason: `${provider} ${window}`,
+  bucket,
 })
 
 const settings = (...readings: UsageReading[]): Settings => ({ limits: { enabledProviders: [], notice: { enabled: false, intervalSeconds: 3600 }, readings } }) as unknown as Settings
@@ -26,6 +27,16 @@ describe('keepKnownReadings', () => {
       ['codex', '5h', 17, 'current'],
       ['claude', '5h', 5, 'stale'],
       ['claude', 'weekly', 24, 'stale'],
+    ])
+  })
+
+  test('keeps same-window buckets independently', () => {
+    const next = keepKnownReadings(
+      settings(reading('agy', 'weekly', 15, 'current', 'Gemini Models'), reading('agy', 'weekly', 47, 'current', 'Claude and GPT models')),
+      settings(reading('agy', 'weekly', null, 'unknown', 'Claude and GPT models')),
+    )
+    expect(next.limits.readings.map((item) => [item.bucket, item.usedPercent, item.status])).toEqual([
+      ['Claude and GPT models', 47, 'stale'], ['Gemini Models', 15, 'stale'],
     ])
   })
 

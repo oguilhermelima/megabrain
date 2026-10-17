@@ -58,6 +58,21 @@ describe("agy usage limits", () => {
     });
   });
 
+  test("parses every live quota pool and retains their names and windows", async () => {
+    await withDirectory(async (state) => {
+      const process = fakeProcess((command) => command === "agy" ? ok({ stdout: fixture("agy-usage-multiple-pools.json"), stderr: "", exitCode: 0 }) : failed(`unexpected ${command}`));
+      const claude = await readLimit("agy", "weekly", live("agy"), {}, process, state, "claude-sonnet-5-5");
+      const gemini = await readLimit("agy", "5h", live("agy"), {}, process, state, "gemini-3.1-pro-high");
+      const argon = await readLimit("agy", "weekly", live("agy"), {}, process, state, "gemini-4-argon");
+      expect(claude).toMatchObject({ status: "current", bucket: "Claude and GPT models", usedPercent: 40 });
+      expect(gemini).toMatchObject({ status: "current", bucket: "Gemini Models", usedPercent: 10 });
+      expect(argon).toMatchObject({ status: "current", bucket: "Gemini 4 Argon", usedPercent: 0 });
+      expect(claude.status === "current" && claude.result.windows.map(({ bucket, name }) => [bucket, name])).toEqual([
+        ["Gemini Models", "weekly"], ["Gemini Models", "5h"], ["Claude and GPT models", "weekly"], ["Claude and GPT models", "5h"], ["Gemini 4 Argon", "weekly"],
+      ]);
+    });
+  });
+
   test("without a model, the most used bucket is the answer", async () => {
     await withDirectory(async (state) => {
       expect(await readLimit("agy", "weekly", live("agy"), {}, agy(), state)).toMatchObject({ status: "current", usedPercent: 100 });
@@ -84,6 +99,18 @@ describe("agy usage limits", () => {
       expect(await readLimit("agy", "5h", live("agy"), {}, signedOut, state)).toMatchObject({ status: "unknown", reason: expect.stringContaining("not signed in") });
       const missing = fakeProcess(() => failed("Executable not found in $PATH: agy"));
       expect(await readLimit("agy", "5h", live("agy"), {}, missing, state)).toMatchObject({ status: "unknown", reason: expect.stringContaining("agy CLI") });
+    });
+  });
+
+  test("returns a saved quota as stale when the live provider stops returning data", async () => {
+    await withDirectory(async (state) => {
+      const config = { ...live("agy"), usageLimits: { liveProviders: ["agy"], cacheTtlSeconds: 0 } } as unknown as ChainConfig;
+      const saved = await readLimit("agy", "weekly", config, {}, agy(), state, "claude-sonnet-5-5");
+      expect(saved).toMatchObject({ status: "current", bucket: "Claude and GPT models" });
+      const signedOut = fakeProcess(() => ok({ stdout: "", stderr: 'AGY_ERROR: {"status":"UNAUTHENTICATED","error_code":401}', exitCode: 1 }));
+      expect(await readLimit("agy", "weekly", config, {}, signedOut, state, "claude-sonnet-5-5")).toMatchObject({
+        status: "stale", stale: true, staleReason: expect.any(String), usedPercent: 100, bucket: "Claude and GPT models", fetchedAt: expect.any(Number),
+      });
     });
   });
 });
