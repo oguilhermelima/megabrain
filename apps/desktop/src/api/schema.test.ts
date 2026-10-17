@@ -4,7 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
-import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema } from '@/api/schema'
+import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema } from '@/api/schema'
+import { openProject } from '../../../../src/knowledge/store'
 
 const captured = join(import.meta.dir, 'fixtures', 'captured')
 const json = (name: string): unknown => JSON.parse(readFileSync(join(captured, name), 'utf8'))
@@ -128,6 +129,34 @@ describe('the staged CLI still speaks the schemas', () => {
       rmSync(state, { recursive: true, force: true })
     }
   }
+
+  test('knowledge show, list, search and transcript match app schemas', () => {
+    const home = mkdtempSync(join(tmpdir(), 'megabrain-desktop-home-'))
+    const state = mkdtempSync(join(tmpdir(), 'megabrain-desktop-state-'))
+    try {
+      const repo = '/tmp/knowledge-contract-project'
+      const project = openProject(state, repo)
+      project.saveTopic({ id: 'diagnostico-rede-local', project: repo, title: 'Diagnóstico de rede local', kind: 'investigation', status: 'active', createdAt: '2026-10-17T10:00:00.000Z', updatedAt: '2026-10-17T10:00:00.000Z', aliases: [], sections: { overview: 'Diagnóstico do Shizuku.', state: 'Verificado.', pitfalls: '', open: '' }, decisions: [], refs: [], chats: ['c1'], keyMessages: [] })
+      project.saveChat({ id: 'c1', sessionKeys: ['chat:c1'], title: null, summary: 'Diagnóstico do Shizuku', agent: 'claude', model: null, branch: '', worktree: repo, startedAt: '2026-10-17T10:00:00.000Z', endedAt: '', topics: ['diagnostico-rede-local'], refs: [], userTurns: 1, summarizedAt: '2026-10-17T10:00:00.000Z', curated: true })
+      project.writeTranscript('c1', [{ cursor: '1', at: '2026-10-17T10:00:00.000Z', role: 'person', text: 'Diagnóstico local' }])
+      const invoke = (args: string[]) => spawnSync(cli, args, { cwd: home, encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', MEGABRAIN_STATE_DIR: state, MEGABRAIN_ROOT: join(binaries, 'share', 'megabrain'), MEGABRAIN_TMUX_SOCKET: join(state, 'tmux.sock'), TMUX_TMPDIR: state } })
+      const show = invoke(['knowledge', 'show', 'diagnostico-rede-local', '--json'])
+      const list = invoke(['knowledge', 'list', '--json'])
+      const search = invoke(['knowledge', 'search', 'diagnóstico', '--json'])
+      const transcript = invoke(['knowledge', 'transcript', 'c1', '--json'])
+      expect(show.status).toBe(0)
+      expect(knowledgeTopicSchema.safeParse(JSON.parse(show.stdout)).error).toBeUndefined()
+      expect(list.status).toBe(0)
+      expect(knowledgeListSchema.safeParse(JSON.parse(list.stdout)).error).toBeUndefined()
+      expect(search.status).toBe(0)
+      expect(knowledgeSearchSchema.safeParse(JSON.parse(search.stdout)).error).toBeUndefined()
+      expect(transcript.status).toBe(0)
+      expect(knowledgeTranscriptSchema.safeParse(JSON.parse(transcript.stdout)).error).toBeUndefined()
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+      rmSync(state, { recursive: true, force: true })
+    }
+  })
 
   test('the sidecar is staged', () => {
     expect(existsSync(cli)).toBe(true)

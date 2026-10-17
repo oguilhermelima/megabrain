@@ -703,10 +703,10 @@ export const knowledgeDecisionSchema = z.looseObject({
 export const knowledgeKeyMessageSchema = z.looseObject({ chatId: z.string(), eventCursor: z.string(), at: z.string(), role: z.string(), text: z.string(), why: z.string() })
 export const knowledgeChatSchema = z.looseObject({
   id: z.string(),
-  title: z.string(),
+  title: z.string().nullable(),
   summary: z.string(),
   agent: z.string(),
-  model: z.string(),
+  model: z.string().nullable(),
   branch: z.string(),
   worktree: z.string(),
   startedAt: z.string(),
@@ -725,7 +725,7 @@ export const knowledgeTopicSchema = knowledgeTopicSummarySchema.extend({
   chatRecords: z.array(knowledgeChatSchema),
 })
 export const knowledgeTranscriptSchema = z.looseObject({
-  chat: knowledgeChatSchema,
+  chat: knowledgeChatSchema.omit({ lastMessages: true }),
   /** The distilled conversation: person and agent messages in full, each tool call as one line. */
   events: z.array(z.looseObject({ cursor: z.string(), at: z.string(), role: z.enum(['person', 'agent', 'tool']), text: z.string() })),
 })

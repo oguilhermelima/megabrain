@@ -66,7 +66,7 @@ export async function executeKnowledge(args: readonly string[], environment: Env
   if (verb === "show" && flags.positional.length === 1) {
     const topic = showTopic(dir, flags.positional[0] ?? "");
     if (topic === null) return failed(`unknown topic: ${flags.positional[0]}`, 1);
-    if (flags.json) return print(topic);
+    if (flags.json) return print({ ...topic, ...summarizeTopic(topic) });
     const live = topic.decisions.filter((decision) => decision.supersededBy === undefined);
     return ok([`${topic.title} (${topic.kind}, ${topic.status})`, "", `Overview\n${topic.sections.overview}`, `State\n${topic.sections.state}`, `Decisions\n${live.map((decision) => `- ${decision.text} (${decision.why})`).join("\n")}`, `Pitfalls\n${topic.sections.pitfalls}`, `Open\n${topic.sections.open}`, ""].join("\n"));
   }

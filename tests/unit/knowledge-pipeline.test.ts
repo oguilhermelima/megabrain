@@ -490,7 +490,7 @@ describe("knowledge verbs", () => {
     const h = await seeded();
     const id = h.project.topics()[0]?.id as string;
     const body = json(await executeKnowledge(["show", id, "--json"], h.environment));
-    expect(Object.keys(body).sort()).toEqual(["aliases", "chatRecords", "chats", "createdAt", "decisions", "id", "keyMessages", "kind", "project", "refs", "sections", "status", "title", "updatedAt"]);
+    expect(Object.keys(body).sort()).toEqual(["activity", "aliases", "chatRecords", "chats", "createdAt", "decisions", "id", "keyMessages", "kind", "overview", "project", "refs", "sections", "status", "title", "updatedAt"]);
     expect(Object.keys(body.sections).sort()).toEqual(["open", "overview", "pitfalls", "state"]);
     const parent = body.chatRecords.find((record: { id: string }) => record.id === "c1");
     expect(Object.keys(parent).sort()).toEqual(["agent", "branch", "endedAt", "id", "lastMessages", "model", "refs", "startedAt", "summary", "title", "topics", "worktree"]);

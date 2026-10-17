@@ -326,7 +326,7 @@ function ChatLine({ chat, now }: { chat: KnowledgeChat; now: number }) {
   return (
     <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-ink-400">
       <AgentIcon agent={chat.agent} size={12} className="shrink-0 text-ink-300" />
-      <span className="truncate">{chat.model}</span>
+      <span className="truncate">{chat.model ?? chat.agent}</span>
       <span className="text-ink-500">·</span>
       <span className="truncate font-mono text-[11px]">{chat.branch}</span>
       <span className="text-ink-500">·</span>
@@ -336,11 +336,12 @@ function ChatLine({ chat, now }: { chat: KnowledgeChat; now: number }) {
 }
 
 function ChatCard({ chat, workers, now, onOpen }: { chat: KnowledgeChat; workers: KnowledgeChat[]; now: number; onOpen: (chat: KnowledgeChat) => void }) {
+  const title = chat.title ?? chat.agent
   const last = chat.lastMessages.slice(-2)
   return (
     <li className="overflow-hidden rounded-[18px] border border-white/[0.07] bg-white/[0.02] transition-colors hover:border-white/[0.12]">
       <button type="button" onClick={() => onOpen(chat)} className="block w-full space-y-2 px-4 pt-3.5 pb-3 text-left transition-colors hover:bg-white/[0.03]">
-        <span className="block truncate text-[14px] font-semibold text-ink-100">{chat.title}</span>
+        <span className="block truncate text-[14px] font-semibold text-ink-100">{title}</span>
         <ChatLine chat={chat} now={now} />
         <span className="line-clamp-3 block text-[13px] leading-relaxed text-ink-300">{chat.summary}</span>
         {last.length > 0 && (
@@ -355,7 +356,7 @@ function ChatCard({ chat, workers, now, onOpen }: { chat: KnowledgeChat; workers
         )}
       </button>
       {workers.length > 0 && (
-        <ul className="space-y-0.5 border-t border-white/[0.06] bg-white/[0.015] px-2 py-1.5" aria-label={`Workers of ${chat.title}`}>
+        <ul className="space-y-0.5 border-t border-white/[0.06] bg-white/[0.015] px-2 py-1.5" aria-label={`Workers of ${title}`}>
           {workers.map((worker) => (
             <li key={worker.id}>
               <button type="button" onClick={() => onOpen(worker)} title={worker.summary} className="flex h-8 w-full min-w-0 items-center gap-2 rounded-[10px] pr-2 pl-2 text-left text-[12.5px] text-ink-300 transition-colors hover:bg-row-hover hover:text-ink-100">
