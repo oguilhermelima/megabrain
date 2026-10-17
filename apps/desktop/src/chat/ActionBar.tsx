@@ -1,9 +1,8 @@
-import { lazy, Suspense, useLayoutEffect, useState, type ReactNode, type RefObject } from 'react'
+import { lazy, Suspense, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { api } from '@/api'
 import type { BranchChanges, CodeChange } from '@/api/schema'
 import { CodeIcon } from '@/advanced/chrome'
-import { segmentExpanded, type PaneView, type Segment, type WorktreeFacts } from '@/chat/action-bar-model'
-import { AgentIcon } from '@/components/agent-icons'
+import { tabStep, type PaneView, type Segment, type WorktreeFacts } from '@/chat/action-bar-model'
 import { PaneSkeleton } from '@/components/Skeleton'
 import { PullRequestIcon } from '@/github/icons'
 import { changesPolicy } from '@/lib/poll-model'
@@ -53,51 +52,55 @@ export function useWorktreeChanges(facts: WorktreeFacts | null): WorktreeChanges
 }
 
 /**
- * Agent, Code, PR and Diff as one segmented control of icons. The shown view keeps its name; a
- * segment under the pointer or the keyboard's focus grows to show its own (action-bar-model's
- * segmentExpanded), its label sliding open in a 0fr to 1fr grid column. The PR number and the Diff
- * count stay on their icons as small counters. Only a disabled segment keeps a tooltip, for its reason.
+ * Agent, Code, PR and Diff as a strip of tabs, the row under a pane's title, each its icon and name.
+ * The shown view is underlined, the line sitting on the bar's hairline below; the PR number and the
+ * Diff count follow the name as small counters. Only a disabled tab keeps a tooltip, for its reason.
+ * The shown tab takes the keyboard's Tab; Left and Right then move between tabs (action-bar-model's
+ * tabStep) and Enter or Space opens one. A strip wider than its pane scrolls sideways.
  */
-export function ActionBar({ agent, segments, shown, onSelect }: { agent: string | null; segments: readonly Segment[]; shown: PaneView; onSelect: (view: PaneView) => void }) {
-  const [hovered, setHovered] = useState<PaneView | null>(null)
-  const [focused, setFocused] = useState<PaneView | null>(null)
+export function ActionBar({ segments, shown, onSelect }: { segments: readonly Segment[]; shown: PaneView; onSelect: (view: PaneView) => void }) {
+  const strip = useRef<HTMLDivElement>(null)
   const icons: Record<PaneView, ReactNode> = {
-    agent: agent === null || agent === '' ? <ChatGlyph /> : <AgentIcon agent={agent} size={16} />,
+    agent: <ChatGlyph />,
     code: <CodeIcon size={16} />,
     pr: <PullRequestIcon size={16} />,
     diff: <DiffIcon />,
   }
-  const grow = { transition: 'grid-template-columns var(--motion-enter) var(--motion-ease-out), opacity var(--motion-enter) var(--motion-ease-out)' }
+  const move = (event: KeyboardEvent<HTMLButtonElement>, from: PaneView) => {
+    const next = tabStep(segments, from, event.key)
+    if (next === null) return
+    event.preventDefault()
+    const tab = strip.current?.querySelector<HTMLButtonElement>(`[data-view="${next}"]`)
+    tab?.focus()
+    tab?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }
   return (
-    <div role="group" aria-label="Views" onPointerLeave={() => setHovered(null)} className="bar-control bar-group">
+    <div ref={strip} role="tablist" aria-label="Views" className="-mb-px -ml-2 flex max-w-[calc(100%+8px)] min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {segments.map((segment) => {
         const current = segment.view === shown
-        const open = segmentExpanded(segment.view, { shown, hovered, focused })
         return (
           <button
             key={segment.view}
             type="button"
+            role="tab"
+            data-view={segment.view}
             aria-label={segment.badge === null ? segment.label : `${segment.label} ${segment.badge}`}
-            aria-pressed={current}
+            aria-selected={current}
+            tabIndex={current ? 0 : -1}
             title={segment.enabled ? undefined : segment.title}
             disabled={!segment.enabled}
             onClick={() => onSelect(segment.view)}
-            onPointerEnter={() => setHovered(segment.view)}
-            onFocus={(event) => setFocused(event.currentTarget.matches(':focus-visible') ? segment.view : null)}
-            onBlur={() => setFocused(null)}
-            className="bar-segment"
+            onKeyDown={(event) => move(event, segment.view)}
+            className={`relative flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] font-semibold transition-colors duration-[var(--motion-enter)] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent disabled:cursor-default disabled:text-ink-600 ${current ? 'text-ink-100' : 'text-ink-400 hover:text-ink-100'}`}
           >
-            <span className="flex shrink-0 items-start">
-              {icons[segment.view]}
-              {segment.badge !== null && (
-                <span aria-hidden="true" className="-mt-1.5 -ml-1 min-w-3.5 rounded-full bg-ink-600 px-1 text-center text-[9px] leading-3.5 font-semibold text-ink-100 tabular-nums">
-                  {segment.badge}
-                </span>
-              )}
-            </span>
-            <span aria-hidden="true" style={grow} className={`grid ${open ? 'grid-cols-[1fr] opacity-100' : 'grid-cols-[0fr] opacity-0'}`}>
-              <span className="overflow-hidden pr-1 pl-1.5 whitespace-nowrap">{segment.label}</span>
-            </span>
+            {icons[segment.view]}
+            <span aria-hidden="true">{segment.label}</span>
+            {segment.badge !== null && (
+              <span aria-hidden="true" className={`min-w-4 rounded-full px-1 text-center text-[10px] leading-4 tabular-nums ${current ? 'bg-white/[0.14] text-ink-100' : 'bg-white/[0.06] text-ink-300'}`}>
+                {segment.badge}
+              </span>
+            )}
+            <span aria-hidden="true" className={`absolute inset-x-2 bottom-0 h-0.5 rounded-full transition-colors duration-[var(--motion-enter)] ${current ? 'bg-ink-100' : 'bg-transparent'}`} />
           </button>
         )
       })}

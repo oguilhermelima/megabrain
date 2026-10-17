@@ -1,7 +1,7 @@
 import type { BranchChanges, CodeChange, Project, ProjectWorktree } from '@/api/schema'
 import type { ItemKind } from '@/panes/pane-model'
 
-// The action bar centred in a pane's top bar: four views of the item's worktree, all shown in the
+// The view tabs on a pane's top bar, the row under its title: four views of the item's worktree, all shown in the
 // pane under the bar. Agent is the chat or session itself, Code the worktree's editor, PR the
 // branch's pull request and Diff its changes. PR and Diff are disabled while there is nothing to show.
 
@@ -87,21 +87,18 @@ export function paneViewKey(event: Parameters<typeof viewForKey>[0], where: { fo
   return where.focused && !where.inEditor ? viewForKey(event) : null
 }
 
-/** Below this width, in pixels, a chat's top bar stacks into two rows. */
-export const stackedHeaderBelow = 640
-
-/** One row: identity, the action bar centred, the view's controls. Stacked: identity and close, then the bar and the controls. */
-export type HeaderMode = 'row' | 'stacked'
-
-/** The top bar's layout for its width; unmeasured (null or zero) keeps the one row. */
-export function headerMode(width: number | null): HeaderMode {
-  return width !== null && width > 0 && width < stackedHeaderBelow ? 'stacked' : 'row'
-}
-
 /**
- * Whether a segment shows its label: the bar is icons only, but the shown view keeps its name and
- * a segment under the pointer or the keyboard's focus grows to show its own.
+ * Where Left or Right moves the keyboard in the view tabs: the next enabled tab that way, wrapping
+ * past either end; any other key, or no other enabled tab, stays put (null).
  */
-export function segmentExpanded(view: PaneView, { shown, hovered, focused }: { shown: PaneView; hovered: PaneView | null; focused: PaneView | null }): boolean {
-  return view === shown || view === hovered || view === focused
+export function tabStep(available: readonly Segment[], from: PaneView, key: string): PaneView | null {
+  const step = key === 'ArrowRight' ? 1 : key === 'ArrowLeft' ? -1 : 0
+  if (step === 0) return null
+  const start = available.findIndex((segment) => segment.view === from)
+  if (start === -1) return null
+  for (let offset = 1; offset < available.length; offset++) {
+    const candidate = available[(start + step * offset + available.length) % available.length]
+    if (candidate?.enabled === true) return candidate.view
+  }
+  return null
 }

@@ -19,10 +19,10 @@ export interface SharedBar {
 
 /**
  * The split area and what it shows once for all its panes. A split on one worktree gets one bar on
- * top: the project and branch at its left (the pull request's number is on the action bar's PR), Agent, Code, PR and Diff in its true centre (Agent is the split
- * itself; the others lie over the whole area, the panes kept mounted beneath), and Run and the
- * run panel's toggle at its right. With the sidebar hidden it joins the window row, 44px
- * tall and inset past the lights. A split across worktrees keeps each pane's own bar. `children` is told whether a view covers them.
+ * top: the project and branch at its left (the pull request's number is on the PR tab), Run and the
+ * run panel's toggle at its right, and under them the view tabs, Agent, Code, PR and Diff (Agent is
+ * the split itself; the others lie over the whole area, the panes kept mounted beneath). With the
+ * sidebar hidden its first row joins the window row, 44px tall, and both rows are inset past the lights. A split across worktrees keeps each pane's own bar. `children` is told whether a view covers them.
  */
 export function SplitFrame({ shared, inset, children }: { shared: SharedBar | null; inset: number | null; children: (covered: boolean) => ReactNode }) {
   const facts = shared?.facts ?? null
@@ -50,27 +50,28 @@ export function SplitFrame({ shared, inset, children }: { shared: SharedBar | nu
 
   // One tree whether the bar shows or not, so the panes under it never remount when a split starts or stops sharing one worktree.
   const bar = shared !== null && facts !== null && available !== null ? { shared, facts, available } : null
-  // In the window row: 4px above and below the 36px row make the lights' 44px band.
+  // In the window row: 4px above and below the 36px first row make the lights' 44px band.
   const slide: CSSProperties = { transition: 'padding var(--motion-panel) var(--motion-ease-panel)', paddingLeft: inset ?? 24 }
   return (
     <>
       {bar !== null && (
-        <header data-tauri-drag-region data-group-bar="" style={slide} className={`@container/header shrink-0 border-b border-white/[0.06] pr-6 ${inset === null ? 'pt-3 pb-2.5' : 'py-1'}`}>
-          <div data-tauri-drag-region className="grid h-9 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
-            <div data-tauri-drag-region className="flex min-w-0 items-center gap-2.5">
-              {bar.shared.identity.project !== null && <ProjectPicture project={bar.shared.identity.project} />}
-              <div className="min-w-0">
-                <h1 title={bar.facts.root} className="truncate text-[14px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">
-                  {bar.shared.identity.name}
-                </h1>
-                {bar.shared.identity.branch !== null && <p className="truncate text-[12px] leading-4 text-ink-400">{bar.shared.identity.branch}</p>}
-              </div>
+        <header data-tauri-drag-region data-group-bar="" style={slide} className={`@container/header shrink-0 border-b border-white/[0.06] pr-6 ${inset === null ? 'pt-3' : 'pt-1'}`}>
+          <div data-tauri-drag-region className="flex h-9 min-w-0 items-center gap-2.5">
+            {bar.shared.identity.project !== null && <ProjectPicture project={bar.shared.identity.project} />}
+            <div data-tauri-drag-region className="min-w-0 flex-1">
+              <h1 title={bar.facts.root} className="truncate text-[14px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">
+                {bar.shared.identity.name}
+              </h1>
+              {bar.shared.identity.branch !== null && <p className="truncate text-[12px] leading-4 text-ink-400">{bar.shared.identity.branch}</p>}
             </div>
-            <ActionBar agent={null} segments={bar.available} shown={shown} onSelect={bar.shared.setView} />
-            <div data-tauri-drag-region className="flex min-w-0 items-center justify-end gap-3">
+            <div data-tauri-drag-region className="flex shrink-0 items-center justify-end gap-3">
               <RunButton />
               <RunPanelToggle />
             </div>
+          </div>
+          {/* The tabs start where the name does, past the 24px picture and its 10px gap. */}
+          <div data-tauri-drag-region className={`mt-1 flex min-w-0 ${bar.shared.identity.project === null ? '' : 'pl-[34px]'}`}>
+            <ActionBar segments={bar.available} shown={shown} onSelect={bar.shared.setView} />
           </div>
         </header>
       )}

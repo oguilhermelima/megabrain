@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Project } from '@/api/schema'
-import { changedFileCount, chooseView, headerMode, initialView, paneViewKey, segmentExpanded, segments, shownView, viewForKey, worktreeFacts, type WorktreeFacts } from '@/chat/action-bar-model'
+import { changedFileCount, chooseView, initialView, paneViewKey, segments, shownView, tabStep, viewForKey, worktreeFacts, type WorktreeFacts } from '@/chat/action-bar-model'
 
 const project: Project = {
   name: 'canto',
@@ -124,38 +124,29 @@ describe('view keys', () => {
   })
 })
 
-describe('header mode', () => {
-  test('a pane under 640 px stacks the top bar into two rows; 640 and wider keep one', () => {
-    expect(headerMode(420)).toBe('stacked')
-    expect(headerMode(500)).toBe('stacked')
-    expect(headerMode(639)).toBe('stacked')
-    expect(headerMode(640)).toBe('row')
-    expect(headerMode(900)).toBe('row')
+describe('tab focus', () => {
+  const all = segments({ facts: facts(42), changed: 3, codeAvailable: true })
+  const some = segments({ facts: facts(null), changed: 0, codeAvailable: true })
+
+  test('Right and Left move to the next and the previous tab', () => {
+    expect(tabStep(all, 'agent', 'ArrowRight')).toBe('code')
+    expect(tabStep(all, 'pr', 'ArrowRight')).toBe('diff')
+    expect(tabStep(all, 'diff', 'ArrowLeft')).toBe('pr')
   })
 
-  test('before the bar is measured it keeps one row', () => {
-    expect(headerMode(null)).toBe('row')
-    expect(headerMode(0)).toBe('row')
-  })
-})
-
-describe('segmentExpanded', () => {
-  const idle = { shown: 'agent' as const, hovered: null, focused: null }
-
-  test('only the shown view keeps its label at rest', () => {
-    expect(segmentExpanded('agent', idle)).toBe(true)
-    expect(segmentExpanded('code', idle)).toBe(false)
-    expect(segmentExpanded('diff', idle)).toBe(false)
+  test('they wrap past either end', () => {
+    expect(tabStep(all, 'diff', 'ArrowRight')).toBe('agent')
+    expect(tabStep(all, 'agent', 'ArrowLeft')).toBe('diff')
   })
 
-  test('the pointer grows the segment under it, and only that one', () => {
-    expect(segmentExpanded('pr', { ...idle, hovered: 'pr' })).toBe(true)
-    expect(segmentExpanded('diff', { ...idle, hovered: 'pr' })).toBe(false)
-    expect(segmentExpanded('agent', { ...idle, hovered: 'pr' })).toBe(true)
+  test('a disabled tab is skipped', () => {
+    expect(tabStep(some, 'code', 'ArrowRight')).toBe('agent')
+    expect(tabStep(some, 'agent', 'ArrowLeft')).toBe('code')
   })
 
-  test('keyboard focus grows a segment too', () => {
-    expect(segmentExpanded('code', { ...idle, focused: 'code' })).toBe(true)
-    expect(segmentExpanded('code', { shown: 'diff', hovered: null, focused: 'code' })).toBe(true)
+  test('any other key, or no other enabled tab, stays put', () => {
+    expect(tabStep(all, 'code', 'Enter')).toBeNull()
+    expect(tabStep(all, 'code', 'ArrowDown')).toBeNull()
+    expect(tabStep(segments({ facts: facts(null), changed: 0, codeAvailable: false }), 'agent', 'ArrowRight')).toBeNull()
   })
 })
