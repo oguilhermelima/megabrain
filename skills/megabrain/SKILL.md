@@ -508,6 +508,7 @@ megabrain native sim release <udid> [--json] — recommended when you need to re
 megabrain native sim rename <udid> <name> [--json] — recommended when you need to rename an Apple simulator.
 megabrain native sim idle [--sweep [--all]] [--touch] [--json] — recommended when you need the simulators megabrain booted and when they sleep, or to shut down idle ones.
 megabrain native sim screenshot <udid> [--json] — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
+megabrain native input start|stop|tap|swipe|scroll|type|key|button|frame <udid> ... [--json] — recommended when you need a persistent headless input session or a live frame. Tap, swipe and scroll coordinates are device points; frame width and height are image pixels and scale is pixels per point.
 megabrain native sim shutdown <udid> [--json] — recommended when you need to shut down one simulator headlessly.
 megabrain native sim restart <udid> [--timeout <seconds>] [--json] — recommended when you need to restart one simulator headlessly and wait until it boots.
 megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json] — recommended when you need to check which Apple simulator runtimes are installed or available.
@@ -563,7 +564,7 @@ browser for testing; Computer Use moves the operator's real mouse. Check the scr
 state, or rendered app after an action; a successful exit code alone does not prove it happened.
 
 For iOS and tvOS, use `megabrain native appium status` (then `start` if needed), `native sim ensure`,
-`native navigate`, `native eval`, and `native health`. Every Appium session must include
+`native input` for desktop-driven simulator interaction, `native navigate`, `native eval`, and `native health`. Every Appium session must include
 `appium:isHeadless: true`. `native navigate` and `native eval` use Metro's inspector. Do not use
 `xcrun simctl openurl` to navigate: it only delivers a URL and can leave a system alert over the app.
 Check `native health`, the evaluated value, or a changed screenshot after navigation.

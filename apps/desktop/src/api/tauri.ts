@@ -10,7 +10,7 @@ import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink } from '@/api/adapter'
 import { chatStreamReader, streamMarkerSchema } from '@/api/chat-stream'
-import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactListSchema, artifactContentSchema, chatArtifactListSchema, chatArtifactContentSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, bootedSimulatorListSchema, simulatorShutdownSchema, simulatorRestartSchema } from '@/api/schema'
+import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactListSchema, artifactContentSchema, chatArtifactListSchema, chatArtifactContentSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, bootedSimulatorListSchema, simulatorShutdownSchema, simulatorRestartSchema, inputSessionSchema, inputStopSchema, inputActionSchema, inputFrameSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -61,10 +61,6 @@ async function nativeJson<T>(args: string[], schema: z.ZodType<T>): Promise<T> {
   const answer = await cliJson(args, z.looseObject({ refusal: z.looseObject({ message: z.string() }).nullable().optional() }))
   if (answer.refusal != null) throw new CliError(answer.refusal.message, 1)
   return schema.parse(answer)
-}
-
-const inputUnavailable = async (): Promise<never> => {
-  throw new CliError('Device input needs a megabrain with native input; update the CLI', 1)
 }
 
 // `github pr-file` answers with the file under `file`, beside the repository and number.
@@ -200,16 +196,15 @@ export function createTauriApi(): DesktopApi {
     simRestart: async (udid) => void (await nativeJson(['native', 'sim', 'restart', udid, '--json'], simulatorRestartSchema)),
     simulatorsAsleep: async () => (await nativeJson(['native', 'sim', 'idle', '--touch', '--json'], z.looseObject({ asleep: z.array(z.string()) }))).asleep,
     simulatorScreenshot: async (udid) => (await nativeJson(['native', 'sim', 'screenshot', udid, '--json'], z.looseObject({ path: z.string() }))).path,
-    // Device input comes with the CLI's native input commands; until then each call says so.
-    inputStart: inputUnavailable,
-    inputStop: inputUnavailable,
-    inputTap: inputUnavailable,
-    inputSwipe: inputUnavailable,
-    inputScroll: inputUnavailable,
-    inputType: inputUnavailable,
-    inputKey: inputUnavailable,
-    inputButton: inputUnavailable,
-    inputFrame: inputUnavailable,
+    inputStart: (udid) => nativeJson(['native', 'input', 'start', udid, '--json'], inputSessionSchema),
+    inputStop: (udid) => nativeJson(['native', 'input', 'stop', udid, '--json'], inputStopSchema),
+    inputTap: (udid, x, y) => nativeJson(['native', 'input', 'tap', udid, String(x), String(y), '--json'], inputActionSchema),
+    inputSwipe: (udid, x1, y1, x2, y2, duration) => nativeJson(['native', 'input', 'swipe', udid, String(x1), String(y1), String(x2), String(y2), ...(duration === undefined ? [] : ['--duration', String(duration)]), '--json'], inputActionSchema),
+    inputScroll: (udid, x, y, dx, dy) => nativeJson(['native', 'input', 'scroll', udid, String(x), String(y), String(dx), String(dy), '--json'], inputActionSchema),
+    inputType: (udid, text) => nativeJson(['native', 'input', 'type', udid, text, '--json'], inputActionSchema),
+    inputKey: (udid, name) => nativeJson(['native', 'input', 'key', udid, name, '--json'], inputActionSchema),
+    inputButton: (udid, name) => nativeJson(['native', 'input', 'button', udid, name, '--json'], inputActionSchema),
+    inputFrame: (udid) => nativeJson(['native', 'input', 'frame', udid, '--json'], inputFrameSchema),
     openInCode: (root, path, line) =>
       cliJson(['code', 'goto', root, path, ...(line === undefined ? [] : ['--line', String(line)]), '--json'], codeServerSchema),
     settings: () => cliJson(['settings', '--json'], settingsSchema),

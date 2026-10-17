@@ -148,6 +148,7 @@
 - Run megabrain model refresh <agent>. — recommended when you need to refresh one agent provider’s model registry.
 - Run megabrain native appium start.
 - Run megabrain native appium status.
+- Run megabrain native input start|stop|tap|swipe|scroll|type|key|button|frame <udid> ... [--json]. — recommended when you need persistent, headless simulator input and frame capture from the Device tab.
 - Run megabrain native appium stop.
 - Run megabrain native sim list <phone|tv> [--json]. — recommended when you need available iOS or tvOS simulators of one kind.
 - Run megabrain native sim list --booted [--json]. — recommended when you need all booted iOS and tvOS devices, with worktree owners and their registered project roots, in one call.

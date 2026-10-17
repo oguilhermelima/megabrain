@@ -10,6 +10,7 @@ import { findJavaHome, maestroBinary, maestroEnvironment, readMaestroRecord } fr
 import { usageText } from "../../core/usage.js";
 import { recordSimulatorOwner } from "../../core/native-sim-owner.js";
 import { systemClock } from "../../core/clock.js";
+import { endNativeInputSession } from "./native/input.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Emit = (text: string) => void;
@@ -122,6 +123,16 @@ export function activeRunDevices(environment: Environment): Set<string> {
   return devices;
 }
 
+export function activeRunForDevice(environment: Environment, udid: string): string | undefined {
+  const base = join(resolveStateDirectory(environment), "maestro");
+  if (!existsSync(base)) return undefined;
+  for (const key of readdirSync(base)) for (const name of readdirSync(join(base, key))) {
+    const record = readRecord(join(base, key, name));
+    if (record?.device === udid && record.state === "running" && alive(record.pid)) return record.runId;
+  }
+  return undefined;
+}
+
 function findFiles(directory: string, pattern: RegExp): string[] {
   if (!existsSync(directory)) return [];
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -173,6 +184,9 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const ownerNotice = await recordSimulatorOwner(device.value, values["--worktree"] ?? worktree, environment, process, systemClock);
   const admitted = await awaitProcAdmission({ name: "maestro-run", worktree, mode: admission ?? "wait" }, environment, process);
   if (admitted.kind !== "ok") return admitted;
+
+  const inputStopped = await endNativeInputSession(environment, process, device.value);
+  if (inputStopped.kind !== "ok") return failed(`could not end native input session for ${device.value} before Maestro: ${inputStopped.error}`);
 
   const runId = `${new Date().toISOString().replace(/[-:.]/g, "")}-${randomUUID().slice(0, 6)}`;
   const directory = join(worktreeRoot(environment, worktree), runId);

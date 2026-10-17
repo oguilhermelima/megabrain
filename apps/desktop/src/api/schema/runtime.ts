@@ -102,6 +102,15 @@ export type Simulator = z.infer<typeof simulatorSchema>
 export const simulatorShutdownSchema = z.looseObject({ udid: z.string(), state: z.literal('Shutdown') })
 export const simulatorRestartSchema = z.looseObject({ udid: z.string(), state: z.literal('Booted'), waitedMs: z.number() })
 
+export const inputSessionSchema = z.object({ udid: z.string(), session: z.string(), port: z.number().int() })
+export const inputStopSchema = z.object({ udid: z.string(), stopped: z.boolean() })
+export const inputActionSchema = z.object({ ok: z.literal(true), ms: z.number() })
+export const inputFrameSchema = z.object({ image: z.string(), width: z.number(), height: z.number(), scale: z.number(), ms: z.number() })
+export type InputSession = z.infer<typeof inputSessionSchema>
+export type InputStop = z.infer<typeof inputStopSchema>
+export type InputAction = z.infer<typeof inputActionSchema>
+export type InputFrame = z.infer<typeof inputFrameSchema>
+
 /** `megabrain native sim list phone --json`: the available iOS simulators. */
 export const simulatorListSchema = z.looseObject({ devices: z.array(simulatorSchema) })
 

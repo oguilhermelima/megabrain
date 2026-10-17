@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { nativeUsage, validateTimeout } from "../../../core/native.js";
 import { type ProcessAdapter } from "../../../adapters/proc.js";
 import { type NativeHealth, type NativePlatform } from "../../../core/native.js";
@@ -18,6 +19,24 @@ export const APPIUM_SESSION_DEFAULTS = {
 } as const;
 export function appiumSessionCapabilities(platform: NativePlatform, udid: string, bundleId: string): Record<string, string | boolean | number> {
   return { platformName: platform, ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
+}
+export function appiumInputSessionCapabilities(platform: NativePlatform, udid: string): Record<string, string | boolean | number> {
+  const bundleId = platform === "iOS" ? "com.apple.springboard" : "com.apple.TVHomeScreen";
+  // WDA listens on localhost and Appium forwards to it. A stable per-device port lets multiple
+  // simulators own sessions at once without all of them competing for WDA's default 8100.
+  const hash = createHash("sha256").update(udid).digest("hex");
+  const wdaLocalPort = 10000 + Number.parseInt(hash.slice(0, 8), 16) % 50000;
+  const mjpegServerPort = 10000 + Number.parseInt(hash.slice(8, 16), 16) % 50000;
+  return {
+    ...appiumSessionCapabilities(platform, udid, bundleId),
+    "appium:autoLaunch": false,
+    "appium:forceAppLaunch": false,
+    "appium:noReset": true,
+    "appium:wdaLocalPort": wdaLocalPort,
+    "appium:wdaLaunchTimeout": 120_000,
+    "appium:wdaConnectionTimeout": 120_000,
+    "appium:mjpegServerPort": mjpegServerPort,
+  };
 }
 export type AppiumSession = Readonly<{ sessionId: string; stored: boolean }>;
 export type AppiumSessionAttempt = Readonly<{ session?: AppiumSession; reason?: string; warning?: string }>;
@@ -41,8 +60,8 @@ export function appiumHttpFailure(action: string, response: AppiumResponse): str
   const message = appiumMessage(response.body);
   return `${action} (HTTP ${response.status})${message ? `: ${message}` : ""}`;
 }
-export async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey, platform: NativePlatform): Promise<Result<string>> {
-  const session = await processAdapter.run("curl", ["-sS", "-w", "\n%{http_code}", "-X", "POST", "http://127.0.0.1:4723/session", "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: appiumSessionCapabilities(platform, key.udid, key.bundleId) } })]);
+export async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey, platform: NativePlatform, capabilities = appiumSessionCapabilities(platform, key.udid, key.bundleId), port = 4723): Promise<Result<string>> {
+  const session = await processAdapter.run("curl", ["-sS", "--max-time", "120", "-w", "\n%{http_code}", "-X", "POST", `http://127.0.0.1:${port}/session`, "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: capabilities } })]);
   if (session.kind !== "ok") return failed(`Appium server was unreachable: ${session.error}`);
   const response = appiumResponse(session.value.stdout);
   if (response === undefined) return failed("Appium session response did not include an HTTP status");

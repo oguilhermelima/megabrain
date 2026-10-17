@@ -78,7 +78,7 @@ export function createMockMaestroApi(): MaestroApi {
     const last = touched.get(udid) ?? { action: '', x: -1, y: -1, at: 0, typed: '', focus: 0 }
     touched.set(udid, { ...last, action, ...(at === undefined ? {} : { ...at, at: Date.now() }) })
     console.info(`[mock input] ${udid.slice(0, 8)} ${action}`)
-    return { ok: true, ms: 60 }
+    return { ok: true as const, ms: 60 }
   }
   const remoteMoves: Record<string, number> = { left: -1, right: 1, up: -4, down: 4 }
   const flowsOf = (root: string) => {
@@ -231,6 +231,7 @@ export function createMockMaestroApi(): MaestroApi {
     },
     inputStop: async (udid) => {
       sessions.delete(udid)
+      return { udid, stopped: true }
     },
     inputTap: (udid, x, y) => act(udid, `tap ${x},${y}`, { x, y }),
     inputSwipe: (udid, x1, y1, x2, y2, durationMs) => act(udid, `swipe ${x1},${y1} to ${x2},${y2} in ${durationMs} ms`, { x: x2, y: y2 }),

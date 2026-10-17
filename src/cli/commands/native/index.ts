@@ -69,6 +69,7 @@ export function crashReportsDirectory(environment: Environment): string {
 
 
 import { appium, unknownProcess, unknownMetro, unknownTree, unknownFrame, APPIUM_SESSION_DEFAULTS, appiumSessionCapabilities, AppiumSession, AppiumSessionAttempt, AppiumResponse, appiumResponse, appiumMessage, appiumHttpFailure, createAppiumSession, appiumSession } from "./session.js";
+import { nativeInput } from "./input.js";
 
 import { nativeHealth } from "./health.js";
 import { nativeCapture } from "./capture.js";
@@ -98,6 +99,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   const json = args.includes("--json");
   let result: Result<string>;
   if (family === "appium") result = await appium([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
+  else if (family === "input") result = await nativeInput([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "build") result = await nativeBuild([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "runtime" && operation === "list") result = await nativeRuntimeList(rest, processAdapter);
   else if (family === "runtime" && operation === "install") result = await nativeRuntimeInstall(rest, processAdapter);
