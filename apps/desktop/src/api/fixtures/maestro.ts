@@ -1,11 +1,11 @@
 import { CliError, type DesktopApi } from '@/api/adapter'
-import type { MaestroFlow, MaestroRun, Simulator, SimulatorKind } from '@/api/schema'
+import type { InputStatus, MaestroFlow, MaestroRun, Simulator, SimulatorKind } from '@/api/schema'
 
 // Maestro and the simulators for the mock adapter: megabrain's worktrees have flows, the others none
 // (the Device tab's empty state). A run queues briefly, then prints a step about every second; a flow
 // whose path names "login" fails on its third step.
 
-type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simClaim' | 'simRelease' | 'simRename' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot' | 'inputStart' | 'inputStop' | 'inputTap' | 'inputSwipe' | 'inputScroll' | 'inputType' | 'inputKey' | 'inputButton' | 'inputFrame'>
+type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simClaim' | 'simRelease' | 'simRename' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot' | 'inputStart' | 'inputStop' | 'inputTap' | 'inputSwipe' | 'inputScroll' | 'inputType' | 'inputKey' | 'inputButton' | 'inputFrame' | 'inputStatus'>
 
 const seedFlows: MaestroFlow[] = [
   { path: '.maestro/smoke.yaml', name: 'Smoke', appId: 'com.megabrain.desktop' },
@@ -70,11 +70,24 @@ export function createMockMaestroApi(): MaestroApi {
   let face = { title: 'Welcome', line: 'megabrain on the simulator', hue: 220 }
   // What the person's input did: the last action, the last touch and what they typed, per device.
   const touched = new Map<string, { action: string; x: number; y: number; at: number; typed: string; focus: number }>()
-  const sessions = new Set<string>()
+  // Input sessions start in the background like the CLI's: phases for 8 s, then ready; the
+  // iPhone 17 never gets there, its WebDriverAgent build fails after 5 s.
+  const sessions = new Map<string, number>()
+  const failing = '5D2E8C10-3F4A-4B6E-9A7C-1E0F2B3C4D5E'
+  const sessionState = (udid: string): InputStatus => {
+    const startedAt = sessions.get(udid)
+    if (startedAt === undefined) return { udid, state: 'none', phase: null, startedAt: null, error: null }
+    const elapsed = Date.now() - startedAt
+    const since = new Date(startedAt).toISOString()
+    if (udid === failing && elapsed >= 5_000)
+      return { udid, state: 'failed', phase: null, startedAt: since, error: `Appium could not create a session\nWebDriverAgent build failed: xcodebuild exited with code 65\nlog: /Users/operator/.megabrain/native/wda-${udid.slice(0, 8)}.log` }
+    if (elapsed >= 8_000) return { udid, state: 'ready', phase: null, startedAt: since, error: null }
+    return { udid, state: 'starting', phase: elapsed < 1_500 ? 'Starting Appium' : elapsed < 7_000 ? 'Building WebDriverAgent' : 'Opening the session', startedAt: since, error: null }
+  }
   const act = async (udid: string, action: string, at?: { x: number; y: number }) => {
     await wait(60)
     if (deviceOf(udid).state !== 'Booted') throw new CliError(`simulator ${udid} is not booted`, 1)
-    if (!sessions.has(udid)) throw new CliError(`no input session for ${udid}; start one first`, 1)
+    if (sessionState(udid).state !== 'ready') throw new CliError(`input session for ${udid} is ${sessionState(udid).state}`, 1)
     const last = touched.get(udid) ?? { action: '', x: -1, y: -1, at: 0, typed: '', focus: 0 }
     touched.set(udid, { ...last, action, ...(at === undefined ? {} : { ...at, at: Date.now() }) })
     console.info(`[mock input] ${udid.slice(0, 8)} ${action}`)
@@ -224,9 +237,10 @@ export function createMockMaestroApi(): MaestroApi {
       return screen
     },
     inputStart: async (udid) => {
-      await wait(400)
+      await wait(150)
       if (deviceOf(udid).state !== 'Booted') throw new CliError(`simulator ${udid} must be booted to take input`, 1)
-      sessions.add(udid)
+      const state = sessionState(udid).state
+      if (state === 'none' || state === 'failed') sessions.set(udid, Date.now())
       return { udid, session: `mock-session-${udid.slice(0, 8)}`, port: 8100 }
     },
     inputStop: async (udid) => {
@@ -255,10 +269,16 @@ export function createMockMaestroApi(): MaestroApi {
       if (last !== undefined && move !== undefined) touched.set(udid, { ...last, focus: (last.focus + move + 8) % 8 })
       return done
     },
+    inputStatus: async (udid) => {
+      await wait(30)
+      deviceOf(udid)
+      return sessionState(udid)
+    },
     inputFrame: async (udid) => {
       await wait(40)
       const device = deviceOf(udid)
       if (device.state !== 'Booted') throw new CliError(`could not capture simulator ${udid}; is it booted?`, 1)
+      if (sessionState(udid).state !== 'ready') throw new CliError(`input session for ${udid} is ${sessionState(udid).state}`, 1)
       const last = touched.get(udid)
       const now = Date.now()
       const clock = new Date(now).toLocaleTimeString('en-GB')

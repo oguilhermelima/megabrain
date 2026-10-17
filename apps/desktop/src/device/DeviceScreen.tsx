@@ -1,9 +1,10 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react'
 import { api } from '@/api'
 import type { OpenDevice } from '@/device/device-model'
 import { PanelIcon } from '@/advanced/WikiShell'
-import { frameDelay, gestureOf, keyAction, pausedNote, phoneButtons, pointsPerPixel, screenPoint, type Point } from '@/device/screen-model'
+import { createInputSessions, elapsedLabel, failureDetail, preparingNote, type InputView } from '@/device/input-session'
+import { fitZoom, frameDelay, gestureOf, keyAction, pausedNote, phoneButtons, pointSize, pointsPerPixel, screenPoint, zoomedSize, zoomIn, zoomOut, zoomPercent, type Point, type Zoom } from '@/device/screen-model'
 import { onVisibility, windowShows } from '@/lib/app-events'
 import { sidePanelButton } from '@/lib/side-panel'
 import { native } from '@/lib/surface'
@@ -40,10 +41,14 @@ function useWindowFocus() {
   return focus
 }
 
+// The last frame each device showed, so one shown again (or still preparing) starts from it.
+const lastFrames = new Map<string, Frame>()
+
 /**
- * The simulator's live screen: a frame about every 250 ms while the tab shows and the window has
- * focus (see screen-model's frameDelay), each one swapped in only once it decoded so nothing
- * flickers. `refresh` asks for one now. A failed frame pauses the loop until Retry.
+ * The simulator's live screen: a frame about every 250 ms while the tab shows, the window has
+ * focus (see screen-model's frameDelay) and the input session is ready, each one swapped in only
+ * once it decoded so nothing flickers. `refresh` asks for one now. A failed frame pauses the loop
+ * until Retry.
  */
 function useLiveFrames(udid: string | null, booted: boolean) {
   const [frame, setFrame] = useState<Frame | null>(null)
@@ -55,7 +60,7 @@ function useLiveFrames(udid: string | null, booted: boolean) {
   useEffect(() => onVisibility(() => setVisible(windowShows())), [])
 
   useEffect(() => {
-    setFrame(null)
+    setFrame(udid === null ? null : (lastFrames.get(udid) ?? null))
     setError(null)
   }, [udid])
 
@@ -88,7 +93,9 @@ function useLiveFrames(udid: string | null, booted: boolean) {
           image.src = src
           await image.decode()
           if (stopped) return
-          setFrame({ src, width: next.width || image.naturalWidth, height: next.height || image.naturalHeight, scale: next.scale })
+          const shown = { src, width: next.width || image.naturalWidth, height: next.height || image.naturalHeight, scale: next.scale }
+          lastFrames.set(udid, shown)
+          setFrame(shown)
           setError(null)
           running = false
           if (pending) {
@@ -116,57 +123,65 @@ function useLiveFrames(udid: string | null, booted: boolean) {
   return { frame, error, refresh: useCallback(() => now.current(), []), retry: () => setAttempt((count) => count + 1) }
 }
 
-// Input sessions outlive a quick switch away and back: leaving a device stops its session only
-// after stopDelayMs, and showing it again in that time keeps the one already open.
-const stopDelayMs = 1_500
-const sessions = new Map<string, { started: Promise<unknown>; stop: ReturnType<typeof setTimeout> | null }>()
+const inputSessions = createInputSessions({
+  start: (udid) => api.inputStart(udid),
+  status: (udid) => api.inputStatus(udid),
+  stop: (udid) => api.inputStop(udid),
+  now: Date.now,
+  later: (run, ms) => {
+    const timer = setTimeout(run, ms)
+    return () => clearTimeout(timer)
+  },
+})
 
-function acquireSession(udid: string): Promise<unknown> {
-  const held = sessions.get(udid)
-  if (held !== undefined) {
-    if (held.stop !== null) clearTimeout(held.stop)
-    held.stop = null
-    return held.started
-  }
-  const started = api.inputStart(udid)
-  sessions.set(udid, { started, stop: null })
-  started.catch(() => sessions.delete(udid))
-  return started
-}
-
-function releaseSession(udid: string) {
-  const held = sessions.get(udid)
-  if (held === undefined) return
-  if (held.stop !== null) clearTimeout(held.stop)
-  held.stop = setTimeout(() => {
-    sessions.delete(udid)
-    held.started.then(() => api.inputStop(udid)).catch(() => undefined)
-  }, stopDelayMs)
-}
-
-type SessionState = { kind: 'starting' } | { kind: 'ready' } | { kind: 'error'; error: string }
-
-/** The input session for the shown device, opened while it is booted and closed (debounced) once it is not. */
-function useInputSession(udid: string | null, booted: boolean) {
-  const [state, setState] = useState<SessionState>({ kind: 'starting' })
-  const [attempt, setAttempt] = useState(0)
+/** The shown device's input session (see input-session), watched while it is booted and free to take input. */
+function useInputSession(udid: string | null, wanted: boolean) {
+  const [view, setView] = useState<InputView>({ kind: 'idle' })
   useEffect(() => {
-    if (udid === null || !booted) return
-    let current = true
-    setState({ kind: 'starting' })
-    acquireSession(udid).then(
-      () => current && setState({ kind: 'ready' }),
-      (error: unknown) => current && setState({ kind: 'error', error: message(error) }),
-    )
-    return () => {
-      current = false
-      releaseSession(udid)
+    if (udid === null || !wanted) {
+      setView({ kind: 'idle' })
+      return
     }
-  }, [udid, booted, attempt])
-  return { state, retry: () => setAttempt((count) => count + 1) }
+    return inputSessions.watch(udid, setView)
+  }, [udid, wanted])
+  return {
+    view,
+    retry: () => {
+      if (udid !== null) inputSessions.retry(udid)
+    },
+  }
 }
 
 type Ripple = { id: number; x: number; y: number }
+
+// Each device keeps the zoom it was last shown at while the app runs.
+const zooms = new Map<string, Zoom>()
+
+function useDeviceZoom(udid: string | null) {
+  const [zoom, setZoom] = useState<Zoom>(() => (udid === null ? 'fit' : (zooms.get(udid) ?? 'fit')))
+  useEffect(() => setZoom(udid === null ? 'fit' : (zooms.get(udid) ?? 'fit')), [udid])
+  const change = (next: Zoom) => {
+    if (udid !== null) zooms.set(udid, next)
+    setZoom(next)
+  }
+  return [zoom, change] as const
+}
+
+/** The size of the box the device is drawn in, as it resizes. */
+function useBoxSize() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [size, setSize] = useState({ width: 0, height: 0 })
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (element === null) return
+    const measure = () => setSize({ width: element.clientWidth, height: element.clientHeight })
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+  return [ref, size] as const
+}
 
 /**
  * The middle of the Device tab: the device centred and scaled to fit, the hidden panels' toggles in
@@ -177,9 +192,14 @@ type Ripple = { id: number; x: number; y: number }
  */
 export function DeviceScreen({ device, booted, paused, pinned, still, note, showDevices, showFlows }: { device: OpenDevice | null; booted: boolean; paused: boolean; pinned: { src: string; step: number } | null; still: { src: string; step: number | null } | null; note: string | null; showDevices: (() => void) | null; showFlows: (() => void) | null }) {
   const udid = device?.udid ?? null
-  const live = useLiveFrames(udid, booted)
-  const session = useInputSession(udid, booted)
+  // A Maestro run drives the device itself, so the session waits for it to end.
+  const session = useInputSession(udid, booted && !paused)
+  const ready = booted && session.view.kind === 'ready'
+  const live = useLiveFrames(udid, ready)
   const [aspect, setAspect] = useState(1206 / 2622)
+  const [zoom, setZoom] = useDeviceZoom(udid)
+  const [full, setFull] = useState(false)
+  const [stage, stageSize] = useBoxSize()
   const [actionError, setActionError] = useState<string | null>(null)
   const [ripples, setRipples] = useState<Ripple[]>([])
   const image = useRef<HTMLImageElement>(null)
@@ -190,23 +210,46 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
   const queue = useRef<Promise<unknown>>(Promise.resolve())
   useEffect(() => setActionError(null), [udid])
 
-  const shown = pinned ?? (live.frame === null ? still : { src: live.frame.src, step: null })
+  // While a run drives the device its latest screenshot beats the last live frame, which no longer moves.
+  const liveFrame = pinned !== null || (paused && still !== null) ? null : live.frame
+  const shown = pinned ?? (liveFrame === null ? still : { src: liveFrame.src, step: null })
   const step = shown?.step ?? null
-  const frameAspect = live.frame === null || pinned !== null ? null : live.frame.width / live.frame.height
+  const frameAspect = liveFrame === null ? null : liveFrame.width / liveFrame.height
   const ratio = frameAspect ?? aspect
-  const frame = pinned === null ? live.frame : null
-  const ready = booted && session.state.kind === 'ready'
+  const frame = liveFrame
+  // The frame's border and padding around the screen, on each axis.
+  const chrome = ratio > 1 ? 18 : 22
+  // Zoom needs the device's points, known once a live frame came; until then the screen fits.
+  const points = live.frame === null ? null : pointSize(live.frame)
+  const fit = points === null ? 0 : fitZoom({ width: stageSize.width - chrome, height: stageSize.height - chrome }, points)
+  const zoomed = points !== null && zoom !== 'fit' ? zoomedSize(points, zoom) : null
   const takesInput = ready && !paused && frame !== null && udid !== null
   // A screen that stops taking input (a run starts, the device sleeps) lets go of the keyboard too.
   useEffect(() => {
     if (!takesInput && surface.current !== null && surface.current === document.activeElement) surface.current.blur()
   }, [takesInput])
-  const problem = !booted || pinned !== null ? null : (live.error ?? (session.state.kind === 'error' ? session.state.error : actionError))
+  // Before the session is ready the screen itself says why; after, a frame or an action that fails says so under it.
+  const preparing = booted && pinned === null ? session.view : null
+  const covered = preparing?.kind === 'starting' || preparing?.kind === 'failed'
+  const problemText = !ready || pinned !== null ? null : (live.error ?? actionError)
+  const problem = problemText === null ? null : failureDetail(problemText).line
   const retry = () => {
     setActionError(null)
-    if (live.error !== null) live.retry()
-    if (session.state.kind === 'error') session.retry()
+    if (live.error !== null) {
+      // A frame that fails may mean the session ended; starting it again is a no-op when it did not.
+      session.retry()
+      live.retry()
+    }
   }
+
+  useEffect(() => {
+    if (!full) return
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) setFull(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [full])
 
   const send = (action: (target: string) => Promise<unknown>) => {
     if (!takesInput || udid === null) return
@@ -239,7 +282,8 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!takesInput || event.button !== 0) return
-    event.currentTarget.focus()
+    // Focusing must not scroll a zoomed screen, or the press would land somewhere else.
+    event.currentTarget.focus({ preventScroll: true })
     event.currentTarget.setPointerCapture(event.pointerId)
     down.current = { x: event.clientX, y: event.clientY, at: event.timeStamp, id: event.pointerId }
   }
@@ -295,24 +339,28 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
   }
   const press = (name: string) => send((target) => api.inputButton(target, name))
 
-  const status = paused && booted && pinned === null ? pausedNote : session.state.kind === 'starting' && booted && pinned === null ? 'Connecting input…' : null
+  const status = paused && booted && pinned === null ? pausedNote : null
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-ink-950">
-      {showDevices !== null && (
+    <div className={`flex min-h-0 flex-1 flex-col bg-ink-950 ${full ? 'fixed inset-0 z-[100]' : 'relative'}`}>
+      {showDevices !== null && !full && (
         <button type="button" onClick={showDevices} aria-label="Show devices" title="Show devices" className={`${sidePanelButton} absolute top-3 left-3 z-10`}>
           <PanelIcon />
         </button>
       )}
-      {showFlows !== null && (
+      {showFlows !== null && !full && (
         <button type="button" onClick={showFlows} aria-label="Show flows" title="Show flows" className={`${sidePanelButton} absolute top-3 right-3 z-10`}>
           <PanelIcon />
         </button>
       )}
       {step !== null && <span className="absolute top-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11.5px] text-ink-300 tabular-nums">Step {step}</span>}
-      {/* A size container, so the frame takes the largest box of the screen's aspect that fits. */}
-      <div style={{ containerType: 'size' }} className="mx-12 mt-12 mb-4 flex min-h-0 flex-1 items-center justify-center">
-        <div data-device-frame="" style={{ aspectRatio: String(ratio), width: `min(100cqw, calc(100cqh * ${ratio}))` }} className={`border border-white/[0.14] bg-black shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] ${ratio > 1 ? 'rounded-[20px] p-[8px]' : 'rounded-[44px] p-[10px]'}`}>
+      {/* A size container, so at fit the frame takes the largest box of the screen's aspect that fits; zoomed, it scrolls. */}
+      <div ref={stage} style={{ containerType: 'size' }} className={`mx-12 mt-12 mb-4 flex min-h-0 flex-1 ${zoomed === null ? 'items-center justify-center' : 'overflow-auto'}`}>
+        <div
+          data-device-frame=""
+          style={zoomed === null ? { aspectRatio: String(ratio), width: `min(100cqw, calc(100cqh * ${ratio}))` } : { width: zoomed.width + chrome, height: zoomed.height + chrome }}
+          className={`border border-white/[0.14] bg-black shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] ${zoomed === null ? '' : 'm-auto shrink-0'} ${ratio > 1 ? 'rounded-[20px] p-[8px]' : 'rounded-[44px] p-[10px]'}`}
+        >
           <div
             ref={surface}
             data-device-screen=""
@@ -338,11 +386,13 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
                   const loaded = event.currentTarget
                   if (loaded.naturalWidth > 0 && loaded.naturalHeight > 0) setAspect(loaded.naturalWidth / loaded.naturalHeight)
                 }}
-                className="pointer-events-none h-full w-full object-contain select-none"
+                className={`pointer-events-none h-full w-full object-contain transition-opacity duration-200 select-none motion-reduce:transition-none ${covered ? 'opacity-35' : ''}`}
               />
             ) : (
-              <p className="px-6 text-center text-[12px] leading-5 text-ink-500">{note ?? (device === null ? 'Open a device with + to see its screen' : 'Waiting for the screen…')}</p>
+              !covered && <p className="px-6 text-center text-[12px] leading-5 text-ink-500">{note ?? (device === null ? 'Open a device with + to see its screen' : 'Waiting for the screen…')}</p>
             )}
+            {preparing?.kind === 'starting' && <Preparing phase={preparing.phase} elapsedMs={preparing.elapsedMs} />}
+            {preparing?.kind === 'failed' && <Failed error={preparing.error} onRetry={session.retry} />}
             {ripples.map((entry) => (
               <span
                 key={entry.id}
@@ -369,6 +419,73 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
           )}
         </p>
       </div>
+      {device !== null && <ViewControls zoom={zoom} fit={fit} canZoom={points !== null && fit > 0} full={full} onZoom={setZoom} onFull={setFull} />}
+    </div>
+  )
+}
+
+/** Zoom out, the zoom shown, zoom in, fit and 100 percent, and full screen, in the screen's corner. */
+function ViewControls({ zoom, fit, canZoom, full, onZoom, onFull }: { zoom: Zoom; fit: number; canZoom: boolean; full: boolean; onZoom: (zoom: Zoom) => void; onFull: (full: boolean) => void }) {
+  const text = 'px-2 text-[11.5px]'
+  return (
+    <div role="toolbar" aria-label="View" className="absolute right-4 bottom-4 z-10 flex items-center gap-0.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-1 py-0.5">
+      <button type="button" aria-label="Zoom out" title="Zoom out" disabled={!canZoom} onClick={() => onZoom(zoomOut(zoom, fit))} className={toolButton}>
+        {glyphs['zoom-out']}
+      </button>
+      <span className="min-w-10 text-center text-[11.5px] text-ink-300 tabular-nums">{canZoom ? `${zoomPercent(zoom, fit)}%` : 'Fit'}</span>
+      <button type="button" aria-label="Zoom in" title="Zoom in" disabled={!canZoom} onClick={() => onZoom(zoomIn(zoom, fit))} className={toolButton}>
+        {glyphs['zoom-in']}
+      </button>
+      <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-white/[0.08]" />
+      <button type="button" aria-pressed={zoom === 'fit'} title="Largest size that fits" disabled={!canZoom} onClick={() => onZoom('fit')} className={`${toolButton} ${text} ${zoom === 'fit' ? 'text-ink-100' : ''}`}>
+        Fit
+      </button>
+      <button type="button" aria-pressed={zoom === 1} title="One device point per pixel" disabled={!canZoom} onClick={() => onZoom(1)} className={`${toolButton} ${text} ${zoom === 1 ? 'text-ink-100' : ''}`}>
+        100%
+      </button>
+      <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-white/[0.08]" />
+      <button type="button" aria-label={full ? 'Exit full screen' : 'Full screen'} title={full ? 'Exit full screen (Esc)' : 'Full screen'} aria-pressed={full} onClick={() => onFull(!full)} className={toolButton}>
+        {glyphs[full ? 'exit-full' : 'full']}
+      </button>
+    </div>
+  )
+}
+
+/** Over the dimmed screen while the input session starts: what it is doing and for how long. */
+function Preparing({ phase, elapsedMs }: { phase: string | null; elapsedMs: number }) {
+  return (
+    <div role="status" className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-6 text-center">
+      <span aria-hidden="true" className="mb-2 size-1.5 animate-pulse rounded-full bg-accent motion-reduce:animate-none" />
+      <p className="text-[12.5px] leading-5 text-ink-100">Preparing the device for input</p>
+      <p className="text-[11.5px] leading-5 text-ink-300 tabular-nums">
+        {phase ?? 'Starting'}
+        <span aria-hidden="true"> · {elapsedLabel(elapsedMs)}</span>
+      </p>
+      <p className="mt-1 text-[11.5px] leading-4 text-ink-400">{preparingNote}</p>
+    </div>
+  )
+}
+
+/** Over the dimmed screen when the input session could not start: a plain sentence, the CLI's line, Retry and the log. */
+function Failed({ error, onRetry }: { error: string; onRetry: () => void }) {
+  const detail = failureDetail(error)
+  const log = detail.log
+  return (
+    <div role="alert" className="absolute inset-0 flex flex-col items-center justify-center gap-1 px-6 text-center">
+      <p className="text-[12.5px] leading-5 text-bad-soft">Couldn’t connect to the device</p>
+      <p title={detail.line} className="line-clamp-3 text-[11.5px] leading-4 break-words text-ink-400">
+        {detail.line}
+      </p>
+      <div className="mt-2 flex items-center gap-2">
+        <button type="button" onClick={onRetry} className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[11.5px] text-ink-200 hover:bg-white/[0.12]">
+          Retry
+        </button>
+        {log !== null && (
+          <button type="button" title={log} onClick={() => void api.revealPath(log)} className="rounded-full px-2 py-0.5 text-[11.5px] text-ink-400 underline-offset-2 hover:text-ink-200 hover:underline">
+            Show log
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -391,6 +508,10 @@ const glyphs: Record<string, ReturnType<typeof glyph>> = {
   right: glyph('M6 4l4 4-4 4'),
   menu: glyph('M3 5h10M3 8h10M3 11h10'),
   'play-pause': glyph('M3.5 4v8l5-4zM10.5 4v8M13 4v8'),
+  'zoom-out': glyph('M4 8h8'),
+  'zoom-in': glyph('M4 8h8M8 4v8'),
+  full: glyph('M3 6V3h3M10 3h3v3M13 10v3h-3M6 13H3v-3'),
+  'exit-full': glyph('M6 3v3H3M13 6h-3V3M10 13v-3h3M3 10h3v3'),
 }
 
 /** The device's hardware: a phone's side buttons, or an Apple TV remote's pad and keys. */

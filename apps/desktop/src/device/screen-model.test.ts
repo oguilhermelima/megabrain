@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { idleRun, reduceRun } from '@/device/device-model'
-import { blurGraceMs, frameDelay, frameMs, gestureOf, inputPaused, keyAction, pausedNote, screenPoint, tapSlop } from '@/device/screen-model'
+import { blurGraceMs, fitZoom, frameDelay, frameMs, gestureOf, inputPaused, keyAction, pausedNote, pointSize, screenPoint, tapSlop, zoomedSize, zoomIn, zoomOut, zoomPercent, zoomSteps } from '@/device/screen-model'
 
 const UDID = '401F3DA8-E4C1-48B7-9BB9-2C8416115E1A'
 const OTHER = '110E1BF2-99F9-4475-916E-32FBA7CED248'
@@ -154,5 +154,56 @@ describe('keys typed on the focused screen', () => {
     expect(key('c', { ctrlKey: true })).toBeNull()
     expect(key('Shift')).toBeNull()
     expect(key('F5')).toBeNull()
+  })
+})
+
+describe('zooming the device screen', () => {
+  const points = pointSize({ width: 1206, height: 2622, scale: 3 })
+
+  test('a device’s size in points is its frame’s pixels over its scale', () => {
+    expect(points).toEqual({ width: 402, height: 874 })
+    expect(pointSize({ width: 1920, height: 1080, scale: 1 })).toEqual({ width: 1920, height: 1080 })
+  })
+
+  test('fit is the largest zoom whose box fits, limited by the tighter side', () => {
+    expect(fitZoom({ width: 402, height: 874 }, points)).toBe(1)
+    expect(fitZoom({ width: 804, height: 874 }, points)).toBe(1)
+    expect(fitZoom({ width: 201, height: 1000 }, points)).toBe(0.5)
+    expect(fitZoom({ width: 0, height: 874 }, points)).toBe(0)
+  })
+
+  test('100 percent is one device point per CSS pixel', () => {
+    expect(zoomedSize(points, 1)).toEqual({ width: 402, height: 874 })
+    expect(zoomedSize(points, 2)).toEqual({ width: 804, height: 1748 })
+  })
+
+  test('zoom in and out step from where the screen is, fit included', () => {
+    expect(zoomIn('fit', 0.6)).toBe(0.75)
+    expect(zoomOut('fit', 0.6)).toBe(0.5)
+    expect(zoomIn('fit', 1)).toBe(1.25)
+    expect(zoomOut('fit', 1)).toBe(0.75)
+    expect(zoomIn(1, 0.6)).toBe(1.25)
+    expect(zoomOut(1, 0.6)).toBe(0.75)
+  })
+
+  test('zoom stops at its ends', () => {
+    expect(zoomIn(zoomSteps.at(-1) ?? 0, 0.6)).toBe(zoomSteps.at(-1) ?? -1)
+    expect(zoomOut(zoomSteps[0], 0.6)).toBe(zoomSteps[0])
+    expect(zoomOut('fit', 0.1)).toBe(zoomSteps[0])
+    expect(zoomIn('fit', 9)).toBe(zoomSteps.at(-1) ?? -1)
+  })
+
+  test('the label is the percentage the screen shows, fit included', () => {
+    expect(zoomPercent('fit', 0.6123)).toBe(61)
+    expect(zoomPercent(1, 0.6)).toBe(100)
+    expect(zoomPercent(1.25, 0.6)).toBe(125)
+  })
+
+  test('a point maps to the device at any zoom: at 100 percent a CSS pixel is a point, at 200 percent two are', () => {
+    const at100 = { left: 40, top: 30, ...zoomedSize(points, 1) }
+    expect(screenPoint({ x: 40 + 10, y: 30 + 20 }, at100, phone, 3)).toEqual({ x: 10, y: 20 })
+    const at200 = { left: -300, top: -500, ...zoomedSize(points, 2) }
+    expect(screenPoint({ x: -300 + 402, y: -500 + 874 }, at200, phone, 3)).toEqual({ x: 201, y: 437 })
+    expect(screenPoint({ x: -300 + 20, y: -500 + 40 }, at200, phone, 3)).toEqual({ x: 10, y: 20 })
   })
 })

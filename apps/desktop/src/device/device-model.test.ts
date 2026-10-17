@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, type MaestroEvent } from '@/api/schema'
 import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, elsewhereLabel, panelPlaces, renameCommit, sleepNote, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
-import { changesPolicy, planPoll, pollInterval, projectsPolicy, screenPolicy } from '@/lib/poll-model'
+import { changesPolicy, devicesPolicy, planPoll, pollInterval, projectsPolicy, screenPolicy } from '@/lib/poll-model'
 
 const captured = (name: string) => readFileSync(join(import.meta.dir, '..', 'api', 'fixtures', 'captured', name), 'utf8')
 const events = (name: string): MaestroEvent[] =>
@@ -448,5 +448,38 @@ describe('the Device tab polls only while it shows', () => {
   test.each([['changes', changesPolicy], ['devices', projectsPolicy], ['screen', screenPolicy]])('%s waits while the window is hidden', (_name, policy) => {
     expect(pollInterval(policy, false)).toBeNull()
     for (const trigger of ['timer', 'visibility'] as const) expect(planPoll(policy, trigger, { visible: false, now: 10_000_000, lastRunAt: 0 })).toEqual({ run: false, nextInMs: null })
+  })
+})
+
+describe('a shut down device leaves the list', () => {
+  test('the Device tab reads its devices every 5 s while the window shows, at once after an action or focus, and not while hidden', () => {
+    expect(devicesPolicy).toEqual({ visibleMs: 5_000, hiddenMs: null, refreshOn: { action: true, focus: true } })
+    expect(planPoll(devicesPolicy, 'timer', { visible: true, now: 5_000, lastRunAt: 0 })).toEqual({ run: true, nextInMs: 5_000 })
+    expect(planPoll(devicesPolicy, 'timer', { visible: true, now: 3_000, lastRunAt: 0 })).toEqual({ run: false, nextInMs: 2_000 })
+    expect(planPoll(devicesPolicy, 'action', { visible: true, now: 1_000, lastRunAt: 0 })).toEqual({ run: true, nextInMs: 5_000 })
+    expect(planPoll(devicesPolicy, 'timer', { visible: false, now: 60_000, lastRunAt: 0 })).toEqual({ run: false, nextInMs: null })
+  })
+
+  test('a device shut down by hand is gone from the next read, mine or elsewhere; one megabrain put to sleep stays', () => {
+    const before = openDevices(
+      [
+        { udid: 'p1', name: 'iPhone 17', runtime: 'iOS 27.0', state: 'Booted', kind: 'phone', worktree: null, project: null },
+        { udid: 'tv', name: 'Apple TV 4K', runtime: 'tvOS 27.0', state: 'Booted', kind: 'tv', worktree: null, project: null },
+      ],
+      [],
+      [],
+    )
+    expect(before.map((device) => device.udid)).toEqual(['p1', 'tv'])
+    const choices: DeviceChoice[] = [
+      { udid: 'p1', name: 'iPhone 17', state: 'Shutdown', kind: 'phone' },
+      { udid: 'p2', name: 'iPhone Air', state: 'Shutdown', kind: 'phone' },
+      { udid: 'tv', name: 'Apple TV 4K', state: 'Booted', kind: 'tv' },
+    ]
+    const after = openDevices([{ udid: 'tv', name: 'Apple TV 4K', runtime: 'tvOS 27.0', state: 'Booted', kind: 'tv', worktree: null, project: null }], choices, ['p2'])
+    expect(after.map((device) => [device.udid, device.state])).toEqual([
+      ['p2', 'Asleep'],
+      ['tv', 'Booted'],
+    ])
+    expect(deviceSections(after, '/w/here', []).elsewhere.flatMap((group) => group.devices.map((entry) => entry.device.udid))).toEqual(['p2', 'tv'])
   })
 })

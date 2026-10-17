@@ -102,14 +102,24 @@ export type Simulator = z.infer<typeof simulatorSchema>
 export const simulatorShutdownSchema = z.looseObject({ udid: z.string(), state: z.literal('Shutdown') })
 export const simulatorRestartSchema = z.looseObject({ udid: z.string(), state: z.literal('Booted'), waitedMs: z.number() })
 
-export const inputSessionSchema = z.object({ udid: z.string(), session: z.string(), port: z.number().int() })
+const inputStateSchema = z.enum(['none', 'starting', 'ready', 'failed'])
+// `native input start` returns at once: its state while the session starts, the session once ready.
+export const inputSessionSchema = z.looseObject({ udid: z.string(), state: inputStateSchema.optional(), session: z.string().optional(), port: z.number().int().optional() })
 export const inputStopSchema = z.object({ udid: z.string(), stopped: z.boolean() })
 export const inputActionSchema = z.object({ ok: z.literal(true), ms: z.number() })
 export const inputFrameSchema = z.object({ image: z.string(), width: z.number(), height: z.number(), scale: z.number(), ms: z.number() })
+/** `native input status UDID --json`: where the device's input session is; a cold start builds WebDriverAgent for about a minute. */
+// The CLI leaves out what it does not know, and a ready session may carry an empty startedAt.
+const absent = z
+  .string()
+  .nullish()
+  .transform((value) => (value === undefined || value === null || value === '' ? null : value))
+export const inputStatusSchema = z.looseObject({ udid: z.string(), state: inputStateSchema, phase: absent, startedAt: absent, error: absent })
 export type InputSession = z.infer<typeof inputSessionSchema>
 export type InputStop = z.infer<typeof inputStopSchema>
 export type InputAction = z.infer<typeof inputActionSchema>
 export type InputFrame = z.infer<typeof inputFrameSchema>
+export type InputStatus = z.infer<typeof inputStatusSchema>
 
 /** `megabrain native sim list phone --json`: the available iOS simulators. */
 export const simulatorListSchema = z.looseObject({ devices: z.array(simulatorSchema) })

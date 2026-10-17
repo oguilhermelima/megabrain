@@ -10,7 +10,7 @@ import { inputPaused } from '@/device/screen-model'
 import { DevicesSidebar, type DeviceBusy } from '@/device/DevicesSidebar'
 import { FlowsRunPanel, type Load } from '@/device/FlowsRunPanel'
 import { startRun, stopRun, useDeviceRun } from '@/device/run-store'
-import { changesPolicy, projectsPolicy } from '@/lib/poll-model'
+import { changesPolicy, devicesPolicy } from '@/lib/poll-model'
 import { native } from '@/lib/surface'
 import { usePoll } from '@/lib/usePoll'
 
@@ -107,7 +107,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
     [root, run.phase],
   )
   const refreshDevices = usePoll(
-    projectsPolicy,
+    devicesPolicy,
     async (current) => {
       const [listed, phones, tvs] = await Promise.all([api.simListBooted().catch((error: unknown) => ({ error })), api.simulators('phone').catch(() => null), api.simulators('tv').catch(() => null)])
       if (!current()) return

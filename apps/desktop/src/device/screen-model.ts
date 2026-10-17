@@ -83,3 +83,41 @@ export const phoneButtons = [
 ] as const
 
 export const remoteButtons = ['up', 'down', 'left', 'right', 'select', 'menu', 'play-pause', 'home'] as const
+
+// Zoom: 'fit' takes the largest box that fits; a number is CSS pixels per device point, so 1 is
+// 100 percent. Input needs nothing more, as screenPoint reads the drawn image's own box.
+export type Zoom = 'fit' | number
+
+export const zoomSteps = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3] as const
+
+/** A device's size in points: its frame's pixels over its scale. */
+export function pointSize(frame: { width: number; height: number; scale: number }): { width: number; height: number } {
+  const scale = frame.scale > 0 ? frame.scale : 1
+  return { width: frame.width / scale, height: frame.height / scale }
+}
+
+/** The zoom fit gives in `box`: the tighter side's ratio, or 0 before anything has a size. */
+export function fitZoom(box: { width: number; height: number }, points: { width: number; height: number }): number {
+  if (box.width <= 0 || box.height <= 0 || points.width <= 0 || points.height <= 0) return 0
+  return Math.min(box.width / points.width, box.height / points.height)
+}
+
+export function zoomedSize(points: { width: number; height: number }, zoom: number): { width: number; height: number } {
+  return { width: points.width * zoom, height: points.height * zoom }
+}
+
+const effective = (zoom: Zoom, fit: number) => (zoom === 'fit' ? fit : zoom)
+
+/** The next step above where the screen is, or the last one. */
+export function zoomIn(zoom: Zoom, fit: number): number {
+  const now = effective(zoom, fit)
+  return zoomSteps.find((step) => step > now + 1e-6) ?? zoomSteps[7]
+}
+
+/** The next step below where the screen is, or the first one. */
+export function zoomOut(zoom: Zoom, fit: number): number {
+  const now = effective(zoom, fit)
+  return [...zoomSteps].reverse().find((step) => step < now - 1e-6) ?? zoomSteps[0]
+}
+
+export const zoomPercent = (zoom: Zoom, fit: number) => Math.round(effective(zoom, fit) * 100)
