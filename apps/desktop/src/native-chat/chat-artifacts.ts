@@ -2,12 +2,12 @@ import type { ArtifactRevision, ChatArtifact } from '@/api/schema'
 import { clampWidth, type WidthLimits, type WidthStorage } from '@/lib/panel-width'
 
 // The artifacts row above a native chat's composer and the panel that opens one beside the chat. The
-// row lists the chat's artifacts newest change first, one chip per title, and pulses the ones a new
-// listing changed; the panel remembers, per chat, which artifact was open and how wide, across pane
-// switches and restarts.
+// row lists the chat's artifacts newest change first, one chip per artifact id, and pulses the ones a
+// new listing changed; the person can close a chip until its artifact changes again. The panel
+// remembers, per chat, which artifact was open and how wide, across pane switches and restarts.
 
-/** One chip: the newest of the artifacts sharing a title, and all of them, newest first. */
-export type ArtifactChip = { artifact: ChatArtifact; members: ChatArtifact[]; active: boolean; pulse: boolean }
+/** One chip: one artifact, whether it is open in the panel, and whether it just changed. */
+export type ArtifactChip = { artifact: ChatArtifact; active: boolean; pulse: boolean }
 
 /** What says an artifact changed: its update time and its revision. */
 const stamp = (artifact: ChatArtifact) => `${artifact.updatedAt}#${artifact.revision ?? ''}`
@@ -18,36 +18,31 @@ export const artifactStamps = (artifacts: readonly ChatArtifact[]): Map<string, 
 /** Titles that name one artifact for the person: case and accents folded, ends trimmed. */
 export const titleKey = (title: string) => title.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim()
 
-/** The artifacts newest change first (ties keep the listed order), those sharing a title together. */
-function groups(artifacts: readonly ChatArtifact[]): [ChatArtifact, ...ChatArtifact[]][] {
-  const byTitle = new Map<string, [ChatArtifact, ...ChatArtifact[]]>()
-  for (const artifact of [...artifacts].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))) {
-    const key = titleKey(artifact.title)
-    const group = byTitle.get(key)
-    if (group === undefined) byTitle.set(key, [artifact])
-    else group.push(artifact)
-  }
-  return [...byTitle.values()]
-}
+/** The closed chips of a chat: each artifact's stamp when it was closed. A newer stamp shows it again. */
+export type HiddenChips = ReadonlyMap<string, string>
+
+const hidden = (artifact: ChatArtifact, closed: HiddenChips) => closed.get(artifact.id) === stamp(artifact)
 
 /**
- * The row's chips, newest change first, or null when the chat has none. Artifacts sharing a title are
- * one chip showing the newest. `previous` is the listing before this one; a chip with an artifact new
- * or changed since then pulses. The first listing (null) pulses nothing.
+ * The row's chips, one per artifact, newest change first (ties keep the listed order), or null when
+ * none is left to show. `previous` is the listing before this one; an artifact new or changed since
+ * then pulses, and the first listing (null) pulses nothing. A closed chip stays out until its
+ * artifact changes.
  */
-export function artifactRow(artifacts: readonly ChatArtifact[], previous: ReadonlyMap<string, string> | null, activeId: string | null): ArtifactChip[] | null {
-  if (artifacts.length === 0) return null
-  return groups(artifacts).map((members) => ({
-    artifact: members[0],
-    members,
-    active: members.some((member) => member.id === activeId),
-    pulse: previous !== null && members.some((member) => previous.get(member.id) !== stamp(member)),
-  }))
+export function artifactRow(artifacts: readonly ChatArtifact[], previous: ReadonlyMap<string, string> | null, activeId: string | null, closed: HiddenChips = new Map()): ArtifactChip[] | null {
+  const chips = [...artifacts]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .filter((artifact) => !hidden(artifact, closed))
+    .map((artifact) => ({ artifact, active: artifact.id === activeId, pulse: previous !== null && previous.get(artifact.id) !== stamp(artifact) }))
+  return chips.length === 0 ? null : chips
 }
 
-/** The artifacts sharing a title with the open one, newest first; null when it is not listed. */
-export function artifactGroup(artifacts: readonly ChatArtifact[], id: string | null): [ChatArtifact, ...ChatArtifact[]] | null {
-  return id === null ? null : (groups(artifacts).find((members) => members.some((member) => member.id === id)) ?? null)
+/** The open artifact, by its id; null when none is open or it is no longer listed. */
+export const openArtifact = (artifacts: readonly ChatArtifact[], id: string | null): ChatArtifact | null => (id === null ? null : (artifacts.find((artifact) => artifact.id === id) ?? null))
+
+/** Closes the artifact's chip at its current stamp; closing the one open in the panel closes the panel too. */
+export function closeChip(closed: HiddenChips, artifact: ChatArtifact, openId: string | null): { hidden: HiddenChips; open: string | null } {
+  return { hidden: new Map([...closed, [artifact.id, stamp(artifact)]]), open: openId === artifact.id ? null : openId }
 }
 
 /**
@@ -95,9 +90,9 @@ export const chatPanelLimits: WidthLimits = { min: 320, max: 1200, initial: 520 
 
 const closed = (): ChatPanel => ({ artifactId: null, width: chatPanelLimits.initial })
 
-function readAll(storage: () => WidthStorage): Record<string, unknown> {
+function readAll(storage: () => WidthStorage, key: string): Record<string, unknown> {
   try {
-    const value: unknown = JSON.parse(storage().getItem(panelStoreKey) ?? '{}')
+    const value: unknown = JSON.parse(storage().getItem(key) ?? '{}')
     return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
   } catch {
     return {}
@@ -106,7 +101,7 @@ function readAll(storage: () => WidthStorage): Record<string, unknown> {
 
 /** The chat's panel as last left; a chat never opened, or storage that is blocked or holds something else, reads closed. */
 export function readChatPanel(storage: () => WidthStorage, chatId: string): ChatPanel {
-  const entry = readAll(storage)[chatId]
+  const entry = readAll(storage, panelStoreKey)[chatId]
   if (typeof entry !== 'object' || entry === null) return closed()
   const { artifactId, width } = entry as Record<string, unknown>
   if ((artifactId !== null && typeof artifactId !== 'string') || typeof width !== 'number') return closed()
@@ -116,14 +111,36 @@ export function readChatPanel(storage: () => WidthStorage, chatId: string): Chat
 /** Remembers the chat's panel, keeping the most recent chats only; not remembering it is fine. */
 export function writeChatPanel(storage: () => WidthStorage, chatId: string, panel: ChatPanel): ChatPanel {
   const next = { artifactId: panel.artifactId, width: clampWidth(panel.width, chatPanelLimits) }
-  const { [chatId]: _previous, ...rest } = readAll(storage)
+  writeChat(storage, panelStoreKey, chatId, next)
+  return next
+}
+
+/** Writes one chat's entry under `key`, the most recent chats only; not remembering it is fine. */
+function writeChat(storage: () => WidthStorage, key: string, chatId: string, value: unknown) {
+  const { [chatId]: _previous, ...rest } = readAll(storage, key)
   const entries = Object.entries(rest).slice(-(keptChats - 1))
   try {
-    storage().setItem(panelStoreKey, JSON.stringify(Object.fromEntries([...entries, [chatId, next]])))
+    storage().setItem(key, JSON.stringify(Object.fromEntries([...entries, [chatId, value]])))
   } catch {
-    // The panel opens closed next time.
+    // Forgotten next time.
   }
-  return next
+}
+
+/** Every chat's closed chips under one key, as [artifact id, stamp] pairs, the most recently written chat last. */
+export const hiddenStoreKey = 'megabrain.chat.hidden-artifacts'
+
+const isStampPair = (value: unknown): value is [string, string] => Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && typeof value[1] === 'string'
+
+/** The chat's closed chips; storage that is blocked or holds something else closes none. */
+export function readHiddenChips(storage: () => WidthStorage, chatId: string): HiddenChips {
+  const entry = readAll(storage, hiddenStoreKey)[chatId]
+  return new Map(Array.isArray(entry) ? entry.filter(isStampPair) : [])
+}
+
+/** Remembers the chat's closed chips; not remembering them is fine. */
+export function writeHiddenChips(storage: () => WidthStorage, chatId: string, closed: HiddenChips): HiddenChips {
+  writeChat(storage, hiddenStoreKey, chatId, [...closed])
+  return closed
 }
 
 /** Below this pane width the panel lies over the chat instead of squeezing it. */

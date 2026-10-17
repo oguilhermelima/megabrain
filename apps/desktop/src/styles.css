@@ -501,8 +501,16 @@ html.native body {
    chip the agent just changed sends out a ring of the accent twice. */
 .artifact-row {
   scrollbar-width: none;
-  /* The last chip fades into the edge, so a row that runs on reads as one that scrolls. */
-  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  /* An end with chips scrolled past it fades, so a row that runs on reads as one that scrolls. */
+  --fade-start: 0px;
+  --fade-end: 0px;
+  mask-image: linear-gradient(to right, transparent, #000 var(--fade-start), #000 calc(100% - var(--fade-end)), transparent);
+}
+.artifact-row[data-fade-start] {
+  --fade-start: 28px;
+}
+.artifact-row[data-fade-end] {
+  --fade-end: 28px;
 }
 .artifact-row::-webkit-scrollbar {
   display: none;

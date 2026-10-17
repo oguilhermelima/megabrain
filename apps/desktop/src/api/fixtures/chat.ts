@@ -8,7 +8,7 @@ export const mockNativeChat: NativeChat = {
   id: 'chat-0001',
   agent: 'claude',
   model: 'claude-opus-5-5',
-  cwd: '/Users/operator/Workspaces/Canto',
+  cwd: '/Users/operator/Workspaces/canto',
   title: 'Tidy the onboarding steps',
   state: 'working',
   mode: 'chat',

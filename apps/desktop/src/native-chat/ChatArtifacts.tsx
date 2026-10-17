@@ -4,6 +4,8 @@ import type { ArtifactRevision, ChatArtifact, ChatArtifactContent, ChatArtifactS
 import { ArtifactsIcon } from '@/advanced/chrome'
 import { ArtifactFrame } from '@/advanced/ArtifactFrame'
 import { documentElements } from '@/advanced/ArtifactsPage'
+import { ArtifactKindIcon } from '@/advanced/ArtifactStrip'
+import { artifactKindLabel } from '@/advanced/artifacts-model'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
 import { agentColor } from '@/components/agent-activity'
@@ -14,7 +16,7 @@ import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { httpsUrl } from '@/lib/external'
 import { OldRevisionNote, RevisionPicker, updated } from '@/native-chat/RevisionPicker'
-import { artifactStamps, chatPanelLimits, readChatPanel, revisionEntries, revisionRead, revisionView, writeChatPanel, type ArtifactChip, type ChatPanel } from '@/native-chat/chat-artifacts'
+import { artifactStamps, chatPanelLimits, readChatPanel, readHiddenChips, revisionEntries, revisionRead, revisionView, writeChatPanel, writeHiddenChips, type ArtifactChip, type ChatPanel, type HiddenChips } from '@/native-chat/chat-artifacts'
 
 // A native chat's artifacts: the row of chips above the composer and the panel that opens one beside
 // the chat (chat-artifacts.ts holds the rules). The chat's follow says when they change; the row lists
@@ -118,29 +120,99 @@ export function useChatPanel(chatId: string) {
   }
 }
 
-/** The row above the composer: one chip per artifact (those sharing a title are one), newest change first, the open one highlighted. */
-export function ArtifactsRow({ chips, now, onOpen }: { chips: ArtifactChip[]; now: number; onOpen: (chip: ArtifactChip) => void }) {
+/** The chips the person closed in this chat, as they were left. */
+export function useHiddenChips(chatId: string): { hidden: HiddenChips; save: (next: HiddenChips) => void } {
+  const [state, setState] = useState<{ chatId: string; hidden: HiddenChips }>(() => ({ chatId, hidden: readHiddenChips(browserStorage, chatId) }))
+  const hidden = state.chatId === chatId ? state.hidden : readHiddenChips(browserStorage, chatId)
+  return { hidden, save: (next) => setState({ chatId, hidden: writeHiddenChips(browserStorage, chatId, next) }) }
+}
+
+/** Which ends of the row have chips scrolled past them, so those ends fade. */
+function useRowFade() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [fade, setFade] = useState({ start: false, end: false })
+  const measure = () => {
+    const row = ref.current
+    if (row === null) return
+    const start = row.scrollLeft > 1
+    const end = row.scrollLeft + row.clientWidth < row.scrollWidth - 1
+    setFade((shown) => (shown.start === start && shown.end === end ? shown : { start, end }))
+  }
+  useEffect(() => {
+    const row = ref.current
+    if (row === null) return
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(row)
+    for (const child of row.children) observer.observe(child)
+    return () => observer.disconnect()
+  })
+  return { ref, fade, measure }
+}
+
+/**
+ * The row above the composer: one chip per artifact, newest change first, the open one filled. A
+ * chip shows what the artifact is (its kind, else who made it), its title and age; on hover or focus
+ * the age gives way to the x that closes it. A row longer than the pane scrolls sideways, faded at
+ * the ends it runs past.
+ */
+export function ArtifactsRow({ chips, now, onOpen, onClose }: { chips: ArtifactChip[]; now: number; onOpen: (chip: ArtifactChip) => void; onClose: (chip: ArtifactChip) => void }) {
+  const { ref, fade, measure } = useRowFade()
   return (
-    <div role="toolbar" aria-label="Artifacts" className="artifact-row mb-1.5 flex gap-1.5 overflow-x-auto px-1 py-0.5">
-      {chips.map((chip) => (
-        <button
-          key={chip.artifact.id}
-          type="button"
-          // The composer keeps the focus: the person goes on writing while the artifact opens.
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => onOpen(chip)}
-          aria-pressed={chip.active}
-          title={`${chip.artifact.title}\n${sourceLabel(chip.artifact.source)} · ${new Date(chip.artifact.updatedAt).toLocaleString()}`}
-          className={`relative flex h-7 max-w-[240px] shrink-0 items-center gap-1.5 rounded-full border pr-2.5 pl-2 text-[12.5px] transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
-            chip.active ? 'border-accent/45 bg-accent/[0.12] text-ink-100' : 'border-white/[0.08] bg-white/[0.04] text-ink-300 hover:border-white/[0.14] hover:bg-white/[0.07] hover:text-ink-100'
-          }`}
-        >
-          {chip.pulse && <span key={`${chip.artifact.updatedAt}#${chip.artifact.revision ?? ''}`} aria-hidden="true" className="artifact-pulse pointer-events-none absolute inset-0 rounded-full" />}
-          <SourceMark source={chip.artifact.source} size={13} />
-          <span className="min-w-0 truncate font-medium">{chip.artifact.title}</span>
-          <span className={`shrink-0 text-[11px] tabular-nums ${chip.pulse ? 'text-accent' : 'text-ink-400'}`}>{relativeAge(chip.artifact.updatedAt, now)}</span>
-        </button>
-      ))}
+    <div
+      ref={ref}
+      role="toolbar"
+      aria-label="Artifacts"
+      data-fade-start={fade.start || undefined}
+      data-fade-end={fade.end || undefined}
+      onScroll={measure}
+      // A mouse wheel scrolls the row sideways; a trackpad already does.
+      onWheel={(event) => {
+        if (event.deltaX === 0 && event.deltaY !== 0) event.currentTarget.scrollLeft += event.deltaY
+      }}
+      className="artifact-row mb-1.5 flex gap-1 overflow-x-auto px-1 py-0.5"
+    >
+      {chips.map((chip) => {
+        const { artifact } = chip
+        const kind = artifact.kind === undefined ? null : artifactKindLabel(artifact.kind)
+        return (
+          <div
+            key={artifact.id}
+            className={`group relative flex h-7 max-w-[260px] shrink-0 items-center rounded-full text-[12.5px] transition-colors duration-100 motion-reduce:transition-none ${
+              chip.active ? 'bg-white/[0.14] text-ink-100 shadow-[inset_0_0_0_1px_rgb(255_255_255/0.1)]' : 'bg-white/[0.05] text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'
+            }`}
+          >
+            {chip.pulse && <span key={`${artifact.updatedAt}#${artifact.revision ?? ''}`} aria-hidden="true" className="artifact-pulse pointer-events-none absolute inset-0 rounded-full" />}
+            <button
+              type="button"
+              // The composer keeps the focus: the person goes on writing while the artifact opens.
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => onOpen(chip)}
+              aria-pressed={chip.active}
+              title={`${artifact.title}\n${kind === null ? '' : `${kind} · `}${sourceLabel(artifact.source)} · ${new Date(artifact.updatedAt).toLocaleString()}`}
+              className="flex h-full min-w-0 items-center gap-1.5 rounded-full pl-2.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
+            >
+              <span className={`inline-flex shrink-0 ${chip.active ? 'text-accent' : 'text-ink-400 group-hover:text-ink-200'}`}>{artifact.kind === undefined ? <SourceMark source={artifact.source} size={13} /> : <ArtifactKindIcon kind={artifact.kind} />}</span>
+              <span className={`min-w-0 truncate ${chip.active ? 'font-semibold' : 'font-medium'}`}>{artifact.title}</span>
+            </button>
+            <span className="relative mr-1 ml-1 grid h-5 min-w-5 shrink-0 place-items-center">
+              <span className={`px-0.5 text-[11px] tabular-nums transition-opacity duration-100 group-focus-within:opacity-0 group-hover:opacity-0 motion-reduce:transition-none ${chip.pulse ? 'text-accent' : 'text-ink-400'}`}>{relativeAge(artifact.updatedAt, now)}</span>
+              <button
+                type="button"
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => onClose(chip)}
+                aria-label={`Close ${artifact.title}`}
+                title="Close"
+                className="absolute inset-0 m-auto grid size-5 place-items-center rounded-full text-ink-300 opacity-0 transition-opacity duration-100 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-white/[0.12] hover:text-ink-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
+              >
+                <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                  <path d="m4 4 8 8M12 4l-8 8" />
+                </svg>
+              </button>
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }

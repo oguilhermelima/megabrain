@@ -2,7 +2,7 @@ import { closeSync, existsSync, fstatSync, openSync, readFileSync, readdirSync, 
 import { basename, dirname, extname, join } from "node:path";
 import type { Chat } from "./store.js";
 import { sessionLogPath } from "./session-log.js";
-import { ARTIFACT_MAX_BYTES, listArtifacts, showArtifact, stripGoogleFonts } from "../knowledge/artifacts.js";
+import { ARTIFACT_MAX_BYTES, listArtifacts, showArtifact, stripGoogleFonts, type ArtifactKind } from "../knowledge/artifacts.js";
 
 export type ChatArtifactSource = "megabrain" | "claude-artifact" | "claude-design" | "codex-plan" | "agy" | "grok";
 export type ChatArtifactFormat = "html" | "markdown" | "text" | "url";
@@ -10,6 +10,8 @@ export type ChatArtifact = {
   id: string;
   source: ChatArtifactSource;
   title: string;
+  /** What megabrain filed it as; other sources keep no kind. */
+  kind?: ArtifactKind;
   format: ChatArtifactFormat;
   path?: string;
   url?: string;
@@ -94,7 +96,7 @@ function parseClaude(path: string): LocatedChatArtifact[] {
 export async function listMegabrainChatArtifacts(stateDir: string, chat: Chat): Promise<LocatedChatArtifact[]> {
   return (await listArtifacts(stateDir, {}))
     .filter((artifact) => artifact.chatId === chat.id)
-    .map((stored) => ({ artifact: { id: stored.id, source: "megabrain", title: stored.title, format: stored.format === "html" ? "html" : "markdown", path: stored.path, updatedAt: localUpdatedAt(stored.path, stored.updatedAt), revision: stored.revision, editable: false }, localPath: stored.path }));
+    .map((stored) => ({ artifact: { id: stored.id, source: "megabrain", title: stored.title, kind: stored.kind, format: stored.format === "html" ? "html" : "markdown", path: stored.path, updatedAt: localUpdatedAt(stored.path, stored.updatedAt), revision: stored.revision, editable: false }, localPath: stored.path }));
 }
 
 export async function listClaudeChatArtifacts(chat: Chat, home: string): Promise<LocatedChatArtifact[]> {

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { ArtifactRevision, ChatArtifact, ChatEventLine } from '@/api/schema'
 import { applyLine, followState } from '@/native-chat/chat-model'
 import { mockNativeChat } from '@/api/fixtures/chat'
-import { artifactGroup, artifactRow, artifactStamps, chatPanelLimits, overlayBelow, panelLayout, panelStoreKey, pickRevision, readChatPanel, revisionEntries, revisionRead, revisionView, writeChatPanel } from '@/native-chat/chat-artifacts'
+import { artifactRow, artifactStamps, chatPanelLimits, closeChip, hiddenStoreKey, openArtifact, readHiddenChips, writeHiddenChips, type ArtifactChip, type HiddenChips, overlayBelow, panelLayout, panelStoreKey, pickRevision, readChatPanel, revisionEntries, revisionRead, revisionView, writeChatPanel } from '@/native-chat/chat-artifacts'
 import type { WidthStorage } from '@/lib/panel-width'
 
 const artifact = (id: string, updatedAt: string, revision: number | null = 1): ChatArtifact => ({ id, source: 'megabrain', title: id, format: 'markdown', updatedAt, revision, editable: false })
@@ -59,37 +59,91 @@ describe('artifactRow', () => {
 const titled = (id: string, title: string, updatedAt: string, revision: number | null = 1): ChatArtifact => ({ ...artifact(id, updatedAt, revision), title })
 
 describe('one chip per artifact', () => {
-  const older = titled('old', 'Leva de correções do QA Social', '2026-10-17T11:40:00Z', 2)
-  const newer = titled('new', '  leva de CORRECOES do qa social ', '2026-10-17T12:20:00Z', 3)
-  const other = titled('other', 'Something else', '2026-10-17T12:00:00Z')
+  const diagram = titled('art-20261017-e82e7a18', 'Leva de correções do QA Social — fluxo', '2026-10-17T12:20:00Z', 3)
+  const doc = titled('art-20261017-6b1338f8', 'Leva de correções do QA Social', '2026-10-17T11:40:00Z', 1)
+  const twin = titled('twin', '  leva de CORRECOES do qa social ', '2026-10-17T11:00:00Z', 2)
 
-  test('artifacts with the same title, case and accents folded and trimmed, share one chip showing the newest', () => {
-    const row = artifactRow([older, other, newer], null, null)
-    expect(row?.map((chip) => chip.artifact.id)).toEqual(['new', 'other'])
-    expect(row?.[0]?.members.map((member) => member.id)).toEqual(['new', 'old'])
-    expect(row?.[1]?.members.map((member) => member.id)).toEqual(['other'])
+  test('artifacts with similar or equal titles stay one chip each, newest first', () => {
+    expect(artifactRow([doc, twin, diagram], null, null)?.map((chip) => chip.artifact.id)).toEqual(['art-20261017-e82e7a18', 'art-20261017-6b1338f8', 'twin'])
   })
 
-  test('the chip is active while any of its artifacts is open', () => {
-    expect(artifactRow([older, newer, other], null, 'old')?.filter((chip) => chip.active).map((chip) => chip.artifact.id)).toEqual(['new'])
+  test('only the open artifact is active, not one sharing its title', () => {
+    expect(artifactRow([diagram, doc, twin], null, 'twin')?.filter((chip) => chip.active).map((chip) => chip.artifact.id)).toEqual(['twin'])
   })
 
-  test('the chip pulses when any of its artifacts changed', () => {
-    const before = artifactStamps([older, newer, other])
-    const row = artifactRow([{ ...older, revision: 3 }, newer, other], before, null)
-    expect(row?.find((chip) => chip.artifact.id === 'new')?.pulse).toBe(true)
-    expect(row?.find((chip) => chip.artifact.id === 'other')?.pulse).toBe(false)
+  test('only the artifact that changed pulses', () => {
+    const before = artifactStamps([diagram, doc, twin])
+    const row = artifactRow([diagram, { ...doc, revision: 2 }, twin], before, null)
+    expect(row?.filter((chip) => chip.pulse).map((chip) => chip.artifact.id)).toEqual(['art-20261017-6b1338f8'])
   })
 
-  test('different titles stay apart', () => {
-    expect(artifactRow([titled('x', 'Plan', a.updatedAt), titled('y', 'Plans', b.updatedAt)], null, null)?.length).toBe(2)
+  test('the open artifact is found by its id alone', () => {
+    expect(openArtifact([diagram, doc, twin], 'art-20261017-6b1338f8')?.id).toBe('art-20261017-6b1338f8')
+    expect(openArtifact([diagram, doc, twin], 'gone')).toBeNull()
+    expect(openArtifact([diagram, doc, twin], null)).toBeNull()
+  })
+})
+
+describe('closing a chip', () => {
+  const chipOf = (row: ArtifactChip[] | null, id: string) => row?.find((chip) => chip.artifact.id === id)
+
+  test('a closed chip leaves the row; the others stay', () => {
+    const hidden = closeChip(new Map(), a, null).hidden
+    expect(artifactRow([a, b, c], null, null, hidden)?.map((chip) => chip.artifact.id)).toEqual(['b', 'c'])
   })
 
-  test('the group of an open artifact, newest first, from any of its ids', () => {
-    expect(artifactGroup([older, other, newer], 'old')?.map((member) => member.id)).toEqual(['new', 'old'])
-    expect(artifactGroup([older, other, newer], 'new')?.map((member) => member.id)).toEqual(['new', 'old'])
-    expect(artifactGroup([older, other, newer], 'gone')).toBeNull()
-    expect(artifactGroup([older, other, newer], null)).toBeNull()
+  test('the row disappears when every chip is closed', () => {
+    let hidden: HiddenChips = new Map()
+    for (const shown of [a, b]) hidden = closeChip(hidden, shown, null).hidden
+    expect(artifactRow([a, b], null, null, hidden)).toBeNull()
+  })
+
+  test('a closed chip comes back on a newer revision of its artifact', () => {
+    const hidden = closeChip(new Map(), a, null).hidden
+    expect(chipOf(artifactRow([{ ...a, revision: 2 }, b], null, null, hidden), 'a')).toBeDefined()
+    expect(chipOf(artifactRow([{ ...a, updatedAt: '2026-10-17T13:00:00Z' }, b], null, null, hidden), 'a')).toBeDefined()
+    expect(chipOf(artifactRow([a, b], null, null, hidden), 'a')).toBeUndefined()
+  })
+
+  test('closing a chip hides only that id, not one sharing its title', () => {
+    const one = titled('one', 'Same title', a.updatedAt)
+    const two = titled('two', 'Same title', b.updatedAt)
+    const hidden = closeChip(new Map(), one, null).hidden
+    expect(artifactRow([one, two], null, null, hidden)?.map((chip) => chip.artifact.id)).toEqual(['two'])
+  })
+
+  test('closing the open chip closes the panel; closing another keeps it open', () => {
+    expect(closeChip(new Map(), a, 'a').open).toBeNull()
+    expect(closeChip(new Map(), a, 'b').open).toBe('b')
+    expect(closeChip(new Map(), a, null).open).toBeNull()
+  })
+
+  test('closed chips are remembered per chat under one key', () => {
+    const storage = memory()
+    writeHiddenChips(() => storage, 'chat-1', closeChip(new Map(), a, null).hidden)
+    writeHiddenChips(() => storage, 'chat-2', closeChip(new Map(), b, null).hidden)
+    expect(Object.keys(storage.values)).toEqual([hiddenStoreKey])
+    expect(artifactRow([a, b], null, null, readHiddenChips(() => storage, 'chat-1'))?.map((chip) => chip.artifact.id)).toEqual(['b'])
+    expect(artifactRow([a, b], null, null, readHiddenChips(() => storage, 'chat-2'))?.map((chip) => chip.artifact.id)).toEqual(['a'])
+    expect(readHiddenChips(() => storage, 'chat-3').size).toBe(0)
+  })
+
+  test('garbage or blocked storage hides nothing, and writing to it does not throw', () => {
+    expect(readHiddenChips(() => memory({ [hiddenStoreKey]: '{not json' }), 'chat-1').size).toBe(0)
+    expect(readHiddenChips(() => memory({ [hiddenStoreKey]: JSON.stringify({ 'chat-1': [7, 'x'] }) }), 'chat-1').size).toBe(0)
+    expect(readHiddenChips(() => throwing, 'chat-1').size).toBe(0)
+    const hidden = closeChip(new Map(), a, null).hidden
+    expect(writeHiddenChips(() => throwing, 'chat-1', hidden)).toBe(hidden)
+  })
+
+  test('keeps the most recently written chats, a bounded number', () => {
+    const storage = memory()
+    const hidden = closeChip(new Map(), a, null).hidden
+    for (let index = 0; index < 250; index += 1) writeHiddenChips(() => storage, `chat-${index}`, hidden)
+    const kept = Object.keys(JSON.parse(storage.values[hiddenStoreKey] ?? '{}') as object)
+    expect(kept.length).toBeLessThanOrEqual(200)
+    expect(kept).toContain('chat-249')
+    expect(kept).not.toContain('chat-0')
   })
 })
 

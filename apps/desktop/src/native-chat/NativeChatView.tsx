@@ -25,8 +25,8 @@ import { backToChat, chatChanged, requestTerminal, stopAndOpen, TERMINAL_WAIT_NO
 import { beginSwitch, endSwitch, switchEngine, switchStep } from '@/native-chat/switch-trace'
 import { endKeptSession } from '@/terminal/kept-terminals'
 import { useNow } from '@/github/parts'
-import { ArtifactPanel, ArtifactsRow, useChatArtifacts, useChatPanel } from '@/native-chat/ChatArtifacts'
-import { artifactGroup, artifactRow, panelLayout } from '@/native-chat/chat-artifacts'
+import { ArtifactPanel, ArtifactsRow, useChatArtifacts, useChatPanel, useHiddenChips } from '@/native-chat/ChatArtifacts'
+import { artifactRow, closeChip, openArtifact, panelLayout, type ArtifactChip } from '@/native-chat/chat-artifacts'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
@@ -71,9 +71,14 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
   const now = useNow(30_000)
   const artifacts = useChatArtifacts(chat.id, artifactsChanged)
   const panel = useChatPanel(chat.id)
-  // Artifacts sharing a title are one: the panel shows the newest of the open one's.
-  const openGroup = artifacts.artifacts === null ? null : artifactGroup(artifacts.artifacts, panel.artifactId)
-  const chips = artifacts.artifacts === null ? null : artifactRow(artifacts.artifacts, artifacts.previous, panel.artifactId)
+  const closedChips = useHiddenChips(chat.id)
+  const opened = artifacts.artifacts === null ? null : openArtifact(artifacts.artifacts, panel.artifactId)
+  const chips = artifacts.artifacts === null ? null : artifactRow(artifacts.artifacts, artifacts.previous, panel.artifactId, closedChips.hidden)
+  const closeArtifactChip = (chip: ArtifactChip) => {
+    const next = closeChip(closedChips.hidden, chip.artifact, panel.artifactId)
+    closedChips.save(next.hidden)
+    if (next.open !== panel.artifactId) panel.open(next.open)
+  }
   const paneWidth = usePaneWidth()
   const layout = panelLayout(paneWidth.width, panel.width)
 
@@ -262,11 +267,11 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     stop()
   }
 
-  const artifactPanel = (members: [ChatArtifact, ...ChatArtifact[]], overlay: boolean) => (
+  const artifactPanel = (artifact: ChatArtifact, overlay: boolean) => (
     <ArtifactPanel
-      key={members[0].id}
+      key={artifact.id}
       chatId={chat.id}
-      members={members}
+      members={[artifact]}
       width={layout.width}
       overlay={overlay}
       now={now}
@@ -389,7 +394,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
             <div className="relative flex min-h-0 flex-1 flex-col">
               {transcript}
               {/* On a narrow pane the artifact lies over the transcript; the composer below stays in reach. */}
-              {openGroup !== null && layout.mode === 'overlay' && artifactPanel(openGroup, true)}
+              {opened !== null && layout.mode === 'overlay' && artifactPanel(opened, true)}
             </div>
             {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
             <div onKeyDown={onComposerKey} className="contents">
@@ -408,11 +413,11 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
                 channel={compose}
                 initCommands={chat.slashCommands}
                 queue={queueControls}
-                above={chips === null ? undefined : <ArtifactsRow chips={chips} now={now} onOpen={(chip) => panel.open(chip.active ? null : chip.artifact.id)} />}
+                above={chips === null ? undefined : <ArtifactsRow chips={chips} now={now} onOpen={(chip) => panel.open(chip.active ? null : chip.artifact.id)} onClose={closeArtifactChip} />}
               />
             </div>
           </div>
-          {openGroup !== null && layout.mode === 'split' && artifactPanel(openGroup, false)}
+          {opened !== null && layout.mode === 'split' && artifactPanel(opened, false)}
         </div>
       )}
     </div>

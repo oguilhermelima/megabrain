@@ -31,6 +31,8 @@ export const chatArtifactSchema = z.looseObject({
   id: z.string(),
   source: z.enum(['megabrain', 'claude-artifact', 'claude-design', 'codex-plan', 'agy', 'grok']),
   title: z.string(),
+  /** What megabrain filed it as; other sources, and a kind this app does not know, have none. */
+  kind: z.enum(['diagram', 'plan', 'doc']).optional().catch(undefined),
   format: z.enum(['html', 'markdown', 'text', 'url']),
   path: z.string().optional(),
   url: z.string().optional(),

@@ -63,6 +63,20 @@ describe("chat artifact CLI", () => {
     expect(JSON.parse(second.value)).toEqual(result);
   });
 
+  test("names the kind of a megabrain artifact and none for another source", async () => {
+    const w = world();
+    await transcript(w, remoteFixture);
+    await createArtifact(w.state, { title: "Flow", kind: "diagram", content: "<!doctype html><p>flow</p>", format: "html", project: w.cwd, topics: [], chatId: w.chat.id, now: "2026-10-17T12:02:30.000Z" });
+    await createArtifact(w.state, { title: "Steps", kind: "plan", content: "# Steps\n", format: "markdown", project: w.cwd, topics: [], chatId: w.chat.id, now: "2026-10-17T12:02:40.000Z" });
+    const listed = await executeChat(["artifacts", w.chat.id, "--json"], w.environment, undefined as never);
+    expect(listed.kind).toBe("ok");
+    if (listed.kind !== "ok") return;
+    const { artifacts } = JSON.parse(listed.value) as { artifacts: { source: string; title: string; kind?: string }[] };
+    expect(artifacts.find((artifact) => artifact.title === "Flow")?.kind).toBe("diagram");
+    expect(artifacts.find((artifact) => artifact.title === "Steps")?.kind).toBe("plan");
+    expect(artifacts.filter((artifact) => artifact.source !== "megabrain").every((artifact) => !("kind" in artifact))).toBe(true);
+  });
+
   test("classifies a Claude Design publication only when its matching result names a Design type", async () => {
     const w = world("22222222-2222-4222-8222-222222222222");
     await transcript(w, designFixture);
