@@ -28,6 +28,8 @@ import { useNow } from '@/github/parts'
 import { ArtifactPanel, ArtifactsRow, useChatArtifacts, useChatPanel, useHiddenChips } from '@/native-chat/ChatArtifacts'
 import { artifactRow, closeChip, openArtifact, panelLayout, type ArtifactChip } from '@/native-chat/chat-artifacts'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
+import { runningTasks, taskRows } from '@/chat/background-tasks'
+import { BackgroundIndicator } from '@/native-chat/BackgroundTasks'
 import { pageMx } from '@/lib/page'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
@@ -281,6 +283,10 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     />
   )
 
+  // The background work still running, above the composer; a pick scrolls the transcript to its row.
+  const running = useMemo(() => runningTasks(taskRows(state.events).latest), [state.events])
+  const jumpToTask = useRef<((taskId: string) => void) | null>(null)
+
   const transcript = (
     <div className="flex min-h-0 flex-1 flex-col">
       <ConversationAgent.Provider value={chat.agent}>
@@ -300,6 +306,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
             onOpenPath={onOpenPath}
             channel={compose}
             navigator
+            jumpRef={jumpToTask}
           />
         )}
       </ApprovalRendererContext.Provider>
@@ -414,7 +421,14 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
                 channel={compose}
                 initCommands={chat.slashCommands}
                 queue={queueControls}
-                above={chips === null ? undefined : <ArtifactsRow chips={chips} now={now} onOpen={(chip) => panel.open(chip.active ? null : chip.artifact.id)} onClose={closeArtifactChip} />}
+                above={
+                  running.length === 0 && chips === null ? undefined : (
+                    <>
+                      <BackgroundIndicator tasks={running} onJump={(taskId) => jumpToTask.current?.(taskId)} />
+                      {chips !== null && <ArtifactsRow chips={chips} now={now} onOpen={(chip) => panel.open(chip.active ? null : chip.artifact.id)} onClose={closeArtifactChip} />}
+                    </>
+                  )
+                }
               />
             </div>
           </div>

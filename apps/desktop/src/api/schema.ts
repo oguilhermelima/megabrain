@@ -137,7 +137,7 @@ export const transcriptImageSchema = z.union([z.object({ path: z.string() }), z.
 export const transcriptEventSchema = z.looseObject({
   id: z.string(),
   at: z.string().nullable(),
-  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system', 'approval']),
+  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system', 'approval', 'turn-cut', 'background-task']),
   text: z.string(),
   /** On a native chat's assistant or thinking event: the message its streamed chunks belonged to. */
   messageId: z.string().optional(),
@@ -150,6 +150,26 @@ export const transcriptEventSchema = z.looseObject({
   // its result. A status this app does not know reads as none, so the subagent still shows.
   subagent: z
     .looseObject({ id: z.string(), type: z.string().optional(), description: z.string().optional(), status: z.enum(['completed', 'failed', 'stopped']).optional().catch(undefined) })
+    .optional(),
+  // On a turn-cut event: a turn that ended without the agent finishing it, sent once after any partial text.
+  // A reason this app does not know reads as unknown; partial says whether some of the answer had arrived.
+  reason: z.enum(['interrupted', 'process-exited', 'error', 'limit', 'unknown']).catch('unknown').optional(),
+  detail: z.string().optional(),
+  partial: z.boolean().optional(),
+  // On a background-task event: work the agent left running past its answer (a background shell, a monitor,
+  // a background agent), sent when it starts and on every change of state under the same id. lost means the
+  // session or the daemon ended without a final state. A kind this app does not know reads as other.
+  backgroundTask: z
+    .looseObject({
+      id: z.string(),
+      kind: z.enum(['shell', 'monitor', 'agent', 'other']).catch('other'),
+      label: z.string(),
+      state: z.enum(['running', 'completed', 'failed', 'killed', 'lost']),
+      startedAt: z.string(),
+      endedAt: z.string().nullable().optional(),
+      summary: z.string().nullable().optional(),
+      exitCode: z.number().nullable().optional(),
+    })
     .optional(),
   /** On a user event: the images it carried, a local file or inline; the text keeps an [Image #N] marker where each was. */
   images: z.array(transcriptImageSchema).optional(),

@@ -63,7 +63,7 @@ export function thoughtLabel(ms: number | undefined): string {
   return ms === undefined ? 'Thought' : `Thought for ${formatElapsed(Math.max(1000, Math.round(ms / 1000) * 1000))}`
 }
 
-const endsTurn = (event: TranscriptEvent) => event.kind === 'user' || event.kind === 'assistant' || event.kind === 'system'
+const endsTurn = (event: TranscriptEvent) => event.kind === 'user' || event.kind === 'assistant' || event.kind === 'system' || event.kind === 'turn-cut'
 
 function pairTools(events: TranscriptEvent[], steps: Map<string, TranscriptEvent[]>, ends: Map<string, TranscriptEvent>, before: TranscriptEvent | null = null): ConversationItem[] {
   let lastEnd = -1

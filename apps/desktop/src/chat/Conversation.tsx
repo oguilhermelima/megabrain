@@ -30,6 +30,7 @@ import { pageMx } from '@/lib/page'
 import { chatTurns, railShown, turnLanding } from '@/native-chat/navigator-rail'
 import { NavigatorRail, railMargin } from '@/native-chat/NavigatorRail'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
+import { cutLine, taskDurationMs, taskRows, taskStateLabel, taskTool, type BackgroundTask } from '@/chat/background-tasks'
 
 const noLive: LiveRow[] = []
 
@@ -78,6 +79,20 @@ function SystemMessage({ event }: { event: TranscriptEvent }) {
   return (
     <li onContextMenu={markMessage(event.text)} className="text-center text-[12px] text-ink-400">
       {event.text}
+    </li>
+  )
+}
+
+/** Under a turn that ended before the agent finished it: that it stopped, and why. The partial answer above stays as it is. */
+function CutTurnLine({ event }: { event: TranscriptEvent }) {
+  const detail = event.detail?.trim() ?? ''
+  return (
+    <li role="note" title={detail === '' ? undefined : detail} className="flex max-w-[80%] items-center gap-2 text-[12.5px] text-ink-400">
+      <svg viewBox="0 0 16 16" width={12} height={12} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-ink-500">
+        <circle cx="8" cy="8" r="5.75" />
+        <rect x="6" y="6" width="4" height="4" rx="0.75" />
+      </svg>
+      <span className="min-w-0 truncate">{cutLine(event)}</span>
     </li>
   )
 }
@@ -360,6 +375,68 @@ function SubagentGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { ty
   )
 }
 
+/** Each background task's latest state by its id, and the task a jump just landed on; its row reads both here, so a settled row updates in place. */
+const BackgroundTasksContext = createContext<{ latest: ReadonlyMap<string, BackgroundTask>; flashed: string | null }>({ latest: new Map(), flashed: null })
+
+const taskKindName: Record<BackgroundTask['kind'], string> = { shell: 'Background shell', monitor: 'Monitor', agent: 'Background agent', other: 'Background task' }
+const taskToolStatus = (state: BackgroundTask['state']): ToolStatus => (state === 'running' ? 'running' : state === 'failed' ? 'error' : 'ok')
+
+/** How long a task ran, counting each second while it runs. */
+function TaskDuration({ task }: { task: BackgroundTask }) {
+  const running = task.state === 'running'
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [running])
+  const ms = taskDurationMs(task, now)
+  return ms === null ? null : <span className="shrink-0 text-[12px] text-ink-400 tabular-nums">{formatElapsed(ms)}</span>
+}
+
+/**
+ * Work the agent left running past its answer, where it started: its kind, its label, where it stands and for how
+ * long, in its latest state; opened, the summary it ended with.
+ */
+function BackgroundTaskRow({ event }: { event: TranscriptEvent }) {
+  const [open, setOpen] = useState(false)
+  const { latest, flashed } = useContext(BackgroundTasksContext)
+  const first = event.backgroundTask
+  if (first === undefined) return <SystemMessage event={event} />
+  const task = latest.get(first.id) ?? first
+  const summary = task.summary ?? ''
+  const lost = task.state === 'lost'
+  return (
+    <li className="max-w-[85%]">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={summary === '' ? undefined : open}
+        disabled={summary === ''}
+        title={task.label}
+        className={`flex max-w-full items-center gap-2 rounded-lg py-1 pr-2 pl-0.5 text-left text-[13px] text-ink-300 transition-colors duration-500 enabled:hover:text-ink-100 motion-reduce:transition-none ${flashed === task.id ? 'bg-white/[0.07]' : ''}`}
+      >
+        <ToolIcon name={taskTool[task.kind]} status={taskToolStatus(task.state)} size={13} />
+        <span className="shrink-0">{taskKindName[task.kind]}</span>
+        <span className="min-w-0 truncate font-mono text-[12px] text-ink-400">{task.label}</span>
+        <span className={`shrink-0 text-[12px] ${task.state === 'failed' ? 'text-warn' : lost ? 'text-ink-500 italic' : 'text-ink-400'}`}>· {taskStateLabel(task)}</span>
+        <TaskDuration task={task} />
+        {(task.state === 'running' || task.state === 'completed' || task.state === 'failed') && <StateMark state={task.state === 'running' ? 'running' : task.state === 'failed' ? 'failed' : 'done'} />}
+        {summary !== '' && (
+          <svg viewBox="0 0 16 16" width={11} height={11} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`shrink-0 text-ink-500 transition-transform ${open ? 'rotate-90' : ''}`}>
+            <path d="m6 3.5 4.5 4.5L6 12.5" />
+          </svg>
+        )}
+      </button>
+      {open && summary !== '' && (
+        <div className="mt-1 mb-2 ml-6">
+          <CallText label={task.state === 'failed' ? 'Error' : 'Result'} text={summary} failed={task.state === 'failed'} />
+        </div>
+      )}
+    </li>
+  )
+}
+
 // Memoised: a settled row keeps its item object across polls (see conversation-derive.ts).
 const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem | NoticeDisplayItem; onOpenChat: OpenChat | undefined }) {
   if (item.type === 'notice') return <NoticeCard card={item} onOpenChat={onOpenChat} />
@@ -374,6 +451,8 @@ const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem |
   if (event.kind === 'assistant') return <AssistantMessage event={event} />
   if (event.kind === 'thinking') return <ThinkingMessage event={event} thoughtMs={item.thoughtMs} />
   if (event.kind === 'approval') return <ApprovalMessage event={event} />
+  if (event.kind === 'turn-cut') return <CutTurnLine event={event} />
+  if (event.kind === 'background-task') return <BackgroundTaskRow event={event} />
   return <SystemMessage event={event} />
 })
 
@@ -469,6 +548,7 @@ export function ConversationList({
   footer = null,
   channel,
   navigator = false,
+  jumpRef,
 }: {
   events: TranscriptEvent[]
   onOpenChat?: OpenChat
@@ -482,6 +562,8 @@ export function ConversationList({
   channel?: ComposeChannel
   /** A rail of the person's messages on the right edge, to jump between turns. */
   navigator?: boolean
+  /** Set while the list shows: scrolls to a background task's row by the task's id. */
+  jumpRef?: { current: ((taskId: string) => void) | null }
 }) {
   const [pinned, setPinned] = useState(true)
   const list = useRef<HTMLDivElement>(null)
@@ -490,15 +572,17 @@ export function ConversationList({
     [root, onOpenPath],
   )
 
+  // A background task shows once, where it started; its later states reach its row through the context.
+  const tasks = useMemo(() => taskRows(events), [events])
   // Only the new events are derived on each poll; the settled rows are kept.
   const derived = useRef<DerivedConversation | null>(null)
   const collapsed = useRef<NoticeDisplayItem[]>([])
   const settled = useMemo(() => {
-    const next = deriveConversation(derived.current, events)
+    const next = deriveConversation(derived.current, tasks.events)
     derived.current = next
     collapsed.current = collapseNotices(next.display, collapsed.current)
     return collapsed.current
-  }, [events])
+  }, [tasks.events])
   // The live rows change with every chunk; the settled ones above keep their identity.
   const items = useMemo<NoticeDisplayItem[]>(
     () => (live.length === 0 ? settled : settled.concat(live.map((row) => ({ type: 'message', event: row.event, streaming: row.streaming, pending: row.pending })))),
@@ -527,6 +611,28 @@ export function ConversationList({
   const scrollToLatest = () => {
     if (count > 0) virtualizer.scrollToIndex(count - 1, { align: 'end' })
   }
+
+  // A jump to a task lights its row for a moment, so the eye finds it.
+  const [flashed, setFlashed] = useState<string | null>(null)
+  useEffect(() => {
+    if (flashed === null) return
+    const timer = setTimeout(() => setFlashed(null), 1_200)
+    return () => clearTimeout(timer)
+  }, [flashed])
+  useEffect(() => {
+    if (jumpRef === undefined) return
+    jumpRef.current = (taskId) => {
+      const index = items.findIndex((item) => item.type === 'message' && item.event.kind === 'background-task' && item.event.backgroundTask?.id === taskId)
+      if (index === -1) return
+      setPinned(false)
+      virtualizer.scrollToIndex(index, { align: 'center' })
+      setFlashed(taskId)
+    }
+    return () => {
+      jumpRef.current = null
+    }
+  }, [jumpRef, items, virtualizer])
+  const taskContext = useMemo(() => ({ latest: tasks.latest, flashed }), [tasks.latest, flashed])
 
   useEffect(() => {
     if (pinned) scrollToLatest()
@@ -639,6 +745,7 @@ export function ConversationList({
 
   return (
     <PathLinksContext.Provider value={links}>
+      <BackgroundTasksContext.Provider value={taskContext}>
       {/* It fades in where the suggestions or the loading rows were, as the first message arrives. */}
       <div ref={width.ref} className="motion-fade relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <div
@@ -693,6 +800,7 @@ export function ConversationList({
         )}
         <ContextMenu menu={contextMenu.menu} onClose={contextMenu.close} />
       </div>
+      </BackgroundTasksContext.Provider>
     </PathLinksContext.Provider>
   )
 }

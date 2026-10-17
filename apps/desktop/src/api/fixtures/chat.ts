@@ -88,6 +88,49 @@ export const mockLongChatLines: ChatEventLine[] = Array.from({ length: 100 }, (_
   ]
 }).flat()
 
+/** A chat whose turns were cut before finishing, with work left running in the background. */
+export const mockCutChat: NativeChat = {
+  ...mockNativeChat,
+  id: 'chat-0003',
+  title: 'Ship the billing migration',
+  state: 'idle',
+  agentSessionId: '0b1c2d3e-0000-4000-8000-0000000000ac',
+  createdAt: at(1800),
+  lastActivityAt: at(30),
+}
+
+type Task = NonNullable<TranscriptEvent['backgroundTask']>
+const task = (seconds: number, backgroundTask: Task): TranscriptEvent => ({ id: '', at: at(seconds), kind: 'background-task', text: backgroundTask.label, backgroundTask })
+const cut = (seconds: number, fields: Pick<TranscriptEvent, 'reason' | 'detail' | 'partial'>): TranscriptEvent => ({ id: '', at: at(seconds), kind: 'turn-cut', text: '', ...fields })
+const devServer: Task = { id: 'bg-dev', kind: 'shell', label: 'pnpm --filter web dev', state: 'running', startedAt: at(1500) }
+const suite: Task = { id: 'bg-suite', kind: 'shell', label: 'pnpm test --filter billing', state: 'running', startedAt: at(1490) }
+const ci: Task = { id: 'bg-ci', kind: 'monitor', label: 'CI checks on #981', state: 'running', startedAt: at(1200) }
+const reviewer: Task = { id: 'bg-review', kind: 'agent', label: 'Review the migration diff', state: 'running', startedAt: at(900) }
+const tail: Task = { id: 'bg-tail', kind: 'shell', label: 'tail -f logs/worker.log', state: 'running', startedAt: at(880) }
+
+export const mockCutChatLines: ChatEventLine[] = ([
+  { id: '', at: at(1510), kind: 'user', text: 'Start the dev server, run the billing tests and watch CI on #981.' },
+  { id: '', at: at(1505), kind: 'assistant', text: 'Starting the dev server and the tests in the background, then a monitor on CI.' },
+  task(1500, devServer),
+  task(1490, suite),
+  task(1200, ci),
+  { id: '', at: at(1190), kind: 'assistant', text: 'All three are running. While the tests go, I am updating the snapshot files: the invoice totals now round per line, so the first' },
+  cut(1185, { reason: 'interrupted', partial: true }),
+  task(1100, { ...suite, state: 'completed', endedAt: at(1100), exitCode: 0, summary: '212 pass, 0 fail\nRan 212 tests across 31 files. [41.2s]' }),
+  { id: '', at: at(920), kind: 'user', text: 'Leave the snapshots. Run the migration and have an agent review the diff.' },
+  task(900, reviewer),
+  task(880, tail),
+  { id: '', at: at(870), kind: 'assistant', text: 'Running the migration now. The first two steps applied cleanly; the third rewrites' },
+  cut(865, { reason: 'process-exited', detail: 'claude exited with code 137', partial: true }),
+  task(860, { ...reviewer, state: 'failed', endedAt: at(860), summary: 'The agent stopped: its context window filled before it read the last file.' }),
+  task(600, { ...tail, state: 'lost' }),
+  { id: '', at: at(320), kind: 'user', text: 'Pick it up from step three.' },
+  cut(300, { reason: 'error', detail: 'API returned 529 overloaded', partial: false }),
+  { id: '', at: at(60), kind: 'user', text: 'Try again.' },
+  { id: '', at: at(50), kind: 'assistant', text: 'Step three applied. Checking the row counts against' },
+  cut(45, { reason: 'limit', detail: 'Resets at 18:00', partial: true }),
+] satisfies TranscriptEvent[]).map((event, index) => ({ cursor: String(index + 1), event: { ...event, id: `cut-e${index + 1}` } }))
+
 /** A slash command and its output, as chatd stores a local command's: the user line, then the result naming it. */
 function commandEvents(seconds: number, ...commands: [string, string][]): TranscriptEvent[] {
   return commands.flatMap(([command, text], index): TranscriptEvent[] => [
@@ -150,11 +193,13 @@ function mockChat(chatId: string): MockChat {
   if (chat !== undefined) return chat
   const original = chatId === mockNativeChat.id
   const long = chatId === mockLongChat.id
-  const lines = original ? mockChatLines.slice() : long ? mockLongChatLines.slice() : []
-  chat = { lines, followers: new Set(), state: original || long ? 'idle' : 'starting', turnStartedAt: original || long ? null : new Date().toISOString(), cancel: null, queue: [], held: false }
+  const cutTurns = chatId === mockCutChat.id
+  const stored = long || cutTurns
+  const lines = original ? mockChatLines.slice() : long ? mockLongChatLines.slice() : cutTurns ? mockCutChatLines.slice() : []
+  chat = { lines, followers: new Set(), state: original || stored ? 'idle' : 'starting', turnStartedAt: original || stored ? null : new Date().toISOString(), cancel: null, queue: [], held: false }
   chats.set(chatId, chat)
   if (original) play(chatId, openingTurn)
-  else if (long) return chat
+  else if (stored) return chat
   else play(chatId, [{ type: 'pause', ms: 2600 }, { type: 'state', state: 'idle' }])
   return chat
 }

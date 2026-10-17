@@ -1,4 +1,4 @@
-import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat } from '@/api/fixtures/chat'
+import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockCutChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat } from '@/api/fixtures/chat'
 import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/api/fixtures/chat-artifacts'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
@@ -376,7 +376,7 @@ export function createMockApi(): DesktopApi {
     codeDiff: async (_root, path) => ({ ...(isNew(mockCodeChanges, path) ? mockNewFileDiff : mockCodeDiff), path }),
     codeBranchChanges: async () => mockBranchChanges,
     codeBranchDiff: async (_root, _mergeBase, path) => ({ ...(isNew(mockBranchChanges.changes, path) ? mockNewFileDiff : mockCodeDiff), path }),
-    chats: async () => [mockNativeChat, mockLongChat],
+    chats: async () => [mockNativeChat, mockLongChat, mockCutChat],
     startChat: async ({ agent, model, cwd }) => ({ ...mockNativeChat, id: `chat-${Date.now()}`, agent, model: model ?? null, cwd, title: null, state: 'starting' }),
     sendChat: async (chatId, parts) => {
       await wait(250)
