@@ -3,13 +3,16 @@ import { searchTopics } from '@/advanced/knowledge-model'
 
 // The knowledge base for the mock, shaped like `knowledge list|search|show|transcript --json`: canto
 // has topics of every kind, linked by shared chats, files and refs so its map has edges; megabrain has
-// a few; stack has its summaries off in the mock's Settings, so it lists no topics.
+// a few; atlas has sixty, generated, to see a crowded map; notes has one; stack has its summaries off
+// in the mock's Settings, so it lists no topics.
 
 const root = '/Users/operator/Workspaces'
 const tree = `${root}/Worktrees`
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
 const canto = `${root}/canto`
 const megabrain = `${root}/megabrain`
+const atlas = `${root}/atlas`
+const notes = `${root}/notes`
 
 const chat = (id: string, minutes: number, fields: Pick<KnowledgeChat, 'title' | 'summary' | 'branch' | 'worktree' | 'topics'> & Partial<KnowledgeChat>): KnowledgeChat => ({
   id,
@@ -264,7 +267,39 @@ export const mockKnowledgeTopics: KnowledgeTopic[] = [
     sections: { overview: 'Every few messages or minutes a small model summarises the chat.', state: 'Shipped; the knowledge base now builds on it.', pitfalls: '', open: '' },
     refs: [{ kind: 'file', id: 'src/chat/summaries.ts' }, { kind: 'branch', id: 'feat/summaries-wiki' }],
   }),
+  topic('notes-capture', notes, 300, {
+    title: 'Quick capture',
+    kind: 'feat',
+    status: 'active',
+    overview: 'A note from anywhere with one shortcut.',
+    sections: { overview: 'A global shortcut opens a capture field over any app.', state: 'Prototype on a branch.', pitfalls: '', open: '- Where the note lands when no notebook is open.' },
+  }),
+  ...atlasTopics(),
 ]
+
+/** Sixty topics for atlas, the same on every load: every kind, unevenly, sharing chats, files and PRs. */
+function atlasTopics(): KnowledgeTopic[] {
+  let seed = 11
+  const next = () => {
+    seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648
+    return seed / 2_147_483_648
+  }
+  const kinds: KnowledgeTopic['kind'][] = ['feat', 'feat', 'feat', 'fix', 'fix', 'refactor', 'decision', 'investigation']
+  const subjects = ['Player', 'Search', 'Onboarding', 'Home rails', 'Sidebar', 'Dispatch queue', 'Worktree cards', 'Settings', 'Sync engine', 'Offline cache', 'Release notes', 'Auth tokens', 'Image pipeline', 'Push alerts', 'Usage meter']
+  const aspects = ['layout', 'keyboard focus', 'loading states', 'error copy', 'retry policy', 'cold start', 'accessibility pass', 'dark theme', 'telemetry', 'empty state', 'drag and drop', 'migration to the new store']
+  const pick = <T,>(list: readonly T[]) => list[Math.floor(next() * list.length)] as T
+  return Array.from({ length: 60 }, (_, n) => {
+    const kind = pick(kinds)
+    const chats = Array.from({ length: Math.floor(next() * 3) }, () => `atlas-chat-${Math.floor(next() * 45)}`)
+    const files = Array.from({ length: Math.floor(next() * 3) }, () => ({ kind: 'file' as const, id: `src/${pick(['app', 'core', 'ui'])}/module-${Math.floor(next() * 35)}.ts` }))
+    const prs = next() < 0.25 ? [{ kind: 'pr' as const, id: String(500 + Math.floor(next() * 14)) }] : []
+    const status = next() < 0.55 ? 'shipped' : next() < 0.8 ? 'active' : 'dropped'
+    const title = `${pick(subjects)} ${pick(aspects)}`
+    const minutes = Math.floor(next() * 20_000)
+    const made = topic(`atlas-${n}`, atlas, minutes, { title, kind, status, overview: `${title}, as the atlas team left it.`, sections: { overview: `${title}.`, state: status === 'shipped' ? 'Shipped.' : status === 'active' ? 'In progress.' : 'Dropped.', pitfalls: '', open: '' }, refs: [...files, ...prs] })
+    return { ...made, chats, activity: Math.floor(next() * next() * 40) }
+  })
+}
 
 const summaryOf = ({ sections: _sections, decisions: _decisions, keyMessages: _keyMessages, chatRecords: _chatRecords, ...summary }: KnowledgeTopic): KnowledgeTopicSummary => summary
 
@@ -273,6 +308,8 @@ export function mockKnowledgeList(repo: string | undefined, enabled: (repo: stri
   const projects = [
     { repo: megabrain, project: 'megabrain' },
     { repo: canto, project: 'canto' },
+    { repo: atlas, project: 'atlas' },
+    { repo: notes, project: 'notes' },
     { repo: `${root}/local/stack`, project: 'stack' },
   ]
   return {
