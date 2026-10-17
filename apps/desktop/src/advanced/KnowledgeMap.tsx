@@ -78,7 +78,7 @@ function useMeasure(element: HTMLElement | null): ((text: string) => number) | u
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`
 
-export function KnowledgeMap({ project, topics, selectedId, onPick, onClose }: { project: string; topics: KnowledgeTopicSummary[]; selectedId: string | null; onPick: (topic: KnowledgeTopicSummary) => void; onClose: () => void }) {
+export function KnowledgeMap({ project, topics, selectedId, onPick }: { project: string; topics: KnowledgeTopicSummary[]; selectedId: string | null; onPick: (topic: KnowledgeTopicSummary) => void }) {
   const [area, setArea] = useState<HTMLDivElement | null>(null)
   const [size, setSize] = useState<{ width: number; height: number } | null>(null)
   useLayoutEffect(() => {
@@ -237,18 +237,11 @@ export function KnowledgeMap({ project, topics, selectedId, onPick, onClose }: {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="shrink-0 space-y-3 px-6 pt-5 pb-3">
-        <div className="flex items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-[18px] font-semibold tracking-[-0.01em] text-ink-100">Map of {project}</h1>
-            <p className="mt-0.5 text-[12.5px] text-ink-400">
-              {shownCount === topics.length ? plural(topics.length, 'topic') : `${shownCount} of ${plural(topics.length, 'topic')}`} · {plural(layout.links.length, 'link')} through shared {linkTypes.filter((entry) => filter.links.has(entry.type)).map((entry) => entry.label.toLowerCase()).join(', ') || 'nothing'}
-            </p>
-          </div>
-          <button type="button" onClick={onClose} className="inline-flex h-8 shrink-0 items-center rounded-full border border-white/[0.1] bg-white/[0.04] px-3.5 text-[12.5px] font-medium text-ink-200 transition-colors hover:bg-white/[0.08]">
-            Close map
-          </button>
-        </div>
+      {/* The page's top bar names the map and closes it; this row says what it shows and filters it. */}
+      <header className="shrink-0 space-y-3 px-6 pt-4 pb-3">
+        <p className="text-[12.5px] text-ink-400">
+          {shownCount === topics.length ? plural(topics.length, 'topic') : `${shownCount} of ${plural(topics.length, 'topic')}`} · {plural(layout.links.length, 'link')} through shared {linkTypes.filter((entry) => filter.links.has(entry.type)).map((entry) => entry.label.toLowerCase()).join(', ') || 'nothing'}
+        </p>
         {topics.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <ul className="flex flex-wrap items-center gap-1.5" aria-label="Kinds shown">

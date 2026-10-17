@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { KnowledgeChat, KnowledgeDecision, KnowledgeTopicSummary } from '@/api/schema'
-import { chatCards, decisionsOf, groupTopics, knowledgeItem, knowledgeItemIn, knowledgeView, nodeRadius, refLabel, refNumber, searchTopics, topicGraph } from '@/advanced/knowledge-model'
+import { chatCards, decisionsOf, groupTopics, knowledgeItem, knowledgeItemIn, knowledgeView, nodeRadius, pageTitle, refLabel, refNumber, searchTopics, topicGraph } from '@/advanced/knowledge-model'
 
 const topic = (id: string, updatedAt: string, extra: Partial<KnowledgeTopicSummary> = {}): KnowledgeTopicSummary => ({
   id,
@@ -202,5 +202,22 @@ describe('the Knowledge page item', () => {
     expect(knowledgeItemIn(['native:a', 'knowledge:home', 'terminal:t'])).toBe('knowledge:home')
     expect(knowledgeItemIn(['native:a', 'summary:sum-0002'])).toBe('summary:sum-0002')
     expect(knowledgeItemIn(['native:a', 'project:/work/canto'])).toBeNull()
+  })
+})
+
+describe('pageTitle', () => {
+  const view = { repo: '/r', topic: null, chat: null, map: false }
+  test('the map is titled after the project', () => {
+    expect(pageTitle({ ...view, map: true }, 'megabrain', 'Desktop app')).toBe('Map of megabrain')
+  })
+
+  test('a topic, or a chat read from it, is titled after the topic', () => {
+    expect(pageTitle(view, 'megabrain', 'Desktop app')).toBe('Desktop app')
+    expect(pageTitle({ ...view, topic: 't', chat: 'c' }, 'megabrain', 'Desktop app')).toBe('Desktop app')
+  })
+
+  test('with no topic or no project the page is Knowledge', () => {
+    expect(pageTitle(view, 'megabrain', null)).toBe('Knowledge')
+    expect(pageTitle({ ...view, map: true }, null, null)).toBe('Knowledge')
   })
 })

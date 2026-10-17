@@ -3,7 +3,9 @@ import type { Components } from 'react-markdown'
 import { api } from '@/api'
 import type { Artifact, ArtifactContent, NativeChat, Project } from '@/api/schema'
 import { ArtifactKindIcon } from '@/advanced/ArtifactStrip'
-import { Chevron } from '@/advanced/chrome'
+import { ArtifactsIcon, Chevron } from '@/advanced/chrome'
+import { BarSearch, WikiShell } from '@/advanced/WikiShell'
+import { wikiPanels } from '@/advanced/wiki-shell-model'
 import { relativeAge } from '@/advanced/projects-model'
 import { ArtifactFrame } from '@/advanced/ArtifactFrame'
 import { artifactKindLabel, artifactKinds, artifactOfItem, groupArtifacts, newestArtifact, type ArtifactProject } from '@/advanced/artifacts-model'
@@ -17,10 +19,11 @@ import { useNow } from '@/github/parts'
 import { projectsPolicy } from '@/lib/poll-model'
 import { usePoll } from '@/lib/usePoll'
 
-// The Artifacts page, the diagrams, plans and docs agents filed with `megabrain artifact`, in the wiki
-// shell of the Summaries page: a navigation column of projects and their artifacts by kind, with a
-// filter on titles, beside the picked artifact. Markdown reads in the app's renderer; HTML renders in
-// a sandboxed frame (artifacts-model.ts) that fills the column below the artifact's header.
+// The Artifacts page, the diagrams, plans and docs agents filed with `megabrain artifact`, in the
+// Knowledge page's shell (WikiShell): a top bar with the artifact's title and a filter on titles, the
+// projects and their artifacts by kind in a panel on the right, and the picked artifact between them.
+// Markdown reads in the app's renderer; HTML renders in a sandboxed
+// frame (artifacts-model.ts) that fills the column below the artifact's header.
 
 /** A project's picture when megabrain lists it, else its initials on its colour. */
 function Picture({ project, name }: { project: Project | undefined; name: string }) {
@@ -86,7 +89,7 @@ function NavArtifact({ artifact, selected, now, onPick }: { artifact: Artifact; 
       onClick={() => onPick(artifact)}
       aria-current={selected ? 'page' : undefined}
       title={`${artifact.title}\n${new Date(artifact.updatedAt).toLocaleString()}`}
-      className={`flex h-8 w-full items-center gap-2 rounded-[10px] pr-2 pl-[30px] text-left text-[13px] transition-colors ${selected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
+      className={`flex h-8 w-full items-center gap-2 rounded-[12px] pr-1.5 pl-[29px] text-left text-[13px] transition-colors ${selected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
     >
       <span className="min-w-0 flex-1 truncate">{artifact.title}</span>
       <span className="shrink-0 text-[11px] whitespace-nowrap text-ink-400 tabular-nums">{relativeAge(artifact.updatedAt, now)}</span>
@@ -102,7 +105,7 @@ function NavProject({ project, listed, open, onToggle, selectedId, now, onPick }
         onClick={() => onToggle(project.project)}
         aria-expanded={open}
         title={`${project.name}\n${project.project}`}
-        className="group/fold flex h-9 w-full min-w-0 items-center gap-2.5 rounded-[12px] pr-2 pl-1.5 text-left transition-colors select-none hover:bg-row-hover"
+        className="group/fold flex h-9 w-full min-w-0 items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 text-left transition-colors select-none hover:bg-row-hover"
       >
         <span className="relative flex shrink-0 items-center">
           <span className="transition-opacity duration-[120ms] group-hover/fold:opacity-0">
@@ -112,17 +115,17 @@ function NavProject({ project, listed, open, onToggle, selectedId, now, onPick }
             <Chevron open={open} />
           </span>
         </span>
-        <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-[-0.01em] text-ink-100">{project.name}</h2>
+        <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{project.name}</h2>
       </button>
       <Collapse open={open}>
         <div className="space-y-2 pt-0.5 pb-2">
           {project.kinds.map((group) => (
             <div key={group.kind} className="space-y-0.5">
-              <div className="flex h-7 items-center gap-2 pr-2 pl-2.5 text-ink-400">
+              <div className="flex h-7 items-center gap-2 pr-1.5 pl-[27px] text-ink-400">
                 <span className="grid size-3.5 shrink-0 place-items-center">
                   <ArtifactKindIcon kind={group.kind} />
                 </span>
-                <h3 className="min-w-0 flex-1 truncate text-[11px] font-medium tracking-[0.04em] uppercase">{artifactKinds.find((entry) => entry.kind === group.kind)?.title}</h3>
+                <h3 className="min-w-0 flex-1 truncate text-[12px] font-medium">{artifactKinds.find((entry) => entry.kind === group.kind)?.title}</h3>
                 <span className="shrink-0 text-[11px] tabular-nums">{group.artifacts.length}</span>
               </div>
               {group.artifacts.map((artifact) => (
@@ -271,38 +274,39 @@ export function ArtifactsPage({
   const selected = list?.find((artifact) => artifact.id === selectedId)
   const none = list !== null && list.length === 0
 
+  const count = grouped?.reduce((sum, project) => sum + project.kinds.reduce((inner, group) => inner + group.artifacts.length, 0), 0) ?? null
+
   return (
-    <div className="flex h-full min-h-0">
-      <nav aria-label="Artifacts" className="flex w-[272px] shrink-0 flex-col border-r border-white/[0.07]">
-        <div className="shrink-0 px-3 pt-3 pb-2">
-          <input
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Escape' || query === '') return
-              event.preventDefault()
-              setQuery('')
-            }}
-            placeholder="Filter artifacts"
-            aria-label="Filter artifacts"
-            className="h-8 w-full rounded-[10px] border border-white/[0.08] bg-white/[0.04] px-3 text-[13px] text-ink-100 placeholder:text-ink-400 focus:border-accent/60 focus:outline-none"
-          />
-        </div>
-        <div style={{ scrollbarGutter: 'stable' }} className="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 pb-3 pl-2">
+    <WikiShell
+      keys={wikiPanels.artifacts}
+      crumb={
+        <span className="flex shrink-0 items-center gap-2 text-ink-300">
+          <span className="grid size-6 shrink-0 place-items-center">
+            <ArtifactsIcon />
+          </span>
+          <span className={selected === undefined ? 'text-[14px] leading-5 font-semibold tracking-[-0.01em] text-ink-100' : 'text-[13px] font-semibold tracking-[-0.01em] text-ink-200 @max-[520px]/header:hidden'}>Artifacts</span>
+        </span>
+      }
+      title={selected?.title ?? null}
+      tools={!none && <BarSearch value={query} onChange={setQuery} label="Filter artifacts" />}
+      panelLabel={none ? null : 'Artifacts'}
+      panelCount={count}
+      panel={
+        <>
           {error !== null && list === null && (
             <div className="px-1">
               <ErrorNote error={error} />
             </div>
           )}
-          {list === null && error === null && <p className="px-2 py-1 text-[12.5px] text-ink-400">Loading artifacts…</p>}
-          {text !== '' && grouped?.length === 0 && <p className="px-2 py-1 text-[12.5px] text-ink-400">No artifact title matches “{query.trim()}”.</p>}
+          {list === null && error === null && <p className="px-2.5 py-1 text-[12.5px] text-ink-400">Loading artifacts…</p>}
+          {text !== '' && grouped?.length === 0 && <p className="px-2.5 py-1 text-[12.5px] text-ink-400">No artifact title matches “{query.trim()}”.</p>}
           {grouped?.map((project) => (
             <NavProject key={project.project} project={project} listed={listed.get(project.project)} open={text !== '' || !folded.has(project.project)} onToggle={toggle} selectedId={selectedId} now={now} onPick={onPick} />
           ))}
-        </div>
-      </nav>
-      <article className="min-w-0 flex-1">
+        </>
+      }
+    >
+      <article className="h-full min-w-0">
         {selectedId !== null ? (
           <Reading key={selectedId} id={selectedId} version={selected?.updatedAt ?? ''} projects={projects} chats={chats} now={now} onOpenChat={onOpenChat} />
         ) : none ? (
@@ -317,6 +321,6 @@ export function ArtifactsPage({
           )
         )}
       </article>
-    </div>
+    </WikiShell>
   )
 }

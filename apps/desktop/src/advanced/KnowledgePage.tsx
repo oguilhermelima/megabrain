@@ -6,7 +6,9 @@ import { column, useRead } from '@/advanced/knowledge-parts'
 import { ChatTranscript } from '@/advanced/KnowledgeTranscript'
 import { Chevron, KnowledgeIcon } from '@/advanced/chrome'
 import { KnowledgeMap } from '@/advanced/KnowledgeMap'
-import { chatCards, decisionsOf, groupTopics, kindColors, kindGroups, refLabel, refNumber, statusLabels, type KnowledgeView } from '@/advanced/knowledge-model'
+import { BarSearch, WikiShell, barToggle } from '@/advanced/WikiShell'
+import { wikiPanels } from '@/advanced/wiki-shell-model'
+import { chatCards, decisionsOf, groupTopics, kindColors, kindGroups, pageTitle, refLabel, refNumber, statusLabels, type KnowledgeView } from '@/advanced/knowledge-model'
 import { displayName } from '@/advanced/appearance-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { projectColor, projectInitials } from '@/advanced/picture-model'
@@ -24,8 +26,9 @@ import { projectsPolicy } from '@/lib/poll-model'
 import { usePoll } from '@/lib/usePoll'
 import { effectiveToggles, inEffect, parseKnowledgeSettings, type KnowledgeSettings } from '@/settings/knowledge-model'
 
-// The Knowledge page, a wiki of one project's topics in one pane: a navigation column with the
-// project switcher, a search and the topics by kind, beside the picked topic in a reading column: its
+// The Knowledge page, a wiki of one project's topics in one pane (WikiShell): a top bar with the
+// project switcher, the page's title, a search and the map's toggle, the topics by kind in a panel on
+// the right, and between them the picked topic in a reading column: its
 // kind and status, refs, sections, decisions, key messages and the chats that built it. The item's id
 // is what the page shows (knowledge-model.ts); with no topic picked it shows the project's newest.
 
@@ -123,7 +126,7 @@ function NavTopic({ topic, selected, now, onPick }: { topic: KnowledgeTopicSumma
       onClick={() => onPick(topic)}
       aria-current={selected ? 'page' : undefined}
       title={`${topic.title}\n${statusLabels[topic.status]} · updated ${new Date(topic.updatedAt).toLocaleString()}`}
-      className={`flex h-8 w-full items-center gap-2.5 rounded-[10px] pr-2 pl-3 text-left text-[13px] transition-colors ${selected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
+      className={`flex h-8 w-full items-center gap-2.5 rounded-[12px] pr-1.5 pl-[29px] text-left text-[13px] transition-colors ${selected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
     >
       <StatusDot status={topic.status} />
       <span className={`min-w-0 flex-1 truncate ${topic.status === 'dropped' ? 'text-ink-400' : ''}`}>{topic.title}</span>
@@ -135,11 +138,12 @@ function NavTopic({ topic, selected, now, onPick }: { topic: KnowledgeTopicSumma
 function NavKind({ label, kind, topics, open, onToggle, selectedId, now, onPick }: { label: string; kind: KnowledgeKind; topics: KnowledgeTopicSummary[]; open: boolean; onToggle: (kind: KnowledgeKind) => void; selectedId: string | null; now: number; onPick: (topic: KnowledgeTopicSummary) => void }) {
   return (
     <section>
-      <button type="button" onClick={() => onToggle(kind)} aria-expanded={open} className="flex h-8 w-full items-center gap-2 rounded-[10px] pr-2 pl-2.5 text-left text-ink-400 transition-colors select-none hover:bg-row-hover hover:text-ink-200">
-        <span style={{ backgroundColor: kindColors[kind] }} aria-hidden="true" className="size-2 shrink-0 rounded-[3px]" />
-        <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold tracking-[0.04em] uppercase">{label}</span>
-        <span className="shrink-0 text-[11px] tabular-nums">{topics.length}</span>
+      {/* A section header as the left sidebar draws one: its chevron, its name, its count at the right. */}
+      <button type="button" onClick={() => onToggle(kind)} aria-expanded={open} className="flex h-8 w-full items-center gap-2 rounded-[12px] pr-1.5 pl-2.5 text-left text-[13px] font-semibold text-ink-400 transition-colors select-none hover:text-ink-200">
         <Chevron open={open} />
+        <span style={{ backgroundColor: kindColors[kind] }} aria-hidden="true" className="size-2 shrink-0 rounded-[3px]" />
+        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="shrink-0 text-[11px] font-medium tabular-nums">{topics.length}</span>
       </button>
       <Collapse open={open}>
         <div className="space-y-0.5 pt-0.5 pb-2">
@@ -377,7 +381,6 @@ function TopicReading({
   id,
   repo,
   listed,
-  name,
   now,
   onOpenGithub,
   onOpenChat,
@@ -386,7 +389,6 @@ function TopicReading({
   id: string
   repo: string
   listed: Project | undefined
-  name: string
   now: number
   onOpenGithub: (repo: string, kind: 'pr' | 'issue', number: number) => void
   onOpenChat: (chatId: string) => void
@@ -414,11 +416,7 @@ function TopicReading({
   return (
     <div className={`${column} space-y-9`}>
       <header className="space-y-4">
-        <div className="flex items-center gap-2.5 text-[13px] text-ink-300">
-          <KnowledgePicture project={listed} name={name} />
-          <span className="font-semibold text-ink-200">{listed === undefined ? name : displayName(listed)}</span>
-        </div>
-        <h1 className="text-[28px] leading-tight font-semibold tracking-[-0.02em] text-ink-100">{topic.title}</h1>
+        <h2 className="text-[28px] leading-tight font-semibold tracking-[-0.02em] text-ink-100">{topic.title}</h2>
         <div className="flex flex-wrap items-center gap-2">
           <KindChip kind={topic.kind} />
           <StatusChip status={topic.status} />
@@ -505,10 +503,10 @@ function ProjectSwitcher({ current, listed, projects, isOn, onPick }: { current:
         onClick={(event) => open(event, [projects.map((project) => ({ label: isOn(project) ? project.project : `${project.project} (off)`, title: project.repo, onSelect: () => onPick(project.repo) }))])}
         aria-haspopup="menu"
         title={`${current.project}\n${current.repo}`}
-        className="flex h-9 min-w-0 flex-1 items-center gap-2.5 rounded-[12px] pr-2 pl-1.5 text-left transition-colors select-none hover:bg-row-hover"
+        className="flex h-[30px] max-w-[240px] min-w-0 shrink-0 items-center gap-2 rounded-full pr-2 pl-[3px] text-left transition-colors select-none hover:bg-white/[0.08]"
       >
         <KnowledgePicture project={listed} name={current.project} />
-        <span className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-[-0.01em] text-ink-100">{listed === undefined ? current.project : displayName(listed)}</span>
+        <span className="min-w-0 truncate text-[13px] font-semibold tracking-[-0.01em] text-ink-200 @max-[520px]/header:hidden">{listed === undefined ? current.project : displayName(listed)}</span>
         <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-ink-400">
           <path d="m5 6.5 3-3 3 3M5 9.5l3 3 3-3" />
         </svg>
@@ -586,11 +584,7 @@ export function KnowledgePage({
     }
     if (list !== null && list.projects.length === 0) return <Blank title="No projects yet">Add a project and its chats are written up here, topic by topic.</Blank>
     if (project === null) {
-      return error === null ? (
-        <div className={column}>
-          <TextSkeleton lines={8} />
-        </div>
-      ) : null
+      return <div className={column}>{error === null ? <TextSkeleton lines={8} /> : <ErrorNote error={error} />}</div>
     }
     if (!on) {
       return (
@@ -599,68 +593,57 @@ export function KnowledgePage({
         </Blank>
       )
     }
-    if (view.map) return <KnowledgeMap project={nameOf(project)} topics={topics} selectedId={view.topic} onPick={pickTopic} onClose={() => onView({ ...view, map: false })} />
+    if (view.map) return <KnowledgeMap project={nameOf(project)} topics={topics} selectedId={view.topic} onPick={pickTopic} />
     if (view.chat !== null) {
       const topic = topics.find((entry) => entry.id === view.topic)
       return <ChatTranscript key={view.chat} chatId={view.chat} backLabel={topic?.title ?? 'Back to the topic'} onBack={() => onView({ ...view, chat: null })} />
     }
     if (selectedId === null) return <Blank title="No topics yet">As chats in {nameOf(project)} work, megabrain files what they build and decide under topics. They gather here by kind.</Blank>
-    return <TopicReading key={selectedId} id={selectedId} repo={project.repo} listed={listed.get(project.repo)} name={project.project} now={now} onOpenGithub={onOpenGithub} onOpenChat={(chat) => onView({ repo: project.repo, topic: selectedId, chat, map: false })} onOpenArtifact={onOpenArtifact} />
+    return <TopicReading key={selectedId} id={selectedId} repo={project.repo} listed={listed.get(project.repo)} now={now} onOpenGithub={onOpenGithub} onOpenChat={(chat) => onView({ repo: project.repo, topic: selectedId, chat, map: false })} onOpenArtifact={onOpenArtifact} />
   }
 
+  const topicTitle = selectedId === null ? null : (topics.find((topic) => topic.id === selectedId)?.title ?? null)
+  const crumb =
+    project !== null && list !== null ? (
+      <ProjectSwitcher current={project} listed={listed.get(project.repo)} projects={list.projects} isOn={projectOn} onPick={pickProjectRepo} />
+    ) : (
+      <span className="flex min-w-0 items-center gap-2 text-ink-300">
+        <span className="grid size-6 shrink-0 place-items-center">
+          <KnowledgeIcon />
+        </span>
+        <h1 className="truncate text-[14px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">Knowledge</h1>
+      </span>
+    )
+  const shownCount = shown?.reduce((sum, group) => sum + group.topics.length, 0) ?? null
+
   return (
-    <div className="flex h-full min-h-0">
-      <nav aria-label="Knowledge" className="flex w-[272px] shrink-0 flex-col border-r border-white/[0.07]">
-        <div className="shrink-0 space-y-2 px-2 pt-3 pb-2">
-          {project !== null && list !== null && (
-            <div className="flex items-center gap-1">
-              <ProjectSwitcher current={project} listed={listed.get(project.repo)} projects={list.projects} isOn={projectOn} onPick={pickProjectRepo} />
-              <button
-                type="button"
-                onClick={() => onView({ repo: project.repo, topic: view.topic, chat: null, map: !view.map })}
-                disabled={!on}
-                aria-pressed={view.map}
-                title="Map of the project’s topics"
-                className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12.5px] font-medium transition-colors disabled:opacity-40 ${view.map ? 'border-accent/40 bg-accent/15 text-ink-100' : 'border-white/[0.08] bg-white/[0.04] text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'}`}
-              >
-                <KnowledgeIcon size={13} />
-                Map
-              </button>
-            </div>
-          )}
-          <div className="px-1">
-            <input
-              type="search"
-              value={query}
-              disabled={!on}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape' || query === '') return
-                event.preventDefault()
-                setQuery('')
-              }}
-              placeholder="Search topics"
-              aria-label="Search topics"
-              className="h-8 w-full rounded-[10px] border border-white/[0.08] bg-white/[0.04] px-3 text-[13px] text-ink-100 placeholder:text-ink-400 focus:border-accent/60 focus:outline-none disabled:opacity-50"
-            />
-          </div>
-        </div>
-        <div style={{ scrollbarGutter: 'stable' }} className="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto pr-1 pb-3 pl-2">
-          {error !== null && list === null && (
-            <div className="px-1">
-              <ErrorNote error={error} />
-            </div>
-          )}
-          {list === null && error === null && <p className="px-2 py-1 text-[12.5px] text-ink-400">Loading topics…</p>}
-          {searching && shown?.length === 0 && <p className="px-2 py-1 text-[12.5px] text-ink-400">No topic matches “{query.trim()}”.</p>}
-          {!off &&
-            on &&
-            shown?.map((group) => (
-              <NavKind key={group.kind} label={group.label} kind={group.kind} topics={group.topics} open={searching || !folded.has(group.kind)} onToggle={toggle} selectedId={selectedId} now={now} onPick={pickTopic} />
-            ))}
-        </div>
-      </nav>
-      <article className={`min-w-0 flex-1 ${view.map ? 'overflow-hidden' : 'overflow-y-auto'}`}>{reading()}</article>
-    </div>
+    <WikiShell
+      keys={wikiPanels.knowledge}
+      crumb={crumb}
+      title={project === null ? null : pageTitle(view, nameOf(project), topicTitle)}
+      tools={
+        project !== null && (
+          <>
+            <BarSearch value={query} onChange={setQuery} label="Search topics" disabled={!on} />
+            <button type="button" onClick={() => onView({ repo: project.repo, topic: view.topic, chat: null, map: !view.map })} disabled={!on} aria-pressed={view.map} title={view.map ? 'Close the map' : 'Map of the project’s topics'} className={`${barToggle(view.map)} px-2.5`}>
+              <KnowledgeIcon />
+              Map
+            </button>
+          </>
+        )
+      }
+      panelLabel={on ? 'Topics' : null}
+      panelCount={shownCount}
+      panel={
+        <>
+          {searching && shown?.length === 0 && <p className="px-2.5 py-1 text-[12.5px] text-ink-400">No topic matches “{query.trim()}”.</p>}
+          {shown?.map((group) => (
+            <NavKind key={group.kind} label={group.label} kind={group.kind} topics={group.topics} open={searching || !folded.has(group.kind)} onToggle={toggle} selectedId={selectedId} now={now} onPick={pickTopic} />
+          ))}
+        </>
+      }
+    >
+      <article className={`h-full min-w-0 ${view.map ? 'overflow-hidden' : 'overflow-y-auto'}`}>{reading()}</article>
+    </WikiShell>
   )
 }
