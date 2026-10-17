@@ -271,10 +271,9 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     <ArtifactPanel
       key={artifact.id}
       chatId={chat.id}
-      members={[artifact]}
+      artifact={artifact}
       width={layout.width}
       overlay={overlay}
-      now={now}
       onResize={{ preview: panel.preview, commit: panel.resize }}
       onClose={() => panel.open(null)}
       onOpenPage={onOpenArtifact ?? null}

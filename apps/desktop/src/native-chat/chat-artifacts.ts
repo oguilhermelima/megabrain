@@ -46,7 +46,7 @@ export function closeChip(closed: HiddenChips, artifact: ChatArtifact, openId: s
 }
 
 /**
- * One version in the panel's revision picker. `number` counts the versions of every artifact sharing
+ * One version in the Artifacts page's revision picker. `number` counts the versions of every artifact sharing
  * the title, oldest 1; `revision` is the artifact's own; `current` marks its latest, read without one.
  */
 export type RevisionEntry = { key: string; artifactId: string; revision: number | null; title: string; at: string; number: number; current: boolean }

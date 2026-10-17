@@ -6,24 +6,23 @@ import { Popover } from '@/components/Popover'
 import { usePresence } from '@/lib/usePresence'
 import { pickRevision, titleKey, type RevisionEntry } from '@/native-chat/chat-artifacts'
 
-// An artifact's revision picker, the chat's artifact panel's and the Artifacts page's top bar's: a
+// An artifact's revision picker, in the Artifacts page's top bar: a
 // pill naming the version shown, of how many, opening every version newest first, each with when it
 // was written; and the note an earlier version reads under, with the way back to the latest. The
 // versions and the rules that pick among them are chat-artifacts.ts's.
 
-export const updated = (at: string, now: number) => (relativeAge(at, now) === 'now' ? 'just now' : `${relativeAge(at, now)} ago`)
+const updated = (at: string, now: number) => (relativeAge(at, now) === 'now' ? 'just now' : `${relativeAge(at, now)} ago`)
 
 const stampOf = (at: string) => new Date(at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
 
-/** The trigger at either size: 24px inside the panel's header line, the bar's 30px pill on a page's top bar; an earlier version shown tints it. */
-const triggerClass = (size: 'inline' | 'bar', old: boolean, open: boolean) => {
-  const state = old ? 'bg-accent/[0.14] text-accent hover:bg-accent/[0.2]' : open ? (size === 'bar' ? 'bg-white/[0.14] text-ink-100' : 'bg-white/[0.08] text-ink-100') : 'text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'
-  const shape = size === 'bar' ? `bar-control gap-1 pr-2 pl-3 font-semibold ${old ? 'border-accent/30' : ''}` : 'flex h-6 items-center gap-1 rounded-full pr-1.5 pl-2 font-medium'
-  return `${shape} shrink-0 text-[12px] tabular-nums transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${state}`
+/** The trigger, the bar's 30px pill; an earlier version shown tints it. */
+const triggerClass = (old: boolean, open: boolean) => {
+  const state = old ? 'bg-accent/[0.14] text-accent hover:bg-accent/[0.2]' : open ? 'bg-white/[0.14] text-ink-100' : 'text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'
+  return `bar-control gap-1 pr-2 pl-3 font-semibold ${old ? 'border-accent/30' : ''} shrink-0 text-[12px] tabular-nums transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${state}`
 }
 
 /** The picker: its trigger, and the menu it opens; `onPick` gets the version picked, null for the latest. */
-export function RevisionPicker({ entries, shown, old, title, now, size, className = '', onPick }: { entries: RevisionEntry[]; shown: RevisionEntry; old: boolean; title: string; now: number; size: 'inline' | 'bar'; className?: string; onPick: (key: string | null) => void }) {
+export function RevisionPicker({ entries, shown, old, title, now, className = '', onPick }: { entries: RevisionEntry[]; shown: RevisionEntry; old: boolean; title: string; now: number; className?: string; onPick: (key: string | null) => void }) {
   const [menuAt, setMenuAt] = useState<AnchorRect | null>(null)
   const menu = usePresence(menuAt)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -40,7 +39,7 @@ export function RevisionPicker({ entries, shown, old, title, now, size, classNam
           const { left, top, right, bottom } = event.currentTarget.getBoundingClientRect()
           setMenuAt((current) => (current === null ? { left, top, right, bottom } : null))
         }}
-        className={`${triggerClass(size, old, menuAt !== null)} ${className}`}
+        className={`${triggerClass(old, menuAt !== null)} ${className}`}
       >
         Revision {shown.number} of {entries.length}
         <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 opacity-70">

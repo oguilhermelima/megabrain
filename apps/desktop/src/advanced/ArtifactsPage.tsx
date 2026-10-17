@@ -19,6 +19,7 @@ import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { useNow } from '@/github/parts'
 import { projectsPolicy } from '@/lib/poll-model'
+import { sidePanelGroup, sidePanelNote, sidePanelRow, sidePanelSlot, sidePanelTrailing } from '@/lib/side-panel'
 import { usePoll } from '@/lib/usePoll'
 import { revisionRead, revisionView } from '@/native-chat/chat-artifacts'
 import { OldRevisionNote, RevisionPicker } from '@/native-chat/RevisionPicker'
@@ -85,10 +86,12 @@ function NavArtifact({ artifact, selected, now, onPick }: { artifact: Artifact; 
       onClick={() => onPick(artifact)}
       aria-current={selected ? 'page' : undefined}
       title={`${artifact.title}\n${artifactKindLabel(artifact.kind)} · updated ${new Date(artifact.updatedAt).toLocaleString()}`}
-      className={`flex h-8 w-full items-center gap-2.5 rounded-[12px] pr-1.5 pl-[29px] text-left text-[13px] transition-colors ${selected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
+      className={sidePanelRow(selected)}
     >
+      <span aria-hidden="true" className={sidePanelSlot} />
+      <span aria-hidden="true" className={sidePanelSlot} />
       <span className="min-w-0 flex-1 truncate">{artifact.title}</span>
-      <span className="shrink-0 text-[11px] whitespace-nowrap text-ink-400 tabular-nums">{relativeAge(artifact.updatedAt, now)}</span>
+      <span className={sidePanelTrailing}>{relativeAge(artifact.updatedAt, now)}</span>
     </button>
   )
 }
@@ -97,9 +100,11 @@ function NavKind({ kind, artifacts, open, onToggle, selectedId, now, onPick }: {
   return (
     <section>
       {/* A section header as the Knowledge panel draws one: its chevron, its kind's mark and name, its count at the right. */}
-      <button type="button" onClick={() => onToggle(kind)} aria-expanded={open} className="flex h-8 w-full items-center gap-2 rounded-[12px] pr-1.5 pl-2.5 text-left text-[13px] font-semibold text-ink-400 transition-colors select-none hover:text-ink-200">
-        <Chevron open={open} />
-        <span className="grid size-3.5 shrink-0 place-items-center">
+      <button type="button" onClick={() => onToggle(kind)} aria-expanded={open} className={sidePanelGroup}>
+        <span className={sidePanelSlot}>
+          <Chevron open={open} />
+        </span>
+        <span className={sidePanelSlot}>
           <ArtifactKindIcon kind={kind} />
         </span>
         <span className="min-w-0 flex-1 truncate">{artifactKinds.find((entry) => entry.kind === kind)?.title ?? kind}</span>
@@ -384,7 +389,7 @@ export function ArtifactsPage({
       tools={
         project !== null && (
           <>
-            {revisions !== null && entries.length > 1 && ready !== null && <RevisionPicker entries={entries} shown={revisions.shown} old={revisions.old} title={ready.title} now={now} size="bar" onPick={(pick) => setKept({ ...view, pick })} />}
+            {revisions !== null && entries.length > 1 && ready !== null && <RevisionPicker entries={entries} shown={revisions.shown} old={revisions.old} title={ready.title} now={now} onPick={(pick) => setKept({ ...view, pick })} />}
             <BarSearch value={query} onChange={setQuery} label="Search artifacts" />
           </>
         )
@@ -398,8 +403,8 @@ export function ArtifactsPage({
               <ErrorNote error={error} />
             </div>
           )}
-          {list === null && error === null && <p className="px-2.5 py-1 text-[12.5px] text-ink-400">Loading artifacts…</p>}
-          {searching && shown?.kinds.length === 0 && <p className="px-2.5 py-1 text-[12.5px] text-ink-400">No artifact title matches “{query.trim()}”.</p>}
+          {list === null && error === null && <p className={sidePanelNote}>Loading artifacts…</p>}
+          {searching && shown?.kinds.length === 0 && <p className={sidePanelNote}>No artifact title matches “{query.trim()}”.</p>}
           {shown?.kinds.map((group) => (
             <NavKind key={group.kind} kind={group.kind} artifacts={group.artifacts} open={searching || !folded.has(group.kind)} onToggle={toggle} selectedId={selectedId} now={now} onPick={onPick} />
           ))}

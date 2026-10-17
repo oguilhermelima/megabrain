@@ -23,6 +23,7 @@ import { useNow } from '@/github/parts'
 import { stateColors } from '@/github/github-model'
 import { ClosedIssueIcon, ClosedPullRequestIcon, IssueIcon, MergedIcon, PullRequestIcon } from '@/github/icons'
 import { projectsPolicy } from '@/lib/poll-model'
+import { sidePanelGroup, sidePanelNote, sidePanelRow, sidePanelSlot, sidePanelTrailing } from '@/lib/side-panel'
 import { usePoll } from '@/lib/usePoll'
 import { effectiveToggles, inEffect, parseKnowledgeSettings, type KnowledgeSettings } from '@/settings/knowledge-model'
 
@@ -117,11 +118,14 @@ function NavTopic({ topic, selected, now, onPick }: { topic: KnowledgeTopicSumma
       onClick={() => onPick(topic)}
       aria-current={selected ? 'page' : undefined}
       title={`${topic.title}\n${statusLabels[topic.status]} · updated ${new Date(topic.updatedAt).toLocaleString()}`}
-      className={`flex h-8 w-full items-center gap-2.5 rounded-[12px] pr-1.5 pl-[29px] text-left text-[13px] transition-colors ${selected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
+      className={sidePanelRow(selected)}
     >
-      <StatusDot status={topic.status} />
+      <span aria-hidden="true" className={sidePanelSlot} />
+      <span className={sidePanelSlot}>
+        <StatusDot status={topic.status} />
+      </span>
       <span className={`min-w-0 flex-1 truncate ${topic.status === 'dropped' ? 'text-ink-400' : ''}`}>{topic.title}</span>
-      <span className="shrink-0 text-[11px] whitespace-nowrap text-ink-400 tabular-nums">{relativeAge(topic.updatedAt, now)}</span>
+      <span className={sidePanelTrailing}>{relativeAge(topic.updatedAt, now)}</span>
     </button>
   )
 }
@@ -130,9 +134,13 @@ function NavKind({ label, kind, topics, open, onToggle, selectedId, now, onPick 
   return (
     <section>
       {/* A section header as the left sidebar draws one: its chevron, its name, its count at the right. */}
-      <button type="button" onClick={() => onToggle(kind)} aria-expanded={open} className="flex h-8 w-full items-center gap-2 rounded-[12px] pr-1.5 pl-2.5 text-left text-[13px] font-semibold text-ink-400 transition-colors select-none hover:text-ink-200">
-        <Chevron open={open} />
-        <span style={{ backgroundColor: kindColors[kind] }} aria-hidden="true" className="size-2 shrink-0 rounded-[3px]" />
+      <button type="button" onClick={() => onToggle(kind)} aria-expanded={open} className={sidePanelGroup}>
+        <span className={sidePanelSlot}>
+          <Chevron open={open} />
+        </span>
+        <span className={sidePanelSlot}>
+          <span style={{ backgroundColor: kindColors[kind] }} aria-hidden="true" className="size-2 rounded-[3px]" />
+        </span>
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="shrink-0 text-[11px] font-medium tabular-nums">{topics.length}</span>
       </button>
@@ -748,7 +756,7 @@ export function KnowledgePage({
       panelCount={shownCount}
       panel={
         <>
-          {searching && shown?.length === 0 && <p className="px-2.5 py-1 text-[12.5px] text-ink-400">No topic matches “{query.trim()}”.</p>}
+          {searching && shown?.length === 0 && <p className={sidePanelNote}>No topic matches “{query.trim()}”.</p>}
           {shown?.map((group) => (
             <NavKind key={group.kind} label={group.label} kind={group.kind} topics={group.topics} open={searching || !folded.has(group.kind)} onToggle={toggle} selectedId={selectedId} now={now} onPick={pickTopic} />
           ))}

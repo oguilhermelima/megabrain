@@ -3,6 +3,7 @@ import { SearchIcon } from '@/advanced/SidebarTools'
 import { readPanelOpen, wikiPanelLimits, wikiPanelSurface, wikiShellLayout, writePanelOpen, type WikiPanel } from '@/advanced/wiki-shell-model'
 import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { SlidePanel } from '@/components/SlidePanel'
+import { sidePanelButton, sidePanelHeader, sidePanelHeaderRow, sidePanelList, sidePanelTitle } from '@/lib/side-panel'
 
 // The shell the Knowledge and Artifacts pages share: the page's navigation in a panel on the right that
 // runs the pane's full height and opens, closes and resizes like the run panel, drawn like the left
@@ -101,26 +102,17 @@ export function WikiShell({
         // The left sidebar's glass over the window's vibrancy, its hairline at the edge it faces.
         <SlidePanel open={layout.panel} side="right" width={width.width} maxWidth="50cqw" className={wikiPanelSurface} handle={<ResizeHandle edge="left" label={`Resize ${panelLabel.toLowerCase()}`} panel={width} grip />}>
           <nav aria-label={panelLabel} data-sidebar-surface="" className="flex min-h-0 flex-1 flex-col">
-            {/* The bar's height (12px above a 36px row, 10px below), padded and laid out like the left
-                sidebar's Projects header (the list's 4px plus its 6px gutter at the right): the title on the rows' text column, the toggle overhanging by
-                its inset so its glyph ends where the counts below end. */}
-            <div data-tauri-drag-region className="flex shrink-0 pt-3 pr-2.5 pb-2.5 pl-2.5">
-              <div data-tauri-drag-region className="flex h-9 min-w-0 flex-1 items-center gap-2 pr-1.5 pl-2.5">
-                <h2 className="min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-[-0.01em] text-ink-300">{panelLabel}</h2>
+            {/* The header lines up with the bar beside it; lib/side-panel.ts holds the panel's metrics. */}
+            <div data-tauri-drag-region className={sidePanelHeader}>
+              <div data-tauri-drag-region className={sidePanelHeaderRow}>
+                <h2 className={sidePanelTitle}>{panelLabel}</h2>
                 {panelCount !== null && panelCount !== undefined && <span className="shrink-0 text-[11px] font-medium text-ink-400 tabular-nums">{panelCount}</span>}
-                <button
-                  type="button"
-                  onClick={() => setOpen(false)}
-                  aria-label={toggleTitle(true)}
-                  title={toggleTitle(true)}
-                  className="-mr-[6px] grid size-7 shrink-0 place-items-center rounded-full text-ink-400 transition-colors hover:bg-white/[0.08] hover:text-ink-100 focus-visible:ring-1 focus-visible:ring-white/25 focus-visible:outline-none"
-                >
+                <button type="button" onClick={() => setOpen(false)} aria-label={toggleTitle(true)} title={toggleTitle(true)} className={sidePanelButton}>
                   <PanelIcon />
                 </button>
               </div>
             </div>
-            {/* Padded like the left sidebar's list: 10px at the left, 4px and the scrollbar's gutter at the right. */}
-            <div style={{ scrollbarGutter: 'stable' }} className="sidebar-scroll min-h-0 flex-1 space-y-1 overflow-y-auto pt-1 pr-1 pb-3 pl-2.5">
+            <div style={{ scrollbarGutter: 'stable' }} className={sidePanelList}>
               {panel}
             </div>
           </nav>
