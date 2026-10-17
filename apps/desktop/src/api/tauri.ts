@@ -424,6 +424,11 @@ export function createTauriApi(): DesktopApi {
     setKnowledgeSettings: async (json) => void (await cliText(['settings', 'set', 'knowledge', json])),
     agentSettings: () => cliJson(['settings', 'get', 'agents'], z.unknown()),
     setAgentSettings: async (json) => void (await cliText(['settings', 'set', 'agents', json])),
+    // Until the CLI ships its agent update command, these say so instead of guessing its flags.
+    agentUpdates: () => Promise.reject(new CliError('Agent update checks need a newer megabrain CLI.', 1)),
+    agentUpdate: () => Promise.reject(new CliError('Updating agents needs a newer megabrain CLI.', 1)),
+    agentUpdateSettings: () => cliJson(['settings', 'get', 'agents-update'], z.unknown()),
+    setAgentUpdateSettings: async (json) => void (await cliText(['settings', 'set', 'agents-update', json])),
     modelSettings: () => cliJson(['settings', 'get', 'models'], z.unknown()),
     setModelSettings: async (json) => void (await cliText(['settings', 'set', 'models', json])),
     setUsageOrder: async (json) => void (await cliText(['settings', 'set', 'usage-order', json])),

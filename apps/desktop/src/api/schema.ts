@@ -280,6 +280,22 @@ export const agentDefaultsSchema = z.looseObject({
 export type AgentDefaults = z.infer<typeof agentDefaultsSchema>
 // `agent command --json`: the command line that starts an agent's own TUI.
 export const agentCommandSchema = z.looseObject({ agent: z.string(), argv: z.array(z.string()).min(1) })
+// The agent update check: each agent CLI's installed and latest version (null when unknown), how it
+// was installed, when it was last checked, and the last update attempt. status is up-to-date,
+// update-available, updated, latest-unknown or updating; installKind standalone, npm, brew, native
+// or unknown. Kept as strings so a value the app does not know yet reads as unknown, not an error.
+export const agentUpdateEntrySchema = z.looseObject({
+  agent: z.string(),
+  installed: z.string().nullable(),
+  latest: z.string().nullable(),
+  status: z.string(),
+  installKind: z.string(),
+  checkedAt: z.string().nullable(),
+  lastAttempt: z.looseObject({ at: z.string(), ok: z.boolean(), error: z.string().nullable().optional() }).optional(),
+})
+export const agentUpdatesSchema = z.looseObject({ agents: z.array(agentUpdateEntrySchema) })
+export type AgentUpdateEntry = z.infer<typeof agentUpdateEntrySchema>
+export type AgentUpdates = z.infer<typeof agentUpdatesSchema>
 // `sessions history --cwd <path> --json`: past sessions started in a folder, newest first, read from
 // each agent's own storage; messageCount is null when the log does not say.
 export const historySessionSchema = z.looseObject({

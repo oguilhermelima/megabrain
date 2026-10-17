@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame } from '@/api/schema'
+import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -330,6 +330,13 @@ export interface DesktopApi {
   /** The default agent for New chat and the agents turned off for the app (`settings get agents`); settings/agents-model.ts reads the shape. */
   agentSettings(): Promise<unknown>
   setAgentSettings(json: string): Promise<void>
+  /** Each agent CLI's installed and latest version and its last update attempt; settings/agent-updates-model.ts reads it. */
+  agentUpdates(): Promise<AgentUpdates>
+  /** Runs the agent's official installer now and reports the version it left installed. */
+  agentUpdate(agent: string): Promise<Pick<AgentUpdateEntry, 'agent' | 'installed'>>
+  /** Whether megabrain updates agents on its own (`settings get agents-update`); settings/agent-updates-model.ts reads the shape. */
+  agentUpdateSettings(): Promise<unknown>
+  setAgentUpdateSettings(json: string): Promise<void>
   /** The models turned on or off and each agent's default (`settings get models`); settings/models-model.ts reads the shape. */
   modelSettings(): Promise<unknown>
   setModelSettings(json: string): Promise<void>

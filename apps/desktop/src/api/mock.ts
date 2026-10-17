@@ -2,7 +2,7 @@ import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat,
 import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/api/fixtures/chat-artifacts'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
-import type { ArchivedWorktree, CodeChange, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
+import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockNewFileDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { createMockMaestroApi } from '@/api/fixtures/maestro'
@@ -36,6 +36,15 @@ export function createMockApi(): DesktopApi {
   let chatSummaries: unknown = { enabled: true, agent: 'claude', model: 'claude-haiku-5-5', effort: null, everyMessages: 6, everyMinutes: 10, retitle: true }
   let knowledgeSettings: unknown = { defaults: { summaries: true, retitle: true, topics: true, sessions: true, context: true }, projects: { '/Users/operator/Workspaces/local/stack': { summaries: false } } }
   let agentSettings: unknown = { version: 1, default: null, disabled: [] }
+  let agentUpdateSettings: unknown = { enabled: true, perAgent: {} }
+  // One agent in each state: Codex current, Claude behind, Grok's last update failed, agy's latest unknown.
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString()
+  let agentUpdates: AgentUpdateEntry[] = [
+    { agent: 'claude', installed: '2.4.1', latest: '2.5.0', status: 'update-available', installKind: 'native', checkedAt: hoursAgo(2) },
+    { agent: 'codex', installed: '0.163.0', latest: '0.163.0', status: 'up-to-date', installKind: 'standalone', checkedAt: hoursAgo(1) },
+    { agent: 'grok', installed: '1.2.0', latest: '1.3.0', status: 'update-available', installKind: 'npm', checkedAt: hoursAgo(4), lastAttempt: { at: hoursAgo(4), ok: false, error: 'npm warn deprecated inflight@1.0.6\nnpm error path /usr/local/lib/node_modules/@xai/grok\nnpm error EACCES: permission denied, mkdir \'/usr/local/lib/node_modules/@xai\'' } },
+    { agent: 'agy', installed: '1.4.1', latest: null, status: 'latest-unknown', installKind: 'unknown', checkedAt: hoursAgo(3) },
+  ]
   let modelSettings: unknown = { version: 1, models: {}, defaults: {} }
   let worktreeLocation: unknown = null
   // What the GitHub writes changed: added comments and new states, by kind and number.
@@ -474,6 +483,21 @@ export function createMockApi(): DesktopApi {
     setKnowledgeSettings: async (json) => void (knowledgeSettings = JSON.parse(json) as unknown),
     agentSettings: async () => agentSettings,
     setAgentSettings: async (json) => void (agentSettings = JSON.parse(json) as unknown),
+    agentUpdates: async () => {
+      await wait(400)
+      return { agents: agentUpdates }
+    },
+    agentUpdate: async (agent) => {
+      await wait(2500)
+      const entry = agentUpdates.find((item) => item.agent === agent)
+      if (entry === undefined || entry.installed === null) throw new CliError(`${agent} is not installed`, 1)
+      if (agent === 'grok') throw new CliError('npm error code EACCES', 1)
+      const installed = entry.latest ?? entry.installed
+      agentUpdates = agentUpdates.map((item) => (item.agent === agent ? { ...item, installed, status: 'updated', checkedAt: new Date().toISOString(), lastAttempt: { at: new Date().toISOString(), ok: true, error: null } } : item))
+      return { agent, installed }
+    },
+    agentUpdateSettings: async () => agentUpdateSettings,
+    setAgentUpdateSettings: async (json) => void (agentUpdateSettings = JSON.parse(json) as unknown),
     modelSettings: async () => modelSettings,
     setModelSettings: async (json) => {
       modelSettings = JSON.parse(json) as unknown

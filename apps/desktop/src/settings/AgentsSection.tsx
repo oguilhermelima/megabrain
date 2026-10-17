@@ -4,6 +4,7 @@ import type { InstallPlan } from '@/api/schema'
 import { AgentIcon } from '@/components/agent-icons'
 import { Bone } from '@/components/Skeleton'
 import { ErrorNote, Segmented, Spinner } from '@/components/ui'
+import { AgentUpdatesGroup, type AgentUpdates } from '@/settings/AgentUpdates'
 import { agentNames, agentRows, defaultAgentSettings, parseAgentSettings, serialiseAgentSettings, withDefault, withEnabled, type AgentRow, type AgentSettings } from '@/settings/agents-model'
 import { quiet, SettingsGroup } from '@/settings/settings-ui'
 
@@ -116,7 +117,8 @@ function AgentLine({ row, onEnabled, onDefault }: { row: AgentRow; onEnabled: (e
   )
 }
 
-export function AgentsSection() {
+/** `updates` is read by the Settings window, which shows its badge on the Agents entry. */
+export function AgentsSection({ updates }: { updates: AgentUpdates }) {
   const [generation, setGeneration] = useState(0)
   const { plan, settings, setSettings, commands, loading, error } = useAgents(generation)
   const [saveError, setSaveError] = useState<unknown>(null)
@@ -180,6 +182,7 @@ export function AgentsSection() {
         ))}
       </SettingsGroup>
       <p className="px-1 text-[12px] text-ink-500">A disabled agent stays installed; New chat just does not offer it. The command is what the app runs to start the agent’s own terminal.</p>
+      <AgentUpdatesGroup updates={updates} />
       {error !== null && <ErrorNote error={error} />}
       {saveError !== null && <ErrorNote error={saveError} />}
     </>

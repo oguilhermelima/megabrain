@@ -5,6 +5,7 @@ import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { SettingsSkeleton } from '@/components/Skeleton'
 import { Button, ErrorNote } from '@/components/ui'
 import { AgentsSection } from '@/settings/AgentsSection'
+import { useAgentUpdates } from '@/settings/AgentUpdates'
 import { ChainsSection } from '@/settings/ChainsSection'
 import { LimitsSection } from '@/settings/LimitsSection'
 import { ModelsSection } from '@/settings/ModelsSection'
@@ -31,6 +32,8 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
   const [projectsError, setProjectsError] = useState<unknown>(null)
   const nav = useRef<HTMLElement>(null)
   const content = useRef<HTMLElement>(null)
+  // Read when the window opens, so the Agents entry shows pending updates before its page is opened.
+  const agentUpdates = useAgentUpdates()
 
   // Every page loads only its own slice of the settings, once, and keeps it while the window is open.
   const loads = useMemo(
@@ -152,6 +155,11 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
                       </span>
                     )}
                     <span className="min-w-0 truncate">{item.label}</span>
+                    {item.key === 'agents' && agentUpdates.badge > 0 && (
+                      <span className="ml-auto rounded-full bg-white/[0.08] px-1.5 text-[11px] leading-[18px] font-semibold text-ink-300 tabular-nums" aria-label={`${agentUpdates.badge} agent ${agentUpdates.badge === 1 ? 'update' : 'updates'} available`}>
+                        {agentUpdates.badge}
+                      </span>
+                    )}
                   </button>
                 )
               })}
@@ -193,7 +201,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
                   onRefreshLimits={reload}
                 />
               )}
-              {section === 'agents' && <AgentsSection />}
+              {section === 'agents' && <AgentsSection updates={agentUpdates} />}
               {section === 'chains' && (
                 <ChainsSection
                   chains={settings.chains}
