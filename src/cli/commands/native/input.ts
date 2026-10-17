@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcessAdapter } from "../../../adapters/proc.js";
 import { resolveStateDirectory } from "../../../core/state.js";
@@ -31,6 +31,7 @@ async function mjpegFrame(port: number): Promise<Buffer> {
 }
 
 type RecordEntry = { udid: string; session: string; platform: "iOS" | "tvOS"; pointWidth?: number; pointHeight?: number };
+type InputStatus = { udid: string; state: "none" | "starting" | "ready" | "failed"; phase: string; startedAt?: string; error?: string; session?: string; port?: number };
 async function windowSize(process: ProcessAdapter, env: Environment, session: string): Promise<{ width: number; height: number } | undefined> {
   for (const path of ["/window/rect", "/window/size"]) {
     const result = await request(process, env, session, "GET", path);
@@ -44,6 +45,29 @@ async function windowSize(process: ProcessAdapter, env: Environment, session: st
   return undefined;
 }
 const stateFile = (env: Environment) => join(resolveStateDirectory(env), "native-input-sessions.json");
+const statusFile = (env: Environment, udid: string) => join(resolveStateDirectory(env), "native-input", `${udid}.json`);
+const lockFile = (env: Environment, udid: string) => join(resolveStateDirectory(env), "native-input", `${udid}.lock`);
+function readStatus(env: Environment, udid: string): InputStatus | undefined {
+  try { const value = JSON.parse(readFileSync(statusFile(env, udid), "utf8")) as InputStatus; return value.udid === udid ? value : undefined; } catch { return undefined; }
+}
+function writeStatus(env: Environment, value: InputStatus): void {
+  const file = statusFile(env, value.udid); mkdirSync(join(resolveStateDirectory(env), "native-input"), { recursive: true });
+  const tmp = `${file}.${globalThis.process.pid}.tmp`; writeFileSync(tmp, `${JSON.stringify(value)}\n`, { mode: 0o600 }); renameSync(tmp, file);
+}
+function option(args: readonly string[], name: string): string | undefined { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; }
+function decisiveAppiumLine(env: Environment, fallback: string): string {
+  try { const lines = readFileSync(join(resolveStateDirectory(env), "appium.log"), "utf8").trim().split("\n").filter((line) => /error|failed|unable|xcodebuild/i.test(line)); return lines.at(-1) ?? fallback; } catch { return fallback; }
+}
+async function waitForInput(env: Environment, udid: string, _process: ProcessAdapter, timeoutSeconds: number): Promise<Result<string>> {
+  const deadline = Date.now() + Math.max(1, timeoutSeconds) * 1000;
+  while (Date.now() < deadline) {
+    const status = readStatus(env, udid);
+    if (status?.state === "ready") return ok(`${JSON.stringify({ udid, session: status.session, port: status.port })}\n`);
+    if (status?.state === "failed") return failed(status.error ?? "native input session failed");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return failed(`timed out waiting for native input session ${udid}`);
+}
 function records(env: Environment): RecordEntry[] {
   try { const parsed = JSON.parse(readFileSync(stateFile(env), "utf8")) as { version?: number; sessions?: RecordEntry[] }; return parsed.version === 1 && Array.isArray(parsed.sessions) ? parsed.sessions : []; } catch { return []; }
 }
@@ -64,21 +88,47 @@ async function request(process: ProcessAdapter, env: Environment, session: strin
 export async function nativeInput(args: readonly string[], env: Environment, process: ProcessAdapter): Promise<Result<string>> {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) return ok(`${usageText("native-input")}\nCoordinates use device points; frames report image pixels and pixels per point.\n`);
   const [verb, udid, ...rawRest] = args.filter((arg) => arg !== "--json");
+  const worker = rawRest.includes("--worker");
   const durationIndex = rawRest.indexOf("--duration");
   const duration = durationIndex >= 0 ? Number(rawRest[durationIndex + 1]) : 500;
   const rest = durationIndex >= 0 ? rawRest.filter((_, index) => index !== durationIndex && index !== durationIndex + 1) : rawRest;
   if (!verb || !udid || !SIMULATOR_UDID.test(udid)) return failed("native input requires start|stop|tap|swipe|scroll|type|key|button|frame and a simulator UDID", 2);
   const all = records(env); const old = all.find((entry) => entry.udid === udid);
+  if (verb === "status") {
+    const status = readStatus(env, udid) ?? (old ? { udid, state: "ready" as const, phase: "ready", startedAt: "", session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) } : { udid, state: "none" as const, phase: "idle" });
+    return ok(`${JSON.stringify(status)}\n`);
+  }
   if (verb !== "stop") { const { activeRunForDevice } = await import("../maestro.js"); const activeRun = activeRunForDevice(env, udid); if (activeRun) return failed(`simulator ${udid} is being driven by Maestro run ${activeRun}`); }
   if (verb === "stop") {
     if (old) { await request(process, env, old.session, "DELETE", "").catch(() => undefined); save(env, all.filter((entry) => entry.udid !== udid)); }
+    writeStatus(env, { udid, state: "none", phase: "idle", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString() });
     return ok(`${JSON.stringify({ udid, stopped: true })}\n`);
   }
   if (verb === "start") {
+    if (!worker) {
+      const prior = readStatus(env, udid);
+      if (old && prior?.state !== "starting") return ok(`${JSON.stringify({ udid, state: "ready", session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) })}\n`);
+      if (prior?.state === "starting") return rest.includes("--wait") ? waitForInput(env, udid, process, Number(option(rest, "--timeout") ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);
+      const directory = join(resolveStateDirectory(env), "native-input"); mkdirSync(directory, { recursive: true });
+      const lock = lockFile(env, udid); let fd: number;
+      try { fd = openSync(lock, "wx", 0o600); }
+      catch { const current = readStatus(env, udid); return current?.state === "starting" ? (rest.includes("--wait") ? waitForInput(env, udid, process, Number(option(rest, "--timeout") ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`)) : failed(`input start for ${udid} is already being claimed`); }
+      closeSync(fd);
+      writeStatus(env, { udid, state: "starting", phase: "validating simulator", startedAt: new Date().toISOString() });
+      const executable = globalThis.process.argv[1];
+      const launched = executable ? await process.startDetached(executable, ["native", "input", "start", udid, "--worker"], { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env), ...(env.MEGABRAIN_APPIUM_PORT ? { MEGABRAIN_APPIUM_PORT: env.MEGABRAIN_APPIUM_PORT } : {}) } }) : failed("could not locate megabrain executable for background input start");
+      if (launched.kind !== "ok") { writeStatus(env, { udid, state: "failed", phase: "launching", startedAt: readStatus(env, udid)!.startedAt, error: launched.error }); try { unlinkSync(lock); } catch {} return launched; }
+      return rest.includes("--wait") ? waitForInput(env, udid, process, Number(option(rest, "--timeout") ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);
+    }
+    const lock = lockFile(env, udid);
+    const update = (phase: string) => writeStatus(env, { udid, state: "starting", phase, startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString() });
+    try {
+    update("validating simulator");
     const phones = await simCandidates(process, "phone");
     const tvs = await simCandidates(process, "tv");
     const candidate = [...(phones.kind === "ok" ? phones.value : []), ...(tvs.kind === "ok" ? tvs.value : [])].find((d) => d.udid === udid);
-    if (!candidate) return failed(`unknown simulator: ${udid}`);
+    if (!candidate) throw new Error(`unknown simulator: ${udid}`);
+    if (candidate.state !== "Booted") throw new Error(`simulator ${udid} is not booted (state: ${candidate.state})`);
     const platform = phones.kind === "ok" && phones.value.some((d) => d.udid === udid) ? "iOS" : "tvOS";
     if (old) {
       const live = await request(process, env, old.session, "GET", "");
@@ -86,17 +136,29 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
         const size = await windowSize(process, env, old.session);
         const updated = { ...old, ...(size ? { pointWidth: size.width, pointHeight: size.height } : {}) };
         save(env, [...all.filter((entry) => entry.udid !== udid), updated]);
+        writeStatus(env, { udid, state: "ready", phase: "ready", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString(), session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) });
         return ok(`${JSON.stringify({ udid, session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) })}\n`);
       }
     }
-    if ((await appium(["status"], env, process)).kind !== "ok") { const started = await appium(["start"], env, process); if (started.kind !== "ok") return started; }
+    update("launching Appium");
+    if ((await appium(["status"], env, process)).kind !== "ok") { const started = await appium(["start"], env, process); if (started.kind !== "ok") throw new Error(started.error); }
     const port = Number(env.MEGABRAIN_APPIUM_PORT ?? 4723);
+    update(platform === "tvOS" ? "building tvOS WebDriverAgent" : "building WebDriverAgent");
     const created = await createAppiumSession(process, { udid, bundleId: platform === "iOS" ? "com.apple.springboard" : "com.apple.TVHomeScreen" }, platform, appiumInputSessionCapabilities(platform, udid), port);
-    if (created.kind !== "ok") return created;
+    if (created.kind !== "ok") throw new Error(created.error);
+    update("connecting to WebDriverAgent");
     const size = await windowSize(process, env, created.value);
     save(env, [...all.filter((entry) => entry.udid !== udid), { udid, session: created.value, platform, ...(size ? { pointWidth: size.width, pointHeight: size.height } : {}) }]);
+    writeStatus(env, { udid, state: "ready", phase: "ready", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString(), session: created.value, port });
     return ok(`${JSON.stringify({ udid, session: created.value, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) })}\n`);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      writeStatus(env, { udid, state: "failed", phase: readStatus(env, udid)?.phase ?? "starting", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString(), error: decisiveAppiumLine(env, message) });
+      return failed(message);
+    } finally { try { unlinkSync(lock); } catch {} }
   }
+  const pending = readStatus(env, udid);
+  if (pending?.state === "starting") return failed(`input session for ${udid} state starting (phase: ${pending.phase})`);
   if (!old) return failed(`no input session for ${udid}; run native input start ${udid} first`);
   const started = Date.now(); let route = ""; let body: unknown;
   const nums = rest.slice(0, 6).map(Number);

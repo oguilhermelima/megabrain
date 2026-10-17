@@ -11,6 +11,7 @@ import type { ProcessAdapter } from "../../src/adapters/proc.js";
 const directories: string[] = [];
 const udid = "11111111-1111-4111-8111-111111111111";
 async function fixture() { const directory = await mkdtemp(join(tmpdir(), "native-input-")); directories.push(directory); await writeFile(join(directory, "native-input-sessions.json"), JSON.stringify({ version: 1, sessions: [{ udid, session: "sess-1", platform: "iOS" }] })); return directory; }
+async function emptyFixture() { const directory = await mkdtemp(join(tmpdir(), "native-input-")); directories.push(directory); return directory; }
 function fakeProcess() {
   const calls: Array<{ command: string; args: string[] }> = [];
   const process: ProcessAdapter = {
@@ -55,7 +56,52 @@ describe("native input scenarios", () => {
       expect(capabilities["appium:autoLaunch"]).toBe(false);
       expect(capabilities["appium:forceAppLaunch"]).toBe(false);
       expect(capabilities["appium:noReset"]).toBe(true);
+      expect(capabilities.platformName).toBe(platform);
+      if (platform === "tvOS") expect(capabilities["appium:bundleId"]).toBeUndefined();
     }
+  });
+
+  test("starts asynchronously and joins concurrent starts for one UDID", async () => {
+    const state = await emptyFixture(); const { process } = fakeProcess(); let launches = 0;
+    process.startDetached = async () => { launches += 1; return ok({ pid: 123 }); };
+    const env = { MEGABRAIN_STATE_DIR: state };
+    const starts = await Promise.all([
+      nativeInput(["start", udid, "--json"], env, process),
+      nativeInput(["start", udid, "--json"], env, process),
+    ]);
+    expect(launches).toBe(1);
+    for (const result of starts) expect(JSON.parse((result as { value: string }).value)).toMatchObject({ udid, state: "starting" });
+    const status = await nativeInput(["status", udid, "--json"], env, process);
+    expect(JSON.parse((status as { value: string }).value)).toMatchObject({ udid, state: "starting", phase: expect.any(String), startedAt: expect.any(String) });
+  });
+
+  test("fails input start for a shutdown simulator without booting it", async () => {
+    const state = await emptyFixture(); const { process, calls } = fakeProcess();
+    const run = process.run.bind(process);
+    process.run = async (command, args) => {
+      if (command === "xcrun") {
+        calls.push({ command, args: [...args] });
+        return ok({ stdout: JSON.stringify({ devices: { "iOS 18": [{ udid, state: "Shutdown", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
+      }
+      return run(command, args);
+    };
+
+    const result = await nativeInput(["start", udid, "--worker"], { MEGABRAIN_STATE_DIR: state }, process);
+
+    expect(result.kind).toBe("failed");
+    expect((result as { error: string }).error).toContain("not booted");
+    expect(calls.some((call) => call.command === "xcrun" && call.args.includes("boot"))).toBe(false);
+    const status = await nativeInput(["status", udid, "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+    expect(JSON.parse((status as { value: string }).value)).toMatchObject({ udid, state: "failed", error: expect.stringContaining("not booted") });
+  });
+
+  test("fails input immediately with starting state while session setup is in progress", async () => {
+    const state = await emptyFixture(); const { process } = fakeProcess();
+    process.startDetached = async () => ok({ pid: 123 });
+    await nativeInput(["start", udid, "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+    const action = await nativeInput(["tap", udid, "2", "3", "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+    expect(action.kind).toBe("failed");
+    expect((action as { error: string }).error).toContain("state starting");
   });
 
   test("reuses its saved session, sends device point coordinates, and deletes it on stop", async () => {

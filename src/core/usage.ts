@@ -140,7 +140,7 @@ export const USAGE_LINES = {
   "model-add": "model add <agent> <model> --reasoning <levels>",
   "model-refresh": "model refresh <agent>",
   "native-appium": "native appium start|stop|status",
-  "native-input": "native input start|stop|tap|swipe|scroll|type|key|button|frame <udid> ... [--json]",
+  "native-input": "native input start|status|stop|tap|swipe|scroll|type|key|button|frame <udid> ... [--wait] [--timeout seconds] [--json]",
   "native-sim-list": "native sim list <phone|tv> [--json]",
   "native-runtime-list": "native runtime list [<ios|tvos>] (--installed|--available) [--json]",
   "native-runtime-install": "native runtime install <ios|tvos> <version> [--json]",

@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { nativeUsage, validateTimeout } from "../../../core/native.js";
 import { type ProcessAdapter } from "../../../adapters/proc.js";
 import { type NativeHealth, type NativePlatform } from "../../../core/native.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../../core/native-session.js";
 import { createNativeSessionStore } from "../../../adapters/native-session-store.js";
+import { resolveStateDirectory } from "../../../core/state.js";
 
 import { Environment, Config, ExpoApp, NativeCaptureScreen, error, refusalCode, normalizeJsonResult, nativeWorktreeRoot, nativeConfigFile, config, setting, simCandidates, parseKind, optionValue, crashReportsDirectory, runtimePlatform, installedRuntimes, nativeBuildUsage, buildConfigError, readExpoApp, generatedWorkspace, nativeBuild, nativeRuntimeList, nativeRuntimeInstall, nativeCrashes, nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure, nativeReload, runtimeValue, formatEvaluation, cdpArguments, nativeEval, routerModuleExpression, logBoxExpression, devLoadingViewExpression, routeInfoExpression, navigationQueueExpression, navigationExpression, RouteSnapshot, NativeNavigationResult, routeSnapshot, routeChanged, nativeNavigationResult, pendingNavigationCount, nativeNavigate, nativeCaptureScreens, uniqueCaptureScreens, captureOptionNames, validateCaptureOptions, terminateNativeCaptureApp, resetNativeCaptureApp, captureNativeFrame, NativeSettledFrame, settleNativeFrame, NativeLogBoxStatus, NativeDevLoadingViewStatus, NativeResetOverlayStatus, silenceNativeLogBox, preventNativeDevLoadingView, silenceNativeOverlays, nativeOverlaySummary, nativeDevLoadingViewSummary, captureNavigationArgs, nativeCapture, executeNative } from "./index.js";
 
@@ -28,13 +31,16 @@ export function appiumInputSessionCapabilities(platform: NativePlatform, udid: s
   const wdaLocalPort = 10000 + Number.parseInt(hash.slice(0, 8), 16) % 50000;
   const mjpegServerPort = 10000 + Number.parseInt(hash.slice(8, 16), 16) % 50000;
   return {
-    ...appiumSessionCapabilities(platform, udid, bundleId),
+    ...APPIUM_SESSION_DEFAULTS,
+    platformName: platform,
+    "appium:udid": udid,
+    ...(platform === "iOS" ? { "appium:bundleId": bundleId } : {}),
     "appium:autoLaunch": false,
     "appium:forceAppLaunch": false,
     "appium:noReset": true,
     "appium:wdaLocalPort": wdaLocalPort,
-    "appium:wdaLaunchTimeout": 120_000,
-    "appium:wdaConnectionTimeout": 120_000,
+    "appium:wdaLaunchTimeout": 600_000,
+    "appium:wdaConnectionTimeout": 600_000,
     "appium:mjpegServerPort": mjpegServerPort,
   };
 }
@@ -61,7 +67,7 @@ export function appiumHttpFailure(action: string, response: AppiumResponse): str
   return `${action} (HTTP ${response.status})${message ? `: ${message}` : ""}`;
 }
 export async function createAppiumSession(processAdapter: ProcessAdapter, key: NativeSessionKey, platform: NativePlatform, capabilities = appiumSessionCapabilities(platform, key.udid, key.bundleId), port = 4723): Promise<Result<string>> {
-  const session = await processAdapter.run("curl", ["-sS", "--max-time", "120", "-w", "\n%{http_code}", "-X", "POST", `http://127.0.0.1:${port}/session`, "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: capabilities } })]);
+  const session = await processAdapter.run("curl", ["-sS", "--max-time", "660", "-w", "\n%{http_code}", "-X", "POST", `http://127.0.0.1:${port}/session`, "-H", "Content-Type: application/json", "-d", JSON.stringify({ capabilities: { alwaysMatch: capabilities } })], { timeoutMs: 670_000 });
   if (session.kind !== "ok") return failed(`Appium server was unreachable: ${session.error}`);
   const response = appiumResponse(session.value.stdout);
   if (response === undefined) return failed("Appium session response did not include an HTTP status");
@@ -167,7 +173,13 @@ export async function appium(args: readonly string[], environment: Environment, 
   }
   if (operation !== "start" && operation !== "stop") return error(`unknown appium operation: ${operation}`, 2);
   if (operation === "start") {
-    const started = await processAdapter.startDetached("appium", ["--port", port, "--log-level", "error"]);
+    mkdirSync(resolveStateDirectory(environment), { recursive: true });
+    const log = join(resolveStateDirectory(environment), "appium.log");
+    const rotated = `${log}.1`;
+    try {
+      if (existsSync(log) && statSync(log).size > 10 * 1024 * 1024) { try { unlinkSync(rotated); } catch {} renameSync(log, rotated); }
+    } catch { /* logging must not prevent Appium from starting */ }
+    const started = await processAdapter.startDetached("appium", ["--port", port, "--log-level", "info", "--log", log]);
     if (started.kind !== "ok") return error(`failed to start appium: ${started.error}`);
     const timeout = validateTimeout(environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30");
     if (timeout.kind !== "ok") return timeout;

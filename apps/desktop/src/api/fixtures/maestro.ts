@@ -241,7 +241,7 @@ export function createMockMaestroApi(): MaestroApi {
       if (deviceOf(udid).state !== 'Booted') throw new CliError(`simulator ${udid} must be booted to take input`, 1)
       const state = sessionState(udid).state
       if (state === 'none' || state === 'failed') sessions.set(udid, Date.now())
-      return { udid, session: `mock-session-${udid.slice(0, 8)}`, port: 8100 }
+      return { udid, state: 'starting' }
     },
     inputStop: async (udid) => {
       sessions.delete(udid)

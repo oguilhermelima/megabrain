@@ -520,6 +520,7 @@ describe("native health Appium session", () => {
 
 describe("native appium lifecycle", () => {
   test("starts detached, waits for port readiness, and leaves status up", async () => {
+    const state = await mkdtemp(join(tmpdir(), "native-appium-"));
     const calls: string[] = [];
     const process: ProcessAdapter = {
       async run(command, args) {
@@ -536,17 +537,22 @@ describe("native appium lifecycle", () => {
       invocationCount: () => calls.length,
     };
 
-    const result = await executeNative(["appium", "start"], {}, process);
-    expect(result).toEqual({ kind: "ok", value: "appium: up (port 4723, pid 1234)\n" });
-    expect(calls).toEqual([
-      "appium --port 4723 --log-level error",
-      "curl -fsS --max-time 1 http://127.0.0.1:4723/status",
-      "lsof -tiTCP:4723 -sTCP:LISTEN",
-      "ps -p 1234 -o command=",
-    ]);
+    try {
+      const result = await executeNative(["appium", "start"], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(result).toEqual({ kind: "ok", value: "appium: up (port 4723, pid 1234)\n" });
+      expect(calls).toEqual([
+        `appium --port 4723 --log-level info --log ${join(state, "appium.log")}`,
+        "curl -fsS --max-time 1 http://127.0.0.1:4723/status",
+        "lsof -tiTCP:4723 -sTCP:LISTEN",
+        "ps -p 1234 -o command=",
+      ]);
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
   });
 
   test("fails when the detached server never answers", async () => {
+    const state = await mkdtemp(join(tmpdir(), "native-appium-"));
     const process: ProcessAdapter = {
       async run(command) {
         if (command === "curl") return failed("connection refused");
@@ -556,9 +562,13 @@ describe("native appium lifecycle", () => {
       invocationCount: () => 0,
     };
 
-    const result = await executeNative(["appium", "start"], { MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
-    expect(result.kind).toBe("failed");
-    if (result.kind === "failed") expect(result.error).toContain("appium did not start on port 4723");
+    try {
+      const result = await executeNative(["appium", "start"], { MEGABRAIN_STATE_DIR: state, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toContain("appium did not start on port 4723");
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
   });
 
   test("stops the Appium process found on the listening port", async () => {
