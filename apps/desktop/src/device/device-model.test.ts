@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, type MaestroEvent } from '@/api/schema'
-import { bootThenRun, sleepNote, defaultDevice, deviceLayout, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, reduceRun, screenSource, sortDevices, stepRows, timeLabel, type RunState } from '@/device/device-model'
+import { afterRestart, afterShutdown, bootThenRun, sleepNote, deviceLayout, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
 import { changesPolicy, planPoll, pollInterval, projectsPolicy, screenPolicy } from '@/lib/poll-model'
 
 const captured = (name: string) => readFileSync(join(import.meta.dir, '..', 'api', 'fixtures', 'captured', name), 'utf8')
@@ -167,22 +167,82 @@ describe('flows', () => {
 
 describe('devices', () => {
   const listed = simulatorListSchema.parse(JSON.parse(captured('native-sim-list.json'))).devices
-  const devices = [
-    { udid: 'b', name: 'iPhone 17', state: 'Shutdown' },
-    { udid: 'a', name: 'iPhone 18 Pro', state: 'Booted' },
-    { udid: 'c', name: 'iPad Air', state: 'Shutdown' },
+  const booted = [
+    { udid: 'tv', name: 'Apple TV 4K', runtime: 'tvOS 27.0', state: 'Booted', kind: 'tv' as const },
+    { udid: 'p2', name: 'iPhone 18 Pro', runtime: 'iOS 27.0', state: 'Booted', kind: 'phone' as const },
+    { udid: 'p1', name: 'iPhone 17', runtime: 'iOS 27.0', state: 'Booted', kind: 'phone' as const },
   ]
+  const available: DeviceChoice[] = [
+    { udid: 'p1', name: 'iPhone 17', state: 'Booted', kind: 'phone' },
+    { udid: 'p2', name: 'iPhone 18 Pro', state: 'Booted', kind: 'phone' },
+    { udid: 'p3', name: 'iPhone Air', state: 'Shutdown', kind: 'phone' },
+    { udid: 'p0', name: 'iPad mini', state: 'Shutdown', kind: 'phone' },
+    { udid: 'tv', name: 'Apple TV 4K', state: 'Booted', kind: 'tv' },
+    { udid: 'tv2', name: 'Apple TV', state: 'Shutdown', kind: 'tv' },
+  ]
+  const open = openDevices(booted, available, [])
+
   test('the captured simulator list parses', () => {
     expect(listed.length).toBeGreaterThan(0)
   })
-  test('booted simulators come first, then by name', () => {
-    expect(sortDevices(devices).map((device) => device.udid)).toEqual(['a', 'c', 'b'])
+
+  test('the open devices are the booted ones, phones first, then by name', () => {
+    expect(open.map((device) => device.udid)).toEqual(['p1', 'p2', 'tv'])
+    expect(open[0]).toEqual({ udid: 'p1', name: 'iPhone 17', runtime: 'iOS 27.0', kind: 'phone', state: 'Booted' })
   })
-  test('the chosen device stays while listed; otherwise the first booted, else the first', () => {
-    expect(defaultDevice(devices, 'c')).toBe('c')
-    expect(defaultDevice(devices, 'gone')).toBe('a')
-    expect(defaultDevice(devices.filter((device) => device.state !== 'Booted'), null)).toBe('c')
-    expect(defaultDevice([], null)).toBeNull()
+
+  test('a row that is not booted is not open', () => {
+    expect(openDevices([{ ...booted[1], state: 'Shutdown' } as (typeof booted)[number]], available, []).map((device) => device.udid)).toEqual([])
+  })
+
+  test('a simulator megabrain put to sleep stays open as asleep', () => {
+    const withSleeper = openDevices(booted, available, ['p3'])
+    expect(withSleeper.map((device) => [device.udid, device.state])).toEqual([
+      ['p1', 'Booted'],
+      ['p2', 'Booted'],
+      ['p3', 'Asleep'],
+      ['tv', 'Booted'],
+    ])
+    expect(withSleeper.find((device) => device.udid === 'p3')?.runtime).toBeNull()
+  })
+
+  test('the chosen device stays selected while open; otherwise the first; none when nothing is open', () => {
+    expect(selectDevice(open, 'tv')).toBe('tv')
+    expect(selectDevice(open, 'gone')).toBe('p1')
+    expect(selectDevice(open, null)).toBe('p1')
+    expect(selectDevice([], 'tv')).toBeNull()
+  })
+
+  test('the picker offers every available device that is not open, phones first, then by name', () => {
+    expect(pickerChoices(available, open).map((device) => device.udid)).toEqual(['p0', 'p3', 'tv2'])
+  })
+
+  test('a device that is asleep is open, so the picker leaves it out', () => {
+    expect(pickerChoices(available, openDevices(booted, available, ['p3'])).map((device) => device.udid)).toEqual(['p0', 'tv2'])
+  })
+
+  test('shutting down removes the device and moves the selection to the first left', () => {
+    const shut = afterShutdown(open, 'p1', 'p1')
+    expect(shut.open.map((device) => device.udid)).toEqual(['p2', 'tv'])
+    expect(shut.selected).toBe('p2')
+  })
+
+  test('shutting down another device keeps the selection', () => {
+    expect(afterShutdown(open, 'p1', 'tv')).toEqual({ open: open.filter((device) => device.udid !== 'tv'), selected: 'p1' })
+  })
+
+  test('shutting down the last device leaves nothing selected', () => {
+    const only: OpenDevice[] = open.slice(0, 1)
+    expect(afterShutdown(only, 'p1', 'p1')).toEqual({ open: [], selected: null })
+  })
+
+  test('restarting keeps the device and the selection, and marks it booted', () => {
+    const sleeping = openDevices(booted, available, ['p3'])
+    const restarted = afterRestart(sleeping, 'p3', 'p3')
+    expect(restarted.selected).toBe('p3')
+    expect(restarted.open.map((device) => device.udid)).toEqual(['p1', 'p2', 'p3', 'tv'])
+    expect(restarted.open.find((device) => device.udid === 'p3')?.state).toBe('Booted')
+    expect(afterRestart(open, 'p2', 'tv').selected).toBe('p2')
   })
 })
 

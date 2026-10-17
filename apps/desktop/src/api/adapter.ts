@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
+import type { AgentDefaults, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -88,10 +88,16 @@ export interface DesktopApi {
   maestroRun(root: string, flow: string, device: string, onEvent: (event: MaestroEvent) => void, onEnd: (error: string | null) => void): Promise<() => void>
   /** Stops the worktree's running flow (`maestro stop`). */
   maestroStop(root: string): Promise<void>
-  /** The iOS simulators (`native sim list phone --json`). */
-  simulators(): Promise<Simulator[]>
-  /** Boots a simulator headless and waits for it (`native sim ensure phone --device`). */
-  bootSimulator(udid: string): Promise<void>
+  /** The iPhone or Apple TV simulators (`native sim list phone|tv --json`); phones when no kind is given. */
+  simulators(kind?: SimulatorKind): Promise<Simulator[]>
+  /** Boots a simulator headless and waits for it (`native sim ensure phone|tv --device`). */
+  bootSimulator(udid: string, kind?: SimulatorKind): Promise<void>
+  /** The booted simulators, phones and TVs (`native sim list --booted --json`). */
+  simListBooted(): Promise<BootedSimulator[]>
+  /** Shuts a simulator down (`native sim shutdown <udid> --json`); already shut down is fine. */
+  simShutdown(udid: string): Promise<{ udid: string; state: 'Shutdown' }>
+  /** Shuts a simulator down, boots it and waits until it is booted (`native sim restart <udid> --json`). */
+  simRestart(udid: string): Promise<{ udid: string; state: 'Booted'; waitedMs: number }>
   /** The simulators megabrain shut down when idle, and a sign the Device tab shows (`native sim idle --touch --json`). */
   simulatorsAsleep(): Promise<string[]>
   /** A fresh screenshot of a booted simulator (`native sim screenshot`); resolves to the file's path. */

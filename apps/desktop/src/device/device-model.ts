@@ -1,4 +1,4 @@
-import type { MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
+import type { BootedSimulator, MaestroEvent, MaestroFlow, MaestroRun, Simulator, SimulatorKind } from '@/api/schema'
 
 // The Device tab: a worktree's Maestro flows, an iOS simulator's screen and a run's steps as
 // `maestro run --json` prints them. The CLI says a step only once it finished; the step in progress
@@ -133,21 +133,55 @@ export function newFlowName(input: string): string | null {
   return /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name) ? name : null
 }
 
-const booted = (device: Simulator) => device.state === 'Booted'
+/** A simulator the picker lists, tagged with the list it came from (`native sim list phone|tv`). */
+export type DeviceChoice = Simulator & { kind: SimulatorKind }
 
-export function sortDevices(devices: readonly Simulator[]): Simulator[] {
-  return [...devices].sort((a, b) => Number(booted(b)) - Number(booted(a)) || a.name.localeCompare(b.name))
+/** A device in the sidebar: booted, or shut down by megabrain when idle and so still open. */
+export interface OpenDevice {
+  udid: string
+  name: string
+  runtime: string | null
+  kind: SimulatorKind
+  state: 'Booted' | 'Asleep'
 }
 
-/** The device a run uses: the chosen one while it is listed, else the first booted, else the first. */
-export function defaultDevice(devices: readonly Simulator[], chosen: string | null): string | null {
-  if (chosen !== null && devices.some((device) => device.udid === chosen)) return chosen
-  return sortDevices(devices)[0]?.udid ?? null
+const byKindThenName = (a: { kind: SimulatorKind; name: string }, b: { kind: SimulatorKind; name: string }) => Number(a.kind === 'tv') - Number(b.kind === 'tv') || a.name.localeCompare(b.name)
+
+/** The sidebar's devices: the booted ones and the ones megabrain put to sleep, phones first, then by name. */
+export function openDevices(booted: readonly BootedSimulator[], available: readonly DeviceChoice[], asleep: readonly string[]): OpenDevice[] {
+  const open: OpenDevice[] = booted.filter((row) => row.state === 'Booted').map((row) => ({ udid: row.udid, name: row.name, runtime: row.runtime, kind: row.kind, state: 'Booted' }))
+  for (const device of available) {
+    if (asleep.includes(device.udid) && !open.some((entry) => entry.udid === device.udid)) open.push({ udid: device.udid, name: device.name, runtime: null, kind: device.kind, state: 'Asleep' })
+  }
+  return open.sort(byKindThenName)
+}
+
+/** The selected device: the chosen one while it is open, else the first open, else none. */
+export function selectDevice(open: readonly OpenDevice[], chosen: string | null): string | null {
+  if (chosen !== null && open.some((device) => device.udid === chosen)) return chosen
+  return open[0]?.udid ?? null
+}
+
+/** What the + picker offers: every available device not already open, phones first, then by name. */
+export function pickerChoices(available: readonly DeviceChoice[], open: readonly OpenDevice[]): DeviceChoice[] {
+  return available.filter((device) => !open.some((entry) => entry.udid === device.udid)).sort(byKindThenName)
+}
+
+/** A device shut down leaves the sidebar; the selection stays unless it was that device. */
+export function afterShutdown(open: readonly OpenDevice[], chosen: string | null, udid: string): { open: OpenDevice[]; selected: string | null } {
+  const left = open.filter((device) => device.udid !== udid)
+  return { open: left, selected: selectDevice(left, chosen === udid ? null : chosen) }
+}
+
+/** A device restarted stays where it is, booted, and the selection does not move. */
+export function afterRestart(open: readonly OpenDevice[], chosen: string | null, udid: string): { open: OpenDevice[]; selected: string | null } {
+  const next = open.map((device): OpenDevice => (device.udid === udid ? { ...device, state: 'Booted' } : device))
+  return { open: next, selected: selectDevice(next, chosen) }
 }
 
 export type DeviceLayout = 'columns' | 'split' | 'stack'
 
-/** Flows, screen and run side by side when the view is wide; the screen beside flows over run in the middle; one column below 720px. */
+/** Devices, screen and the flows-and-run panel side by side when wide; the screen beside devices over the panel in the middle; one column below 720px. */
 export function deviceLayout(width: number): DeviceLayout {
   return width >= 1080 ? 'columns' : width >= 720 ? 'split' : 'stack'
 }

@@ -1,11 +1,11 @@
 import { CliError, type DesktopApi } from '@/api/adapter'
-import type { MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
+import type { MaestroFlow, MaestroRun, Simulator, SimulatorKind } from '@/api/schema'
 
 // Maestro and the simulators for the mock adapter: megabrain's worktrees have flows, the others none
 // (the Device tab's empty state). A run queues briefly, then prints a step about every second; a flow
 // whose path names "login" fails on its third step.
 
-type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simulatorsAsleep' | 'simulatorScreenshot'>
+type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot'>
 
 const seedFlows: MaestroFlow[] = [
   { path: '.maestro/smoke.yaml', name: 'Smoke', appId: 'com.megabrain.desktop' },
@@ -36,11 +36,19 @@ export function createMockMaestroApi(): MaestroApi {
   const flows = new Map<string, MaestroFlow[]>()
   const runs = new Map<string, MaestroRun[]>()
   const live = new Map<string, () => void>()
-  const devices: Simulator[] = [
-    { udid: 'B50AEA46-5013-445E-A3BB-4FB968ED0B13', name: 'iPhone 18 Pro', state: 'Booted' },
-    { udid: 'F9C3EADB-1E0B-499F-A423-EA83499DDF1D', name: 'iPhone 17 Pro', state: 'Shutdown' },
-    { udid: 'B86BFEB1-7A65-4459-980C-1C4104CC6FE2', name: 'iPhone 17e', state: 'Shutdown' },
+  const devices: (Simulator & { kind: SimulatorKind; runtime: string })[] = [
+    { udid: 'B50AEA46-5013-445E-A3BB-4FB968ED0B13', name: 'iPhone 18 Pro', state: 'Booted', kind: 'phone', runtime: 'iOS 27.0' },
+    { udid: 'F9C3EADB-1E0B-499F-A423-EA83499DDF1D', name: 'iPhone 17 Pro', state: 'Shutdown', kind: 'phone', runtime: 'iOS 27.0' },
+    { udid: 'B86BFEB1-7A65-4459-980C-1C4104CC6FE2', name: 'iPhone 17e', state: 'Shutdown', kind: 'phone', runtime: 'iOS 27.0' },
+    { udid: '110E1BF2-99F9-4475-916E-32FBA7CED248', name: 'iPhone Air', state: 'Booted', kind: 'phone', runtime: 'iOS 26.5' },
+    { udid: '7C0D21A4-5B9E-4D1F-9E3A-2F6B8C4A1D05', name: 'Apple TV 4K (3rd generation)', state: 'Booted', kind: 'tv', runtime: 'tvOS 27.0' },
+    { udid: 'E3A9F6B2-0C47-4E8D-B1A5-93D2C7F4E816', name: 'Apple TV', state: 'Shutdown', kind: 'tv', runtime: 'tvOS 27.0' },
   ]
+  const deviceOf = (udid: string) => {
+    const device = devices.find((entry) => entry.udid === udid)
+    if (device === undefined) throw new CliError(`no simulator matches ${udid}`, 1)
+    return device
+  }
   // What the booted phone shows: the last step a run reached.
   let screen = mockScreen('Welcome', 'megabrain on the simulator')
   const flowsOf = (root: string) => {
@@ -136,15 +144,30 @@ export function createMockMaestroApi(): MaestroApi {
       if (stop === undefined) throw new CliError('no running maestro run for this worktree', 1)
       stop()
     },
-    simulators: async () => {
+    simulators: async (kind = 'phone') => {
       await wait(200)
-      return devices.map((device) => ({ ...device }))
+      return devices.filter((device) => device.kind === kind).map(({ udid, name, state }) => ({ udid, name, state }))
     },
     bootSimulator: async (udid) => {
       await wait(1500)
-      const device = devices.find((entry) => entry.udid === udid)
-      if (device === undefined) throw new CliError(`no iPhone simulator matches ${udid}`, 1)
+      deviceOf(udid).state = 'Booted'
+    },
+    simListBooted: async () => {
+      await wait(150)
+      return devices.filter((device) => device.state === 'Booted').map(({ udid, name, runtime, state, kind }) => ({ udid, name, runtime, state, kind }))
+    },
+    simShutdown: async (udid) => {
+      await wait(700)
+      deviceOf(udid).state = 'Shutdown'
+      return { udid, state: 'Shutdown' as const }
+    },
+    simRestart: async (udid) => {
+      const started = Date.now()
+      const device = deviceOf(udid)
+      device.state = 'Shutdown'
+      await wait(1800)
       device.state = 'Booted'
+      return { udid, state: 'Booted' as const, waitedMs: Date.now() - started }
     },
     simulatorsAsleep: async () => [],
     simulatorScreenshot: async (udid) => {
