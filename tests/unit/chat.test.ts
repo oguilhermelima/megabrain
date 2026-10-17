@@ -79,7 +79,7 @@ async function socketDaemon(env: ReturnType<typeof sandbox>) {
 describe("native chat commands with protocol fakes", () => {
   test("starts, sends in order, persists events, and reloads an interrupted Claude chat", async () => {
     const env = sandbox();
-    const claudeUsage = readFileSync(join(process.cwd(), "tests/fixtures/chat-claude-usage.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    const claudeUsage = readFileSync(join(process.cwd(), "tests/fixtures/chat-claude-usage.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as { parent_tool_use_id?: string; usage: Record<string, number> });
     fakeAgent(env.bin, "claude", `
 const readline = require("node:readline");
 const rl = readline.createInterface({ input: process.stdin });
@@ -91,8 +91,10 @@ rl.on("line", (line) => {
   const input = JSON.parse(line);
   if (input.type === "user") {
     const text = input.message.content.filter((part) => part.type === "text").map((part) => part.text).join("");
-    process.stdout.write(JSON.stringify({ type: "assistant", message: { id: "assistant-" + (++n), content: [{ type: "text", text: "reply:" + text }], usage: usageRows[0].messageUsage, stop_reason: "end_turn" } }) + "\\n");
-    process.stdout.write(JSON.stringify({ type: "result", session_id: "fake-claude-session", is_error: false, usage: usageRows[1].usage, modelUsage: { "claude-haiku-5-5": usageRows[1].modelUsage.model } }) + "\\n");
+    for (const row of usageRows) {
+      process.stdout.write(JSON.stringify({ type: "assistant", ...(row.parent_tool_use_id ? { parent_tool_use_id: row.parent_tool_use_id } : {}), message: { id: "assistant-" + (++n), content: [{ type: "text", text: "reply:" + text }], usage: row.usage, stop_reason: "end_turn" } }) + "\\n");
+    }
+    process.stdout.write(JSON.stringify({ type: "result", session_id: "fake-claude-session", is_error: false, modelUsage: { "claude-haiku-5-5": { contextWindow: 1000000 } } }) + "\\n");
   }
 });
 `);
@@ -105,7 +107,11 @@ rl.on("line", (line) => {
     await waitForChat(chat.id, "idle", env);
     const listed = await call(["chat", "list", "--json"], env);
     expect(listed.kind).toBe("ok");
-    if (listed.kind === "ok") expect(JSON.parse(listed.value)).toContainEqual(expect.objectContaining({ id: chat.id, contextTokens: 75729, contextWindow: 1000000 }));
+    if (listed.kind === "ok") {
+      const saved = (JSON.parse(listed.value) as Array<{ id: string; contextTokens: number; contextWindow: number }>).find((entry) => entry.id === chat.id);
+      expect(saved).toMatchObject({ contextTokens: 250074, contextWindow: 1000000 });
+      expect(saved?.contextTokens).toBeLessThanOrEqual(saved?.contextWindow ?? 0);
+    }
 
     const events = await call(["chat", "events", chat.id, "--json"], env);
     expect(events.kind).toBe("ok");
@@ -146,6 +152,9 @@ rl.on("line", (line) => {
     process.stdout.write(JSON.stringify({ id: request.id, result: { turn: { id: "fake-turn" } } }) + "\\n");
     process.stdout.write(JSON.stringify({ method: "turn/started", params: { threadId: thread, turnId: "fake-turn" } }) + "\\n");
     process.stdout.write(JSON.stringify({ method: usage.method, params: { ...usage.params, threadId: thread, turnId: "fake-turn" } }) + "\\n");
+    const totalOnlyUsage = { ...usage.params.tokenUsage };
+    delete totalOnlyUsage.last;
+    process.stdout.write(JSON.stringify({ method: usage.method, params: { ...usage.params, tokenUsage: totalOnlyUsage, threadId: thread, turnId: "fake-turn" } }) + "\\n");
   }
   if (request.method === "turn/steer") process.stdout.write(JSON.stringify({ id: request.id, result: { turnId: "fake-turn" } }) + "\\n");
 });
@@ -167,7 +176,11 @@ rl.on("line", (line) => {
     ]);
     const listed = await call(["chat", "list", "--json"], env);
     expect(listed.kind).toBe("ok");
-    if (listed.kind === "ok") expect(JSON.parse(listed.value)).toContainEqual(expect.objectContaining({ id: chat.id, contextTokens: 19980, contextWindow: 258400 }));
+    if (listed.kind === "ok") {
+      const saved = (JSON.parse(listed.value) as Array<{ id: string; contextTokens: number; contextWindow: number }>).find((entry) => entry.id === chat.id);
+      expect(saved).toMatchObject({ contextTokens: 61476, contextWindow: 258400 });
+      expect(saved?.contextTokens).toBeLessThanOrEqual(saved?.contextWindow ?? 0);
+    }
     const moved = await call(["chat", "mode", chat.id, "terminal", "--json"], env);
     expect(moved.kind).toBe("ok");
     if (moved.kind === "ok") expect(JSON.parse(moved.value)).toMatchObject({ chat: { mode: "terminal", state: "idle" } });

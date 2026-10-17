@@ -1,2 +1,4 @@
-{"type":"assistant","messageUsage":{"input_tokens":2,"cache_creation_input_tokens":47020,"cache_read_input_tokens":28707,"output_tokens":1}}
-{"type":"result","usage":{"input_tokens":2,"cache_creation_input_tokens":47020,"cache_read_input_tokens":28707,"output_tokens":4},"modelUsage":{"model":{"contextWindow":1000000}}}
+{"usage":{"input_tokens":2,"cache_read_input_tokens":246438,"cache_creation_input_tokens":851}}
+{"usage":{"input_tokens":2,"cache_read_input_tokens":247289,"cache_creation_input_tokens":682}}
+{"usage":{"input_tokens":2,"cache_read_input_tokens":247971,"cache_creation_input_tokens":2101}}
+{"parent_tool_use_id":"redacted-subagent","usage":{"input_tokens":2,"cache_read_input_tokens":5758,"cache_creation_input_tokens":37447}}

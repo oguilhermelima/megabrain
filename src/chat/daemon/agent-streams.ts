@@ -22,6 +22,7 @@ import { ChatSummarizer } from ".././summaries.js";
 import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFingerprint, listChatArtifacts, listClaudeChatArtifacts, listMegabrainChatArtifacts, type ChatArtifact } from ".././artifacts.js";
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import type { ChatDaemon } from "../daemon.js";
+import { setContextTokens } from "./artifacts-summaries.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
 
@@ -197,10 +198,10 @@ export async function handleCodex(daemon: ChatDaemon, id: string, child: ChildPr
     if (thread !== "" && chat.agentSessionId !== null && thread !== chat.agentSessionId) { await daemon.handleCodexSubagent(chat, thread, method, params); return; }
     if (method === "thread/tokenUsage/updated") {
       const usage = object(params.tokenUsage);
-      const last = object(usage.last ?? usage.total);
+      const last = object(usage.last);
       const input = count(last.inputTokens);
       const window = usage.modelContextWindow;
-      if (input !== undefined) chat.contextTokens = input;
+      if (input !== undefined) setContextTokens(chat, input);
       if (typeof window === "number" && Number.isSafeInteger(window) && window > 0) chat.contextWindow = window;
       await daemon.save(chat);
       const total = count(object(usage.total).outputTokens);
