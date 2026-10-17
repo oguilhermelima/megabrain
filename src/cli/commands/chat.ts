@@ -3,6 +3,8 @@ import { createInterface } from "node:readline";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
+import { loadModelRegistry } from "../../core/model.js";
+import { readModelSettings, startModel } from "../../core/model-settings.js";
 import { callChatd, callPermissionServer } from "../../chat/daemon.js";
 import { ChatStore, type ChatLine } from "../../chat/store.js";
 import { readSummaries, searchSummaries } from "../../chat/summaries.js";
@@ -66,7 +68,10 @@ export async function executeChat(args: readonly string[], environment: Environm
       partsArg.rest = partsArg.rest.filter((arg) => arg !== "--approvals");
       if (agent === undefined || cwdArg.value === undefined || effortArg.value === "" || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
       const parts = partsJson(partsArg.value);
-      value = await callChatd(dir, { operation: "start", agent, model: modelArg.value, effort: effortArg.value, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
+      // Without --model the chat takes the agent's default from Settings > Models, when one is set.
+      const registry = loadModelRegistry(environment);
+      const start = startModel(await readModelSettings(dir), registry.kind === "loaded" ? registry.registry.models : [], agent, modelArg.value, effortArg.value);
+      value = await callChatd(dir, { operation: "start", agent, model: start.model, effort: start.effort, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
       return ok(argsJson(value));
     }
     if (verb === "send") {

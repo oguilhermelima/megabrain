@@ -226,15 +226,21 @@ export const settingsSchema = z.looseObject({
     z.looseObject({
       agent: z.string(),
       model: z.string(),
-      reasoning: z.looseObject({ levels: z.array(z.string()) }),
+      /** The levels the model accepts and the one it runs at when none is given (null when unknown). */
+      reasoning: z.looseObject({ levels: z.array(z.string()), default: z.string().nullable().optional() }),
       /** How people say the model, for example Opus 5.5; absent from an older CLI. */
       name: z.string().optional(),
+      /** The line within an agent (opus, sol, gemini flash) and its version (5.5); null when unknown. */
+      family: z.string().nullable().optional(),
+      generation: z.string().nullable().optional(),
       /** Token windows the model supports, the default first; absent from an older CLI. */
       contextWindows: z.array(z.number()).optional(),
-      /** active, retired or deprecated; absent from an older CLI. */
+      /** current, older or deprecated; an older CLI said active or retired, or nothing. */
       status: z.string().optional(),
-      /** What the agent's CLI says the model is for; null or absent when it says nothing. */
+      /** What the model is best for, one line for a person choosing; null or absent when unknown. */
       description: z.string().nullable().optional(),
+      /** Whether the picker offers it, after Settings > Models; absent from an older CLI, which means on. */
+      enabled: z.boolean().optional(),
     }),
   ),
   terminal: z.looseObject({ default: z.string().nullable(), detected: z.string().nullable(), available: z.array(z.string()) }),

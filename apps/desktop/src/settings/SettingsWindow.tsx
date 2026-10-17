@@ -227,7 +227,7 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
               )}
               {section === 'worktrees' && <WorktreesSection projects={listed} onOpenProject={(path) => go(projectKey(path))} />}
               {section === 'shortcuts' && <ShortcutsSection />}
-              {section === 'models' && <ModelsSection models={settings.models} error={error} onRefresh={async (agent) => void (await act(() => api.refreshModels(agent)))} />}
+              {section === 'models' && <ModelsSection models={settings.models} error={error} onSaved={act} onRefresh={async (agent) => void (await act(() => api.refreshModels(agent)))} />}
               {section === 'terminal' && (
                 <TerminalSection
                   engine={settings.terminalEngine ?? 'native'}

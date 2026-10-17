@@ -106,6 +106,7 @@ export function upgradeRegistry(registry: ModelRegistry, template: ModelRegistry
       ...models[index], reasoning: templateModel.reasoning, status: templateModel.status,
       contextWindow: templateModel.contextWindow, name: templateModel.name,
       contextWindows: templateModel.contextWindows, description: templateModel.description,
+      family: templateModel.family, generation: templateModel.generation,
     };
   }
   return { ...registry, models };
@@ -114,6 +115,35 @@ export function upgradeRegistry(registry: ModelRegistry, template: ModelRegistry
 // Every level a CLI can name, in order; agy also offers a "thinking" variant of some Claude models.
 const levelOrder: readonly string[] = [...reasoningLevels, "thinking"];
 const byLevel = (left: string, right: string) => levelOrder.indexOf(left) - levelOrder.indexOf(right);
+
+// A refresh reads what each CLI offers today; what a person choosing needs beyond that (the
+// best-for line, family, generation and status) is megabrain's own, kept in the shipped table and
+// laid over the live row. A model the table does not know keeps what was derived from its id.
+type Curated = Readonly<{ family?: string; generation?: string; status: string; description?: string }>;
+
+function curated(template: readonly Model[], agent: string, model: string, derived: Curated): Curated {
+  const entry = template.find((candidate) => candidate.agent === agent && candidate.model === model);
+  const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
+  const family = text(entry?.family) ?? derived.family;
+  const generation = text(entry?.generation) ?? derived.generation;
+  const description = text(entry?.description) ?? derived.description;
+  return {
+    ...(family === undefined ? {} : { family }),
+    ...(generation === undefined ? {} : { generation }),
+    status: text(entry?.status) ?? derived.status,
+    ...(description === undefined ? {} : { description }),
+  };
+}
+
+const versionOf = (text: string): number[] => text.split(".").map(Number);
+function compareVersions(left: string, right: string): number {
+  const [a, b] = [versionOf(left), versionOf(right)];
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
 
 // agy lists one id per reasoning level ("gemini-4-argon-high\tGemini 4 Argon (High)"); an id with
 // no level runs at none. The registry keeps one model per base id with the levels it was listed
@@ -124,7 +154,7 @@ export function agyModelId(model: string, effort: string | null): string {
   return effort === null || effort === "none" || agyLevel.test(model) ? model : `${model}-${effort}`;
 }
 
-export function refreshAgyModels(listing: string, obtainedAt: string): readonly Model[] {
+export function refreshAgyModels(listing: string, obtainedAt: string, template: readonly Model[] = []): readonly Model[] {
   const folded = new Map<string, { name: string | undefined; levels: string[] }>();
   for (const [, id = "", listedName] of listing.matchAll(/^((?:gemini|claude|gpt-oss)-[A-Za-z0-9_.-]+)(?:\t(.*))?$/gm)) {
     const level = agyLevel.exec(id)?.[1];
@@ -134,13 +164,18 @@ export function refreshAgyModels(listing: string, obtainedAt: string): readonly 
     if (!entry.levels.includes(level ?? "none")) entry.levels.push(level ?? "none");
     folded.set(base, entry);
   }
-  return [...folded].map(([model, { name, levels }]) => ({
-    agent: "agy",
-    model,
-    ...(name === undefined ? {} : { name }),
-    reasoning: { separateAxis: true, levels: levels.sort(byLevel) },
-    provenance: { kind: "live", command: "agy models", obtainedAt },
-  }));
+  return [...folded].map(([model, { name, levels }]) => {
+    // agy lists only what it offers now, so each listed model is current unless the table says otherwise.
+    const [, family = model, generation] = /^(?:claude-)?([a-z]+(?:-[a-z]+)*?)-(\d+(?:[.-]\d+)?)(?=$|-)/.exec(model) ?? [];
+    return {
+      agent: "agy",
+      model,
+      ...(name === undefined ? {} : { name }),
+      ...curated(template, "agy", model, { family, ...(generation === undefined ? {} : { generation: generation.replace("-", ".") }), status: "current" }),
+      reasoning: { separateAxis: true, levels: levels.sort(byLevel) },
+      provenance: { kind: "live", command: "agy models", obtainedAt },
+    };
+  });
 }
 
 // `grok models` lists the ids it offers. Their levels, names and windows live in grok's own
@@ -148,7 +183,7 @@ export function refreshAgyModels(listing: string, obtainedAt: string): readonly 
 // an id and falls back to the levels every listed model supports.
 const grokFallbackLevels = ["low", "medium", "high"];
 
-type GrokCacheEntry = { name?: unknown; description?: unknown; context_window?: unknown; context_windows?: unknown; reasoning_efforts?: unknown };
+type GrokCacheEntry = { name?: unknown; description?: unknown; context_window?: unknown; context_windows?: unknown; reasoning_effort?: unknown; reasoning_efforts?: unknown };
 
 function grokCache(text: string | undefined): Readonly<Record<string, GrokCacheEntry>> {
   try {
@@ -161,28 +196,73 @@ function grokCache(text: string | undefined): Readonly<Record<string, GrokCacheE
 
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
-export function refreshGrokModels(listing: string, cacheText: string | undefined, known: readonly Model[], obtainedAt: string): readonly Model[] {
+// grok-4.7 and grok-4.7-build-fast are generation 4.7 of the grok and grok fast families; the
+// newest generation grok lists is current and the rest older.
+function grokIdentity(model: string): { family: string; generation?: string } {
+  const [, generation, rest = ""] = /^grok-(\d+(?:\.\d+)*)(.*)$/.exec(model) ?? [];
+  return { family: /fast/.test(rest) ? "grok fast" : "grok", ...(generation === undefined ? {} : { generation }) };
+}
+
+export function refreshGrokModels(listing: string, cacheText: string | undefined, known: readonly Model[], obtainedAt: string, template: readonly Model[] = []): readonly Model[] {
   const ids = [...new Set([...listing.matchAll(/^[ \t]*[*-][ \t]+(grok-[A-Za-z0-9_.-]+)/gm)].map((match) => match[1]!))];
   const cache = grokCache(cacheText);
+  const newest = ids.map((model) => grokIdentity(model).generation ?? "0").reduce((top, generation) => (compareVersions(generation, top) > 0 ? generation : top), "0");
   return ids.map((model) => {
     const provenance = { kind: "live", command: "grok models", obtainedAt };
+    const identity = grokIdentity(model);
+    const status = identity.generation !== undefined && compareVersions(identity.generation, newest) === 0 ? "current" : "older";
     const info = cache[model];
     const cachedLevels = Array.isArray(info?.reasoning_efforts) ? info.reasoning_efforts.map((effort: { id?: unknown }) => effort?.id).filter((id): id is string => typeof id === "string") : [];
     if (info === undefined || cachedLevels.length === 0) {
       const levels = known.find((entry) => entry.agent === "grok" && entry.model === model)?.reasoning.levels ?? grokFallbackLevels;
-      return { agent: "grok", model, reasoning: { separateAxis: true, levels }, provenance };
+      return { agent: "grok", model, ...curated(template, "grok", model, { ...identity, status }), reasoning: { separateAxis: true, levels }, provenance };
     }
     const windows = Array.isArray(info.context_windows) ? info.context_windows.filter(positive) : [];
+    const level = typeof info.reasoning_effort === "string" && cachedLevels.includes(info.reasoning_effort) ? info.reasoning_effort : undefined;
     return {
       agent: "grok",
       model,
       ...(typeof info.name === "string" ? { name: info.name } : {}),
-      ...(typeof info.description === "string" ? { description: info.description } : {}),
+      ...curated(template, "grok", model, { ...identity, status, ...(typeof info.description === "string" ? { description: info.description } : {}) }),
       ...(positive(info.context_window) ? { contextWindow: info.context_window } : {}),
       ...(windows.length > 0 ? { contextWindows: windows } : {}),
-      reasoning: { separateAxis: true, levels: cachedLevels.sort(byLevel) },
+      reasoning: { separateAxis: true, levels: cachedLevels.sort(byLevel), ...(level === undefined ? {} : { default: level }) },
       provenance,
     };
+  });
+}
+
+// Codex keeps what it offers in ~/.codex/models_cache.json: each model's slug, display name, the
+// reasoning levels it accepts and its default, its window, and whether the picker lists it at all
+// (internal models are hidden). Its own description says when a model is older ("Older generation
+// workhorse model.", "Previous generation...").
+type CodexCacheEntry = { slug?: unknown; display_name?: unknown; description?: unknown; visibility?: unknown; context_window?: unknown; default_reasoning_level?: unknown; supported_reasoning_levels?: unknown };
+
+export function refreshCodexModels(cacheText: string | undefined, template: readonly Model[], obtainedAt: string): readonly Model[] {
+  let listed: CodexCacheEntry[];
+  try {
+    const models = (JSON.parse(cacheText ?? "") as { models?: unknown }).models;
+    listed = Array.isArray(models) ? models.filter((entry): entry is CodexCacheEntry => typeof entry === "object" && entry !== null && (entry as CodexCacheEntry).visibility === "list") : [];
+  } catch {
+    return [];
+  }
+  return listed.flatMap((info) => {
+    if (typeof info.slug !== "string" || info.slug === "") return [];
+    const model = info.slug;
+    const levels = Array.isArray(info.supported_reasoning_levels) ? info.supported_reasoning_levels.map((level: { effort?: unknown }) => level?.effort).filter((effort): effort is string => typeof effort === "string").sort(byLevel) : [];
+    const [, generation, family = "gpt"] = /^gpt-(\d+(?:\.\d+)*)(?:-([a-z]+))?/.exec(model) ?? [];
+    const own = typeof info.description === "string" ? info.description : undefined;
+    const name = typeof info.display_name === "string" ? info.display_name.replace(/^(GPT-[\d.]+)-/, "$1 ") : undefined;
+    const fallback = typeof info.default_reasoning_level === "string" && levels.includes(info.default_reasoning_level) ? info.default_reasoning_level : undefined;
+    return [{
+      agent: "codex",
+      model,
+      ...(name === undefined ? {} : { name }),
+      ...curated(template, "codex", model, { family, ...(generation === undefined ? {} : { generation }), status: own !== undefined && /^(Older|Previous)\b/.test(own) ? "older" : "current", ...(own === undefined ? {} : { description: own }) }),
+      ...(positive(info.context_window) ? { contextWindow: info.context_window, contextWindows: [info.context_window] } : {}),
+      reasoning: { separateAxis: true, levels, ...(fallback === undefined ? {} : { default: fallback }) },
+      provenance: { kind: "live", command: "~/.codex/models_cache.json", obtainedAt },
+    }];
   });
 }
 
@@ -213,6 +293,15 @@ export function parseModelRegistry(text: string): ModelRegistry | undefined {
     return registry.version === 1 && Array.isArray(registry.models) && registry.models.every(isModelEntry) ? value as ModelRegistry : undefined;
   } catch {
     return undefined;
+  }
+}
+
+/** The shipped table, for what a refresh lays over a live listing; empty when it cannot be read. */
+export function readTemplateModels(environment: ModelEnvironment): readonly Model[] {
+  try {
+    return parseModelRegistry(readFileSync(modelRegistryPaths(environment).template, "utf8"))?.models ?? [];
+  } catch {
+    return [];
   }
 }
 

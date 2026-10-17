@@ -53,6 +53,33 @@ function counter() {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
 describe('createSharedRead', () => {
+  test('reload reads at once inside the interval, and once more after a read that was running', async () => {
+    const time = fakeClock()
+    let release: (value: number) => void = () => {}
+    let calls = 0
+    const read = () => {
+      calls += 1
+      return new Promise<number>((resolve) => {
+        release = resolve
+      })
+    }
+    const store = createSharedRead(read, { intervalMs: 60_000, clock: time.clock })
+    store.subscribe(() => {})
+    expect(calls).toBe(1)
+    store.reload()
+    expect(calls).toBe(1)
+    release(1)
+    await settle()
+    expect(calls).toBe(2)
+    release(2)
+    await settle()
+    expect(store.get()).toBe(2)
+    store.refresh()
+    expect(calls).toBe(2)
+    store.reload()
+    expect(calls).toBe(3)
+  })
+
   test('every subscriber shares one read and gets its value', async () => {
     const time = fakeClock()
     const source = counter()

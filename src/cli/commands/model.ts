@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { addModel, formatModelList, loadModelRegistry, reasoningLevels, refreshAgyModels, refreshGrokModels, saveModelRegistry, validateReasoning } from "../../core/model.js";
+import { addModel, formatModelList, loadModelRegistry, readTemplateModels, refreshAgyModels, refreshCodexModels, refreshGrokModels, saveModelRegistry, type Model } from "../../core/model.js";
 import { staleChainSteps, type StaleStep } from "../../core/chain.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { readConfig } from "./chain.js";
@@ -63,6 +63,30 @@ function refreshResult(environment: Environment, agent: string, count: number, m
   return { ...result, stderr: `megabrain: ${stale.length} chain step${stale.length === 1 ? "" : "s"} now stale: ${lines}. Repair with: megabrain chain repair <chain> --step <n> --model <id>\n` };
 }
 
+/** Each agent's live models: codex and grok from their own caches, agy from its listing, claude from the shipped table. */
+async function refreshedModels(agent: string, environment: Environment, processAdapter: ProcessAdapter, known: readonly Model[]): Promise<Result<readonly Model[]>> {
+  const template = readTemplateModels(environment);
+  const home = environment.HOME ?? "";
+  if (agent === "claude") return ok(template.filter((model) => model.agent === "claude"));
+  if (agent === "codex") {
+    const cache = await readFile(join(home, ".codex", "models_cache.json"), "utf8").catch(() => undefined);
+    if (cache === undefined) return failed("could not refresh codex models: ~/.codex/models_cache.json is missing; run codex once to create it");
+    return ok(refreshCodexModels(cache, template, new Date().toISOString()));
+  }
+  if (agent === "grok") {
+    const listed = await processAdapter.run("grok", ["models"]);
+    if (listed.kind !== "ok") return failed("could not refresh grok models: grok models failed");
+    const cache = await readFile(join(home, ".grok", "models_cache.json"), "utf8").catch(() => undefined);
+    return ok(refreshGrokModels(listed.value.stdout, cache, known, new Date().toISOString(), template));
+  }
+  if (agent === "agy") {
+    const listed = await processAdapter.run("agy", ["models"]);
+    if (listed.kind !== "ok") return failed("could not refresh agy models: agy models failed");
+    return ok(refreshAgyModels(listed.value.stdout, new Date().toISOString(), template));
+  }
+  return failed(`unknown agent: ${agent}`);
+}
+
 async function modelRefresh(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   const agent = args[0] ?? "";
   if (agent === "-h" || agent === "--help") return ok(usage("model-refresh"));
@@ -73,27 +97,16 @@ async function modelRefresh(args: readonly string[], environment: Environment, p
     if (arg !== "--json" && arg !== "-h" && arg !== "--help") return errorResult(`unknown model refresh option: ${arg}`, 2);
     if (arg === "-h" || arg === "--help") return ok(usage("model-refresh"));
   }
-  if (agent === "codex" || agent === "claude") return errorResult(`${agent} has no live model listing; its registry entries remain manually curated`);
-  if (agent !== "agy" && agent !== "grok") return errorResult(`unknown agent: ${agent}`);
+  if (!["claude", "codex", "grok", "agy"].includes(agent)) return errorResult(`unknown agent: ${agent}`);
   const loaded = loadModelRegistry(environment);
   if (loaded.kind === "failed") return loaded;
-  if (agent === "grok") {
-    const listed = await processAdapter.run("grok", ["models"]);
-    if (listed.kind !== "ok") return errorResult("could not refresh grok models: grok models failed");
-    const cache = await readFile(join(environment.HOME ?? "", ".grok", "models_cache.json"), "utf8").catch(() => undefined);
-    const refreshed = refreshGrokModels(listed.value.stdout, cache, loaded.registry.models, new Date().toISOString());
-    if (refreshed.length === 0) return errorResult("could not refresh grok models: grok models returned no model ids");
-    const stored = saveModelRegistry(environment, { ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "grok"), ...refreshed] });
-    if (stored.kind !== "ok") return errorResult(stored.error, stored.exitCode);
-    return refreshResult(environment, "grok", refreshed.length, [...loaded.registry.models.filter((model) => model.agent !== "grok"), ...refreshed], asJson);
-  }
-  const result = await processAdapter.run("agy", ["models"]);
-  if (result.kind !== "ok") return errorResult("could not refresh agy models: agy models failed");
-  const models = refreshAgyModels(result.value.stdout, new Date().toISOString());
-  if (models.length === 0) return errorResult("could not refresh agy models: agy models returned no model ids");
-  const saved = saveModelRegistry(environment, { ...loaded.registry, models: [...loaded.registry.models.filter((model) => model.agent !== "agy"), ...models] });
+  const refreshed = await refreshedModels(agent, environment, processAdapter, loaded.registry.models);
+  if (refreshed.kind !== "ok") return refreshed;
+  if (refreshed.value.length === 0) return errorResult(`could not refresh ${agent} models: the listing named no models`);
+  const models = [...loaded.registry.models.filter((model) => model.agent !== agent), ...refreshed.value];
+  const saved = saveModelRegistry(environment, { ...loaded.registry, models });
   if (saved.kind !== "ok") return errorResult(saved.error, saved.exitCode);
-  return refreshResult(environment, "agy", models.length, [...loaded.registry.models.filter((model) => model.agent !== "agy"), ...models], asJson);
+  return refreshResult(environment, agent, refreshed.value.length, models, asJson);
 }
 
 export async function executeModel(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<string>> {

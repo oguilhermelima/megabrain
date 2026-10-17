@@ -294,6 +294,9 @@ export interface DesktopApi {
   /** The default agent for New chat and the agents turned off for the app (`settings get agents`); settings/agents-model.ts reads the shape. */
   agentSettings(): Promise<unknown>
   setAgentSettings(json: string): Promise<void>
+  /** The models turned on or off and each agent's default (`settings get models`); settings/models-model.ts reads the shape. */
+  modelSettings(): Promise<unknown>
+  setModelSettings(json: string): Promise<void>
   /** Where new worktrees are created (`settings get worktree-location`); settings/worktrees-model.ts reads the shape. */
   worktreeLocation(): Promise<unknown>
   setWorktreeLocation(json: string): Promise<void>

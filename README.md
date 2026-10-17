@@ -261,7 +261,7 @@ ownership is required for `reply` and `close`.
 orchestration-hooks` and removed by `--revert`; `config.toml` is never edited. Grok runs a user-level
 hook without the folder being trusted. `megabrain model refresh grok` reads `grok models`; the
 shipped registry carries the reasoning levels from grok's own model cache (`grok-4.5` has no
-`xhigh`).
+`xhigh`), and the newest generation grok lists is current.
 
 When a spawn meets Grok's "Do you trust the contents of this directory?" dialog it answers `y`, only
 for the worktree being spawned into, and records `trustAnswered` only after that send succeeds; it
@@ -447,7 +447,17 @@ megabrain chain limits --json    # what each provider window says right now
 megabrain chain limits --enable claude,agy,grok   # allow the live readers (codex reads disk)
 megabrain chain repair <name> --step 2 --model <id> --effort high
 megabrain model list             # the registered models and reasoning levels
+megabrain model refresh codex    # re-read what an agent offers today
 ```
+
+Every registered model carries a display name (Opus 5.5, GPT-6.1 Sol), its family and generation,
+its context windows, the effort levels that model really accepts, a one-line description of what it
+is best for, and a status: `current`, `older` or `deprecated`. `model refresh <agent>` re-reads the
+agent's own source: codex from `~/.codex/models_cache.json` (only the models Codex lists, with each
+one's levels and default), grok from `grok models` plus `~/.grok/models_cache.json`, agy from
+`agy models`, and claude from megabrain's shipped table, which follows the Claude API model list
+(Sonnet 4.5 and Haiku 4.5 take no effort; Opus 4.6 and Sonnet 4.6 have no `xhigh`). The description,
+family and status come from that table whenever it knows the model.
 
 Pass `--chain <name>` to either spawn command to bypass selector matching. An explicit `--agent`
 on `orchestrate spawn` is the escape hatch and bypasses chains entirely; `--model` and `--effort`

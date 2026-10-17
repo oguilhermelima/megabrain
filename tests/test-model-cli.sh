@@ -89,9 +89,9 @@ printf 'help: binary documents model, list, add, and refresh\n'
 assert_failure 2 'unknown model list option: --invalid' model list --invalid
 printf 'invalid-option: binary refuses unknown list flags\n'
 
-# Scenario: refresh refuses agents whose registry is manually curated.
-# Falsification: a no-op success would claim that codex was refreshed despite no live listing.
-assert_failure 1 'codex has no live model listing' model refresh codex
-printf 'unavailable-refresh: binary refuses non-live model refresh\n'
+# Scenario: codex refreshes from its own model cache and refuses when codex never wrote one.
+# Falsification: a no-op success would claim that codex was refreshed with nothing to read.
+assert_failure 1 'models_cache.json is missing' model refresh codex
+printf 'unavailable-refresh: binary refuses a codex refresh without its cache\n'
 
 printf 'ok: compiled model scenarios assert output, effects, and failures directly\n'

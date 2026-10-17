@@ -69,6 +69,8 @@ export interface SharedRead<T> {
   subscribe(listener: (value: T) => void): () => void
   /** Reads now unless a read ran within the interval or is running. */
   refresh(): void
+  /** Reads now whatever the interval, for a change the app just made itself; a running read is left to finish. */
+  reload(): void
   /** True while the last read failed; the value `get` returns is then the one from before. */
   failed(): boolean
   /** Listens for any change a view shows: a new value, or a read failing or recovering. */
@@ -86,6 +88,7 @@ export function createSharedRead<T>(
   let value: T | null = cached?.value ?? null
   let valueAt: number | null = cached?.savedAt ?? null
   let lastRunAt: number | null = null
+  let again = false
   let running = false
   let failedLast = false
   const changes = new Set<() => void>()
@@ -137,7 +140,11 @@ export function createSharedRead<T>(
       )
       .finally(() => {
         running = false
-        schedule()
+        if (!again) return schedule()
+        // A reload asked while this read ran wants a value read after its change.
+        again = false
+        lastRunAt = null
+        tick()
       })
   }
 
@@ -158,6 +165,11 @@ export function createSharedRead<T>(
       return () => changes.delete(listener)
     },
     refresh: tick,
+    reload() {
+      lastRunAt = null
+      if (running) again = true
+      else tick()
+    },
     visibilityChanged() {
       if (clock.visible()) tick()
       else stopTimer()

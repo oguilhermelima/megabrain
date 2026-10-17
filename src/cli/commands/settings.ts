@@ -15,6 +15,7 @@ import { supervisorWatcher } from "./supervise.js";
 import { defaultWorktreeLocation, parseWorktreeLocation } from "../../core/worktree-location.js";
 import { defaultIdleSetting, parseIdleSetting } from "../../core/native-idle.js";
 import { defaultSummarySettings, parseSummarySettings } from "../../chat/summaries.js";
+import { emptyModelSettings, modelEnabled, modelSettingsFile, parseModelSettings, type ModelSettings } from "../../core/model-settings.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -192,6 +193,7 @@ const desktopSettings = {
   "usage-order": desktopFileOf("usage-order.json", parseUsageOrder, emptyUsageOrder, (value) => `usage order: ${value.order.length} ordered, ${value.hidden.length} hidden`),
   "device-idle-minutes": desktopFileOf("device-idle.json", parseIdleSetting, defaultIdleSetting, (value) => `device idle: ${value.minutes === 0 ? "never sleeps" : `${value.minutes} min`}`),
   "agents": desktopFileOf("agent-settings.json", parseAgentSettings, emptyAgentSettings, (value) => `agents: default ${value.default ?? "auto"}, ${value.disabled.length} disabled`),
+  "models": desktopFileOf(modelSettingsFile, parseModelSettings, emptyModelSettings, (value) => `models: ${Object.keys(value.models).length} toggled, ${Object.keys(value.defaults).length} agent default${Object.keys(value.defaults).length === 1 ? "" : "s"}`),
 } as const;
 
 type DesktopSetting = keyof typeof desktopSettings;
@@ -261,7 +263,7 @@ type SettingsValue = {
     readings: Awaited<ReturnType<typeof readLimitRows>>;
   };
   chains: Array<Record<string, unknown> & { name: string }>;
-  models: Array<{ agent: string; model: string; name: string; contextWindows: number[]; status: string; description: string | null; reasoning: { levels: string[] } }>;
+  models: Array<{ agent: string; model: string; name: string; family: string | null; generation: string | null; contextWindows: number[]; status: "current" | "older" | "deprecated"; description: string | null; reasoning: { levels: string[]; default: string | null }; enabled: boolean }>;
   terminal: { default: string | null; detected: string | null; available: string[] };
 };
 
@@ -285,12 +287,13 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
   const validated = validateConfig(lenient, environment);
   if (validated.kind !== "ok") return validated;
 
-  const [historyEnabled, storedPolicy, configuredDefault, readings, terminalEngine] = await Promise.all([
+  const [historyEnabled, storedPolicy, configuredDefault, readings, terminalEngine, modelSettings] = await Promise.all([
     want("resources") ? resourceHistoryEnabled(environment) : false,
     want("resources") ? readAdmissionPolicy(environment) : undefined,
     want("terminal") ? storedDefault(environment) : undefined,
     want("limits") ? readLimitRows(environment, validated.value, processAdapter) : [],
     want("terminalEngine") ? readTerminalEngine(environment) : "native" as const,
+    want("models") ? readDesktopSetting(environment, "models") as Promise<ModelSettings> : emptyModelSettings,
   ]);
   const settingsPolicy = storedPolicy === undefined ? null : {
     maxAgents: storedPolicy.maxAgents ?? null,
@@ -298,14 +301,20 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
     maxPressure: storedPolicy.maxPressure ?? null,
     maxContainerSuites: storedPolicy.maxContainerSuites ?? null,
   };
+  const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : null);
+  // A registry written before statuses meant current, older or deprecated said active or retired.
+  const status = (value: unknown): SettingsValue["models"][number]["status"] => (value === "older" ? "older" : value === "deprecated" || value === "retired" ? "deprecated" : "current");
   const models = registry.value.map((model) => ({
     agent: model.agent,
     model: model.model,
     name: typeof model.name === "string" ? model.name : model.model,
+    family: text(model.family),
+    generation: text(model.generation),
     contextWindows: Array.isArray(model.contextWindows) ? model.contextWindows.filter((window): window is number => typeof window === "number") : [],
-    status: typeof model.status === "string" ? model.status : "active",
-    description: typeof model.description === "string" ? model.description : null,
-    reasoning: { levels: [...(model.reasoning?.levels ?? [])] },
+    status: status(model.status),
+    description: text(model.description),
+    reasoning: { levels: [...(model.reasoning?.levels ?? [])], default: text(model.reasoning?.default) },
+    enabled: modelEnabled(modelSettings, model),
   }));
   const watcher = supervisorWatcher(database.value);
   const chains = Object.entries(chainConfig.value.chains).map(([name, chain]) => ({
@@ -354,7 +363,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|agents|worktree-location|device-idle-minutes|project-appearance", 2);
+    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|agents|models|worktree-location|device-idle-minutes|project-appearance", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {

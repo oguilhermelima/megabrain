@@ -82,8 +82,8 @@ describe("megabrain settings", () => {
     expect(Object.keys(firstReading ?? {}).sort()).toContain("resetsAt");
     expect(Object.keys(firstReading ?? {}).sort()).toContain("fetchedAt");
     expect(Object.keys(firstReading ?? {}).sort()).toContain("reason");
-    // The registry's old current flag is not passed on: the app decides main versus older by rule.
-    expect(value.models).toEqual([{ agent: "codex", model: "model-known", name: "Known model", contextWindows: [272000], status: "active", description: null, reasoning: { levels: ["low", "high"] } }]);
+    // The registry's old current flag is not passed on; a model without a status reads as current, and on.
+    expect(value.models).toEqual([{ agent: "codex", model: "model-known", name: "Known model", family: null, generation: null, contextWindows: [272000], status: "current", description: null, reasoning: { levels: ["low", "high"], default: null }, enabled: true }]);
     expect(value.resources).toEqual({ historyEnabled: false, policy: null });
     expect(value.limits).toMatchObject({ enabledProviders: [], notice: { enabled: false, intervalSeconds: 3600 } });
     const limits = await run(["chain", "limits", "--json"], env);

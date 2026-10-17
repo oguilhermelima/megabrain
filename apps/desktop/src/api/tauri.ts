@@ -412,6 +412,8 @@ export function createTauriApi(): DesktopApi {
     setChatSummaries: async (json) => void (await cliText(['settings', 'set', 'chat-summaries', json])),
     agentSettings: () => cliJson(['settings', 'get', 'agents'], z.unknown()),
     setAgentSettings: async (json) => void (await cliText(['settings', 'set', 'agents', json])),
+    modelSettings: () => cliJson(['settings', 'get', 'models'], z.unknown()),
+    setModelSettings: async (json) => void (await cliText(['settings', 'set', 'models', json])),
     setUsageOrder: async (json) => void (await cliText(['settings', 'set', 'usage-order', json])),
     shortcuts: () => cliJson(['settings', 'get', 'shortcuts'], z.unknown()),
     setShortcuts: async (json) => void (await cliText(['settings', 'set', 'shortcuts', json])),

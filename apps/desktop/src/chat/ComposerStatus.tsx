@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type RefObject } from 'react'
 import type { Settings } from '@/api/schema'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { Popover } from '@/components/Popover'
@@ -10,6 +10,7 @@ import {
   defaultWindow,
   displayName,
   effortLevels,
+  effortHint,
   effortName,
   effortStep,
   findModel,
@@ -24,6 +25,8 @@ import {
   type LimitTone,
 } from '@/chat/composer-status'
 import { ringOffset } from '@/chat/composer-look'
+import { pickerText } from '@/chat/model-picker-look'
+import { menuFocusStep } from '@/components/menu-model'
 import { AgentIcon } from '@/components/agent-icons'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { appSettings } from '@/lib/app-settings'
@@ -69,7 +72,7 @@ type MenuPick = Omit<ModelPick, 'name'>
 /** keepOpen leaves the menu up, for the effort slider moving under the pointer or the arrows. */
 type MenuPickOptions = { keepOpen?: boolean }
 
-const heading = 'px-2 pb-1.5 text-[10.5px] font-semibold tracking-[0.08em] text-ink-500 uppercase'
+const heading = `px-2 pb-1.5 text-[11px] font-semibold tracking-[0.08em] uppercase ${pickerText.heading}`
 
 /** Two or more choices side by side in equal widths, the chosen one raised. */
 function Segmented<T extends string | number>({ label, options, value, onPick }: { label: string; options: { value: T; label: string }[]; value: T | undefined; onPick: (value: T) => void }) {
@@ -84,7 +87,7 @@ function Segmented<T extends string | number>({ label, options, value, onPick }:
             role="radio"
             aria-checked={option.value === value}
             onClick={() => onPick(option.value)}
-            className={`h-7 min-w-0 truncate rounded-[8px] px-1.5 text-center text-[12.5px] transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 motion-reduce:transition-none ${option.value === value ? 'bg-white/[0.15] font-medium text-ink-100 shadow-[0_1px_3px_rgba(0,0,0,0.35)]' : 'text-ink-400 hover:bg-white/[0.04] hover:text-ink-200'}`}
+            className={`h-7 min-w-0 truncate rounded-[8px] px-1.5 text-center text-[12.5px] transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/30 motion-reduce:transition-none ${option.value === value ? 'bg-white/[0.15] font-medium text-ink-100 shadow-[0_1px_3px_rgba(0,0,0,0.35)]' : `${pickerText.segment} hover:bg-white/[0.06] hover:text-ink-100`}`}
           >
             {option.label}
           </button>
@@ -99,7 +102,7 @@ function Segmented<T extends string | number>({ label, options, value, onPick }:
  * one raised on a filled track. A click or an arrow moves it at once and sends the level a moment
  * after the last move, so stepping across does not send every level on the way; Home and End jump.
  */
-function EffortSlider({ levels, value, onPick }: { levels: string[]; value: string | undefined; onPick: (level: string) => void }) {
+function EffortSlider({ levels, value, fallback, onPick }: { levels: string[]; value: string | undefined; fallback: string | null; onPick: (level: string) => void }) {
   const [shown, setShown] = useState(value)
   const pending = useRef<{ level: string; timer: ReturnType<typeof setTimeout> } | null>(null)
   const send = useRef(onPick)
@@ -160,12 +163,16 @@ function EffortSlider({ levels, value, onPick }: { levels: string[]; value: stri
         </div>
         <div className="grid" style={columns}>
           {levels.map((level, position) => (
-            <span key={level} className={`text-center text-[11.5px] leading-4 whitespace-nowrap ${position === index ? 'font-medium text-ink-100' : 'text-ink-500'}`}>
+            <span key={level} className={`text-center text-[11.5px] leading-4 whitespace-nowrap ${position === index ? 'font-medium text-ink-100' : pickerText.effortLabel}`}>
               {effortName(level)}
             </span>
           ))}
         </div>
       </div>
+      {/* What the level in use means, or the level the model runs at when none is set. */}
+      <p aria-live="polite" className={`mt-1.5 px-1 text-[12px] leading-4 ${pickerText.effortHint}`}>
+        {shown !== undefined ? effortHint(shown) : fallback !== null ? `Model default: ${effortName(fallback)}. ${effortHint(fallback)}` : 'The agent picks the effort'}
+      </p>
     </div>
   )
 }
@@ -178,20 +185,23 @@ function ModelRow({ item, agent, checked, onPick }: { item: Models[number]; agen
       type="button"
       role="menuitemradio"
       aria-checked={checked}
+      data-picker-item=""
       title={item.model}
       onClick={onPick}
       // One height with or without a hint, so the list stays even.
-      className={`flex h-11 w-full items-center gap-3 rounded-[10px] px-2.5 text-left transition-colors duration-100 focus-visible:outline-none motion-reduce:transition-none ${checked ? 'bg-accent/[0.12] hover:bg-accent/[0.16] focus-visible:bg-accent/[0.18]' : 'hover:bg-white/[0.06] focus-visible:bg-white/[0.08]'}`}
+      className={`flex min-h-[50px] w-full items-center gap-3 rounded-[10px] px-2.5 py-1.5 text-left transition-colors duration-100 focus-visible:outline-none motion-reduce:transition-none ${checked ? 'bg-accent/[0.14] hover:bg-accent/[0.18] focus-visible:bg-accent/[0.2]' : 'hover:bg-white/[0.06] focus-visible:bg-white/[0.08]'}`}
     >
       <span className="min-w-0 flex-1">
-        <span className={`block truncate text-[13.5px] leading-5 ${checked ? 'font-medium text-ink-100' : 'text-ink-200'}`}>{name}</span>
-        {hint !== null && <span className={`block truncate text-[11.5px] leading-4 ${checked ? 'text-accent/80' : 'text-ink-500'}`}>{hint}</span>}
+        <span className={`block truncate text-[13.5px] leading-5 ${checked ? `font-semibold ${pickerText.selectedName}` : `font-medium ${pickerText.name}`}`}>{name}</span>
+        {hint !== null && <span className={`block truncate text-[12px] leading-4 ${checked ? pickerText.selectedHint : pickerText.hint}`}>{hint}</span>}
       </span>
-      {checked && (
-        <svg viewBox="0 0 24 24" className="size-4 shrink-0 text-accent" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="m5 12.5 4.5 4.5L19 7.5" />
-        </svg>
-      )}
+      <span aria-hidden="true" className={`grid size-5 shrink-0 place-items-center rounded-full ${checked ? 'bg-accent text-accent-ink' : ''}`}>
+        {checked && (
+          <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <path d="m5 12.5 4.5 4.5L19 7.5" />
+          </svg>
+        )}
+      </span>
     </button>
   )
 }
@@ -260,10 +270,20 @@ function ModelMenu({
     choose({ ...target, effort: effort !== undefined && item.reasoning.levels.includes(effort) ? effort : undefined })
   }
   const row = (item: Models[number]) => <ModelRow key={item.model} item={item} agent={agent} checked={item === entry} onPick={() => pickModel(item)} />
+  // Up and down walk the models and the Older toggle, wrapping; Home and End jump. The effort slider keeps its own arrows.
+  const walk = (event: KeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement
+    if (!target.hasAttribute('data-picker-item')) return
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[data-picker-item]')]
+    const next = menuFocusStep(items.length, items.indexOf(target), event.key)
+    if (next === null) return
+    event.preventDefault()
+    items[next]?.focus()
+  }
 
   return (
     <Popover {...menuLook} anchor={anchor} label="Model" leaving={leaving} onClose={onClose} trigger={trigger}>
-      <div className="w-[304px] max-w-[calc(100vw-32px)]">
+      <div className="w-[340px] max-w-[calc(100vw-32px)]" onKeyDown={walk}>
         <>
           <p className={`${heading} pt-1`}>Model</p>
           {groups.current.map(row)}
@@ -273,13 +293,15 @@ function ModelMenu({
               <button
                 type="button"
                 aria-expanded={showOlder}
+                data-picker-item=""
                 onClick={() => setShowOlder((open) => !open)}
-                className="mt-0.5 flex h-8 w-full items-center gap-1.5 rounded-[10px] px-2.5 text-left text-[12px] text-ink-500 transition-colors duration-100 hover:bg-white/[0.04] hover:text-ink-300 focus-visible:bg-white/[0.06] focus-visible:text-ink-300 focus-visible:outline-none motion-reduce:transition-none"
+                className={`mt-0.5 flex h-8 w-full items-center gap-1.5 rounded-[10px] px-2.5 text-left text-[12.5px] font-medium ${pickerText.olderToggle} transition-colors duration-100 hover:bg-white/[0.05] hover:text-ink-200 focus-visible:bg-white/[0.07] focus-visible:text-ink-200 focus-visible:outline-none motion-reduce:transition-none`}
               >
                 <svg viewBox="0 0 16 16" className={`size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none ${showOlder ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="m6 4 4 4-4 4" />
                 </svg>
-                {`Older models (${groups.older.length})`}
+                Older models
+                <span className="ml-auto rounded-full bg-white/[0.07] px-1.5 text-[11px] leading-[18px] tabular-nums">{groups.older.length}</span>
               </button>
               {showOlder && groups.older.map(row)}
             </>
@@ -296,7 +318,7 @@ function ModelMenu({
             />
           )}
           {levels.length > 0 && current !== null && (
-            <EffortSlider levels={levels} value={effort} onPick={(level) => onPick({ model: current, window: currentWindow, effort: level }, { keepOpen: true })} />
+            <EffortSlider levels={levels} value={effort} fallback={entry?.reasoning.default ?? null} onPick={(level) => onPick({ model: current, window: currentWindow, effort: level }, { keepOpen: true })} />
           )}
         </>
       </div>

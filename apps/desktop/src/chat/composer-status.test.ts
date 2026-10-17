@@ -15,6 +15,7 @@ import {
   defaultWindow,
   displayName,
   effortCommand,
+  effortHint,
   effortLevels,
   effortName,
   effortStep,
@@ -148,23 +149,23 @@ describe('groupModels', () => {
   })
 })
 
-describe('main models per agent, on the registry measured 2026-10-16', () => {
+describe('current and older come from the registry when it says', () => {
   const main = (agent: string) => groupModels(agentModels(measuredModels, agent)).current.map((model) => model.model)
   const older = (agent: string) => groupModels(agentModels(measuredModels, agent)).older.length
 
-  test('Claude: the 5.5 family', () => {
-    expect(main('claude')).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-5', 'claude-haiku-5-5'])
+  test('Claude: the 5.5 family; 11 older and 7 deprecated fold away', () => {
+    expect(main('claude')).toEqual(['claude-fable-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'])
     expect(older('claude')).toBe(18)
   })
 
-  test('Codex: the gpt-6 family', () => {
-    expect(main('codex')).toEqual(['gpt-6-astra', 'gpt-6-luna', 'gpt-6-sol'])
-    expect(older('codex')).toBe(9)
+  test('Codex: what Codex itself calls current, GPT-6.1 Sol, GPT-6 Astra and GPT-6 Luna', () => {
+    expect(main('codex')).toEqual(['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna'])
+    expect(older('codex')).toBe(10)
   })
 
-  test('agy, after the fold: Gemini 4, Gemini 3.8, Claude Opus 5.5 and Claude Sonnet 5.5', () => {
-    expect(main('agy')).toEqual(['gemini-4-argon', 'gemini-3.8-flash', 'claude-opus-5-5', 'claude-sonnet-5-5'])
-    expect(older('agy')).toBe(1)
+  test('agy: everything it lists', () => {
+    expect(main('agy')).toEqual(['gemini-4-argon', 'gemini-3.8-flash', 'claude-opus-5-5', 'claude-sonnet-5-5', 'gpt-oss-120b'])
+    expect(older('agy')).toBe(0)
   })
 
   test('Grok: the newest grok, standard and fast', () => {
@@ -172,13 +173,50 @@ describe('main models per agent, on the registry measured 2026-10-16', () => {
     expect(older('grok')).toBe(2)
   })
 
-  test('a newer point release takes its line over, the rest of the generation stays', () => {
-    const codex = registry('codex', ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-terra'])
-    expect(groupModels(codex).current.map((model) => model.model)).toEqual(['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna'])
+  test('a status of current, older or deprecated wins over the version rule', () => {
+    const codex = registry('codex', ['gpt-6-sol', 'gpt-5.6-terra', 'gpt-5.5'], { 'gpt-6-sol': { status: 'older' }, 'gpt-5.6-terra': { status: 'current' }, 'gpt-5.5': { status: 'deprecated' } })
+    expect(groupModels(codex)).toEqual({ current: [codex[1]!], older: [codex[0]!, codex[2]!] })
   })
 
-  test('a model with no version to rank is older', () => {
+  test('a registry without those statuses, from an older CLI, still groups by version', () => {
+    const codex = registry('codex', ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-terra'])
+    expect(groupModels(codex).current.map((model) => model.model)).toEqual(['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna'])
     expect(groupModels(registry('agy', ['gpt-oss-120b', 'gemini-4-argon'])).older.map((model) => model.model)).toEqual(['gpt-oss-120b'])
+  })
+})
+
+describe('the picker shows only the models turned on', () => {
+  const models = registry('codex', ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna', 'gpt-6-sol', 'gpt-5.6-terra'], {
+    'gpt-6.1-sol': { status: 'current', enabled: true },
+    'gpt-6-astra': { status: 'current', enabled: false },
+    'gpt-6-luna': { status: 'current' },
+    'gpt-6-sol': { status: 'older', enabled: true },
+    'gpt-5.6-terra': { status: 'older', enabled: false },
+  })
+  const ids = (list: Models) => list.map((model) => model.model)
+
+  test('a model turned off is hidden from both groups; one without the flag counts as on', () => {
+    const groups = menuGroups(models, 'gpt-6.1-sol')
+    expect(ids(groups.current)).toEqual(['gpt-6.1-sol', 'gpt-6-luna'])
+    expect(groups.selected).toBeNull()
+    expect(ids(groups.older)).toEqual(['gpt-6-sol'])
+  })
+
+  test('the model in use stays visible even when it was turned off', () => {
+    expect(menuGroups(models, 'gpt-6-astra').selected?.model).toBe('gpt-6-astra')
+    expect(menuGroups(models, 'gpt-5.6-terra').selected?.model).toBe('gpt-5.6-terra')
+    expect(ids(menuGroups(models, 'gpt-5.6-terra').older)).toEqual(['gpt-6-sol'])
+  })
+})
+
+describe('effortHint', () => {
+  test('one plain line for every level any agent offers', () => {
+    for (const level of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'thinking']) {
+      const hint = effortHint(level)
+      expect({ level, ok: hint.length > 8 && hint.length <= 48 }).toEqual({ level, ok: true })
+    }
+    expect(effortHint('ultra')).toContain('helper')
+    expect(effortHint('unknown-level')).toBe('')
   })
 })
 

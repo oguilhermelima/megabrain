@@ -13,6 +13,7 @@ import { ResumeList } from '@/launcher/ResumeList'
 import { beginStart, bindStart, endStart, startStep } from '@/native-chat/start-trace'
 import { usePendingActions } from '@/lib/usePendingActions'
 import { defaultAgentSettings, parseAgentSettings, type AgentSettings } from '@/settings/agents-model'
+import { defaultModelSettings, parseModelSettings, startPick, type ModelSettings } from '@/settings/models-model'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
 import type { TerminalLaunch } from '@/terminal/terminal-list'
 
@@ -69,6 +70,23 @@ function useAgentSettings() {
     let stopped = false
     api.agentSettings().then(
       (saved) => !stopped && setSettings(parseAgentSettings(saved)),
+      () => {},
+    )
+    return () => {
+      stopped = true
+    }
+  }, [])
+  return settings
+}
+
+// The models turned on and each agent's default from Settings > Models, read each time a launcher
+// opens like the agent settings; until they arrive a new chat starts on the agent's own default.
+function useModelSettings() {
+  const [settings, setSettings] = useState<ModelSettings>(defaultModelSettings)
+  useEffect(() => {
+    let stopped = false
+    api.modelSettings().then(
+      (saved) => !stopped && setSettings(parseModelSettings(saved)),
       () => {},
     )
     return () => {
@@ -143,7 +161,10 @@ export function Launcher({
   const cwd = chosenPath ?? launchWorktree(clicked, remembered(worktreeKey), worktrees.map((entry) => entry.path))
   const worktree = worktrees.find((entry) => entry.path === cwd) ?? null
   useEffect(() => onWorktree(cwd), [cwd, onWorktree])
-  const [model, setModel] = useState<{ model: string; effort: string | null } | null>(null)
+  const [picked, setModel] = useState<{ model: string; effort: string | null } | null>(null)
+  // Until the person picks, a new chat starts on the agent's default from Settings > Models.
+  const modelSettings = useModelSettings()
+  const model = picked ?? startPick(modelSettings, tile === 'terminal' ? null : tile)
   const [error, setError] = useState<unknown>(null)
   // A chat start shows in this pane at once, as one pending entry, until the chat replaces it.
   const actions = usePendingActions()
@@ -199,7 +220,7 @@ export function Launcher({
   const resume = (session: HistorySession) => {
     if (cwd === null) return
     remember(worktreeKey, cwd)
-    const plan = resumeLaunch(session, { cwd, tile, model: model?.model ?? null, effort: model?.effort ?? null })
+    const plan = resumeLaunch(session, { cwd, tile, model: picked?.model ?? null, effort: picked?.effort ?? null })
     const agent = tiles.find((item) => item.id === session.agent)?.label ?? session.agent
     onResume(session, { ...plan, id: newTerminalId(), title: `${agent} · ${session.title.trim() === '' ? session.id : session.title}` })
   }
@@ -297,7 +318,7 @@ export function Launcher({
         agent={tile === 'terminal' ? null : tile}
         cwd={cwd}
         model={model?.model ?? null}
-        onModelChange={async (picked, effort) => setModel({ model: picked, effort: effort ?? null })}
+        onModelChange={async (next, effort) => setModel({ model: next, effort: effort ?? null })}
         onSend={launch}
       />
     </div>

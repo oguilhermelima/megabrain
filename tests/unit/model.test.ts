@@ -125,9 +125,9 @@ describe("registry operations", () => {
     const listing = "You are logged in with grok.com.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.5\n";
     const known = [{ agent: "grok", model: "grok-4.5", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live" } }];
     expect(refreshGrokModels(listing, undefined, known, "now")).toEqual([
-      { agent: "grok", model: "grok-4.7", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
-      { agent: "grok", model: "grok-4.7-build-fast", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
-      { agent: "grok", model: "grok-4.5", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
+      { agent: "grok", model: "grok-4.7", family: "grok", generation: "4.7", status: "current", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
+      { agent: "grok", model: "grok-4.7-build-fast", family: "grok fast", generation: "4.7", status: "current", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
+      { agent: "grok", model: "grok-4.5", family: "grok", generation: "4.5", status: "older", reasoning: { separateAxis: true, levels: ["low", "medium", "high"] }, provenance: { kind: "live", command: "grok models", obtainedAt: "now" } },
     ]);
     expect(refreshGrokModels("not logged in", "{}", [], "now")).toEqual([]);
   });

@@ -29,6 +29,7 @@ export function createMockApi(): DesktopApi {
   let usageOrder: unknown = { version: 1, order: [], hidden: [] }
   let chatSummaries: unknown = null
   let agentSettings: unknown = { version: 1, default: null, disabled: [] }
+  let modelSettings: unknown = { version: 1, models: {}, defaults: {} }
   let worktreeLocation: unknown = null
   // What the GitHub writes changed: added comments and new states, by kind and number.
   const githubComments = new Map<string, GithubDetail['comments']>()
@@ -429,6 +430,13 @@ export function createMockApi(): DesktopApi {
     setChatSummaries: async (json) => void (chatSummaries = JSON.parse(json) as unknown),
     agentSettings: async () => agentSettings,
     setAgentSettings: async (json) => void (agentSettings = JSON.parse(json) as unknown),
+    modelSettings: async () => modelSettings,
+    setModelSettings: async (json) => {
+      modelSettings = JSON.parse(json) as unknown
+      // As the CLI does: a saved toggle wins, else a model is on when it is current.
+      const toggles = (modelSettings as { models?: Record<string, boolean> }).models ?? {}
+      settings = { ...settings, models: settings.models.map((model) => ({ ...model, enabled: toggles[`${model.agent}/${model.model}`] ?? model.status === 'current' })) }
+    },
     setUsageOrder: async (json) => void (usageOrder = JSON.parse(json) as unknown),
     shortcuts: async () => shortcuts,
     setShortcuts: async (json) => void (shortcuts = JSON.parse(json) as unknown),

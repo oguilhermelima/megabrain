@@ -88,23 +88,18 @@ const retiredStatuses = new Set(['retired', 'deprecated'])
 const fastWords = new Set(['mini', 'nano', 'flash', 'fast', 'spark'])
 
 /**
- * The models the menu shows first and the older ones it folds away, by rule rather than a list. A
- * model's line is its family with the words after its version (gpt-6-luna is the gpt luna line,
- * gemini-3.8-flash the gemini flash line), and its class is the family split into a standard and a
- * fast tier (flash, mini, fast...), since a fast tier ships on its own clock. A model is main when
- * it is the newest of its line and its line's generation, the major version, is the newest of its
- * class. A model the registry marks retired or deprecated, or one with no version to rank, is older.
- * On the registry of 2026-10-16 that gives:
- * - claude: Opus, Sonnet, Fable and Haiku 5.5; Opus 5 and Opus 4.8 are older in the opus line.
- * - codex: GPT-6 Astra, Luna and Sol; GPT-5.6 Terra is the newest terra, but generation 5 is not 6.
- * - agy: Gemini 4 Argon, Gemini 3.8 Flash (the newest of gemini's fast tier), Claude Opus and Sonnet
- *   5.5; GPT-OSS 120B has no version.
- * - grok: Grok 4.7 and Grok 4.7 Build Fast.
- * Both groups keep registry order.
+ * The models the menu shows first and the older ones it folds away. The registry says which is
+ * which: current, or older and deprecated. A model it says neither of, from a CLI older than those
+ * statuses, is placed by rule instead. A model's line is its family with the words after its
+ * version (gpt-6-luna is the gpt luna line, gemini-3.8-flash the gemini flash line), and its class
+ * is the family split into a standard and a fast tier (flash, mini, fast...), since a fast tier
+ * ships on its own clock. Such a model is main when it is the newest of its line and its line's
+ * generation, the major version, is the newest of its class; one marked retired, or with no version
+ * to rank, is older. Both groups keep registry order.
  */
 export function groupModels(models: Models): { current: Models; older: Models } {
   const ranked = models.flatMap((model) => {
-    if (typeof model.status === 'string' && retiredStatuses.has(model.status)) return []
+    if (model.status === 'current' || model.status === 'older' || (typeof model.status === 'string' && retiredStatuses.has(model.status))) return []
     const { family, version, words } = modelParts(model.model)
     if (version.length === 0) return []
     const tier = words.some((word) => fastWords.has(word)) ? 'fast' : 'standard'
@@ -118,7 +113,8 @@ export function groupModels(models: Models): { current: Models; older: Models } 
     newestGeneration.set(kind, Math.max(newestGeneration.get(kind) ?? 0, version[0] ?? 0))
   }
   const main = new Set(ranked.filter((item) => compareVersions(item.version, newestInLine.get(item.line) ?? []) === 0 && item.version[0] === newestGeneration.get(item.kind)).map((item) => item.model))
-  return { current: models.filter((model) => main.has(model)), older: models.filter((model) => !main.has(model)) }
+  const isCurrent = (model: Models[number]) => model.status === 'current' || main.has(model)
+  return { current: models.filter(isCurrent), older: models.filter((model) => !isCurrent(model)) }
 }
 
 export function agentModels(models: Models, agent: string | null): Models {
@@ -192,10 +188,11 @@ export function displayName(id: string, models: Models): string {
  * model in use on its own when it is an older one, taken out of the fold so it shows while closed.
  */
 export function menuGroups(models: Models, id: string | null): { current: Models; selected: Models[number] | null; older: Models } {
-  const groups = groupModels(models)
   const entry = findModel(models, id)
-  const selected = entry !== undefined && groups.older.includes(entry) ? entry : null
-  return { current: groups.current, selected, older: groups.older.filter((model) => model !== selected) }
+  // Settings > Models turns models off; the one in use stays, so the menu still says what runs.
+  const groups = groupModels(models.filter((model) => model.enabled !== false || model === entry))
+  const selected = entry !== undefined && (groups.older.includes(entry) || entry.enabled === false) ? entry : null
+  return { current: groups.current.filter((model) => model !== selected), selected, older: groups.older.filter((model) => model !== selected) }
 }
 
 const familyHints: Record<string, string> = { haiku: 'Fastest', sonnet: 'Balanced', opus: 'Most capable' }
@@ -338,6 +335,23 @@ export function effortStep(levels: string[], current: string | undefined, key: s
 
 export function effortName(level: string): string {
   return effortNames[level] ?? capitalise(level)
+}
+
+const effortHints: Record<string, string> = {
+  none: 'No extra thinking, the plain model',
+  minimal: 'Barely thinks; the fastest answers',
+  low: 'Quick answers with light thinking',
+  medium: 'Balances speed and depth',
+  high: 'Thinks harder on complex problems',
+  xhigh: 'Deep thinking for hard, long tasks',
+  max: 'Deepest thinking; slowest and costliest',
+  ultra: 'Deepest thinking, with helper agents',
+  thinking: 'Extended thinking turned on',
+}
+
+/** One line on what an effort level means for the answer; empty for a level it does not know. */
+export function effortHint(level: string): string {
+  return effortHints[level] ?? ''
 }
 
 const unixSeconds = /^\d+(\.\d+)?$/
