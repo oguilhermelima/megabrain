@@ -200,6 +200,14 @@ megabrain chat rename <id> <title> [--json] — name a chat by hand; automatic t
 megabrain chat summarize <id> [--json] — write a summary of a chat now with the configured model.
 megabrain chat summaries <id> --json — a chat's summaries, newest first.
 megabrain chat search <text> --json — find past chats by project, branch, title or summary.
+megabrain knowledge list [--repo <name|path>] --json — the project's topics (features, fixes, refactors, decisions, investigations), newest first.
+megabrain knowledge show <topic-id> --json — one topic: overview, state, decisions, pitfalls, open items, refs and the chats that built it.
+megabrain knowledge search <text> [--repo <name|path>] [--limit <n>] --json — look up how something works or why it was decided. Run it before redoing earlier work.
+megabrain knowledge transcript <chat-id> --json — the distilled conversation of a chat.
+megabrain knowledge topic-for --cwd <path> [--json] — the topics of that folder's branch.
+megabrain knowledge context --cwd <path> [--json] — those topics as a short Markdown block (about 3 KB).
+megabrain knowledge scan [--json] — read new sessions of enabled projects and curate them into topics.
+megabrain knowledge backfill [--json] — curate the summaries already on disk into topics, once.
 megabrain summaries list [--repo <name|path>] [--branch <branch>] [--limit <n per branch>] --json — summaries grouped by project, then worktree branch, newest first.
 megabrain summaries search <text> [--repo <name|path>] [--branch <branch>] [--limit <n>] --json — look up older development work (title and branch hits rank first). Run it when you need to know what was done or decided before, instead of re-deriving it.
 megabrain summaries show <id> --json — one summary in full.

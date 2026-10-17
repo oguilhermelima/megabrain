@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { ok, type Result } from "../../core/result.js";
 import { summariesContext } from "../../chat/summary-library.js";
+import { knowledgeContext } from "../../knowledge/library.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -13,7 +14,7 @@ export async function executeHookSessionStart(_args: readonly string[], environm
   if (typeof cwd !== "string" || cwd === "") return ok("");
   try {
     const dir = environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain");
-    const context = await summariesContext(dir, cwd, 3);
+    const context = await knowledgeContext(dir, cwd) || await summariesContext(dir, cwd, 3);
     if (context === "") return ok("");
     return ok(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: context } })}\n`);
   } catch { return ok(""); }

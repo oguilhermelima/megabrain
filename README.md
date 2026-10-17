@@ -330,6 +330,13 @@ repository's `.git/info/exclude`, never a tracked `.gitignore`) or `custom` (`cu
 The default is `custom` with the shared `worktree-root` file and a flat layout, so nothing moves;
 existing worktrees stay where they are and `worktree list` still reads them from Git.
 
+Summaries feed a project knowledge base: `megabrain knowledge list --json` shows its topics (features, fixes,
+refactors, decisions, investigations), `knowledge show <topic-id> --json` one topic with its decisions and the chats
+that built it, `knowledge search <text> --json` finds how something works, and `knowledge transcript <chat-id> --json`
+reads a chat's distilled conversation. `knowledge context --cwd <path>` is the block native chats and the
+`summaries-context` hook put in an agent's context. `settings set knowledge` switches, per project, summaries, retitles,
+topics, reading sessions from outside the app and agent context. The design is in `docs/design/knowledge-base.md`.
+
 Chat summaries are off until `settings set chat-summaries '{"enabled":true,"agent":"agy","model":"<model>","effort":"low"}'`
 (`everyMessages` default 6, `everyMinutes` default 10, `retitle` default true). After a turn ends, once
 enough user turns or minutes have passed, the configured agent runs once, headless and with tools off in

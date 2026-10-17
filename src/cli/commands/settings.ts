@@ -15,6 +15,7 @@ import { supervisorWatcher } from "./supervise.js";
 import { defaultWorktreeLocation, parseWorktreeLocation } from "../../core/worktree-location.js";
 import { defaultIdleSetting, parseIdleSetting } from "../../core/native-idle.js";
 import { defaultSummarySettings, parseSummarySettings } from "../../chat/summaries.js";
+import { defaultKnowledgeSettings, parseKnowledgeSettings } from "../../knowledge/settings.js";
 import { emptyModelSettings, modelEnabled, modelSettingsFile, parseModelSettings, type ModelSettings } from "../../core/model-settings.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -189,6 +190,7 @@ const desktopSettings = {
   "hidden-sessions": desktopFileOf("hidden-sessions.json", parseHiddenSessions, emptyHiddenSessions, (value) => `hidden sessions: ${Object.keys(value.sessions).length}`),
   "sidebar-state": desktopFileOf("sidebar-state.json", parseSidebarState, emptySidebarState, (value) => `sidebar state: ${value.collapsed.length} collapsed, ${Object.keys(value.rows).length} ordered worktrees`),
   "chat-summaries": desktopFileOf("chat-summaries.json", parseSummarySettings, defaultSummarySettings, (value) => `chat summaries: ${value.enabled ? `on, ${value.agent} ${value.model}` : "off"}`),
+  "knowledge": desktopFileOf("knowledge-settings.json", parseKnowledgeSettings, defaultKnowledgeSettings, (value) => `knowledge: ${Object.keys(value.projects).length} project overrides`),
   "worktree-location": desktopFileOf("worktree-location.json", parseWorktreeLocation, defaultWorktreeLocation, (value) => `worktree location: ${value.mode}${value.layout === "nested" ? " (by project)" : ""}, ${Object.keys(value.projects).length} project overrides`),
   "usage-order": desktopFileOf("usage-order.json", parseUsageOrder, emptyUsageOrder, (value) => `usage order: ${value.order.length} ordered, ${value.hidden.length} hidden`),
   "device-idle-minutes": desktopFileOf("device-idle.json", parseIdleSetting, defaultIdleSetting, (value) => `device idle: ${value.minutes === 0 ? "never sleeps" : `${value.minutes} min`}`),
@@ -363,7 +365,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|agents|models|worktree-location|device-idle-minutes|project-appearance", 2);
+    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|models|worktree-location|device-idle-minutes|project-appearance", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {

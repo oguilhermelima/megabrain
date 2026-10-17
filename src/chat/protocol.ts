@@ -3,8 +3,9 @@ import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Chat } from "./store.js";
 import { selfInvocation } from "../core/self-invocation.js";
-import { readSummarySettings } from "./summaries.js";
-import { summariesContext } from "./summary-library.js";
+import { knowledgeContext } from "../knowledge/library.js";
+import { togglesFor } from "../knowledge/settings.js";
+import { resolveLocation, summariesContext } from "./summary-library.js";
 
 export type MessagePart = { type: "text"; text: string } | { type: "image"; path: string };
 export type RpcRequest = (method: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -33,8 +34,10 @@ async function claudeContent(parts: MessagePart[]): Promise<unknown[]> {
 
 /** The latest summaries of the chat's worktree, when the feature is on and there is something to say. */
 async function launchContext(chat: Chat, stateDir: string): Promise<string> {
-  if (!readSummarySettings(stateDir).enabled) return "";
-  try { return await summariesContext(stateDir, chat.cwd, 3); } catch { return ""; }
+  try {
+    if (!togglesFor(stateDir, (await resolveLocation(chat.cwd)).repo).context) return "";
+    return await knowledgeContext(stateDir, chat.cwd) || await summariesContext(stateDir, chat.cwd, 3);
+  } catch { return ""; }
 }
 
 const claude: ChatProtocolAdapter = {

@@ -16,6 +16,9 @@ import { chatProtocolAdapters, type MessagePart } from "./protocol.js";
 import { discoverSessionId, readSessionTurns, sessionLogPath, sessionTurnOpen } from "./session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from "./subagents.js";
 import { selfInvocation } from "../core/self-invocation.js";
+import { backfillSummaries } from "../knowledge/backfill.js";
+import { KnowledgePipeline } from "../knowledge/pipeline.js";
+import { scanProjects } from "../knowledge/scanner.js";
 import { ChatSummarizer } from "./summaries.js";
 
 type Part = MessagePart;
@@ -127,6 +130,8 @@ const count = (value: unknown): number | undefined => typeof value === "number" 
 export class ChatDaemon {
   readonly store: ChatStore;
   private readonly summarizer: ChatSummarizer;
+  private readonly knowledge: KnowledgePipeline;
+  private scanning = false;
   private readonly children = new Map<string, ChildProcessWithoutNullStreams>();
   /** Messages already sent that wait for the agent to be ready: the first message of a start or a resume, or one sent now. */
   private readonly queues = new Map<string, Part[][]>();
@@ -172,7 +177,7 @@ export class ChatDaemon {
   private clients = 0;
   private closed = false;
   private readonly sockets = new Set<Socket>();
-  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION, readonly build: number = chatBuild()) { this.store = new ChatStore(stateDir); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
+  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION, readonly build: number = chatBuild()) { this.store = new ChatStore(stateDir); this.knowledge = new KnowledgePipeline({ stateDir, environment }); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, pipeline: this.knowledge, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
 
   async start(): Promise<void> {
     const dir = join(this.stateDir, "chatd");
@@ -188,6 +193,27 @@ export class ChatDaemon {
     await writeFile(chatPid(this.stateDir), `${process.pid}\n`, { mode: 0o600 });
     await chmod(chatPid(this.stateDir), 0o600);
     await this.resumeDrained();
+    this.startKnowledge();
+  }
+
+  /**
+   * The knowledge base reads sessions from outside the app too. A minute after start the summaries already on disk are curated once
+   * (a rerun skips what is done), then new sessions are scanned every ten minutes. Both are read-only on the agents' logs and
+   * skip any project whose toggles are off. MEGABRAIN_KNOWLEDGE_SCANNER=off disables the loop.
+   */
+  private startKnowledge(): void {
+    if (this.environment.MEGABRAIN_KNOWLEDGE_SCANNER === "off") return;
+    const pass = async (backfill: boolean): Promise<void> => {
+      if (this.scanning || this.draining) return;
+      this.scanning = true;
+      try {
+        if (backfill) await backfillSummaries({ stateDir: this.stateDir, pipeline: this.knowledge });
+        await scanProjects({ stateDir: this.stateDir, home: this.environment.HOME ?? process.env.HOME ?? "", environment: this.environment, pipeline: this.knowledge });
+      } catch (error) { process.stderr.write(`knowledge scan failed: ${error instanceof Error ? error.message : String(error)}\n`); }
+      finally { this.scanning = false; }
+    };
+    setTimeout(() => { void pass(true); }, 60_000).unref();
+    setInterval(() => { void pass(false); }, 10 * 60_000).unref();
   }
 
   /** The messages a drained predecessor took but left unsent go out now, one per chat, as that chat's next turn. */

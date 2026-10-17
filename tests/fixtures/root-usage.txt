@@ -52,6 +52,7 @@ Commands:
   settings get|set hidden-sessions     Read or replace the sessions the desktop sidebar closed
   settings get|set usage-order         Read or replace the order and hidden providers of the desktop usage readout
   settings get|set chat-summaries      Read or replace the chat summary switch, model, cadence and automatic titles
+  settings get|set knowledge           Read or replace which projects are summarised, curated into topics, scanned and given as agent context
   settings get|set agents              Read or replace the desktop app's default agent and the agents turned off
   settings get|set worktree-location   Read or replace where new worktrees are created (megabrain, repo or custom folder)
   settings get|set device-idle-minutes Read or replace the minutes before a simulator megabrain booted goes to sleep (0 = never)

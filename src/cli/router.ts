@@ -61,6 +61,7 @@ import { executeCommands } from "./commands/commands.js";
 import { executeSession } from "./commands/session.js";
 import { executeSend } from "./commands/send.js";
 import { executeChat } from "./commands/chat.js";
+import { executeKnowledge } from "./commands/knowledge.js";
 import { executeSummaries } from "./commands/summaries.js";
 import { executeArtifact } from "./commands/artifact.js";
 import { executeHookSessionStart } from "./commands/hook-session-start.js";
@@ -146,9 +147,9 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "session", "commands", "chat", "agent", "sessions", "port", "usage", "maestro", "summaries", "artifact"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "session", "commands", "chat", "agent", "sessions", "port", "usage", "maestro", "summaries", "knowledge", "artifact"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
-  const statelessCommand = command === "context" || command === "port" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "summaries" || command === "artifact" || command === "sessions" || command === "settings" && commandArgs[0] === "set" && commandArgs[1] === "terminal-engine";
+  const statelessCommand = command === "context" || command === "port" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "summaries" || command === "knowledge" || command === "artifact" || command === "sessions" || command === "settings" && commandArgs[0] === "set" && commandArgs[1] === "terminal-engine";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
     const cutover = await ensureAutomaticCutover(dependencies.environment);
     if (cutover.kind !== "ok") return failed(cutover.error, cutover.exitCode);
@@ -180,6 +181,7 @@ async function routeCommand(
   if (command === "resources") return executeResources(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "settings") return executeSettings(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "summaries") return executeSummaries(commandArgs, dependencies.environment);
+  if (command === "knowledge") return executeKnowledge(commandArgs, dependencies.environment);
   if (command === "artifact") return executeArtifact(commandArgs, dependencies.environment);
   if (command === "chat") return executeChat(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "session") return executeSession(commandArgs, dependencies.environment, dependencies.processAdapter);

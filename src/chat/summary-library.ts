@@ -71,7 +71,7 @@ export async function migrateSummaries(stateDir: string): Promise<number> {
 }
 
 /** Every entry of every chat, newest first. */
-async function allEntries(stateDir: string): Promise<SummaryEntry[]> {
+export async function allEntries(stateDir: string): Promise<SummaryEntry[]> {
   await migrateSummaries(stateDir);
   const entries = chatDirectories(stateDir).flatMap((chatId) => parseLines(join(stateDir, "chats", chatId, "summaries.jsonl")).filter((entry) => entry.id !== undefined) as SummaryEntry[]);
   return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
