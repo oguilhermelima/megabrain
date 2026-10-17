@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -147,6 +147,40 @@ describe("megabrain settings", () => {
     expect((await run(["terminal", "default", "--clear"], env)).kind).toBe("ok");
     expect((await settings(env)).resources).toEqual({ historyEnabled: false, policy: null });
     expect((await settings(env)).terminal).toMatchObject({ default: null });
+  });
+});
+
+describe("settings get knowledge migration", () => {
+  test("migrates enabled summaries and retitle when knowledge is first read", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "chat-summaries.json"), JSON.stringify({ enabled: true, retitle: true }));
+
+    const result = await run(["settings", "get", "knowledge", "--json"], env);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ defaults: { summaries: true, retitle: true } });
+    expect(existsSync(join(env.state, "knowledge-settings.json"))).toBe(true);
+  });
+
+  test("returns all toggles off without writing when neither settings file exists", async () => {
+    const env = sandbox();
+
+    const result = await run(["settings", "get", "knowledge", "--json"], env);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(JSON.parse(result.value).defaults).toEqual({ summaries: false, retitle: false, topics: false, sessions: false, context: false });
+    expect(existsSync(join(env.state, "knowledge-settings.json"))).toBe(false);
+  });
+
+  test("migrates summaries off when the old setting was disabled", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "chat-summaries.json"), JSON.stringify({ enabled: false, retitle: true }));
+
+    const result = await run(["settings", "get", "knowledge", "--json"], env);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(JSON.parse(result.value).defaults.summaries).toBe(false);
+    expect(existsSync(join(env.state, "knowledge-settings.json"))).toBe(true);
   });
 });
 

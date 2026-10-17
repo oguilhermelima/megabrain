@@ -15,7 +15,7 @@ import { supervisorWatcher } from "./supervise.js";
 import { defaultWorktreeLocation, parseWorktreeLocation } from "../../core/worktree-location.js";
 import { defaultIdleSetting, parseIdleSetting } from "../../core/native-idle.js";
 import { defaultSummarySettings, parseSummarySettings } from "../../chat/summaries.js";
-import { defaultKnowledgeSettings, parseKnowledgeSettings } from "../../knowledge/settings.js";
+import { defaultKnowledgeSettings, parseKnowledgeSettings, readKnowledgeSettings } from "../../knowledge/settings.js";
 import { emptyModelSettings, modelEnabled, modelSettingsFile, parseModelSettings, type ModelSettings } from "../../core/model-settings.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -202,6 +202,7 @@ type DesktopSetting = keyof typeof desktopSettings;
 const isDesktopSetting = (name: string | undefined): name is DesktopSetting => name !== undefined && Object.hasOwn(desktopSettings, name);
 
 async function readDesktopSetting(environment: Environment, name: DesktopSetting): Promise<object> {
+  if (name === "knowledge") return readKnowledgeSettings(dirname(desktopFile(environment, "knowledge-settings.json")));
   const setting = desktopSettings[name];
   try {
     const parsed = setting.parse(await readFile(desktopFile(environment, setting.file), "utf8"));
@@ -365,7 +366,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|models|worktree-location|device-idle-minutes|project-appearance", 2);
+    if ((args.length !== 2 && !(args.length === 3 && args[2] === "--json")) || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|models|worktree-location|device-idle-minutes|project-appearance [--json]", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {
