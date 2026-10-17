@@ -5,7 +5,7 @@ import { api } from '@/api'
 import type { ChatArtifact, MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { ViewSwitch } from '@/chat/ViewSwitch'
-import { Composer } from '@/chat/Composer'
+import { Composer, type Notice } from '@/chat/Composer'
 import type { QueueControls } from '@/chat/QueueStrip'
 import { useComposeChannel } from '@/chat/chat-menu'
 import { ApprovalRendererContext, ConversationList, type OpenChat, type OpenPath } from '@/chat/Conversation'
@@ -23,6 +23,7 @@ import { useFollowChat } from '@/native-chat/useFollowChat'
 import { changeChatQueue } from '@/native-chat/chat-sync'
 import { backToChat, chatChanged, requestTerminal, stopAndOpen, TERMINAL_WAIT_NOTICE, type DeferredStep } from '@/native-chat/deferred-switch'
 import { beginSwitch, endSwitch, switchEngine, switchStep } from '@/native-chat/switch-trace'
+import { ownerBar, ownerOf, refusalOf, sendFailure, sendRoute, sendsWhenFree, switchFailure, viewSwitch, type Hold, type View } from '@/native-chat/terminal-owner'
 import { endKeptSession } from '@/terminal/kept-terminals'
 import { useNow } from '@/github/parts'
 import { ArtifactPanel, ArtifactsRow, useChatArtifacts, useChatPanel, useHiddenChips } from '@/native-chat/ChatArtifacts'
@@ -37,6 +38,8 @@ const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) 
 
 // The terminal each chat handed over to, kept for the app run so reopening the chat reattaches to it.
 const handedOver = new Map<string, TerminalSession>()
+// The view each chat last showed, kept for the app run: the chat view does not move the session.
+const shownViews = new Map<string, View>()
 
 // A suspended (or legacy stopped) chat is not over: its next message resumes the agent session.
 const resumable = resumableChatState
@@ -54,13 +57,27 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
   const [startFresh, setStartFresh] = useState(false)
   const [retryingResume, setRetryingResume] = useState(false)
   const [exited, setExited] = useState<number | null | undefined>(undefined)
-  const toggle = modeToggle(chat)
+  // Which view shows: going to the chat only moves the view, since chatd follows the terminal's session.
+  const [shown, setShown] = useState<View>(() => shownViews.get(listed.id) ?? listed.mode)
+  const showView = (view: View) => {
+    shownViews.set(chat.id, view)
+    setShown(view)
+  }
+  const toggle = modeToggle({ ...chat, mode: shown })
   // Asked for the terminal mid-turn: the pane shows the terminal view and waits for the turn to end.
   const [waitingTerminal, setWaitingTerminal] = useState(false)
-  const mode = waitingTerminal ? 'terminal' : (target ?? chat.mode)
+  const mode = waitingTerminal ? 'terminal' : (target ?? shown)
   const inTerminal = mode === 'terminal'
   const [actionError, setActionError] = useState<unknown>(null)
   const [switchError, setSwitchError] = useState<unknown>(null)
+  // A switch the chat refused because its turn runs: a plain line, the view stays in chat.
+  const [switchNotice, setSwitchNotice] = useState<string | null>(null)
+  // A draft the busy terminal refused, kept in the composer; armed, it sends once the terminal is free.
+  const [hold, setHold] = useState<Hold>('none')
+  const sendDraft = useRef<(() => void) | null>(null)
+  const [takingOver, setTakingOver] = useState(false)
+  const owner = ownerOf(chat)
+  const bar = ownerBar(chat, hold)
   // A step that needs a yes first: sending a queued message now, which stops a running turn.
   const [confirming, setConfirming] = useState<{ text: string; action: string; run: () => void } | null>(null)
   const title = chat.title ?? 'New chat'
@@ -112,7 +129,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     )
 
   const busy = chat.state === 'working' || chat.state === 'waiting-approval'
-  const heldElsewhere = chat.error?.includes('already open in another process') === true
+  const heldElsewhere = refusalOf(chat.error) === 'foreign'
 
   const retryResume = async () => {
     setRetryingResume(true)
@@ -130,7 +147,15 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
 
   // The message shows at once and the chat's user event confirms it; a failed send takes it back.
   // While a turn runs it waits in the queue instead, which the strip above the composer shows.
-  const send = async (parts: MessagePart[]): Promise<null> => {
+  // While the terminal drives, a send takes the session over first; a busy terminal keeps the draft.
+  const send = async (parts: MessagePart[]): Promise<Notice | null> => {
+    if (sendRoute(chat) === 'take-over-first') {
+      try {
+        await takeOver()
+      } catch (caught) {
+        return keepDraft(caught)
+      }
+    }
     const id = crypto.randomUUID()
     const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
     const images = parts.flatMap((part) => (part.type === 'image' ? [{ path: part.path }] : []))
@@ -138,16 +163,45 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     try {
       const { queued } = await api.sendChat(chat.id, parts, { fresh: startFresh && resumable(chat.state) })
       setStartFresh(false)
+      setHold('none')
       if (queued !== null) {
         update((current) => dropOutgoing(current, id))
         if (!queue.some((item) => item.id === queued.id)) setQueue([...queue, queued])
       }
     } catch (caught) {
       update((current) => dropOutgoing(current, id))
-      throw caught
+      return keepDraft(caught)
     }
     return null
   }
+  const keepDraft = (caught: unknown): Notice => {
+    const kept = sendFailure(caught)
+    if (kept === null) throw caught
+    setHold('held')
+    return kept
+  }
+
+  // The daemon checks the terminal is idle, ends its TUI and resumes the session in the chat.
+  const takeOver = async () => {
+    setTakingOver(true)
+    try {
+      const takenOver = await api.takeOverChat(chat.id)
+      update((current) => withSwitchResult(current, takenOver))
+    } finally {
+      setTakingOver(false)
+    }
+    handedOver.delete(chat.id)
+    endKeptSession(chat.id)
+    announceAction()
+  }
+
+  useEffect(() => {
+    if (sendsWhenFree(hold, chat)) {
+      setHold('held')
+      sendDraft.current?.()
+    } else if (hold === 'held' && owner !== 'terminal') setHold('none')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hold, chat.state, owner])
 
   // A message chatd already took (the turn ended and sent it) only refreshes the strip; the view says nothing.
   const changeQueue = async (change: ChatQueueChange): Promise<'saved' | 'taken'> => {
@@ -189,50 +243,53 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     if (step.run === 'switch') void switchMode()
     else if (step.run === 'stop-then-switch') void api.interruptChat(chat.id).catch(() => {}).then(() => switchMode())
   }
+  // To the chat, and to a terminal that already owns the session, only the view moves.
   const requestSwitch = () => {
+    setSwitchNotice(null)
     if (waitingTerminal) return follow(backToChat(true))
-    if (toggle.target === 'terminal') return follow(requestTerminal(chat))
-    void switchMode()
+    if (viewSwitch(chat, toggle.target) === 'show') {
+      setSwitchError(null)
+      return showView(toggle.target)
+    }
+    follow(requestTerminal(chat))
   }
   useEffect(() => {
     if (waitingTerminal) follow(chatChanged(true, chat))
+    if (switchNotice !== null && !busy) setSwitchNotice(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waitingTerminal, chat.state])
 
   const switchMode = async () => {
     if (!toggle.enabled || switching) return
-    const to = toggle.target
-    beginSwitch(chat.id, chat.agent, to)
+    beginSwitch(chat.id, chat.agent, 'terminal')
     setConfirming(null)
     setSwitchError(null)
+    setSwitchNotice(null)
     setSwitching(true)
-    setTarget(to)
+    setTarget('terminal')
     setExited(undefined)
-    const closing = to === 'chat' ? handedOver.get(chat.id) : undefined
-    if (to === 'chat') handedOver.delete(chat.id)
+    // A TUI that ran before has let go of the session; the terminal attaches to the one this switch opens.
+    handedOver.delete(chat.id)
     // The terminal opens as soon as the agent has let go of the session, not after the chat record has come back too.
     const moved = (async () => {
-      // One writer at a time: the terminal's TUI goes before the chat's agent process starts.
-      if (closing !== undefined) await api.closeTerminal(closing.id)
-      if (to === 'chat') {
-        endKeptSession(chat.id)
-        switchStep(chat.id, 'terminalClosed')
-      }
       switchStep(chat.id, 'modeSent')
-      const result = await api.setChatMode(chat.id, to)
+      const result = await api.setChatMode(chat.id, 'terminal')
       switchStep(chat.id, 'modeReturned')
       return result
     })()
-    opening.current = to === 'terminal' ? moved : null
+    opening.current = moved
     try {
       const result = await moved
       if (result.terminal !== null) handedOver.set(chat.id, result.terminal)
       update((current) => withSwitchResult(current, result.chat))
+      showView('terminal')
       setActionError(null)
       announceAction()
     } catch (caught) {
       endSwitch(chat.id, 'error', caught)
-      setSwitchError(caught)
+      const failure = switchFailure(caught)
+      if ('notice' in failure) setSwitchNotice(failure.notice)
+      else setSwitchError(caught)
     } finally {
       opening.current = null
       setTarget(null)
@@ -346,6 +403,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
           <button type="button" onClick={() => void switchMode()} className="shrink-0 rounded-full px-3 py-1 text-[13px] text-ink-100 hover:bg-white/[0.07]">Retry</button>
         </div>
       )}
+      {switchNotice !== null && <p className={`${pageMx} mt-3 text-[13px] text-ink-300`}>{switchNotice}</p>}
       {resumable(chat.state) && chat.error != null && (
         <div className={`${pageMx} mt-3 flex items-center gap-3 text-[13px] text-warn`}>
           <span className={`min-w-0 flex-1 ${heldElsewhere ? 'break-words' : 'truncate'}`} title={chat.error}>Could not resume: {chat.error}</span>
@@ -405,9 +463,27 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
               {opened !== null && layout.mode === 'overlay' && artifactPanel(opened, true)}
             </div>
             {pending !== null && <p className={`${pageMx} -mb-1 px-3 text-[12.5px] text-warn`}>{pending.tool} waits for your approval above.</p>}
+            {bar !== null && (
+              <div className={`${pageMx} -mb-1 flex items-center gap-3 px-3 text-[12.5px] text-ink-400`}>
+                <span className="min-w-0 flex-1 truncate">{bar.text}</span>
+                <button
+                  type="button"
+                  // The daemon refuses a take over mid-turn; Send when free waits for it instead.
+                  disabled={takingOver || (bar.action === 'take-over' && busy)}
+                  title={bar.action === 'take-over' && busy ? 'The terminal is still answering' : undefined}
+                  onClick={() => {
+                    if (bar.action === 'take-over') void act(takeOver)
+                    else setHold(bar.action === 'cancel' ? 'held' : 'armed')
+                  }}
+                  className="shrink-0 text-ink-300 underline-offset-2 hover:text-ink-100 hover:underline disabled:opacity-50"
+                >
+                  {bar.action === 'take-over' ? (takingOver ? 'Taking over…' : 'Take over') : bar.action === 'cancel' ? 'Cancel' : 'Send when free'}
+                </button>
+              </div>
+            )}
             <div onKeyDown={onComposerKey} className="contents">
               <Composer
-                placeholder={resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
+                placeholder={owner === 'terminal' ? `Reply to ${title}… (takes over from the terminal)` : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
                 disabled={false}
                 agent={chat.agent}
                 cwd={chat.cwd}
@@ -429,6 +505,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
                     </>
                   )
                 }
+                sendDraft={sendDraft}
               />
             </div>
           </div>

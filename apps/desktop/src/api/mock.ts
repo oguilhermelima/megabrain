@@ -1,4 +1,4 @@
-import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockCutChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat } from '@/api/fixtures/chat'
+import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockCutChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat, setMockChatMode, takeOverMockChat } from '@/api/fixtures/chat'
 import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/api/fixtures/chat-artifacts'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
@@ -433,10 +433,14 @@ export function createMockApi(): DesktopApi {
       return found
     },
     setChatMode: async (chatId, mode) => ({
-      chat: { ...mockNativeChat, id: chatId, mode },
+      chat: setMockChatMode(chatId, mode),
       terminal: mode === 'terminal' ? { id: 'term-mock', engine: 'native', cwd: mockNativeChat.cwd, title: 'claude', tmuxSession: null } : null,
       command: mode === 'terminal' ? ['claude', '--resume', mockNativeChat.agentSessionId ?? ''] : null,
     }),
+    takeOverChat: async (chatId) => {
+      await wait(300)
+      return takeOverMockChat(chatId)
+    },
     chatTerminalCommand: async () => ['claude', '--resume', mockNativeChat.agentSessionId ?? ''],
     agentDefaults: async () => ({
       agents: [

@@ -22,6 +22,10 @@ export type Chat = {
   /** `suspended`: no agent process, but the record keeps `agentSessionId`; the next send resumes it. `stopped` is only read from records written before that state existed. */
   state: "starting" | "idle" | "working" | "waiting-approval" | "suspended" | "stopped" | "error";
   mode: "chat" | "terminal";
+  /** The single process currently allowed to write this session; the selected view is `mode`. */
+  owner?: "chat" | "terminal" | "none";
+  /** Last complete byte read from the agent's session log while its TUI owned the conversation. */
+  terminalLogCursor?: { byteOffset: number; lastMessageId: string | null };
   agentSessionId: string | null;
   createdAt: string;
   lastActivityAt: string | null;

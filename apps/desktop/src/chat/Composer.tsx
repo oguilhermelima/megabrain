@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type MutableRefObject, type ReactNode } from 'react'
 import type { MessagePart, SlashCommand } from '@/api/schema'
 import { ContextMenu } from '@/components/ContextMenu'
 import { usePresence } from '@/lib/usePresence'
@@ -51,6 +51,7 @@ export function Composer({
   initCommands,
   queue,
   above,
+  sendDraft,
 }: {
   /** Text to put in the box, replacing the draft; a new object each time, as a suggestion is picked. */
   fill?: { text: string } | null
@@ -79,6 +80,8 @@ export function Composer({
   queue?: QueueControls
   /** Shown above the queue and the box, inside the composer's gutter: a native chat's artifacts row. */
   above?: ReactNode
+  /** Filled with the box's send while it is mounted, so the view can send the draft that waits in it. */
+  sendDraft?: MutableRefObject<(() => void) | null>
 }) {
   const [draft, setDraft] = useState<Draft>([])
   const [sending, setSending] = useState(false)
@@ -300,6 +303,14 @@ export function Composer({
     onSend,
     clear,
     onSent: () => setSentCount((count) => count + 1),
+  })
+
+  useEffect(() => {
+    if (sendDraft === undefined) return
+    sendDraft.current = send
+    return () => {
+      sendDraft.current = null
+    }
   })
 
   /** The browser edited the box in place; a chip it brought back while that chip was already there is taken out again. */

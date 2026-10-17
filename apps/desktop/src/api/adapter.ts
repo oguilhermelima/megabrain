@@ -283,6 +283,8 @@ export interface DesktopApi {
   chatArtifact(chatId: string, artifactId: string, revision?: number): Promise<ChatArtifactContent>
   /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */
   setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null }>
+  /** The chat takes the session back from the agent's TUI; the daemon checks the terminal is idle, ends it and resumes. Refuses with terminal-busy mid-turn. */
+  takeOverChat(chatId: string): Promise<NativeChat>
   /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */
   chatTerminalCommand(chatId: string): Promise<string[]>
   /** Each agent's default model and effort from its own config, and the login shell's name (`agent defaults`). */
@@ -370,6 +372,7 @@ export class CliError extends Error {
   constructor(
     message: string,
     readonly code: number | null,
+    readonly refusalCode?: string,
   ) {
     super(message)
   }

@@ -20,13 +20,13 @@ import { queueOperation as queueOperationImpl, loadQueue as loadQueueImpl, persi
 import { resumeDrained as resumeDrainedImpl, send as sendImpl, resume as resumeImpl, deliver as deliverImpl, resumeFailed as resumeFailedImpl } from "./daemon/resume.js";
 import { trackCallback as trackCallbackImpl, runAgent as runAgentImpl, runAgentInternal as runAgentInternalImpl, clearTerminalHoldersBeforeResume as clearTerminalHoldersBeforeResumeImpl, armStartTimer as armStartTimerImpl, clearStartTimer as clearStartTimerImpl, interrupt as interruptImpl, stop as stopImpl } from "./daemon/agent-process.js";
 import { handleClaudeStream as handleClaudeStreamImpl, publishToolCall as publishToolCallImpl, startSubagent as startSubagentImpl, endSubagent as endSubagentImpl, publishClaudeStep as publishClaudeStepImpl, handleClaude as handleClaudeImpl, settleRpc as settleRpcImpl, handleCodex as handleCodexImpl, handleCodexSubagent as handleCodexSubagentImpl, codexRequest as codexRequestImpl, publishTurnCut as publishTurnCutImpl, publishBackgroundTask as publishBackgroundTaskImpl } from "./daemon/agent-streams.js";
-import { rename as renameImpl, remove as removeImpl, mode as modeImpl, importTerminalTurns as importTerminalTurnsImpl, logTurnOpen as logTurnOpenImpl, foreignHolders as foreignHoldersImpl, panesOf as panesOfImpl, endAppTerminals as endAppTerminalsImpl, refreshTerminalChats as refreshTerminalChatsImpl, terminalCommand as terminalCommandImpl } from "./daemon/terminal-mode.js";
+import { rename as renameImpl, remove as removeImpl, mode as modeImpl, takeOver as takeOverImpl, importTerminalTurns as importTerminalTurnsImpl, logTurnOpen as logTurnOpenImpl, foreignHolders as foreignHoldersImpl, panesOf as panesOfImpl, endAppTerminals as endAppTerminalsImpl, refreshTerminalChats as refreshTerminalChatsImpl, terminalCommand as terminalCommandImpl } from "./daemon/terminal-mode.js";
 import { updateContext as updateContextImpl, setModel as setModelImpl, startArtifactWatch as startArtifactWatchImpl, stopArtifactWatch as stopArtifactWatchImpl, replaceArtifactSnapshot as replaceArtifactSnapshotImpl, refreshClaudeArtifacts as refreshClaudeArtifactsImpl, checkArtifactWatch as checkArtifactWatchImpl } from "./daemon/artifacts-summaries.js";
 import { requireChat as requireChatImpl, normalizeParts as normalizePartsImpl, processes as processesImpl, entryOf as entryOfImpl, track as trackImpl, dropConversation as dropConversationImpl, pruneUnused as pruneUnusedImpl, sessionOfTerminal as sessionOfTerminalImpl, save as saveImpl } from "./daemon/chat-state.js";
 
 type Part = MessagePart;
 type Request = { operation: string; [key: string]: unknown };
-type Response = { ok: true; value?: unknown } | { ok: false; error: string; code?: number };
+type Response = { ok: true; value?: unknown } | { ok: false; error: string; code?: string };
 type Environment = Readonly<Record<string, string | undefined>>;
 const instances = new Map<string, ChatDaemon>();
 
@@ -35,7 +35,7 @@ const instances = new Map<string, ChatDaemon>();
 /** Bumped whenever the socket contract changes in a way an older chatd cannot serve; a client that finds another number asks that chatd to hand over. */
 export const CHAT_PROTOCOL_VERSION = 2;
 const DRAINING = "chatd is draining for an upgrade";
-const DEFAULT_TERMINAL_POLL_MS = 1500;
+const DEFAULT_TERMINAL_POLL_MS = 500;
 
 /**
  * Which build of megabrain this is: the modification time of the script or binary running it. A newer CLI
@@ -65,6 +65,9 @@ function heldMessage(chat: Chat, holders: readonly SessionHolder[]): string {
     return `${place}, pid ${holder.pid}${holder.cwd === null ? "" : `, cwd ${holder.cwd}`}`;
   }).join("; ");
   return `${chat.agent} session ${chat.agentSessionId ?? ""} is already open in another process (${where}); close it there and Retry, or start fresh`;
+}
+export class ChatHandoffError extends Error {
+  constructor(readonly code: "terminal-busy" | "chat-busy", message: string) { super(message); }
 }
 class SessionHeldError extends Error {
   constructor(chat: Chat, holders: readonly SessionHolder[]) { super(heldMessage(chat, holders)); }
@@ -171,8 +174,11 @@ export class ChatDaemon {
   readonly knowledgeTasks = new Set<Promise<void>>();
   terminalTimer: ReturnType<typeof setInterval> | undefined;
   terminalRefresh: Promise<void> | undefined;
+  terminalRefreshTask: Promise<void> | undefined;
   /** Each terminal-mode chat's log as last read (size and mtime), so an unchanged idle log is not parsed again. */
   readonly terminalLogs = new Map<string, string>();
+  readonly terminalHandoffs = new Set<string>();
+  readonly terminalFileWatches = new Map<string, { path: string; close: () => void }>();
   clients = 0;
   closed = false;
   closing: Promise<void> | undefined;
@@ -299,13 +305,15 @@ async remove(id: string): Promise<{ removed: string }> { return await removeImpl
 
 async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null }> { return await modeImpl(this, id, mode); }
 
+async takeOver(id: string): Promise<Chat> { return await takeOverImpl(this, id); }
+
   /** Turns typed in the terminal live only in the agent's log; they join the chat, once each, before the agent respawns. */
-async importTerminalTurns(chat: Chat): Promise<void> { return await importTerminalTurnsImpl(this, chat); }
+async importTerminalTurns(chat: Chat, markInterrupted = true): Promise<void> { return await importTerminalTurnsImpl(this, chat, markInterrupted); }
 
 async logTurnOpen(chat: Chat): Promise<boolean> { return await logTurnOpenImpl(this, chat); }
 
   /** Every process holding the chat's session other than this daemon's own agents. */
-async foreignHolders(chat: Chat, panes?: ReadonlyMap<number, string>): Promise<SessionHolder[]> { return await foreignHoldersImpl(this, chat, panes); }
+  async foreignHolders(chat: Chat, panes?: ReadonlyMap<number, string>, exclude?: ReadonlySet<number>): Promise<SessionHolder[]> { return await foreignHoldersImpl(this, chat, panes, exclude); }
 
   /** The pane processes of one session on the app's tmux server, as pane pid to session name. */
 async panesOf(session: string): Promise<ReadonlyMap<number, string>> { return await panesOfImpl(this, session); }
@@ -317,7 +325,12 @@ async panesOf(session: string): Promise<ReadonlyMap<number, string>> { return aw
 async endAppTerminals(chat: Chat): Promise<ReadonlySet<number>> { return await endAppTerminalsImpl(this, chat); }
 
   /** A terminal-mode chat shows its TUI's state: working while the session log holds an unfinished turn and a process still runs it. */
-async refreshTerminalChats(): Promise<void> { return await refreshTerminalChatsImpl(this); }
+async refreshTerminalChats(): Promise<void> {
+  if (this.terminalRefreshTask !== undefined) return await this.terminalRefreshTask;
+  const task = refreshTerminalChatsImpl(this);
+  this.terminalRefreshTask = task;
+  try { await task; } finally { if (this.terminalRefreshTask === task) this.terminalRefreshTask = undefined; }
+}
 
 async terminalCommand(id: string): Promise<string[]> { return await terminalCommandImpl(this, id); }
 

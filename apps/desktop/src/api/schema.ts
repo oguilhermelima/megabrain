@@ -228,6 +228,10 @@ export const nativeChatSchema = z.looseObject({
   state: nativeChatStateSchema,
   /** Who drives the conversation now: the protocol (chat) or the agent's own TUI (terminal). */
   mode: z.enum(['chat', 'terminal']),
+  /** Which process holds the agent session now; absent from a daemon that does not report it. */
+  owner: z.string().superRefine((owner, context) => {
+    if (owner !== 'chat' && owner !== 'terminal' && owner !== 'none') context.addIssue({ code: 'custom', message: 'owner must be chat, terminal or none' })
+  }).optional(),
   /** The agent's own session or thread id, for resume. */
   agentSessionId: z.string().nullable(),
   createdAt: z.string(),

@@ -12,7 +12,12 @@ import { listChatArtifacts, readChatArtifact } from "../../chat/artifacts.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 function stateDir(environment: Environment): string { return environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain"); }
-function errorResult(error: unknown): Result<string> { return failed(error instanceof Error ? error.message : String(error), 2); }
+function errorResult(error: unknown): Result<string> {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
+  if (code === "terminal-busy" || code === "chat-busy") return failed(message, 1, `${JSON.stringify({ refusal: { code, message } })}\n`);
+  return failed(message, 2);
+}
 function takeValue(args: readonly string[], name: string): { value?: string; rest: string[] } {
   const rest: string[] = [];
   let value: string | undefined;
@@ -132,6 +137,12 @@ export async function executeChat(args: readonly string[], environment: Environm
       const [id, mode, ...tail] = rest;
       if (!id || !mode || tail.length !== 1 || tail[0] !== "--json") throw new Error("Usage: megabrain chat mode <id> chat|terminal --json");
       value = await callChatd(dir, { operation: "mode", id, mode }, environment, processAdapter);
+      return ok(argsJson(value));
+    }
+    if (verb === "take-over") {
+      const [id, ...tail] = rest;
+      if (!id || tail.length !== 1 || tail[0] !== "--json") throw new Error("Usage: megabrain chat take-over <id> --json");
+      value = await callChatd(dir, { operation: "take-over", id }, environment, processAdapter);
       return ok(argsJson(value));
     }
     if (verb === "model") {

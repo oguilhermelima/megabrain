@@ -28,7 +28,10 @@ const repoArgs = (repo: string | undefined): string[] => (repo === undefined ? [
 async function cliJson<T>(args: string[], schema: z.ZodType<T>): Promise<T> {
   const output = await invoke<CliOutput>('run_cli', { args })
   if (output.stdout.trim() === '') throw new CliError(firstLine(output.stderr) || `megabrain ${args[0]} exited ${output.code}`, output.code)
-  const parsed = schema.safeParse(JSON.parse(output.stdout))
+  const body: unknown = JSON.parse(output.stdout)
+  const refusal = z.looseObject({ refusal: z.looseObject({ code: z.string(), message: z.string() }) }).safeParse(body)
+  if (refusal.success) throw new CliError(refusal.data.refusal.message, output.code, refusal.data.refusal.code)
+  const parsed = schema.safeParse(body)
   if (!parsed.success) throw new CliError(`megabrain ${args.join(' ')} answered in an unexpected shape: ${parsed.error.message}`, output.code)
   return parsed.data
 }
@@ -391,6 +394,7 @@ export function createTauriApi(): DesktopApi {
     setChatModel: async (chatId, model, effort) => void (await cliText(['chat', 'model', chatId, model, ...(effort === undefined ? [] : ['--effort', effort])])),
     setChatMode: (chatId, mode) =>
       cliJson(['chat', 'mode', chatId, mode, '--json'], z.looseObject({ chat: nativeChatSchema, terminal: terminalSessionSchema.nullable(), command: z.array(z.string()).nullable().default(null) })),
+    takeOverChat: (chatId) => cliJson(['chat', 'take-over', chatId, '--json'], nativeChatSchema),
     chatTerminalCommand: (chatId) => cliJson(['chat', 'terminal-command', chatId, '--json'], z.array(z.string())),
     agentDefaults: () => cliJson(['agent', 'defaults', '--json'], agentDefaultsSchema),
     agentCommand: async (agent, options = {}) =>

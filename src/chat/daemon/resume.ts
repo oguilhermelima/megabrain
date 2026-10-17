@@ -41,10 +41,27 @@ export async function resumeDrained(daemon: ChatDaemon): Promise<void> {
   }
 
 export async function send(daemon: ChatDaemon, id: string, inputParts: Part[], fresh = false): Promise<{ queued: QueuedChatMessage | null }> {
-    const chat = await daemon.requireChat(id);
-    const parts = await daemon.normalizeParts(chat.cwd, inputParts);
+    let chat = await daemon.requireChat(id);
     if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
+    const parts = await daemon.normalizeParts(chat.cwd, inputParts);
     if (daemon.draining) { daemon.resumeOnStart.add(id); return { queued: await daemon.enqueue(chat, parts) }; }
+    const holders = await daemon.foreignHolders(chat);
+    const terminalOwns = holders.some((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
+    if (terminalOwns && await daemon.logTurnOpen(chat)) {
+      const turns = await readSessionTurns(chat, daemon.environment.HOME ?? process.env.HOME ?? "");
+      let lastUser = -1;
+      for (let index = 0; index < turns.length; index += 1) if (turns[index]?.kind === "user") lastUser = index;
+      const toolIsRunning = turns.slice(lastUser + 1).some((turn) => turn.kind === "tool-call") || turns.slice(lastUser + 1).some((turn) => turn.kind === "tool-result");
+      if (!toolIsRunning) {
+        const queued = await daemon.enqueue(chat, parts);
+        chat.state = "working";
+        chat.owner = "terminal";
+        await daemon.save(chat);
+        return { queued };
+      }
+    }
+    await daemon.takeOver(id);
+    chat = await daemon.requireChat(id);
     if (chat.state === "error" && chat.error?.includes("already open in another process")) {
       const queued = await daemon.enqueue(chat, parts);
       await daemon.resume(id);

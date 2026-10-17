@@ -1,4 +1,4 @@
-import type { ChatQueueChange } from '@/api/adapter'
+import { CliError, type ChatQueueChange } from '@/api/adapter'
 import type { ChatApproval, ChatEventLine, ChatQueueItem, MessagePart, NativeChat, TranscriptEvent } from '@/api/schema'
 // Real outputs of Claude's local commands (see command-output.test.ts).
 import contextOutput from '@/api/fixtures/captured/command-output/claude-context.txt?raw'
@@ -17,6 +17,7 @@ export const mockNativeChat: NativeChat = {
   title: 'Tidy the onboarding steps',
   state: 'working',
   mode: 'chat',
+  owner: 'chat',
   agentSessionId: '0b1c2d3e-0000-4000-8000-0000000000aa',
   createdAt: at(300),
   lastActivityAt: at(5),
@@ -185,6 +186,9 @@ interface MockChat {
   /** Messages sent while a turn ran; the next goes out when the turn ends, unless an interrupt holds them. */
   queue: ChatQueueItem[]
   held: boolean
+  /** Which process holds the agent session: the chat, or the agent's TUI that chatd follows. */
+  owner: 'chat' | 'terminal' | 'none'
+  record: NativeChat
 }
 
 const chats = new Map<string, MockChat>()
@@ -199,7 +203,8 @@ function mockChat(chatId: string): MockChat {
   const cutTurns = chatId === mockCutChat.id
   const stored = long || cutTurns
   const lines = original ? mockChatLines.slice() : long ? mockLongChatLines.slice() : cutTurns ? mockCutChatLines.slice() : []
-  chat = { lines, followers: new Set(), state: original || stored ? 'idle' : 'starting', turnStartedAt: original || stored ? null : new Date().toISOString(), cancel: null, queue: [], held: false }
+  const record: NativeChat = original ? mockNativeChat : long ? mockLongChat : cutTurns ? mockCutChat : { ...mockNativeChat, id: chatId, title: null }
+  chat = { lines, followers: new Set(), state: original || stored ? 'idle' : 'starting', turnStartedAt: original || stored ? null : new Date().toISOString(), cancel: null, queue: [], held: false, owner: 'chat', record }
   chats.set(chatId, chat)
   if (original) play(chatId, openingTurn)
   else if (stored) return chat
@@ -381,6 +386,7 @@ export function readMockChat(chatId: string, since: string | null): ChatEventLin
 
 export function sendMockChat(chatId: string, parts: MessagePart[]): { queued: ChatQueueItem | null } {
   const chat = mockChat(chatId)
+  if (chat.owner === 'terminal') takeOverMockChat(chatId)
   if (busy(chat)) {
     const now = new Date().toISOString()
     const queued = { id: nextId('q'), parts, createdAt: now, updatedAt: now }
@@ -451,4 +457,37 @@ export function interruptMockChat(chatId: string) {
 
 export function answerMockApproval(chatId: string, decision: ChatApproval['decisions'][number]) {
   play(chatId, approvedTurn(decision !== 'deny'))
+}
+
+/** The chat as chatd holds it now, with who owns the session. */
+function recordOf(chat: MockChat): NativeChat {
+  return { ...chat.record, state: chat.state, mode: chat.owner === 'terminal' ? 'terminal' : 'chat', owner: chat.owner }
+}
+
+function publishOwner(chat: MockChat, owner: MockChat['owner']) {
+  chat.owner = owner
+  store(chat, { chat: recordOf(chat) })
+}
+
+// A turn the person types in the agent's TUI, which chatd reads from the terminal's session log.
+const terminalTurn: Step[] = [{ type: 'pause', ms: 2500 }, ...replyTurn('Run the onboarding tests from here.')]
+
+/** megabrain chat mode: the TUI takes the session once the chat is idle; the chat side only shows. */
+export function setMockChatMode(chatId: string, mode: NativeChat['mode']): NativeChat {
+  const chat = mockChat(chatId)
+  if (mode === 'terminal' && chat.owner === 'chat' && busy(chat)) throw new CliError('chat-busy: the chat is answering; switch when the turn ends', 1)
+  if (mode === 'terminal' && chat.owner !== 'terminal') {
+    publishOwner(chat, 'terminal')
+    play(chatId, terminalTurn)
+  }
+  return recordOf(chat)
+}
+
+/** megabrain chat take-over: refused while the TUI is mid-turn, else the chat resumes the session. */
+export function takeOverMockChat(chatId: string): NativeChat {
+  const chat = mockChat(chatId)
+  if (chat.owner !== 'terminal') return recordOf(chat)
+  if (busy(chat)) throw new CliError('terminal-busy: the terminal is answering; try again when its turn ends', 1)
+  publishOwner(chat, 'chat')
+  return recordOf(chat)
 }

@@ -27,7 +27,7 @@ import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } fr
 
 export async function queueOperation(daemon: ChatDaemon, request: Request): Promise<unknown> {
     const id = text(request.id);
-    const chat = await daemon.requireChat(id);
+    let chat = await daemon.requireChat(id);
     const action = text(request.action);
     const items = await daemon.loadQueue(id);
     const take = (): QueuedChatMessage => {
@@ -64,6 +64,8 @@ export async function queueOperation(daemon: ChatDaemon, request: Request): Prom
       case "send-now": {
         if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
         if (daemon.draining) throw new Error(DRAINING);
+        await daemon.takeOver(id);
+        chat = await daemon.requireChat(id);
         const item = take();
         await daemon.persistQueue(id);
         if (chat.state === "working" || chat.state === "waiting-approval") await daemon.interrupt(id);

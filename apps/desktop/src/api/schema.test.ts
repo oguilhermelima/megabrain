@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
-import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactContentSchema } from '@/api/schema'
+import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactContentSchema, nativeChatSchema } from '@/api/schema'
 import { openProject } from '../../../../src/knowledge/store'
 
 const captured = join(import.meta.dir, 'fixtures', 'captured')
@@ -96,6 +96,16 @@ describe('module results', () => {
   test('install <module> --json', () => {
     expect(moduleResultSchema.safeParse({ module: 'worktree', action: 'install', ok: false, message: 'Shared worktrees: missing' }).success).toBe(true)
     expect(moduleResultSchema.safeParse({ module: 'worktree', ok: false }).success).toBe(false)
+  })
+})
+
+describe('native chat ownership', () => {
+  test('accepts chat, terminal and no owner as explicit state', () => {
+    const base = { id: 'chat-1', agent: 'claude', model: null, cwd: '/tmp/project', title: null, state: 'idle', mode: 'chat', agentSessionId: 'session-1', createdAt: '2026-10-17T00:00:00Z', lastActivityAt: null }
+    for (const owner of ['chat', 'terminal', 'none']) {
+      expect(nativeChatSchema.parse({ ...base, owner }).owner).toBe(owner)
+    }
+    expect(nativeChatSchema.safeParse({ ...base, owner: 'unknown' }).success).toBe(false)
   })
 })
 

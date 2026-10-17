@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ChatDaemon } from "../../src/chat/daemon.js";
@@ -100,6 +100,14 @@ async function waitState(daemon: ChatDaemon, state: string): Promise<Chat> {
 async function events(daemon: ChatDaemon): Promise<ChatEvent[]> {
   return (await daemon.store.events(ID)).flatMap((line) => line.event === undefined ? [] : [line.event]);
 }
+async function untilEvent(daemon: ChatDaemon, predicate: (event: ChatEvent) => boolean, what: string): Promise<ChatEvent> {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    const found = (await events(daemon)).find(predicate);
+    if (found !== undefined) return found;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`terminal log did not follow ${what}`);
+}
 const shown = (list: ChatEvent[]) => list.filter((item) => item.kind !== "state" && item.kind !== "system").map((item) => `${item.kind}:${item.text}`);
 const TERMINAL_TURNS = [
   "user:typed in terminal",
@@ -144,6 +152,81 @@ describe("the Codex rollout", () => {
 });
 
 describe("switching back to chat imports what the terminal did", () => {
+  test("follows appended Claude messages and tool events while the terminal owns the session, once each", async () => {
+    const env = sandbox();
+    writeClaudeLog(env, "");
+    const chat = record(env, { terminalSince: SWITCHED_AT });
+    await new ChatStore(env.state).put(chat);
+    const daemon = await daemonFor(env);
+    const path = claudeLogPath(env.root, env.cwd, env.sessionId);
+    const now = new Date().toISOString();
+    const rows = [
+      { type: "user", uuid: "follow-u1", timestamp: now, message: { role: "user", content: "look up a file" } },
+      { type: "assistant", uuid: "follow-a1", timestamp: now, message: { id: "follow-m1", stop_reason: "tool_use", content: [{ type: "tool_use", id: "follow-tool", name: "Bash", input: { command: "ls" } }] } },
+      { type: "user", uuid: "follow-u2", timestamp: now, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "follow-tool", content: "file.txt" }] } },
+      { type: "assistant", uuid: "follow-a2", timestamp: now, message: { id: "follow-m2", stop_reason: "end_turn", content: [{ type: "text", text: "found it" }] } },
+    ];
+
+    appendFileSync(path, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+    await untilEvent(daemon, (item) => item.text === "found it", "Claude events");
+    await daemon.refreshTerminalChats();
+
+    expect(shown(await events(daemon))).toEqual(["user:look up a file", "tool-call:Bash", "tool-result:file.txt", "assistant:found it"]);
+  });
+
+  test("persists the terminal log cursor and catches up after chatd restarts", async () => {
+    const env = sandbox();
+    writeClaudeLog(env, "");
+    const chat = record(env, { terminalSince: SWITCHED_AT });
+    const store = new ChatStore(env.state);
+    await store.put(chat);
+    const daemon = await daemonFor(env);
+    await daemon.refreshTerminalChats();
+    const path = claudeLogPath(env.root, env.cwd, env.sessionId);
+    const at = new Date().toISOString();
+    const firstRows = [
+      { type: "user", uuid: "cursor-u1", timestamp: at, message: { role: "user", content: "first terminal turn" } },
+      { type: "assistant", uuid: "cursor-a1", timestamp: at, message: { id: "cursor-message-1", stop_reason: "end_turn", content: [{ type: "text", text: "first answer" }] } },
+    ];
+    appendFileSync(path, `${firstRows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+    await untilEvent(daemon, (item) => item.text === "first answer", "the first terminal turn");
+
+    const cursor = (await store.get(ID) as (Chat & { terminalLogCursor?: { byteOffset: number; lastMessageId: string | null } }) | null)?.terminalLogCursor;
+    expect(cursor).toEqual({ byteOffset: readFileSync(path).byteLength, lastMessageId: "cursor-message-1" });
+    await daemon.close();
+
+    const laterRows = [
+      { type: "user", uuid: "cursor-u2", timestamp: at, message: { role: "user", content: "second terminal turn" } },
+      { type: "assistant", uuid: "cursor-a2", timestamp: at, message: { id: "cursor-message-2", stop_reason: "end_turn", content: [{ type: "text", text: "second answer" }] } },
+    ];
+    appendFileSync(path, `${laterRows.map((row) => JSON.stringify(row)).join("\n")}\n`);
+    const restarted = await daemonFor(env);
+    await untilEvent(restarted, (item) => item.text === "second answer", "the terminal turn written while chatd was stopped");
+
+    expect(shown(await events(restarted))).toEqual(["user:first terminal turn", "assistant:first answer", "user:second terminal turn", "assistant:second answer"]);
+    const updated = (await store.get(ID) as (Chat & { terminalLogCursor?: { byteOffset: number; lastMessageId: string | null } }) | null)?.terminalLogCursor;
+    expect(updated).toEqual({ byteOffset: readFileSync(path).byteLength, lastMessageId: "cursor-message-2" });
+  });
+
+  test("follows appended Codex rollout events while the terminal owns the thread, once each", async () => {
+    const env = sandbox();
+    writeCodexLog(env);
+    const chat = record(env, { agent: "codex", agentSessionId: "thread-9", terminalSince: SWITCHED_AT });
+    await new ChatStore(env.state).put(chat);
+    const daemon = await daemonFor(env);
+    const path = join(env.root, ".codex", "sessions", "2026", "10", "16", "rollout-2026-10-16T10-00-00-thread-9.jsonl");
+    const at = new Date().toISOString();
+    appendFileSync(path, `${JSON.stringify({ timestamp: at, ordinal: 10, type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "open another file" }] } })}\n${JSON.stringify({ timestamp: at, ordinal: 11, type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "opened it" }] } })}\n`);
+
+    await untilEvent(daemon, (item) => item.text === "opened it", "Codex events");
+    await daemon.refreshTerminalChats();
+
+    expect(shown(await events(daemon))).toEqual([
+      "user:typed in terminal", "thinking:pondering the files", "tool-call:shell", "tool-result:notes.txt\n", "assistant:found notes.txt",
+      "user:open another file", "assistant:opened it",
+    ]);
+  });
+
   test("restores missing context from the latest real Claude request, ignoring synthetic usage", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", FAKE_CLAUDE);

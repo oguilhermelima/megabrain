@@ -22,6 +22,7 @@ export async function dispatchRequest(daemon: ChatDaemon, request: Request, sock
     case "approve": return await daemon.approve(text(request.id), text(request.approvalId), text(request.decision));
     case "events": return await daemon.events(text(request.id), Number(request.since ?? 0), request.follow === true, socket);
     case "mode": return await daemon.mode(text(request.id), text(request.mode));
+    case "take-over": return await daemon.takeOver(text(request.id));
     case "model": return await daemon.setModel(text(request.id), text(request.model), text(request.effort) || null);
     case "rename": return await daemon.rename(text(request.id), text(request.title));
     case "summarize": return await daemon.summarizer.summarize(text(request.id));

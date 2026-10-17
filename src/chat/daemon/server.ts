@@ -37,6 +37,11 @@ export async function start(daemon: ChatDaemon): Promise<void> {
     try { readConversations(daemon.stateDir); } catch { /* a locked registry is retried by the next write */ }
     await daemon.pruneUnused();
     await daemon.suspendActive();
+    for (const chat of await daemon.store.list()) {
+      if (chat.owner !== undefined) continue;
+      chat.owner = chat.mode === "terminal" ? "terminal" : "none";
+      await daemon.store.put(chat);
+    }
     await writeFile(chatPid(daemon.stateDir), `${process.pid}\n`, { mode: 0o600 });
     await chmod(chatPid(daemon.stateDir), 0o600);
     await daemon.resumeDrained();
@@ -65,7 +70,7 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
     const now = new Date().toISOString();
     const chat: Chat = {
       id: randomUUID(), agent, cwd, model: text(request.model) || null, ...(text(request.effort) ? { effort: text(request.effort) } : {}), ...(request.approvals === true ? { approvals: true } : {}),
-      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: "starting", mode: "chat",
+      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: "starting", mode: "chat", owner: "none",
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
     };
     await daemon.save(chat);
@@ -101,6 +106,7 @@ export async function suspendActive(daemon: ChatDaemon): Promise<string[]> {
       for (const task of latestTasks.values()) if (task.state === "running") await daemon.publishBackgroundTask(chat, { ...task, state: "lost", endedAt: new Date().toISOString(), summary: "Chat daemon restarted before the task reported completion" });
       if (chat.state === "suspended") continue;
       chat.state = "suspended";
+      chat.owner = "none";
       chat.error = null;
       await daemon.save(chat);
     }
@@ -163,6 +169,8 @@ export async function closeDaemon(daemon: ChatDaemon): Promise<void> {
     daemon.pendingApprovals.clear();
     for (const id of daemon.artifactWatches.keys()) daemon.stopArtifactWatch(id);
     if (daemon.terminalTimer !== undefined) clearInterval(daemon.terminalTimer);
+    for (const watcher of daemon.terminalFileWatches.values()) watcher.close();
+    daemon.terminalFileWatches.clear();
     await daemon.terminalRefresh;
     daemon.server?.close();
     daemon.server = undefined;
@@ -212,7 +220,11 @@ export async function listen(daemon: ChatDaemon): Promise<void> {
           catch { socket.end(`${JSON.stringify({ ok: false, error: "invalid request" })}\n`); return; }
           void daemon.handle(request, socket).then((value) => {
             if (!socket.destroyed && !(request.operation === "events" && request.follow === true)) socket.end(`${JSON.stringify({ ok: true, value })}\n`);
-          }).catch((error: unknown) => { if (!socket.destroyed) socket.end(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`); });
+          }).catch((error: unknown) => {
+            if (socket.destroyed) return;
+            const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
+            socket.end(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error), ...(code === "terminal-busy" || code === "chat-busy" ? { code } : {}) })}\n`);
+          });
         });
       });
       daemon.server.once("error", reject);

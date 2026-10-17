@@ -59,6 +59,8 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
     if (daemon.closed) return;
     const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...scrubAgentEnvironment({ ...process.env, ...daemon.environment }), MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });
     daemon.children.set(chat.id, child);
+    chat.owner = "chat";
+    await daemon.save(chat);
     const childRecord = chatChildRecord(daemon.stateDir, chat.id);
     await mkdir(join(daemon.stateDir, "chatd", "children"), { recursive: true, mode: 0o700 });
     await writeFile(childRecord, `${JSON.stringify({ pid: child.pid })}\n`, { mode: 0o600 });
@@ -100,7 +102,9 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
       daemon.clearStartTimer(chat.id);
       daemon.children.delete(chat.id);
       await daemon.store.get(chat.id).then(async (current) => {
-        if (!current || current.state === "suspended" || current.state === "stopped" || current.mode === "terminal") return;
+        if (!current) return;
+        if (current.owner === "chat") current.owner = "none";
+        if (current.state === "suspended" || current.state === "stopped" || current.mode === "terminal") { await daemon.save(current); return; }
         if (daemon.interrupting.has(chat.id)) {
           daemon.interrupting.delete(chat.id);
           await daemon.publishTurnCut(current, "interrupted");
