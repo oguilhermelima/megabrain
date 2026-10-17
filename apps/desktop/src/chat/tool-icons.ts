@@ -10,6 +10,7 @@ const kinds: Record<string, ToolKind> = {
   bash: 'terminal',
   bashoutput: 'terminal',
   killshell: 'terminal',
+  command: 'terminal',
   shell: 'terminal',
   local_shell: 'terminal',
   exec_command: 'terminal',

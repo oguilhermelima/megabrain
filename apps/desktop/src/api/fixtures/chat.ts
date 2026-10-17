@@ -22,13 +22,48 @@ export const mockNativeChat: NativeChat = {
   lastActivityAt: at(5),
 }
 
-export const mockChatLines: ChatEventLine[] = [
-  { cursor: '1', event: { id: 'e1', at: at(60), kind: 'user', text: 'Tidy the onboarding steps and run the tests.' } },
-  { cursor: '2', event: { id: 'e2', at: at(55), kind: 'assistant', text: 'Looking at the steps first.' } },
-  { cursor: '3', event: { id: 'e3', at: at(50), kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: 'ls apps/web/src/app/onboarding' } } },
-  { cursor: '4', event: { id: 'e4', at: at(49), kind: 'tool-result', text: '_components\n_hooks\n_steps\nlayout.tsx\npage.tsx', tool: { name: 'Bash', status: 'ok' } } },
-  ...commandLines(5, ['/usage', usageOutput], ['/cost', costOutput], ['/context', contextOutput], ['/mcp', mcpOutput]),
-]
+// The long answer that closes the step of many tool calls (explainedTurn): most of markdown in one message.
+const explainedAnswer = `## How the onboarding steps are wired
+
+The flow is **three steps**, rendered by \`page.tsx\` in the order of its \`steps\` array. Each step is a file under \`_steps\`, and the shared progress bar reads the same array.
+
+### What each step owns
+
+1. **Account** asks for the name and email, and validates both before *Next* unlocks.
+2. **Profile** picks the avatar and the language; the language switches the copy at once.
+3. **Welcome** was meant to close the flow, but nothing imports it any more.
+
+- The order lives in one place, so renaming files cannot reorder the flow.
+- The tests assert the order through the rendered headings, not the file names.
+  - That is why the rename is safe.
+
+> Dropping \`welcome.tsx\` changes nothing on screen: the last step already redirects home.
+
+| Step | File | Tested |
+| --- | --- | --- |
+| Account | \`_steps/account.tsx\` | yes |
+| Profile | \`_steps/profile.tsx\` | yes |
+| Welcome | \`_steps/welcome.tsx\` | no |
+
+The order comes from this array:
+
+\`\`\`tsx
+export const steps = [
+  { id: 'account', title: 'Your account', component: AccountStep },
+  { id: 'profile', title: 'Your profile', component: ProfileStep },
+] as const satisfies readonly OnboardingStep[]
+\`\`\`
+
+See the [Next.js routing docs](https://nextjs.org/docs/app/building-your-application/routing) for why \`_steps\` stays out of the routes.`
+
+export const mockChatLines: ChatEventLine[] = ([
+  { id: 'e1', at: at(60), kind: 'user', text: 'Tidy the onboarding steps and run the tests.' },
+  { id: 'e2', at: at(55), kind: 'assistant', text: 'Looking at the steps first.' },
+  { id: 'e3', at: at(50), kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: 'ls apps/web/src/app/onboarding' } },
+  { id: 'e4', at: at(49), kind: 'tool-result', text: '_components\n_hooks\n_steps\nlayout.tsx\npage.tsx', tool: { name: 'Bash', status: 'ok' } },
+  ...commandEvents(48, ['/usage', usageOutput], ['/cost', costOutput], ['/context', contextOutput], ['/mcp', mcpOutput]),
+  ...explainedTurn(40),
+] satisfies TranscriptEvent[]).map((event, index) => ({ cursor: String(index + 1), event: { ...event, id: `e${index + 1}` } }))
 
 /** A long conversation: 100 turns, for the navigator rail beside the transcript. */
 export const mockLongChat: NativeChat = {
@@ -54,14 +89,35 @@ export const mockLongChatLines: ChatEventLine[] = Array.from({ length: 100 }, (_
 }).flat()
 
 /** A slash command and its output, as chatd stores a local command's: the user line, then the result naming it. */
-function commandLines(first: number, ...commands: [string, string][]): ChatEventLine[] {
-  return commands.flatMap(([command, text], index) => {
-    const cursor = first + index * 2
-    return [
-      { cursor: String(cursor), event: { id: `e${cursor}`, at: at(48 - index), kind: 'user', text: command } },
-      { cursor: String(cursor + 1), event: { id: `e${cursor + 1}`, at: at(48 - index), kind: 'assistant', text, command } },
-    ]
-  })
+function commandEvents(seconds: number, ...commands: [string, string][]): TranscriptEvent[] {
+  return commands.flatMap(([command, text], index): TranscriptEvent[] => [
+    { id: '', at: at(seconds - index), kind: 'user', text: command },
+    { id: '', at: at(seconds - index), kind: 'assistant', text, command },
+  ])
+}
+
+// A step of many tool calls, one failing, then the long answer.
+function explainedTurn(seconds: number): TranscriptEvent[] {
+  const call = (name: string, input: unknown): TranscriptEvent => ({ id: '', at: at(seconds), kind: 'tool-call', text: name, tool: { name, input: JSON.stringify(input) } })
+  const done = (name: string, text: string, status: 'ok' | 'error' = 'ok'): TranscriptEvent => ({ id: '', at: at(seconds), kind: 'tool-result', text, tool: { name, status } })
+  return [
+    { id: '', at: at(seconds), kind: 'user', text: 'Before you change anything, explain how the steps are wired.' },
+    call('Read', { file_path: '/Users/operator/Workspaces/canto/apps/web/src/app/onboarding/page.tsx' }),
+    done('Read', "import { steps } from './_steps'\n\nexport default function Onboarding() {\n  return <Stepper steps={steps} />\n}"),
+    call('Read', { file_path: '/Users/operator/Workspaces/canto/apps/web/src/app/onboarding/_steps/index.ts' }),
+    done('Read', "export const steps = [\n  { id: 'account', title: 'Your account', component: AccountStep },\n  { id: 'profile', title: 'Your profile', component: ProfileStep },\n]"),
+    call('Grep', { pattern: 'welcome', path: 'apps/web/src' }),
+    done('Grep', 'apps/web/src/app/onboarding/_steps/welcome.tsx'),
+    call('WebSearch', { query: 'next.js app router private folders underscore' }),
+    done('WebSearch', 'Private folders: prefix a folder with an underscore to opt it out of routing.'),
+    call('WebSearch', { query: 'next.js colocation project organization' }),
+    done('WebSearch', 'Project organization and file colocation.'),
+    call('Bash', { command: 'pnpm --filter web exec tsc --noEmit', description: 'Typecheck the web app' }),
+    done('Bash', "apps/web/src/app/onboarding/_steps/welcome.tsx(3,10): error TS2305: Module './shared' has no exported member 'Hero'.", 'error'),
+    call('Bash', { command: 'git log --oneline -3 -- apps/web/src/app/onboarding', description: 'Recent onboarding commits' }),
+    done('Bash', 'a1b2c3d feat(web): profile step\n9f8e7d6 feat(web): account step\n1234abc feat(web): onboarding shell'),
+    { id: '', at: at(seconds), kind: 'assistant', text: explainedAnswer },
+  ]
 }
 
 // A stand-in for megabrain chatd: each chat keeps its stored lines and its followers, and a turn plays

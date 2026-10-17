@@ -2,7 +2,8 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import { useMemo, type AnchorHTMLAttributes, type ImgHTMLAttributes, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type AnchorHTMLAttributes, type ImgHTMLAttributes, type ReactNode } from 'react'
+import { MenuIconGlyph } from '@/components/menu-icons'
 import { api } from '@/api'
 import { Linked } from '@/chat/path-links'
 import { openableUrl } from '@/lib/external'
@@ -39,6 +40,42 @@ function ExternalLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement
   )
 }
 
+// The fence's language, from the class react-markdown gives its code element (language-tsx).
+function fenceLanguage(node: unknown): string | null {
+  const code = (node as { children?: { properties?: { className?: unknown } }[] } | undefined)?.children?.[0]
+  const classes = code?.properties?.className
+  const found = Array.isArray(classes) ? classes.find((name): name is string => typeof name === 'string' && name.startsWith('language-')) : undefined
+  return found === undefined ? null : found.slice('language-'.length)
+}
+
+/** A fenced block: 12 px mono on its own surface, scrolling sideways, with its language and a copy button. */
+function CodeBlock({ node, children, ...props }: React.ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
+  const pre = useRef<HTMLPreElement>(null)
+  const [copied, setCopied] = useState(false)
+  const language = fenceLanguage(node)
+  const copy = () => {
+    const text = pre.current?.textContent ?? ''
+    void navigator.clipboard.writeText(text.replace(/\n$/, '')).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }, () => {})
+  }
+  return (
+    <div className="group/code relative overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.035]">
+      <div className="flex h-8 items-center justify-between border-b border-white/[0.06] pr-1.5 pl-3 text-[11.5px] text-ink-400">
+        <span className="font-mono">{language ?? 'code'}</span>
+        <button type="button" onClick={copy} title="Copy code" className="flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-white/[0.07] hover:text-ink-200">
+          <MenuIconGlyph icon="copy" />
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre ref={pre} className="overflow-x-auto px-3.5 py-3 font-mono text-[12px] leading-[19px]" {...props}>
+        {children}
+      </pre>
+    </div>
+  )
+}
+
 const components = {
   a: ExternalLink,
   // Text-bearing elements link the file paths in their text (see path-links.tsx).
@@ -47,15 +84,15 @@ const components = {
       <Linked>{children}</Linked>
     </p>
   ),
-  ul: (props: React.ComponentPropsWithoutRef<'ul'>) => <ul className="list-disc space-y-0.5 pl-5" {...props} />,
-  ol: (props: React.ComponentPropsWithoutRef<'ol'>) => <ol className="list-decimal space-y-0.5 pl-5" {...props} />,
+  ul: (props: React.ComponentPropsWithoutRef<'ul'>) => <ul className="list-disc space-y-1.5 pl-6 marker:text-ink-400 [&_ol]:mt-1.5 [&_ul]:mt-1.5" {...props} />,
+  ol: (props: React.ComponentPropsWithoutRef<'ol'>) => <ol className="list-decimal space-y-1.5 pl-6 marker:text-ink-400 [&_ol]:mt-1.5 [&_ul]:mt-1.5" {...props} />,
   li: ({ children, ...props }: React.ComponentPropsWithoutRef<'li'>) => (
-    <li {...props}>
+    <li className="pl-1 [&>p+p]:mt-1.5" {...props}>
       <Linked>{children}</Linked>
     </li>
   ),
   strong: ({ children, ...props }: React.ComponentPropsWithoutRef<'strong'>) => (
-    <strong {...props}>
+    <strong className="font-semibold text-ink-100" {...props}>
       <Linked>{children}</Linked>
     </strong>
   ),
@@ -64,38 +101,41 @@ const components = {
       <Linked>{children}</Linked>
     </em>
   ),
-  h1: (props: React.ComponentPropsWithoutRef<'h1'>) => <h1 className="text-[17px] font-bold text-ink-100" {...props} />,
-  h2: (props: React.ComponentPropsWithoutRef<'h2'>) => <h2 className="text-[16px] font-bold text-ink-100" {...props} />,
-  h3: (props: React.ComponentPropsWithoutRef<'h3'>) => <h3 className="text-[15px] font-bold text-ink-100" {...props} />,
+  h1: (props: React.ComponentPropsWithoutRef<'h1'>) => <h1 className="pt-2 text-[19px] leading-[26px] font-semibold tracking-[-0.01em] text-ink-100" {...props} />,
+  h2: (props: React.ComponentPropsWithoutRef<'h2'>) => <h2 className="pt-2 text-[16.5px] leading-[24px] font-semibold tracking-[-0.01em] text-ink-100" {...props} />,
+  h3: (props: React.ComponentPropsWithoutRef<'h3'>) => <h3 className="pt-1 text-[15px] leading-[22px] font-semibold text-ink-100" {...props} />,
+  h4: (props: React.ComponentPropsWithoutRef<'h4'>) => <h4 className="text-[14px] font-semibold text-ink-100" {...props} />,
   blockquote: (props: React.ComponentPropsWithoutRef<'blockquote'>) => (
-    <blockquote className="border-l-2 border-white/15 pl-3 text-ink-400 italic" {...props} />
+    <blockquote className="space-y-2 border-l-[3px] border-white/15 pl-3.5 text-ink-300" {...props} />
   ),
-  code: ({ className, children, ...props }: React.ComponentPropsWithoutRef<'code'>) =>
+  hr: (props: React.ComponentPropsWithoutRef<'hr'>) => <hr className="my-4 border-white/10" {...props} />,
+  code: ({ node: _node, className, children, ...props }: React.ComponentPropsWithoutRef<'code'> & { node?: unknown }) =>
     className?.includes('language-') ? (
-      <code className={`${className} font-mono text-[12.5px] text-ink-100`} {...props}>
+      <code className={`${className} font-mono text-ink-100`} {...props}>
         {children}
       </code>
     ) : (
-      <code className="rounded-md bg-white/[0.08] px-1 py-0.5 font-mono text-[13px] text-ink-100" {...props}>
+      <code className="rounded-[5px] border border-white/[0.07] bg-white/[0.06] px-[5px] py-px font-mono text-[12.5px] text-ink-100 [pre_&]:border-0 [pre_&]:bg-transparent [pre_&]:p-0 [pre_&]:text-[12px]" {...props}>
         <Linked>{children}</Linked>
       </code>
     ),
-  pre: (props: React.ComponentPropsWithoutRef<'pre'>) => (
-    <pre className="my-1.5 overflow-x-auto rounded-xl bg-white/[0.06] px-3 py-2" {...props} />
-  ),
+  pre: CodeBlock,
+  // A wide table scrolls inside its frame rather than widening the message.
   table: (props: React.ComponentPropsWithoutRef<'table'>) => (
-    <table className="my-1.5 border-collapse text-[13px]" {...props} />
+    <div className="w-fit max-w-full overflow-x-auto rounded-xl border border-white/[0.08]">
+      <table className="border-collapse text-[13px] leading-[19px]" {...props} />
+    </div>
   ),
   th: (props: React.ComponentPropsWithoutRef<'th'>) => (
-    <th className="border border-white/10 px-2 py-1 text-left font-semibold text-ink-200" {...props} />
+    <th className="border-b border-white/[0.08] bg-white/[0.04] px-3 py-2 text-left font-semibold text-ink-200 [&:not(:last-child)]:border-r" {...props} />
   ),
   td: ({ children, ...props }: React.ComponentPropsWithoutRef<'td'>) => (
-    <td className="border border-white/10 px-2 py-1 text-ink-300" {...props}>
+    <td className="border-white/[0.06] px-3 py-2 align-top text-ink-300 [&:not(:last-child)]:border-r [tr:not(:last-child)_&]:border-b" {...props}>
       <Linked>{children}</Linked>
     </td>
   ),
   input: (props: React.ComponentPropsWithoutRef<'input'>) =>
-    props.type === 'checkbox' ? <input {...props} disabled className="accent-accent" /> : <input {...props} />,
+    props.type === 'checkbox' ? <input {...props} disabled className="mr-1.5 accent-accent" /> : <input {...props} />,
 }
 
 // A sent message's image slots (user-images.ts imageSlot): a span whose data-image survives sanitizing.
@@ -123,7 +163,7 @@ export function MarkdownText({ text, className = '', image, picture, elements }:
           },
         }
   return (
-    <div className={`space-y-1.5 text-[14px] ${className}`}>
+    <div className={`space-y-3 text-[14px] ${className}`}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, image === undefined ? defaultSchema : imageSlotSchema]]} components={slotted}>
         {text}
       </ReactMarkdown>

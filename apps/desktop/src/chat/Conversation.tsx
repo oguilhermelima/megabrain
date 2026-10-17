@@ -11,6 +11,7 @@ import { deriveConversation, type DerivedConversation } from '@/chat/conversatio
 import { mergeEvents, relayedPreview, relayedTarget, thoughtLabel, type ConversationItem, type LiveRow, type ToolStatus } from '@/chat/conversation-model'
 import { ToolIcon } from '@/chat/ToolIcon'
 import { groupToolRuns, toolDetail, toolGroupSummary, toolName, type DisplayItem, type ToolItem as ToolRow } from '@/chat/tool-groups'
+import { clipText, toolLabel, toolRunLine } from '@/chat/tool-sentence'
 import { subagentGroupSummary, subagentSummary, visibleSteps, type SubagentItem, type SubagentState } from '@/chat/subagent-model'
 import { formatElapsed } from '@/native-chat/chat-model'
 import { MarkdownText } from '@/chat/markdown'
@@ -158,22 +159,58 @@ function prettyInput(input: string): string {
   }
 }
 
+/** Where a call or a run stands: a spinner while it runs, a check once it finished, a warning when it failed. */
+function StateMark({ state }: { state: 'running' | 'done' | 'failed' }) {
+  if (state === 'running') return <span aria-label="running" className="inline-block size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-ink-600 border-t-ink-300" />
+  return (
+    <svg viewBox="0 0 16 16" width={13} height={13} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-label={state === 'failed' ? 'failed' : 'finished'} className={`shrink-0 ${state === 'failed' ? 'text-warn' : 'text-ok/80'}`}>
+      <path d={state === 'failed' ? 'M8 2.5 14 13H2ZM8 6.5v3M8 11.3v.2' : 'm3.5 8.5 3 3 6-7'} />
+    </svg>
+  )
+}
+
+const callState = (status: ToolRow['status']) => (status === 'running' ? 'running' : status === 'error' ? 'failed' : 'done')
+
+/** A call's input or output, cut to a few lines until asked for the rest. */
+function CallText({ label, text, failed = false }: { label: string; text: string; failed?: boolean }) {
+  const [full, setFull] = useState(false)
+  const clip = clipText(text)
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.03]">
+      <div className={`px-3 pt-2 text-[11px] font-semibold tracking-[0.04em] uppercase ${failed ? 'text-warn' : 'text-ink-500'}`}>{label}</div>
+      <pre className={`overflow-auto px-3 pt-1 pb-2.5 font-mono text-[12px] leading-[18px] whitespace-pre-wrap text-ink-200 [overflow-wrap:anywhere] ${full ? 'max-h-96' : ''}`}>
+        <LinkedText text={full ? text : clip.shown} />
+      </pre>
+      {clip.clipped && (
+        <button type="button" onClick={() => setFull((value) => !value)} className="w-full border-t border-white/[0.05] px-3 py-1.5 text-left text-[12px] text-ink-400 hover:bg-white/[0.04] hover:text-ink-200">
+          {full ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** One call: its tool and a short label; opened, its input and what came back. */
 function ToolItem({ item }: { item: ToolRow }) {
   const [open, setOpen] = useState(false)
   const input = item.call.tool?.input
-  const summary = toolDetail(item)
+  const name = toolName(item)
+  const label = toolLabel(name, input) || toolDetail(item)
   const links = useContext(PathLinksContext)
   // The row toggles open, so its path opens through a button of its own beside it.
-  const target = links === null ? null : firstPath(summary, links.root)
+  const target = links === null ? null : firstPath(toolDetail(item), links.root)
   const onContextMenu = (event: ReactMouseEvent) =>
     markMenu(event, { tool: { command: toolCommand(input), input: input === undefined ? null : prettyInput(input), output: item.result?.text ?? null } })
   return (
-    <li onContextMenu={onContextMenu} className="rounded-2xl border border-white/[0.06] bg-white/[0.03]">
-      <div className="flex items-center pr-2">
-        <button type="button" onClick={() => setOpen((value) => !value)} className="flex min-w-0 flex-1 items-center gap-2 px-3.5 py-2 text-left text-[13px]">
-          <ToolIcon name={toolName(item)} status={item.status} size={13} />
-          <span className="shrink-0 font-semibold text-ink-300">{toolName(item)}</span>
-          <span title={summary} className="truncate font-mono text-[12.5px] text-ink-400">{summary}</span>
+    <li onContextMenu={onContextMenu}>
+      <div className="flex items-center gap-1">
+        <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1 text-left text-[13px] hover:bg-white/[0.04]">
+          <ToolIcon name={name} status={item.status} size={13} />
+          <span className="shrink-0 text-ink-300">{name}</span>
+          <span title={toolDetail(item)} className="min-w-0 truncate font-mono text-[12px] text-ink-400">{label}</span>
+          <span className="ml-auto flex shrink-0 items-center pl-2">
+            <StateMark state={callState(item.status)} />
+          </span>
         </button>
         {links !== null && target !== null && (
           <button
@@ -187,51 +224,37 @@ function ToolItem({ item }: { item: ToolRow }) {
         )}
       </div>
       {open && (
-        <div className="space-y-2 px-3.5 pb-3">
-          {input !== undefined && (
-            <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] text-ink-200">
-              <LinkedText text={prettyInput(input)} />
-            </pre>
-          )}
-          {item.result !== null && (
-            <pre className="max-h-48 overflow-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] text-ink-200">
-              <LinkedText text={item.result.text} />
-            </pre>
-          )}
+        <div className="mt-1 mb-2 ml-7 space-y-2">
+          {input !== undefined && input !== '' && <CallText label="Input" text={prettyInput(input)} />}
+          {item.result !== null && item.result.text !== '' && <CallText label={item.status === 'error' ? 'Error' : 'Output'} text={item.result.text} failed={item.status === 'error'} />}
+          {item.status === 'running' && <p className="text-[12px] text-ink-400">Running…</p>}
         </div>
       )}
     </li>
   )
 }
 
+/** A run of calls as one sentence; opened, one row per call. */
 function ToolGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { type: 'tool-group' }>; onOpenChat: OpenChat | undefined }) {
   const [open, setOpen] = useState(false)
+  const line = toolRunLine(group)
   const summary = toolGroupSummary(group)
-  const running = summary.state === 'running'
+  const first = group.items.find((item) => item.type === 'tool')
   return (
     <li className="max-w-[85%]">
-      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex max-w-full items-center gap-2 rounded-full px-1 py-0.5 text-left text-[13px] text-ink-400 hover:text-ink-200">
-        <span className="w-3 shrink-0 text-[10px]">{open ? '▾' : '▸'}</span>
-        {running ? (
-          <>
-            <ToolIcon name={summary.tool} status="running" size={13} />
-            <span className="shrink-0 font-semibold text-ink-200">Working: {summary.tool}</span>
-            <span title={summary.detail} className="min-w-0 truncate font-mono text-[12.5px]">{summary.detail}</span>
-            {summary.earlier > 0 && <span className="shrink-0">· {summary.earlier} earlier</span>}
-          </>
-        ) : (
-          <>
-            <ToolIcon name={summary.counts[0]?.name ?? summary.tool} status={summary.errors > 0 ? 'error' : 'ok'} size={13} />
-            <span className="shrink-0 font-semibold text-ink-300">
-              Ran {summary.total} {summary.total === 1 ? 'tool' : 'tools'}:
-            </span>
-            <span className="min-w-0 truncate">{summary.counts.map((entry) => `${entry.count} ${entry.name}`).join(', ')}</span>
-            {summary.errors > 0 && <span className="shrink-0 font-semibold text-bad">· {summary.errors} failed</span>}
-          </>
-        )}
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="group/run flex max-w-full items-center gap-2 rounded-lg py-1 pr-2 pl-0.5 text-left text-[13px] text-ink-300 hover:text-ink-100">
+        <ToolIcon name={first?.type === 'tool' ? toolName(first) : summary.tool} status={line.state === 'running' ? 'running' : 'ok'} size={13} />
+        <span className="min-w-0 truncate">{line.sentence}</span>
+        {/* While it runs, what is running now. */}
+        {line.state === 'running' && summary.detail !== '' && <span title={summary.detail} className="min-w-0 truncate font-mono text-[12px] text-ink-400">{summary.detail}</span>}
+        {line.failed > 0 && line.state !== 'running' && <span className="shrink-0 text-warn">· {line.failed} failed</span>}
+        <StateMark state={line.state} />
+        <svg viewBox="0 0 16 16" width={11} height={11} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`shrink-0 text-ink-500 transition-transform group-hover/run:text-ink-300 ${open ? 'rotate-90' : ''}`}>
+          <path d="m6 3.5 4.5 4.5L6 12.5" />
+        </svg>
       </button>
       {open && (
-        <ol className="mt-1.5 ml-5 space-y-1.5">
+        <ol className="mt-1 ml-[7px] space-y-0.5 border-l border-white/[0.08] pl-2.5">
           {group.items.map((item) => (
             <Item key={item.type === 'tool' ? item.id : item.event.id} item={item} onOpenChat={onOpenChat} />
           ))}
