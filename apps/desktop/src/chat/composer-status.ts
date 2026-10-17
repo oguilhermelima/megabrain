@@ -73,7 +73,7 @@ export function modelName(id: string): string {
 export function modelLabel(id: string | null, effort: string | null | undefined): string {
   if (id === null || id === '') return 'Default'
   const name = modelName(id)
-  return effort === null || effort === undefined || effort === '' ? name : `${name} · ${effort}`
+  return effort === null || effort === undefined || effort === '' ? name : `${name} · ${effortName(effort)}`
 }
 
 function compareVersions(left: number[], right: number[]): number {
@@ -226,7 +226,7 @@ export function modelDescriptor(entry: Models[number], agent: string | null): st
 
 /** What the model picker shows: name, window and effort, each only when known. */
 export function pickerLabel(name: string | null, window: number | null, effort: string | null | undefined): string {
-  return [name ?? 'Default', window === null ? null : formatTokens(window), effort === undefined || effort === '' ? null : effort].filter((part) => part !== null).join(' · ')
+  return [name ?? 'Default', effort == null || effort === '' ? null : effortName(effort), window === null ? null : formatTokens(window)].filter((part) => part !== null).join(' · ')
 }
 
 const windowChoice = (window: number | null): ContextChoice => (window !== null && window >= 1_000_000 ? '1m' : 'standard')

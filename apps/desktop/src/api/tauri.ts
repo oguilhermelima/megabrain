@@ -344,6 +344,7 @@ export function createTauriApi(): DesktopApi {
     startChat: ({ agent, model, effort, cwd, parts }) =>
       cliJson(['chat', 'start', '--agent', agent, ...(model === undefined ? [] : ['--model', model]), ...(effort === undefined ? [] : ['--effort', effort]), '--cwd', cwd, ...(parts === undefined ? [] : ['--parts', JSON.stringify(parts)]), '--json'], nativeChatSchema),
     sendChat: (chatId, parts, options) => cliJson(['chat', 'send', chatId, '--parts', JSON.stringify(parts), ...(options?.fresh === true ? ['--fresh'] : []), '--json'], z.looseObject({ queued: chatQueueItemSchema.nullable() })),
+    resumeChat: async (chatId) => void (await cliText(['chat', 'resume', chatId, '--json'])),
     chatQueue: (chatId, change) =>
       cliJson(
         [

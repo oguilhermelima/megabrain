@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -33,7 +33,7 @@ function sandbox() {
   const env = { root, state: join(root, "state"), cwd: join(root, "project"), bin: join(root, "bin"), tui: join(root, "tui"), capture: join(root, "capture.jsonl"), server: `mbtest-${randomUUID().slice(0, 8)}` };
   for (const dir of [env.state, env.cwd, env.bin, env.tui]) mkdirSync(dir, { recursive: true, mode: 0o700 });
   servers.push(env.server);
-  writeFileSync(join(env.bin, "tmux"), `#!/bin/sh\nif [ "$1" = "-L" ] && [ "$2" = "megabrain-app" ]; then shift 2; exec ${REAL_TMUX} -L ${env.server} "$@"; fi\nexec ${REAL_TMUX} "$@"\n`);
+  writeFileSync(join(env.bin, "tmux"), `#!/bin/sh\nif [ "$1" = "-L" ] && [ "$2" = "megabrain-app" ]; then shift 2; for arg in "$@"; do if [ "$arg" = "capture-pane" ]; then printf '  ❯ unsent words\\n'; exit 0; fi; done; exec ${REAL_TMUX} -L ${env.server} "$@"; fi\nexec ${REAL_TMUX} "$@"\n`);
   chmodSync(join(env.bin, "tmux"), 0o700);
   // The TUI stand-in: a process named claude that holds its session until killed.
   writeFileSync(join(env.tui, "claude"), `#!${process.execPath}\nsetInterval(() => {}, 1000);\n`);
@@ -163,7 +163,7 @@ describe("the processes that hold an agent session", () => {
 });
 
 describe("one live agent process per chat", () => {
-  test("switching a terminal chat back to chat ends every app terminal resuming its session before the agent resumes", async () => {
+  test("switching a terminal chat back to chat ends all three app terminals resuming its session before the agent resumes", async () => {
     const env = sandbox();
     fakeClaude(env);
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
@@ -171,6 +171,7 @@ describe("one live agent process per chat", () => {
     upsertConversation(env.state, `claude:${chat.agentSessionId}`, { owner: "app-chat", cwd: env.cwd, aliases: { chatId: chat.id, tmux: "megabrain-app:mb-app-aliased", pid: null, dispatchId: null }, createdAt: chat.createdAt, hidden: false });
     tuiInTmux(env, "mb-app-aliased", chat.agentSessionId ?? "");
     tuiInTmux(env, "mb-app-earlier", chat.agentSessionId ?? "");
+    tuiInTmux(env, "mb-app-oldest", chat.agentSessionId ?? "");
     const daemon = await daemonFor(env);
 
     await daemon.handle({ operation: "mode", id: chat.id, mode: "chat" });
@@ -180,9 +181,65 @@ describe("one live agent process per chat", () => {
 
     expect(hasSession(env, "mb-app-aliased")).toBe(false);
     expect(hasSession(env, "mb-app-earlier")).toBe(false);
+    expect(hasSession(env, "mb-app-oldest")).toBe(false);
     expect(spawned(env)).toHaveLength(1);
     const holders = await liveSessionHolders("claude", chat.agentSessionId ?? "", { home: env.root, processes: adapterOf(env) });
     expect(holders.map((holder) => holder.pid)).toEqual([spawned(env)[0]?.pid ?? -1]);
+  });
+
+  test("a send closes idle app-owned duplicate holders and resumes the same session", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const chat = record(env);
+    await new ChatStore(env.state).put(chat);
+    upsertConversation(env.state, `claude:${chat.agentSessionId}`, { owner: "app-chat", cwd: env.cwd, aliases: { chatId: chat.id, tmux: null, pid: null, dispatchId: null }, createdAt: chat.createdAt, hidden: false });
+    tuiInTmux(env, "mb-app-duplicate-a", chat.agentSessionId ?? "");
+    tuiInTmux(env, "mb-app-duplicate-b", chat.agentSessionId ?? "");
+    const daemon = await daemonFor(env);
+
+    await daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "continue" }] });
+    await stateOf(daemon, chat.id, "idle");
+
+    expect(hasSession(env, "mb-app-duplicate-a")).toBe(false);
+    expect(hasSession(env, "mb-app-duplicate-b")).toBe(false);
+    expect(spawned(env)).toHaveLength(1);
+    expect(spawned(env)[0]?.argv).toContain(chat.agentSessionId);
+  });
+
+  test("a working app-owned holder keeps the chat working until its turn finishes, then resumes", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const chat = record(env);
+    await new ChatStore(env.state).put(chat);
+    tuiInTmux(env, "mb-app-working", chat.agentSessionId ?? "");
+    const path = claudeLogPath(env.root, env.cwd, chat.agentSessionId ?? "");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify({ type: "user", uuid: "u1", timestamp: new Date().toISOString(), message: { role: "user", content: "still working" } })}\n`);
+    const daemon = await daemonFor(env);
+
+    await daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "continue" }] });
+    await stateOf(daemon, chat.id, "working");
+    expect(spawned(env)).toHaveLength(0);
+    writeFileSync(path, `${JSON.stringify({ type: "assistant", uuid: "a1", timestamp: new Date().toISOString(), message: { id: "m1", stop_reason: "end_turn", content: [{ type: "text", text: "done" }] } })}\n`);
+    await stateOf(daemon, chat.id, "idle");
+
+    expect(hasSession(env, "mb-app-working")).toBe(false);
+    expect(spawned(env)).toHaveLength(1);
+    expect(spawned(env)[0]?.argv).toContain(chat.agentSessionId);
+  });
+
+  test("switching back to chat records a non-empty TUI composer line before closing its terminal", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
+    await new ChatStore(env.state).put(chat);
+    tuiInTmux(env, "mb-app-draft", chat.agentSessionId ?? "");
+    const daemon = await daemonFor(env);
+
+    await daemon.handle({ operation: "mode", id: chat.id, mode: "chat" });
+    await stateOf(daemon, chat.id, "idle");
+
+    expect(await eventsOf(daemon, chat.id)).toContainEqual(expect.objectContaining({ kind: "system", text: "Unsent text from the terminal: unsent words" }));
   });
 
   test("a resume is refused while a process the app does not own holds the session, and nothing is spawned", async () => {
@@ -190,7 +247,7 @@ describe("one live agent process per chat", () => {
     fakeClaude(env);
     const chat = record(env);
     await new ChatStore(env.state).put(chat);
-    tuiOutside(env, chat.agentSessionId ?? "");
+    const outside = tuiOutside(env, chat.agentSessionId ?? "");
     const daemon = await daemonFor(env);
     await until(() => liveSessionHolders("claude", chat.agentSessionId ?? "", { home: env.root, processes: adapterOf(env) }), (found) => found.length === 1, "outside holder");
 
@@ -198,6 +255,8 @@ describe("one live agent process per chat", () => {
     const settled = await until(() => daemon.store.get(chat.id), (current) => current?.state === "suspended" && current.error !== null, "refused resume");
 
     expect(settled?.error ?? "").toContain("already open in another process");
+    expect(settled?.error ?? "").toContain(`pid ${outside.pid}`);
+    expect(settled?.error ?? "").toContain(`cwd ${realpathSync(env.cwd)}`);
     expect(spawned(env)).toHaveLength(0);
     await expect(daemon.handle({ operation: "mode", id: chat.id, mode: "terminal" })).rejects.toThrow("already open in another process");
   });

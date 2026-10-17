@@ -50,6 +50,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
   const [target, setTarget] = useState<NativeChat['mode'] | null>(null)
   const opening = useRef<Promise<{ command: string[] | null }> | null>(null)
   const [startFresh, setStartFresh] = useState(false)
+  const [retryingResume, setRetryingResume] = useState(false)
   const [exited, setExited] = useState<number | null | undefined>(undefined)
   const toggle = modeToggle(chat)
   // Asked for the terminal mid-turn: the pane shows the terminal view and waits for the turn to end.
@@ -103,6 +104,21 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     )
 
   const busy = chat.state === 'working' || chat.state === 'waiting-approval'
+  const heldElsewhere = chat.error?.includes('already open in another process') === true
+
+  const retryResume = async () => {
+    setRetryingResume(true)
+    setStartFresh(false)
+    setActionError(null)
+    try {
+      await api.resumeChat(chat.id)
+      announceAction()
+    } catch (caught) {
+      setActionError(caught)
+    } finally {
+      setRetryingResume(false)
+    }
+  }
 
   // The message shows at once and the chat's user event confirms it; a failed send takes it back.
   // While a turn runs it waits in the queue instead, which the strip above the composer shows.
@@ -319,7 +335,12 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
       )}
       {resumable(chat.state) && chat.error != null && (
         <div className="mx-8 mt-3 flex items-center gap-3 text-[13px] text-warn">
-          <span className="min-w-0 flex-1 truncate" title={chat.error}>Could not resume: {chat.error}</span>
+          <span className={`min-w-0 flex-1 ${heldElsewhere ? 'break-words' : 'truncate'}`} title={chat.error}>Could not resume: {chat.error}</span>
+          {heldElsewhere && (
+            <button type="button" disabled={retryingResume} onClick={() => void retryResume()} className="shrink-0 rounded-full px-3 py-1 text-ink-100 hover:bg-white/[0.07] disabled:opacity-50">
+              {retryingResume ? 'Retrying…' : 'Retry'}
+            </button>
+          )}
           <button type="button" onClick={() => setStartFresh((current) => !current)} className="shrink-0 rounded-full px-3 py-1 text-ink-100 hover:bg-white/[0.07]">
             {startFresh ? 'Starting fresh with your next message' : 'Start fresh'}
           </button>

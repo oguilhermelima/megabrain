@@ -102,6 +102,12 @@ export async function executeChat(args: readonly string[], environment: Environm
       value = await callChatd(dir, { operation: "send", id, parts: partsJson(parsed.value), ...(fresh ? { fresh } : {}) }, environment, processAdapter);
       return ok(json ? argsJson(value) : "");
     }
+    if (verb === "resume") {
+      const [id, ...tail] = rest;
+      if (!id || tail.length !== 1 || tail[0] !== "--json") throw new Error("Usage: megabrain chat resume <id> --json");
+      value = await callChatd(dir, { operation: "resume", id }, environment, processAdapter);
+      return ok(argsJson(value));
+    }
     if (verb === "queue") return ok(argsJson(await callChatd(dir, queueRequest(rest), environment, processAdapter)));
     if (verb === "interrupt" || verb === "stop") {
       const [id, ...tail] = rest;

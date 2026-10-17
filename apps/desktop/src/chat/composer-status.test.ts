@@ -111,7 +111,7 @@ describe('modelName', () => {
 
 describe('modelLabel', () => {
   test('the name, with the effort when set', () => {
-    expect(modelLabel('claude-opus-5-5', 'high')).toBe('Opus 5.5 · high')
+    expect(modelLabel('claude-opus-5-5', 'medium')).toBe('Opus 5.5 · Medium')
     expect(modelLabel('claude-opus-5-5', undefined)).toBe('Opus 5.5')
     expect(modelLabel('gpt-6-luna', null)).toBe('GPT-6 Luna')
   })
@@ -119,6 +119,16 @@ describe('modelLabel', () => {
   test('an unknown model is Default', () => {
     expect(modelLabel(null, undefined)).toBe('Default')
     expect(modelLabel('', 'high')).toBe('Default')
+  })
+})
+
+describe('pickerLabel', () => {
+  test('shows the selected effort with the model and context window', () => {
+    expect(pickerLabel('Opus 5.5', 1_000_000, 'medium')).toBe('Opus 5.5 · Medium · 1M')
+  })
+
+  test('omits effort when no effort is selected', () => {
+    expect(pickerLabel('Haiku 4.5', 200_000, undefined)).toBe('Haiku 4.5 · 200k')
   })
 })
 
@@ -502,9 +512,9 @@ describe('modelHint', () => {
 
 describe('pickerLabel', () => {
   test('name, window and effort, each only when known', () => {
-    expect(pickerLabel('Opus 5.5', 1_000_000, 'high')).toBe('Opus 5.5 · 1M · high')
+    expect(pickerLabel('Opus 5.5', 1_000_000, 'high')).toBe('Opus 5.5 · High · 1M')
     expect(pickerLabel('Opus 5.5', 200_000, undefined)).toBe('Opus 5.5 · 200k')
-    expect(pickerLabel('GPT-6 Luna', null, 'medium')).toBe('GPT-6 Luna · medium')
+    expect(pickerLabel('GPT-6 Luna', null, 'medium')).toBe('GPT-6 Luna · Medium')
     expect(pickerLabel(null, 200_000, undefined)).toBe('Default · 200k')
   })
 })
@@ -571,7 +581,7 @@ describe('effort', () => {
   })
 
   test('the label carries the effort picked', () => {
-    expect(pickerLabel('Opus 5.5', 1_000_000, 'high')).toBe('Opus 5.5 · 1M · high')
+    expect(pickerLabel('Opus 5.5', 1_000_000, 'high')).toBe('Opus 5.5 · High · 1M')
   })
 
   test('changing only the effort keeps the prompt cache, so it never asks first', () => {

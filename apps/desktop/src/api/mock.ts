@@ -375,6 +375,7 @@ export function createMockApi(): DesktopApi {
       }, 1800)
       return sent
     },
+    resumeChat: async () => {},
     chatQueue: async (chatId, change) => changeMockQueue(chatId, change),
     interruptChat: async (chatId) => interruptMockChat(chatId),
     answerApproval: async (chatId, _approvalId, decision) => answerMockApproval(chatId, decision),

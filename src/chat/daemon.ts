@@ -85,8 +85,20 @@ async function discardStaleState(stateDir: string, options: { pid: boolean }): P
   if (options.pid) { try { await unlink(chatPid(stateDir)); } catch { /* no stale pid */ } }
 }
 function heldMessage(chat: Chat, holders: readonly SessionHolder[]): string {
-  const where = holders.map((holder) => holder.tmuxSession === null ? `pid ${holder.pid}` : `tmux session ${holder.tmuxSession}, pid ${holder.pid}`).join("; ");
-  return `${chat.agent} session ${chat.agentSessionId ?? ""} is already open in another process (${where}); close it there, or start fresh`;
+  const where = holders.map((holder) => {
+    const place = holder.tmuxSession === null ? "terminal process" : `tmux session ${holder.tmuxSession}`;
+    return `${place}, pid ${holder.pid}${holder.cwd === null ? "" : `, cwd ${holder.cwd}`}`;
+  }).join("; ");
+  return `${chat.agent} session ${chat.agentSessionId ?? ""} is already open in another process (${where}); close it there and Retry, or start fresh`;
+}
+class SessionHeldError extends Error {
+  constructor(chat: Chat, holders: readonly SessionHolder[]) { super(heldMessage(chat, holders)); }
+}
+function unsentTerminalText(pane: string): string | null {
+  const lines = pane.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").split(/\r?\n/);
+  const prompt = lines.map((line) => /^\s*[❯›>]\s?(.*)$/.exec(line)).filter((match) => match !== null).at(-1);
+  const text = prompt?.[1] ?? "";
+  return text.trim() === "" ? null : text;
 }
 /** Stops an agent this daemon ran and waits (bounded) until it is gone, so nothing checks for holders while it still runs. */
 async function stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
@@ -253,6 +265,7 @@ export class ChatDaemon {
         case "handover": return await this.handover();
         case "start": return await this.startChat(request);
         case "send": return await this.send(text(request.id), validateParts(request.parts), request.fresh === true);
+        case "resume": return await this.resume(text(request.id));
         case "queue": return await this.queueOperation(request);
         case "interrupt": return await this.interrupt(text(request.id));
         case "stop": return await this.stop(text(request.id));
@@ -366,6 +379,18 @@ export class ChatDaemon {
     if (chat.state === "working" || chat.state === "waiting-approval") return { queued: await this.enqueue(chat, parts) };
     await this.deliver(chat, parts, { fresh });
     return { queued: null };
+  }
+
+  /** Retries a refused resume after the holder is gone, without replaying the message already shown in the transcript. */
+  private async resume(id: string): Promise<Chat> {
+    if (this.draining) throw new Error(DRAINING);
+    const chat = await this.requireChat(id);
+    if (chat.mode !== "chat" || (chat.state !== "suspended" && chat.state !== "stopped") || chat.agentSessionId === null) throw new Error("chat is not resumable");
+    chat.state = "starting";
+    chat.error = null;
+    await this.save(chat);
+    void this.runAgent(chat).catch((error) => this.resumeFailed(id, error));
+    return chat;
   }
 
   /** Shows the message and makes it the next turn: resuming the agent, starting it, or writing to it once it is free. */
@@ -493,12 +518,12 @@ export class ChatDaemon {
     return item;
   }
 
-  /** A resume that cannot start leaves the chat suspended with the reason, and drops the message it carried. */
+  /** A holder refusal keeps the pending message for Retry; other failed resumes drop it as before. */
   private async resumeFailed(id: string, error: unknown): Promise<void> {
     const child = this.children.get(id);
     if (child) { this.children.delete(id); child.kill("SIGTERM"); }
     this.clearStartTimer(id);
-    this.queues.delete(id);
+    if (!(error instanceof SessionHeldError)) this.queues.delete(id);
     const chat = await this.store.get(id);
     if (!chat || chat.state === "suspended" && chat.error !== null) return;
     chat.state = "suspended";
@@ -512,9 +537,7 @@ export class ChatDaemon {
     // One agent per chat: one this daemon still runs for it goes before the next starts, never left behind unowned.
     const previous = this.children.get(chat.id);
     if (previous) { this.children.delete(chat.id); await stopChild(previous); }
-    // Resuming next to another live process would give the session two writers answering different turns.
-    const holders = checked ? [] : await this.foreignHolders(chat);
-    if (holders.length > 0) throw new Error(heldMessage(chat, holders));
+    if (!checked && chat.agentSessionId !== null) await this.clearTerminalHoldersBeforeResume(chat);
     const invocation = await chatProtocolAdapters[chat.agent].prepare(chat, this.stateDir);
     const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...scrubAgentEnvironment({ ...process.env, ...this.environment }), MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });
     this.children.set(chat.id, child);
@@ -586,6 +609,31 @@ export class ChatDaemon {
       if (current.state === "starting" && (this.queues.get(chat.id)?.length ?? 0) === 0) { current.state = "idle"; await this.save(current); }
       await this.drain(chat.id);
     }
+  }
+
+  /** Closes every app TUI for this chat before resume; a live turn gets to finish first. */
+  private async clearTerminalHoldersBeforeResume(chat: Chat): Promise<void> {
+    const appHolder = (holder: SessionHolder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true;
+    let holders = await this.foreignHolders(chat);
+    const foreign = holders.filter((holder) => !appHolder(holder));
+    if (foreign.length > 0) throw new SessionHeldError(chat, foreign);
+    if (!holders.some(appHolder)) return;
+
+    while (await this.logTurnOpen(chat)) {
+      holders = await this.foreignHolders(chat);
+      const activeAppHolders = holders.filter(appHolder);
+      const activeForeign = holders.filter((holder) => !appHolder(holder));
+      if (activeForeign.length > 0) throw new SessionHeldError(chat, activeForeign);
+      if (activeAppHolders.length === 0) break;
+      if (chat.state !== "working") { chat.state = "working"; await this.save(chat); }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    const ended = await this.endAppTerminals(chat);
+    const remaining = (await this.foreignHolders(chat)).filter((holder) => !ended.has(holder.pid));
+    if (remaining.length > 0) throw new SessionHeldError(chat, remaining);
+    await this.importTerminalTurns(chat);
+    if (chat.state !== "starting") { chat.state = "starting"; await this.save(chat); }
   }
 
   private async handleClaudeStream(id: string, streamEvent: Record<string, unknown>): Promise<void> {
@@ -1048,15 +1096,20 @@ export class ChatDaemon {
   private async endAppTerminals(chat: Chat): Promise<ReadonlySet<number>> {
     const alias = this.entryOf(chat.id)?.[1].aliases.tmux ?? null;
     const [server, aliased] = (alias ?? "").split(":");
-    const own = server === OWNED_TMUX_SERVER && aliased !== undefined && aliased.startsWith("mb-") ? aliased : null;
+    const own = server === OWNED_TMUX_SERVER && aliased !== undefined && aliased.startsWith(APP_SESSION_PREFIX) ? aliased : null;
     const panes = own === null ? undefined : await this.panesOf(own);
-    const ended = (await this.foreignHolders(chat, panes)).filter((holder) => holder.tmuxSession?.startsWith("mb-") === true);
+    const ended = (await this.foreignHolders(chat, panes)).filter((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
     const sessions = new Set(ended.flatMap((holder) => holder.tmuxSession === null ? [] : [holder.tmuxSession]));
     if (own !== null) sessions.add(own);
     const pids = new Set(ended.map((holder) => holder.pid));
     if (sessions.size === 0) return pids;
     const tmux = ownedTmuxProcess(this.processes());
     for (const session of sessions) {
+      const capture = await tmux.run("tmux", ["capture-pane", "-p", "-S", "-30", "-t", `=${session}`]);
+      if (capture.kind === "ok") {
+        const draft = unsentTerminalText(capture.value.stdout);
+        if (draft !== null) await this.publish(chat, event("system", `Unsent text from the terminal: ${draft}`));
+      }
       await tmux.run("tmux", ["kill-session", "-t", `=${session}`]);
       try { if (session.startsWith(APP_SESSION_PREFIX)) forgetAppTerminal(this.stateDir, session); } catch { /* a listing aid */ }
     }

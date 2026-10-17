@@ -290,6 +290,7 @@ closes. Start a chat in a project folder, send text or local image parts, and fo
 ```sh
 megabrain chat start --agent claude --cwd ~/code/api --model claude-haiku-5-5 --effort low --json
 megabrain chat send <id> --parts '[{"type":"text","text":"Explain this project"}]'
+megabrain chat resume <id> --json # retry a refused resume after its holder is gone
 megabrain chat events <id> --follow --json
 ```
 
@@ -299,7 +300,12 @@ URL without downloading remote content.
 
 A chat whose agent process is gone (daemon restart, app update, reboot, crash, `chat stop <id>`) is
 `suspended`, not lost: its record keeps the agent's session id and the next `chat send` respawns the
-agent with resume. If that resume fails the chat stays suspended with the error;
+agent with resume. Before resuming, the daemon closes idle app-owned terminal sessions for that chat;
+if one is still answering, the chat stays working until that turn ends. Any text left in the terminal
+composer is recorded as a system notice before the terminal closes. A resume held by another process
+stays suspended and reports its location, pid and working directory; close it and run
+`megabrain chat resume <id> --json` to retry, or start fresh in the desktop app. If another resume
+fails the chat stays suspended with the error;
 `chat send <id> --parts <json> --fresh` then starts a new agent session in the same folder. A newer
 app asks a running chatd of another protocol version to hand over, so an update never ends a turn
 mid-flight without saying so in the transcript. A newer build of the same protocol asks the running

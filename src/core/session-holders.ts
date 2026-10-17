@@ -6,7 +6,7 @@ import { readAppPanes, readProcessTable, type ProcessTable } from "./session-ori
 // An agent session must have one live process at a time: two TUIs, or a TUI and the chat's own agent, on
 // one session write the same log and answer different turns. These are the processes holding a session now.
 
-export type SessionHolder = Readonly<{ pid: number; tmuxSession: string | null }>;
+export type SessionHolder = Readonly<{ pid: number; tmuxSession: string | null; cwd: string | null }>;
 
 const AGENTS = new Set(["claude", "codex"]);
 const RUNTIMES = new Set(["node", "bun"]);
@@ -83,12 +83,12 @@ export async function liveSessionHolders(agent: string, sessionId: string, optio
   for (const pid of options.exclude ?? []) pids.delete(pid);
   // A process whose parent also holds the session is that holder's own child (a wrapper's agent), not a second one.
   for (const pid of [...pids]) if (pids.has(table.get(pid)?.ppid ?? -1)) pids.delete(pid);
-  if (pids.size > 0 && agent === "claude" && options.cwd !== undefined) {
+  const cwds = pids.size === 0 ? new Map<number, string>() : await processCwds([...pids], options.processes);
+  if (agent === "claude" && options.cwd !== undefined) {
     const wanted = await realpath(options.cwd).catch(() => options.cwd);
-    const cwds = await processCwds([...pids], options.processes);
     for (const [pid, cwd] of cwds) if (cwd !== wanted && cwd !== options.cwd) pids.delete(pid);
   }
   if (pids.size === 0) return [];
   const panes = new Map([...await readAppPanes(options.processes), ...options.panes ?? []]);
-  return [...pids].sort((left, right) => left - right).map((pid) => ({ pid, tmuxSession: tmuxSessionOf(table, panes, pid) }));
+  return [...pids].sort((left, right) => left - right).map((pid) => ({ pid, tmuxSession: tmuxSessionOf(table, panes, pid), cwd: cwds.get(pid) ?? null }));
 }
