@@ -14,6 +14,7 @@ import {
   modeToggle,
   pendingApproval,
   queueOutgoing,
+  resumableChatState,
   rowStatus,
   shouldInterrupt,
   thinkingProgress,
@@ -22,6 +23,13 @@ import {
   workingStatus,
   type FollowState,
 } from '@/native-chat/chat-model'
+
+describe('resumable chats', () => {
+  test('a message can resume suspended, stopped and holder-error chats', () => {
+    expect(['suspended', 'stopped', 'error'].map((state) => resumableChatState(state as NativeChat['state']))).toEqual([true, true, true])
+    expect(['starting', 'idle', 'working', 'waiting-approval'].map((state) => resumableChatState(state as NativeChat['state']))).toEqual([false, false, false, false])
+  })
+})
 
 const chat: NativeChat = {
   id: 'chat-1',

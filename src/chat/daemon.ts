@@ -7,7 +7,7 @@ import { chatKey, promoteConversation, readConversations, removeConversation, se
 import { OWNED_TMUX_SERVER, ownedTmuxProcess, readOwnedSessions, writeOwnedSessions } from "../core/session-ownership.js";
 import { liveSessionHolders, type SessionHolder } from "../core/session-holders.js";
 import { APP_SESSION_PREFIX, forgetAppTerminal } from "../core/app-terminals.js";
-import { chmod, mkdir, open, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -36,6 +36,7 @@ function chatPid(stateDir: string): string { return join(stateDir, "chatd", "cha
 function chatLock(stateDir: string): string { return join(stateDir, "chatd", "start.lock"); }
 /** Chats whose queued messages a drained chatd left for its successor to send. */
 function chatResumes(stateDir: string): string { return join(stateDir, "chatd", "resume.json"); }
+function chatChildRecord(stateDir: string, chatId: string): string { return join(stateDir, "chatd", "children", `${chatId}.json`); }
 /** Bumped whenever the socket contract changes in a way an older chatd cannot serve; a client that finds another number asks that chatd to hand over. */
 export const CHAT_PROTOCOL_VERSION = 2;
 const DRAINING = "chatd is draining for an upgrade";
@@ -103,9 +104,15 @@ function unsentTerminalText(pane: string): string | null {
 /** Stops an agent this daemon ran and waits (bounded) until it is gone, so nothing checks for holders while it still runs. */
 async function stopChild(child: ChildProcessWithoutNullStreams): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
-  const gone = new Promise<void>((resolve) => { child.once("close", () => resolve()); });
+  const gone = () => new Promise<void>((resolve) => child.once("close", () => resolve()));
+  let exited = gone();
   child.kill("SIGTERM");
-  await Promise.race([gone, new Promise((resolve) => setTimeout(resolve, 2000).unref?.())]);
+  const timeout = new Promise<false>((resolve) => { const timer = setTimeout(() => resolve(false), 2000); timer.unref?.(); });
+  if (await Promise.race([exited.then(() => true), timeout])) return;
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  exited = gone();
+  child.kill("SIGKILL");
+  await exited;
 }
 function object(value: unknown): Record<string, unknown> { return typeof value === "object" && value !== null ? value as Record<string, unknown> : {}; }
 function text(value: unknown): string { return typeof value === "string" ? value : ""; }
@@ -148,6 +155,9 @@ export class ChatDaemon {
   private readonly knowledge: KnowledgePipeline;
   private scanning = false;
   private readonly children = new Map<string, ChildProcessWithoutNullStreams>();
+  private readonly agentRuns = new Set<Promise<void>>();
+  private readonly childExits = new Set<Promise<void>>();
+  private readonly callbacks = new Set<Promise<unknown>>();
   /** Messages already sent that wait for the agent to be ready: the first message of a start or a resume, or one sent now. */
   private readonly queues = new Map<string, Part[][]>();
   /** The person's queue: messages sent during a turn, persisted, drained one per turn. Loaded once per chat. */
@@ -187,11 +197,15 @@ export class ChatDaemon {
   /** Set by a drain: running turns finish, no new one starts, and the queue waits for the next daemon. */
   private draining = false;
   private readonly resumeOnStart = new Set<string>();
+  private readonly knowledgeTimers: ReturnType<typeof setTimeout>[] = [];
+  private readonly knowledgeTasks = new Set<Promise<void>>();
   private terminalTimer: ReturnType<typeof setInterval> | undefined;
+  private terminalRefresh: Promise<void> | undefined;
   /** Each terminal-mode chat's log as last read (size and mtime), so an unchanged idle log is not parsed again. */
   private readonly terminalLogs = new Map<string, string>();
   private clients = 0;
   private closed = false;
+  private closing: Promise<void> | undefined;
   private readonly sockets = new Set<Socket>();
   constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION, readonly build: number = chatBuild()) { this.store = new ChatStore(stateDir); this.knowledge = new KnowledgePipeline({ stateDir, environment }); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, pipeline: this.knowledge, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
 
@@ -220,7 +234,7 @@ export class ChatDaemon {
   private startKnowledge(): void {
     if (this.environment.MEGABRAIN_KNOWLEDGE_SCANNER === "off") return;
     const pass = async (backfill: boolean): Promise<void> => {
-      if (this.scanning || this.draining) return;
+      if (this.scanning || this.draining || this.closed) return;
       this.scanning = true;
       try {
         if (backfill) {
@@ -231,8 +245,19 @@ export class ChatDaemon {
       } catch (error) { process.stderr.write(`knowledge scan failed: ${error instanceof Error ? error.message : String(error)}\n`); }
       finally { this.scanning = false; }
     };
-    setTimeout(() => { void pass(true); }, 60_000).unref();
-    setInterval(() => { void pass(false); }, 10 * 60_000).unref();
+    const schedule = (backfill: boolean, delay: number, repeat = false) => {
+      const run = () => {
+        if (this.scanning || this.draining || this.closed) return;
+        const task = pass(backfill);
+        this.knowledgeTasks.add(task);
+        void task.then(() => this.knowledgeTasks.delete(task));
+      };
+      const timer = repeat ? setInterval(run, delay) : setTimeout(run, delay);
+      timer.unref();
+      this.knowledgeTimers.push(timer);
+    };
+    schedule(true, 60_000);
+    schedule(false, 10 * 60_000, true);
   }
 
   /** The messages a drained predecessor took but left unsent go out now, one per chat, as that chat's next turn. */
@@ -252,6 +277,7 @@ export class ChatDaemon {
   }
 
   async handle(request: Request, socket?: Socket): Promise<unknown> {
+    if (this.closed) throw new Error("chatd is closed");
     this.clients += 1;
     if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
     try {
@@ -303,7 +329,7 @@ export class ChatDaemon {
     await this.publish(chat, event("system", `Started ${agent} chat`));
     const queue = this.queues.get(chat.id) ?? [];
     if (parts.length > 0) { queue.push(parts); this.queues.set(chat.id, queue); await this.publish(chat, event("user", firstText(parts), undefined, withImages(parts))); }
-    void this.runAgent(chat).catch((error: unknown) => this.fail(chat.id, error));
+    this.trackCallback(this.runAgent(chat).catch((error: unknown) => this.fail(chat.id, error)));
     return chat;
   }
 
@@ -317,7 +343,11 @@ export class ChatDaemon {
     for (const chat of await this.store.list()) {
       if (chat.state === "suspended" || chat.state === "error" || chat.mode === "terminal") continue;
       const child = this.children.get(chat.id);
-      if (child) { this.children.delete(chat.id); child.kill("SIGTERM"); }
+      if (child) {
+        this.children.delete(chat.id);
+        await stopChild(child);
+        try { await unlink(chatChildRecord(this.stateDir, chat.id)); } catch { /* process exited before its record was written */ }
+      }
       this.clearStartTimer(chat.id);
       for (const map of [this.queues, this.activeTurns]) map.delete(chat.id);
       if (chat.state === "working" || chat.state === "waiting-approval") {
@@ -376,6 +406,11 @@ export class ChatDaemon {
     const parts = await this.normalizeParts(chat.cwd, inputParts);
     if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
     if (this.draining) { this.resumeOnStart.add(id); return { queued: await this.enqueue(chat, parts) }; }
+    if (chat.state === "error" && chat.error?.includes("already open in another process")) {
+      const queued = await this.enqueue(chat, parts);
+      await this.resume(id);
+      return { queued };
+    }
     if (chat.state === "working" || chat.state === "waiting-approval") return { queued: await this.enqueue(chat, parts) };
     await this.deliver(chat, parts, { fresh });
     return { queued: null };
@@ -385,11 +420,11 @@ export class ChatDaemon {
   private async resume(id: string): Promise<Chat> {
     if (this.draining) throw new Error(DRAINING);
     const chat = await this.requireChat(id);
-    if (chat.mode !== "chat" || (chat.state !== "suspended" && chat.state !== "stopped") || chat.agentSessionId === null) throw new Error("chat is not resumable");
+    if (chat.mode !== "chat" || (chat.state !== "suspended" && chat.state !== "stopped" && !(chat.state === "error" && chat.error?.includes("already open in another process"))) || chat.agentSessionId === null) throw new Error("chat is not resumable");
     chat.state = "starting";
     chat.error = null;
     await this.save(chat);
-    void this.runAgent(chat).catch((error) => this.resumeFailed(id, error));
+    this.trackCallback(this.runAgent(chat).catch((error) => this.resumeFailed(id, error)));
     return chat;
   }
 
@@ -411,7 +446,7 @@ export class ChatDaemon {
       chat.error = null;
       this.queues.set(id, [parts]);
       await this.save(chat);
-      void this.runAgent(chat).catch((error) => this.resumeFailed(id, error));
+      this.trackCallback(this.runAgent(chat).catch((error) => this.resumeFailed(id, error)));
       return;
     }
     const queue = this.queues.get(id) ?? [];
@@ -420,7 +455,7 @@ export class ChatDaemon {
     if (!this.children.has(id) && chat.state === "idle") {
       chat.state = "starting";
       await this.save(chat);
-      void this.runAgent(chat).catch((error) => this.fail(id, error));
+      this.trackCallback(this.runAgent(chat).catch((error) => this.fail(id, error)));
       return;
     }
     await this.drain(id);
@@ -520,31 +555,53 @@ export class ChatDaemon {
 
   /** A holder refusal keeps the pending message for Retry; other failed resumes drop it as before. */
   private async resumeFailed(id: string, error: unknown): Promise<void> {
+    if (this.closed) return;
     const child = this.children.get(id);
     if (child) { this.children.delete(id); child.kill("SIGTERM"); }
     this.clearStartTimer(id);
     if (!(error instanceof SessionHeldError)) this.queues.delete(id);
     const chat = await this.store.get(id);
+    if (this.closed) return;
     if (!chat || chat.state === "suspended" && chat.error !== null) return;
-    chat.state = "suspended";
+    chat.state = error instanceof SessionHeldError ? "error" : "suspended";
     chat.error = error instanceof Error ? error.message : String(error);
     await this.save(chat);
     await this.publish(chat, event("system", chat.error));
   }
 
+  private trackCallback(task: Promise<unknown>): void {
+    this.callbacks.add(task);
+    void task.then(() => this.callbacks.delete(task), () => this.callbacks.delete(task));
+  }
+
   /** `checked`: the caller already made sure nothing else holds the session (a switch back from the terminal ends the TUIs itself). */
-  private async runAgent(chat: Chat, checked = false): Promise<void> {
+  private runAgent(chat: Chat, checked = false): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    const run = this.runAgentInternal(chat, checked);
+    this.agentRuns.add(run);
+    void run.then(() => this.agentRuns.delete(run), () => this.agentRuns.delete(run));
+    return run;
+  }
+
+  private async runAgentInternal(chat: Chat, checked = false): Promise<void> {
+    if (this.closed) return;
     // One agent per chat: one this daemon still runs for it goes before the next starts, never left behind unowned.
     const previous = this.children.get(chat.id);
     if (previous) { this.children.delete(chat.id); await stopChild(previous); }
     if (!checked && chat.agentSessionId !== null) await this.clearTerminalHoldersBeforeResume(chat);
     const invocation = await chatProtocolAdapters[chat.agent].prepare(chat, this.stateDir);
+    if (this.closed) return;
     const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...scrubAgentEnvironment({ ...process.env, ...this.environment }), MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });
     this.children.set(chat.id, child);
+    const childRecord = chatChildRecord(this.stateDir, chat.id);
+    await mkdir(join(this.stateDir, "chatd", "children"), { recursive: true, mode: 0o700 });
+    await writeFile(childRecord, `${JSON.stringify({ pid: child.pid })}\n`, { mode: 0o600 });
+    if (this.closed) return;
     this.outputSeen.delete(chat.id);
     let stdout = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
+      if (this.closed) return;
       this.outputSeen.add(chat.id);
       this.clearStartTimer(chat.id);
       stdout += chunk;
@@ -559,20 +616,24 @@ export class ChatDaemon {
           const previous = this.eventChains.get(chat.id) ?? Promise.resolve();
           const next = previous.then(() => chat.agent === "claude" ? this.handleClaude(chat.id, child, parsed) : this.handleCodex(chat.id, child, parsed)).catch((error: unknown) => this.fail(chat.id, error));
           this.eventChains.set(chat.id, next);
-        } catch { void this.fail(chat.id, new Error(`invalid ${chat.agent} protocol output`)); }
+        } catch { this.trackCallback(this.fail(chat.id, new Error(`invalid ${chat.agent} protocol output`))); }
       }
     });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-4000); });
-    child.once("error", (error) => { void this.fail(chat.id, error); });
+    child.once("error", (error) => { this.trackCallback(this.fail(chat.id, error)); });
     child.once("close", (code, signal) => {
-      if (this.children.get(chat.id) !== child) return;
-      this.clearStartTimer(chat.id);
-      this.children.delete(chat.id);
+      const settled = (async () => {
+      await readFile(childRecord, "utf8").then(async (raw) => {
+        if (Number(object(JSON.parse(raw)).pid) === child.pid) await unlink(childRecord);
+      }).catch(() => undefined);
       for (const waiter of this.rpcWaiters.get(chat.id)?.values() ?? []) waiter.reject(new Error(stderr.trim() || `${signal ?? "agent exited"}`));
       this.rpcWaiters.delete(chat.id);
-      void this.store.get(chat.id).then(async (current) => {
+      if (this.closed || this.children.get(chat.id) !== child) return;
+      this.clearStartTimer(chat.id);
+      this.children.delete(chat.id);
+      await this.store.get(chat.id).then(async (current) => {
         if (!current || current.state === "suspended" || current.state === "stopped" || current.mode === "terminal") return;
         if (this.interrupting.has(chat.id)) {
           this.interrupting.delete(chat.id);
@@ -591,6 +652,9 @@ export class ChatDaemon {
         await this.save(current);
         await this.publish(current, event("system", current.error ?? "Agent process stopped"));
       });
+      })();
+      this.childExits.add(settled);
+      void settled.then(() => this.childExits.delete(settled), () => this.childExits.delete(settled));
     });
     if (chat.agent === "codex") {
       await this.codexRequest(child, "initialize", { clientInfo: { name: "megabrain", title: "Megabrain", version: "0.2.4" }, capabilities: { experimentalApi: true } });
@@ -615,6 +679,27 @@ export class ChatDaemon {
   private async clearTerminalHoldersBeforeResume(chat: Chat): Promise<void> {
     const appHolder = (holder: SessionHolder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true;
     let holders = await this.foreignHolders(chat);
+    let recordedPid = 0;
+    try { recordedPid = Number(object(JSON.parse(await readFile(chatChildRecord(this.stateDir, chat.id), "utf8"))).pid); } catch { /* no child record from the previous daemon */ }
+    const cwd = await realpath(chat.cwd).catch(() => chat.cwd);
+    const recorded = holders.find((holder) => holder.pid === recordedPid && holder.cwd === cwd);
+    if (recorded !== undefined) {
+      try { process.kill(recorded.pid, "SIGTERM"); } catch { /* it exited between discovery and signal */ }
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        holders = await this.foreignHolders(chat);
+        if (!holders.some((holder) => holder.pid === recorded.pid)) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (holders.some((holder) => holder.pid === recorded.pid)) {
+        try { process.kill(recorded.pid, "SIGKILL"); } catch { /* it exited between checks */ }
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          holders = await this.foreignHolders(chat);
+          if (!holders.some((holder) => holder.pid === recorded.pid)) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      }
+      holders = await this.foreignHolders(chat);
+    }
     const foreign = holders.filter((holder) => !appHolder(holder));
     if (foreign.length > 0) throw new SessionHeldError(chat, foreign);
     if (!holders.some(appHolder)) return;
@@ -638,7 +723,15 @@ export class ChatDaemon {
 
   private async handleClaudeStream(id: string, streamEvent: Record<string, unknown>): Promise<void> {
     const kind = text(streamEvent.type);
-    if (kind === "message_start") { this.currentMessage.set(id, text(object(streamEvent.message).id)); this.countClaude(id, (tokens) => ({ ...tokens, thinking: 0, textChars: 0 }), false); return; }
+    if (kind === "message_start") {
+      const message = object(streamEvent.message);
+      this.currentMessage.set(id, text(message.id));
+      const chat = await this.requireChat(id);
+      this.updateContext(chat, object(message.usage));
+      await this.save(chat);
+      this.countClaude(id, (tokens) => ({ ...tokens, thinking: 0, textChars: 0 }), false);
+      return;
+    }
     if (kind === "content_block_delta") {
       const delta = object(streamEvent.delta);
       const messageId = this.currentMessage.get(id) ?? "";
@@ -768,7 +861,6 @@ export class ChatDaemon {
       // The interrupted turn's own result, after a message sent now already started the next turn.
       if (item.is_error === true && this.interrupting.has(id) && chat.state === "working") { this.interrupting.delete(id); return; }
       if (typeof item.session_id === "string") chat.agentSessionId = item.session_id;
-      this.updateContext(chat, object(item.usage));
       const modelUsage = object(item.modelUsage);
       const modelUsageEntry = object(modelUsage[chat.model ?? ""] ?? Object.values(modelUsage)[0]);
       const window = modelUsageEntry.contextWindow;
@@ -1046,7 +1138,7 @@ export class ChatDaemon {
       chat.state = "starting";
       await this.save(chat);
       // runAgent owns the record from here: saving this copy again could land after its idle and undo it.
-      void this.runAgent(chat, true).catch((error) => this.fail(id, error));
+      this.trackCallback(this.runAgent(chat, true).catch((error) => this.fail(id, error)));
     }
     // The terminal's command rides along, so opening it costs no second round trip.
     return { chat, terminal: null, command: chat.mode === "terminal" ? chatProtocolAdapters[chat.agent].terminalCommand(chat) : null };
@@ -1128,6 +1220,7 @@ export class ChatDaemon {
   /** A terminal-mode chat shows its TUI's state: working while the session log holds an unfinished turn and a process still runs it. */
   private async refreshTerminalChats(): Promise<void> {
     for (const listed of await this.store.list()) {
+      if (this.closed) return;
       if (listed.mode !== "terminal" || listed.agentSessionId === null) continue;
       const path = await sessionLogPath(listed, this.environment.HOME ?? homedir());
       let content: string;
@@ -1143,6 +1236,7 @@ export class ChatDaemon {
       const state: Chat["state"] = working ? "working" : "idle";
       // The record may have moved on while the log was read: only a chat still in the same terminal stint changes.
       const chat = await this.store.get(listed.id);
+      if (this.closed) return;
       if (!chat || chat.mode !== "terminal" || chat.terminalSince !== listed.terminalSince || chat.state === state) continue;
       chat.state = state;
       if (!working) chat.lastActivityAt = new Date().toISOString();
@@ -1156,7 +1250,10 @@ export class ChatDaemon {
   }
 
   private updateContext(chat: Chat, usage: Record<string, unknown>): void {
-    const fields = [usage.input_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens];
+    const input = usage.input_tokens;
+    const cacheCreation = usage.cache_creation_input_tokens;
+    const cacheRead = usage.cache_read_input_tokens;
+    const fields = [input, cacheCreation, cacheRead];
     if (fields.some((value) => value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0))) return;
     if (fields.some((value) => typeof value === "number")) chat.contextTokens = fields.reduce<number>((sum, value) => sum + (typeof value === "number" ? value : 0), 0);
   }
@@ -1173,7 +1270,7 @@ export class ChatDaemon {
       if (child) { this.children.delete(id); child.kill("SIGTERM"); }
       chat.state = "starting";
       await this.save(chat);
-      void this.runAgent(chat).catch((error) => this.fail(id, error));
+      this.trackCallback(this.runAgent(chat).catch((error) => this.fail(id, error)));
     } else await this.save(chat);
     this.publishLive(id, this.stateEvent(chat));
     return chat;
@@ -1407,7 +1504,7 @@ export class ChatDaemon {
     }
     else if (chat.state !== "waiting-approval") this.turnStarted.delete(chat.id);
     await this.publish(chat, this.stateEvent(chat));
-    if (chat.state === "idle") void this.summarizer.turnEnded(chat.id);
+    if (chat.state === "idle") this.trackCallback(this.summarizer.turnEnded(chat.id));
   }
   private stateEvent(chat: Chat): ChatEvent {
     const startedAt = this.turnStarted.get(chat.id);
@@ -1431,7 +1528,7 @@ export class ChatDaemon {
       if (this.removed.has(chat.id)) return;
       const line = await this.store.append(chat.id, value, approval);
       for (const listener of this.subscribers.get(chat.id) ?? []) listener(line);
-      if (value.kind === "tool-result") void this.refreshClaudeArtifacts(chat);
+      if (value.kind === "tool-result") this.trackCallback(this.refreshClaudeArtifacts(chat));
     });
     this.appendChains.set(chat.id, next);
     await next;
@@ -1442,7 +1539,9 @@ export class ChatDaemon {
     await this.publish(chat, event("system", "Interrupted"));
   }
   private async fail(id: string, error: unknown): Promise<void> {
+    if (this.closed) return;
     const chat = await this.store.get(id);
+    if (this.closed) return;
     if (!chat) return;
     chat.state = "error"; chat.error = error instanceof Error ? error.message : String(error);
     await this.save(chat);
@@ -1454,18 +1553,39 @@ export class ChatDaemon {
     this.idleTimer = setTimeout(() => { void this.close(); }, 10 * 60_000);
     this.idleTimer.unref?.();
   }
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.closing !== undefined) return this.closing;
+    this.closing = this.closeDaemon();
+    return this.closing;
+  }
+  private async closeDaemon(): Promise<void> {
     this.closed = true;
     this.idleTimer && clearTimeout(this.idleTimer);
+    for (const timer of this.knowledgeTimers) clearTimeout(timer);
+    this.knowledgeTimers.length = 0;
+    for (const id of this.startTimers.keys()) this.clearStartTimer(id);
+    for (const pending of this.pendingApprovals.values()) pending.resolve("deny");
+    this.pendingApprovals.clear();
     for (const id of this.artifactWatches.keys()) this.stopArtifactWatch(id);
     if (this.terminalTimer !== undefined) clearInterval(this.terminalTimer);
+    await this.terminalRefresh;
     this.server?.close();
     this.server = undefined;
     // An agent left running here would outlive the daemon, reparented to init with nobody to stop it; the next
     // daemon must not find it still holding its session either.
-    const children = [...this.children.values()];
+    const children = [...this.children.entries()];
     this.children.clear();
-    await Promise.all(children.map(stopChild));
+    await Promise.all(children.map(([, child]) => stopChild(child)));
+    await Promise.all([...this.agentRuns, ...this.childExits, ...this.callbacks]);
+    await Promise.all(this.knowledgeTasks);
+    await Promise.all([...this.eventChains.values(), ...this.appendChains.values(), ...this.queueWrites.values()]);
+    await Promise.all([...this.agentRuns, ...this.childExits, ...this.callbacks, ...this.knowledgeTasks]);
+    await Promise.all(children.map(async ([id, child]) => {
+      const record = chatChildRecord(this.stateDir, id);
+      await readFile(record, "utf8").then(async (raw) => {
+        if (Number(object(JSON.parse(raw)).pid) === child.pid) await unlink(record);
+      }).catch(() => undefined);
+    }));
     // The caller of a handover still has its answer in flight; everything else is dropped shortly after so the process can leave.
     const open = [...this.sockets];
     setTimeout(() => { for (const socket of open) socket.destroy(); }, 100).unref?.();
@@ -1505,9 +1625,10 @@ export class ChatDaemon {
       const poll = timeoutMs(this.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
       let refreshing = false;
       this.terminalTimer = setInterval(() => {
-        if (refreshing) return;
+        if (refreshing || this.closed) return;
         refreshing = true;
-        void this.refreshTerminalChats().catch(() => undefined).finally(() => { refreshing = false; });
+        const task = this.refreshTerminalChats().catch(() => undefined).finally(() => { refreshing = false; });
+        this.terminalRefresh = task;
       }, poll);
       this.terminalTimer.unref?.();
     });

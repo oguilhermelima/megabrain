@@ -15,7 +15,7 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
-import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, shouldInterrupt, thinkingProgress, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
+import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, resumableChatState, shouldInterrupt, thinkingProgress, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
@@ -36,8 +36,7 @@ const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) 
 const handedOver = new Map<string, TerminalSession>()
 
 // A suspended (or legacy stopped) chat is not over: its next message resumes the agent session.
-const ended = (state: NativeChat['state']) => state === 'error'
-const resumable = (state: NativeChat['state']) => state === 'suspended' || state === 'stopped'
+const resumable = resumableChatState
 
 /** A conversation megabrain owns through the agent's protocol, followed live while it is open. */
 export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArtifact }: { chat: NativeChat; onOpenChat?: OpenChat; onOpenPath?: OpenPath; onOpenArtifact?: (artifactId: string) => void }) {
@@ -66,7 +65,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
   const live = useMemo(() => liveTail(state), [state])
   const working = workingStatus(state)
   // Nothing said yet: the agent waits for the first message, so suggestions replace any spinner.
-  const fresh = !ended(chat.state) && chat.title === null && state.outgoing.length === 0 && !state.events.some((event) => event.kind === 'user')
+  const fresh = chat.title === null && state.outgoing.length === 0 && !state.events.some((event) => event.kind === 'user')
   const [fill, setFill] = useState<{ text: string } | null>(null)
   // The chat's artifacts: chips above the composer, the open one beside the chat (or over it on a narrow pane).
   const now = useNow(30_000)
@@ -395,8 +394,8 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
             {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
             <div onKeyDown={onComposerKey} className="contents">
               <Composer
-                placeholder={ended(chat.state) ? 'This chat has stopped' : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
-                disabled={ended(chat.state)}
+                placeholder={resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
+                disabled={false}
                 agent={chat.agent}
                 cwd={chat.cwd}
                 context={composerContext(chat)}

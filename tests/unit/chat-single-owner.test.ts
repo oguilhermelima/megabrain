@@ -163,6 +163,24 @@ describe("the processes that hold an agent session", () => {
 });
 
 describe("one live agent process per chat", () => {
+  test("a recorded chatd child left holding the session is ended before retry resumes it", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const sessionId = randomUUID();
+    const chat = record(env, { state: "suspended", agentSessionId: sessionId });
+    await new ChatStore(env.state).put(chat);
+    const holder = tuiOutside(env, sessionId);
+    await until(() => liveSessionHolders("claude", sessionId, { home: env.root, processes: adapterOf(env), cwd: env.cwd }), (found) => found.length === 1, "orphaned chatd child");
+    mkdirSync(join(env.state, "chatd", "children"), { recursive: true });
+    writeFileSync(join(env.state, "chatd", "children", `${chat.id}.json`), JSON.stringify({ pid: holder.pid }));
+    const daemon = await daemonFor(env);
+
+    await daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "resume after upgrade" }] });
+    await stateOf(daemon, chat.id, "idle");
+    await until(() => liveSessionHolders("claude", sessionId, { home: env.root, processes: adapterOf(env), cwd: env.cwd }), (found) => found.every((entry) => entry.pid !== holder.pid), "recorded holder closed");
+    expect(spawned(env).some((entry) => entry.argv.includes(sessionId))).toBe(true);
+  });
+
   test("switching a terminal chat back to chat ends all three app terminals resuming its session before the agent resumes", async () => {
     const env = sandbox();
     fakeClaude(env);
@@ -252,7 +270,7 @@ describe("one live agent process per chat", () => {
     await until(() => liveSessionHolders("claude", chat.agentSessionId ?? "", { home: env.root, processes: adapterOf(env) }), (found) => found.length === 1, "outside holder");
 
     await daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "hello" }] });
-    const settled = await until(() => daemon.store.get(chat.id), (current) => current?.state === "suspended" && current.error !== null, "refused resume");
+    const settled = await until(() => daemon.store.get(chat.id), (current) => current?.state === "error" && current.error !== null, "refused resume");
 
     expect(settled?.error ?? "").toContain("already open in another process");
     expect(settled?.error ?? "").toContain(`pid ${outside.pid}`);
@@ -273,6 +291,24 @@ describe("one live agent process per chat", () => {
 });
 
 describe("draining chatd before an upgrade", () => {
+  test("close settles child cleanup before resolving and never starts another agent", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const daemon = await daemonFor(env);
+    const chat = await daemon.handle({ operation: "start", agent: "claude", cwd: env.cwd, parts: [{ type: "text", text: "slow" }] }) as Chat;
+    await stateOf(daemon, chat.id, "working");
+    await until(async () => spawned(env), (children) => children.length === 1, "agent to spawn");
+    const childRecord = join(env.state, "chatd", "children", `${chat.id}.json`);
+
+    await daemon.close();
+    expect(existsSync(childRecord)).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(existsSync(childRecord)).toBe(false);
+    expect(spawned(env)).toHaveLength(1);
+    expect(await daemon.store.get(chat.id)).toMatchObject({ state: "working" });
+  });
+
   test("finishes the running turn, takes no new turn, hands queued messages to the next daemon and exits", async () => {
     const env = sandbox();
     fakeClaude(env);
@@ -293,6 +329,8 @@ describe("draining chatd before an upgrade", () => {
     expect(visible(await eventsOf(daemon, working.id))).not.toContain("system:Interrupted");
     expect(result.resumes).toEqual([waiting.id]);
     expect(existsSync(join(env.state, "chatd", "chatd.pid"))).toBe(false);
+    const childPid = Number(readFileSync(env.capture, "utf8").trim().split("\n").map((line) => JSON.parse(line).pid).at(-1));
+    expect(() => process.kill(childPid, 0)).toThrow();
 
     // The next daemon sends what waited, resuming that chat.
     const next = await daemonFor(env);
@@ -307,6 +345,20 @@ describe("draining chatd before an upgrade", () => {
     await callChatd(env.state, { operation: "list" }, environment, adapter);
     await until(async () => existsSync(join(env.state, "chatd", "chatd.pid")), (present) => !present, "older chatd left");
     expect(old.store).toBeDefined();
+  });
+
+  test("a holder refusal can be retried after its holder exits, preserving the queued message", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const chat = record(env, { state: "error", error: "already open in another process", agentSessionId: "old-session" });
+    const store = new ChatStore(env.state);
+    await store.put(chat);
+    const daemon = await daemonFor(env);
+    await store.putQueue(chat.id, [{ id: randomUUID(), parts: [{ type: "text", text: "keep this" }], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }]);
+    await expect(daemon.handle({ operation: "resume", id: chat.id })).resolves.toBeDefined();
+    const resumed = await until(() => store.get(chat.id), (value) => value?.state === "idle", "resumed chat");
+    expect(resumed?.error).toBeNull();
+    await until(async () => visible(await eventsOf(daemon, chat.id)), (shown) => shown.includes("assistant:answer:keep this"), "queued message delivered after retry");
   });
 
   test("chat daemon status reports a stopped daemon without starting one", async () => {

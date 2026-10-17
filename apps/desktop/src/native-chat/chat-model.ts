@@ -6,6 +6,11 @@ import { nativeChatStateSchema, type ChatApproval, type ChatDeltaEvent, type Cha
 // each chat sits in the sidebar. Besides the stored history, the state holds what is still live: the
 // messages being streamed (drafts) and the ones this view sent that the chat has not echoed yet.
 
+/** States whose next message starts or resumes the chat's agent session. */
+export function resumableChatState(state: NativeChat['state']): boolean {
+  return state === 'suspended' || state === 'stopped' || state === 'error'
+}
+
 /** A message being generated, grown from its chunks until the complete event replaces it. */
 export interface Draft {
   messageId: string
