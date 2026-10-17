@@ -5,7 +5,8 @@ import { moveTarget, queueSummary } from '@/chat/queue-walk'
 /** What the composer offers on a native chat's queue; the view owns the calls and the confirm before Send now. */
 export interface QueueControls {
   items: ChatQueueItem[]
-  edit: (itemId: string, parts: ChatQueueItem['parts']) => Promise<void>
+  /** 'taken' when chatd had already sent the message: the edit did not apply and the composer keeps the text. */
+  edit: (itemId: string, parts: ChatQueueItem['parts']) => Promise<'saved' | 'taken'>
   move: (itemId: string, to: number) => Promise<void>
   remove: (itemId: string) => Promise<void>
   sendNow: (itemId: string) => void

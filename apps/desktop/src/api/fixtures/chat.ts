@@ -223,6 +223,13 @@ export function followMockChat(chatId: string, since: string | null, onLine: (li
   }
 }
 
+/** megabrain chat events <id> --since <cursor>: the head line with the queue, then the stored lines after the cursor. */
+export function readMockChat(chatId: string, since: string | null): ChatEventLine[] {
+  const chat = mockChat(chatId)
+  const after = since === null ? 0 : Number(since)
+  return [{ cursor: String(after), queue: chat.queue.slice() }, ...chat.lines.filter((line) => Number(line.cursor) > after)]
+}
+
 export function sendMockChat(chatId: string, parts: MessagePart[]): { queued: ChatQueueItem | null } {
   const chat = mockChat(chatId)
   if (busy(chat)) {

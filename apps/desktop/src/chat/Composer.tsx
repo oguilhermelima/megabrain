@@ -31,6 +31,8 @@ export type { Notice } from '@/chat/composer-look'
 
 // Slash commands per agent and folder for the whole app run, read as the composer mounts.
 const commandSource = createCommandSource((agent, cwd) => api.slashCommands(agent, cwd))
+// What a queued message's edit answers when chatd had already sent the message.
+const TAKEN = Symbol('taken')
 
 /**
  * The agent's slash commands for this folder, loaded as soon as both are known rather than from a
@@ -877,7 +879,7 @@ export function Composer({
         return [id, { kind: attachment.kind, path: await attachmentPath(attachment) }] as const
       }),
     )
-      .then((saved) => {
+      .then((saved): Promise<Notice | typeof TAKEN | null> => {
         const paths = new Map(saved)
         const parts = toMessageParts(message, (id) => {
           const found = paths.get(id)
@@ -886,11 +888,17 @@ export function Composer({
         })
         // An edited queued message is saved in place of being sent; the queue moves it to its end.
         const edited = editing === null ? undefined : queue?.items.find((item) => item.id === editing)
-        if (edited !== undefined && queue !== undefined) return queue.edit(edited.id, parts).then(() => null)
+        if (edited !== undefined && queue !== undefined) return queue.edit(edited.id, parts).then((outcome) => (outcome === 'taken' ? TAKEN : null))
         return onSend(parts)
       })
       .then(
         (result) => {
+          // The message was sent before the edit landed: the box keeps the edited text as a plain draft.
+          if (result === TAKEN) {
+            setEditing(null)
+            show({ tone: 'ok', text: 'Already sent; your edit is in the composer.' })
+            return
+          }
           const bad = result?.tone === 'bad'
           show(result, bad)
           setSentCount((count) => count + 1)

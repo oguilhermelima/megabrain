@@ -20,6 +20,7 @@ import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
 import { useFollowChat } from '@/native-chat/useFollowChat'
+import { changeChatQueue } from '@/native-chat/chat-sync'
 import { backToChat, chatChanged, requestTerminal, stopAndOpen, TERMINAL_WAIT_NOTICE, type DeferredStep } from '@/native-chat/deferred-switch'
 import { beginSwitch, endSwitch, switchEngine, switchStep } from '@/native-chat/switch-trace'
 import { endKeptSession } from '@/terminal/kept-terminals'
@@ -36,7 +37,7 @@ const resumable = (state: NativeChat['state']) => state === 'suspended' || state
 
 /** A conversation megabrain owns through the agent's protocol, followed live while it is open. */
 export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat: NativeChat; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
-  const { state, error, update, queue, setQueue } = useFollowChat(listed)
+  const { state, reconnecting, update, queue, setQueue } = useFollowChat(listed)
   // The followed record is live; the listed one only fills in until the first line arrives.
   const chat = state.chat ?? listed
   const [switching, setSwitching] = useState(false)
@@ -112,26 +113,29 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     return null
   }
 
-  const changeQueue = async (change: ChatQueueChange) => {
-    setQueue(await api.chatQueue(chat.id, change))
+  // A message chatd already took (the turn ended and sent it) only refreshes the strip; the view says nothing.
+  const changeQueue = async (change: ChatQueueChange): Promise<'saved' | 'taken'> => {
+    const { items, taken } = await changeChatQueue(api, chat.id, change)
+    setQueue(items)
     announceAction()
+    return taken ? 'taken' : 'saved'
   }
   const queueControls: QueueControls = {
     items: queue,
-    // A failed edit keeps the draft in the composer, which shows the error.
+    // A failed edit keeps the draft in the composer, which shows the error; so does one chatd already sent.
     edit: (itemId, parts) => changeQueue({ action: 'edit', itemId, parts }),
-    move: (itemId, to) => changeQueue({ action: 'move', itemId, to }).catch(setActionError),
-    remove: (itemId) => changeQueue({ action: 'remove', itemId }).catch(setActionError),
+    move: (itemId, to) => changeQueue({ action: 'move', itemId, to }).then(() => {}, setActionError),
+    remove: (itemId) => changeQueue({ action: 'remove', itemId }).then(() => {}, setActionError),
     // Sending now stops a running turn, so it asks first.
     sendNow: (itemId) => {
       const run = () => {
         setConfirming(null)
-        changeQueue({ action: 'send-now', itemId }).catch(setActionError)
+        changeQueue({ action: 'send-now', itemId }).then(() => {}, setActionError)
       }
       if (busy) setConfirming({ text: 'Stop the running turn and send this message now?', action: 'Send now', run })
       else run()
     },
-    ...(chat.agent === 'codex' && chat.state === 'working' ? { steer: (itemId: string) => changeQueue({ action: 'steer', itemId }).catch(setActionError) } : {}),
+    ...(chat.agent === 'codex' && chat.state === 'working' ? { steer: (itemId: string) => changeQueue({ action: 'steer', itemId }).then(() => {}, setActionError) } : {}),
   }
 
   const stop = () => void act(() => api.interruptChat(chat.id))
@@ -237,7 +241,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
         {/* Until the first line of the follow arrives the history is still being read. */}
         {fresh ? (
           <ChatSuggestions cwd={chat.cwd} agent={chat.agent} onPick={(text) => setFill({ text })} />
-        ) : state.cursor === null && state.events.length === 0 && error === null ? (
+        ) : state.cursor === null && state.events.length === 0 ? (
           <TranscriptSkeleton />
         ) : (
           <ConversationList
@@ -263,10 +267,15 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
         title={title}
         actions={<ViewSwitch view={mode} enabled={toggle.enabled && !switching} reason={toggle.reason} switching={switching} onView={requestSwitch} />}
       />
-      {(error !== null || actionError !== null) && (
-        <div className="mx-8 mt-3 space-y-2">
-          {error !== null && <ErrorNote error={error} />}
-          {actionError !== null && <ErrorNote error={actionError} />}
+      {/* A follow that dropped comes back by itself; until then the view says so quietly instead of freezing. */}
+      {reconnecting !== null && (
+        <p className="mx-8 mt-3 text-[12.5px] text-ink-400" title={reconnecting === '' ? undefined : reconnecting}>
+          Reconnecting…
+        </p>
+      )}
+      {actionError !== null && (
+        <div className="mx-8 mt-3">
+          <ErrorNote error={actionError} />
         </div>
       )}
       {confirming !== null && (

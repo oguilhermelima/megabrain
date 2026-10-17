@@ -349,6 +349,20 @@ describe('state events', () => {
     expect(state.turnStartedAt).toBe('2026-10-15T12:00:00Z')
   })
 
+  test('the chat record at the head of a resumed follow replaces the one the view kept', () => {
+    let state = applyLine(followState({ ...chat, state: 'idle' }), line('207', { event: event('e207') }))
+    state = applyLine(state, line('207', { chat: { ...chat, state: 'working', title: 'Retitled' } }))
+    expect(state.chat?.state).toBe('working')
+    expect(state.chat?.title).toBe('Retitled')
+    expect(state.cursor).toBe('207')
+    expect(applyLine(state, line('206', { chat: { ...chat, state: 'idle' } })).chat?.state).toBe('working')
+  })
+
+  test('a line whose event this app does not read still moves the cursor', () => {
+    const state = applyLine(followState(chat), line('128', { event: event('e128') }))
+    expect(applyLine(state, line('129')).cursor).toBe('129')
+  })
+
   test('a replayed older state does not overwrite the newer one', () => {
     let state = applyLine(followState(chat), stateLine('4', 'idle'))
     state = applyLine(state, stateLine('2', 'working', '2026-10-15T11:00:00Z'))

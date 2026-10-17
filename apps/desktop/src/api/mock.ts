@@ -1,4 +1,4 @@
-import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockNativeChat, sendMockChat } from '@/api/fixtures/chat'
+import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockNativeChat, readMockChat, sendMockChat } from '@/api/fixtures/chat'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
@@ -407,6 +407,7 @@ export function createMockApi(): DesktopApi {
       return mockSessionHistory.filter((session) => agent === undefined || session.agent === agent)
     },
     followChat: async (chatId, since, onLine) => followMockChat(chatId, since, onLine),
+    chatEvents: async (chatId, since) => readMockChat(chatId, since),
     logSwitchTrace: async () => {},
     logChatStartTrace: async () => {},
     openTerminal: async ({ engine, cwd, tmuxSession }) => ({ id: `term-${Date.now()}`, engine, cwd, title: 'zsh', tmuxSession: tmuxSession ?? null }),

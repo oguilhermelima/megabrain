@@ -9,6 +9,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
+import { chatStreamReader, streamMarkerSchema } from '@/api/chat-stream'
 import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema } from '@/api/schema'
 
 interface CliOutput {
@@ -40,7 +41,14 @@ async function cliText(args: string[]): Promise<string> {
 // cli_stream, owned by src-tauri); the returned function kills it.
 async function cliStream(args: string[], onLine: (line: string) => void): Promise<() => void> {
   const channel = new Channel<string>()
-  channel.onmessage = onLine
+  // A handler that throws would hold back every later message on the channel, so it never does.
+  channel.onmessage = (line) => {
+    try {
+      onLine(line)
+    } catch (caught) {
+      console.error(caught)
+    }
+  }
   const streamId = await invoke<string>('cli_stream', { args, onLine: channel })
   return () => void invoke('cli_stream_stop', { streamId })
 }
@@ -54,9 +62,6 @@ async function nativeJson<T>(args: string[], schema: z.ZodType<T>): Promise<T> {
 
 // `github pr-file` answers with the file under `file`, beside the repository and number.
 const pullRequestFileSchema = z.looseObject({ file: githubPullRequestFileSchema })
-
-// What the stream itself says, besides the CLI's lines: why the CLI failed, and that it ended.
-const streamMarkerSchema = z.looseObject({ cursor: z.literal(''), error: z.string().optional(), end: z.literal(true).optional() }).refine((value) => value.error !== undefined || value.end === true)
 
 const appTerminalSchema = z.looseObject({ id: z.string(), sessionName: z.string(), cwd: z.string(), title: z.string(), command: z.string(), alive: z.boolean(), createdAt: z.string() })
 
@@ -378,20 +383,12 @@ export function createTauriApi(): DesktopApi {
     agentCommand: async (agent, options = {}) =>
       (await cliJson(['agent', 'command', agent, ...(options.resume === undefined ? [] : ['--resume', options.resume]), ...(options.model === undefined ? [] : ['--model', options.model]), ...(options.effort === undefined ? [] : ['--effort', options.effort]), '--json'], agentCommandSchema)).argv,
     sessionHistory: (cwd, agent) => cliJson(['sessions', 'history', '--cwd', cwd, ...(agent === undefined ? [] : ['--agent', agent]), '--json'], sessionHistorySchema),
-    followChat: (chatId, since, onLine, onEnd) => {
-      // The stream's last lines may be an error and an end marker; they are not chat events.
-      let error: string | null = null
-      return cliStream(['chat', 'events', chatId, ...(since === null ? [] : ['--since', since]), '--follow', '--json'], (text) => {
-        const value: unknown = JSON.parse(text)
-        const marker = streamMarkerSchema.safeParse(value)
-        if (marker.success && marker.data.end === true) return onEnd?.(error)
-        if (marker.success && marker.data.error !== undefined) {
-          error = marker.data.error
-          return
-        }
-        onLine(chatEventLineSchema.parse(value))
-      })
-    },
+    followChat: (chatId, since, onLine, onEnd) => cliStream(['chat', 'events', chatId, ...(since === null ? [] : ['--since', since]), '--follow', '--json'], chatStreamReader(onLine, onEnd)),
+    chatEvents: async (chatId, since) =>
+      (await cliText(['chat', 'events', chatId, ...(since === null ? [] : ['--since', since]), '--json']))
+        .split('\n')
+        .filter((line) => line.trim() !== '')
+        .map((line) => chatEventLineSchema.parse(JSON.parse(line))),
     logSwitchTrace: async (record) => void (await invoke('switch_trace_log', { record })),
     logChatStartTrace: async (record) => void (await invoke('chat_start_trace_log', { record })),
     openTerminal: async (options) => terminalSessionSchema.parse(await invoke('terminal_open', { options })),

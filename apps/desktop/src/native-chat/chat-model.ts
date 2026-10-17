@@ -134,7 +134,8 @@ function confirmOutgoing(outgoing: Outgoing[], event: TranscriptEvent): Outgoing
 /**
  * Folds one line into the state. A line before the cursor is a replay (a resubscription from an
  * older cursor) and returns the same state, as does a line at the cursor unless it carries a state
- * change (sent at the start of every follow) or a chunk; an event id already shown is not added again.
+ * change (sent at the start of every follow), the chat record (the head of every follow and read) or
+ * a chunk; an event id already shown is not added again.
  * Chunks are never stored and never move the cursor.
  */
 export function applyLine(state: FollowState, line: ChatEventLine): FollowState {
@@ -142,7 +143,9 @@ export function applyLine(state: FollowState, line: ChatEventLine): FollowState 
   if (event?.kind === 'delta') return applyDelta(state, event)
   if (event?.kind === 'progress') return applyProgress(state, event)
   const order = state.cursor === null ? 1 : compareCursors(line.cursor, state.cursor)
-  if (order < 0 || (order === 0 && event?.kind !== 'state')) return state
+  if (order < 0) return state
+  // A follow resumed at the cursor starts with the chat as chatd holds it now, which the view takes.
+  if (order === 0 && event?.kind !== 'state') return line.chat === undefined ? state : { ...state, chat: line.chat }
   let next: FollowState = { ...state, cursor: line.cursor }
   if (line.chat !== undefined) next.chat = line.chat
   if (event === undefined) return next

@@ -706,7 +706,8 @@ export const chatQueueItemSchema = z.looseObject({
 export const chatEventLineSchema = z.looseObject({
   cursor: z.string(),
   chat: nativeChatSchema.optional(),
-  event: chatEventSchema.optional(),
+  // An event kind this app does not read (a summary, a newer one) leaves the line without one, so its cursor still counts.
+  event: chatEventSchema.optional().catch(undefined),
   approval: chatApprovalSchema.optional(),
   queue: z.array(chatQueueItemSchema).optional(),
 })
