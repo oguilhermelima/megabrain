@@ -63,7 +63,10 @@ export const mockChatLines: ChatEventLine[] = ([
   { id: 'e4', at: at(49), kind: 'tool-result', text: '_components\n_hooks\n_steps\nlayout.tsx\npage.tsx', tool: { name: 'Bash', status: 'ok' } },
   ...commandEvents(48, ['/usage', usageOutput], ['/cost', costOutput], ['/context', contextOutput], ['/mcp', mcpOutput]),
   ...explainedTurn(40),
-] satisfies TranscriptEvent[]).map((event, index) => ({ cursor: String(index + 1), event: { ...event, id: `e${index + 1}` } }))
+] satisfies TranscriptEvent[]).map((event, index) => ({ cursor: String(index + 1), event: { ...event, id: `e${index + 1}` } })).concat([
+  { cursor: '30', event: { id: 'e-cut', at: at(2), kind: 'turn-cut', text: '', reason: 'interrupted', partial: true } },
+  { cursor: '31', event: { id: 'e-task', at: at(1), kind: 'background-task', text: 'Run the build', backgroundTask: { id: 'task-build', kind: 'shell', label: 'Run the build', state: 'running', startedAt: at(1) } } },
+] satisfies ChatEventLine[])
 
 /** A long conversation: 100 turns, for the navigator rail beside the transcript. */
 export const mockLongChat: NativeChat = {

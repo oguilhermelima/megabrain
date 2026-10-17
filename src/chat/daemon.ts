@@ -19,7 +19,7 @@ import { start as startImpl, handle as handleImpl, startChat as startChatImpl, s
 import { queueOperation as queueOperationImpl, loadQueue as loadQueueImpl, persistQueue as persistQueueImpl, enqueue as enqueueImpl, drain as drainImpl, drainOnce as drainOnceImpl } from "./daemon/queue.js";
 import { resumeDrained as resumeDrainedImpl, send as sendImpl, resume as resumeImpl, deliver as deliverImpl, resumeFailed as resumeFailedImpl } from "./daemon/resume.js";
 import { trackCallback as trackCallbackImpl, runAgent as runAgentImpl, runAgentInternal as runAgentInternalImpl, clearTerminalHoldersBeforeResume as clearTerminalHoldersBeforeResumeImpl, armStartTimer as armStartTimerImpl, clearStartTimer as clearStartTimerImpl, interrupt as interruptImpl, stop as stopImpl } from "./daemon/agent-process.js";
-import { handleClaudeStream as handleClaudeStreamImpl, publishToolCall as publishToolCallImpl, startSubagent as startSubagentImpl, endSubagent as endSubagentImpl, publishClaudeStep as publishClaudeStepImpl, handleClaude as handleClaudeImpl, settleRpc as settleRpcImpl, handleCodex as handleCodexImpl, handleCodexSubagent as handleCodexSubagentImpl, codexRequest as codexRequestImpl } from "./daemon/agent-streams.js";
+import { handleClaudeStream as handleClaudeStreamImpl, publishToolCall as publishToolCallImpl, startSubagent as startSubagentImpl, endSubagent as endSubagentImpl, publishClaudeStep as publishClaudeStepImpl, handleClaude as handleClaudeImpl, settleRpc as settleRpcImpl, handleCodex as handleCodexImpl, handleCodexSubagent as handleCodexSubagentImpl, codexRequest as codexRequestImpl, publishTurnCut as publishTurnCutImpl, publishBackgroundTask as publishBackgroundTaskImpl } from "./daemon/agent-streams.js";
 import { rename as renameImpl, remove as removeImpl, mode as modeImpl, importTerminalTurns as importTerminalTurnsImpl, logTurnOpen as logTurnOpenImpl, foreignHolders as foreignHoldersImpl, panesOf as panesOfImpl, endAppTerminals as endAppTerminalsImpl, refreshTerminalChats as refreshTerminalChatsImpl, terminalCommand as terminalCommandImpl } from "./daemon/terminal-mode.js";
 import { updateContext as updateContextImpl, setModel as setModelImpl, startArtifactWatch as startArtifactWatchImpl, stopArtifactWatch as stopArtifactWatchImpl, replaceArtifactSnapshot as replaceArtifactSnapshotImpl, refreshClaudeArtifacts as refreshClaudeArtifactsImpl, checkArtifactWatch as checkArtifactWatchImpl } from "./daemon/artifacts-summaries.js";
 import { requireChat as requireChatImpl, normalizeParts as normalizePartsImpl, processes as processesImpl, entryOf as entryOfImpl, track as trackImpl, dropConversation as dropConversationImpl, pruneUnused as pruneUnusedImpl, sessionOfTerminal as sessionOfTerminalImpl, save as saveImpl } from "./daemon/chat-state.js";
@@ -135,6 +135,9 @@ export class ChatDaemon {
   readonly activeTurns = new Map<string, string>();
   readonly interrupting = new Set<string>();
   readonly interruptedEvents = new Set<string>();
+  readonly turnHasPartial = new Set<string>();
+  readonly cutTurns = new Set<string>();
+  readonly backgroundTasks = new Map<string, Map<string, import("./store.js").BackgroundTask>>();
   readonly pendingApprovals = new Map<string, { approval: ChatApproval; resolve: (decision: string) => void }>();
   readonly subscribers = new Map<string, Set<(line: ChatLine, live?: boolean) => void>>();
   readonly artifactWatches = new Map<string, ArtifactWatch>();
@@ -153,6 +156,7 @@ export class ChatDaemon {
   /** A Codex turn counts from the thread's output tokens before it, which a resumed thread carries from earlier turns. */
   readonly codexTokenBase = new Map<string, number>();
   readonly toolNames = new Map<string, Map<string, string>>();
+  readonly backgroundTaskIds = new Map<string, Map<string, string>>();
   /** Each chat's subagents by id: the tool that started one, whether it runs in the background, whether it ended. */
   readonly subagents = new Map<string, Map<string, { name: string; background: boolean; ended: boolean }>>();
   /** Removed chats: late agent output must not write their record back. */
@@ -246,6 +250,8 @@ async runAgentInternal(chat: Chat, checked = false): Promise<void> { return awai
 async clearTerminalHoldersBeforeResume(chat: Chat): Promise<void> { return await clearTerminalHoldersBeforeResumeImpl(this, chat); }
 
 async handleClaudeStream(id: string, streamEvent: Record<string, unknown>): Promise<void> { return await handleClaudeStreamImpl(this, id, streamEvent); }
+async publishTurnCut(chat: Chat, reason: NonNullable<ChatEvent["reason"]>, detail?: string): Promise<void> { return await publishTurnCutImpl(this, chat, reason, detail); }
+async publishBackgroundTask(chat: Chat, task: import("./store.js").BackgroundTask): Promise<void> { return await publishBackgroundTaskImpl(this, chat, task); }
 
 async publishToolCall(id: string, toolUseId: string, name: string, input: string, extra: Partial<ChatEvent> = {}): Promise<void> { return await publishToolCallImpl(this, id, toolUseId, name, input, extra); }
 

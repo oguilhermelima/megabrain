@@ -45,7 +45,7 @@ export async function remove(daemon: ChatDaemon, id: string): Promise<{ removed:
     if (child) child.kill("SIGTERM");
     await Promise.allSettled([daemon.eventChains.get(id), daemon.appendChains.get(id), daemon.queueWrites.get(id)]);
     daemon.stopArtifactWatch(id);
-    for (const map of [daemon.queues, daemon.queued, daemon.queueWrites, daemon.drainChains, daemon.activeTurns, daemon.eventChains, daemon.appendChains, daemon.publishedState, daemon.turnStarted, daemon.currentMessage, daemon.claudeTokens, daemon.codexTokenBase, daemon.toolNames, daemon.subagents, daemon.subscribers]) map.delete(id);
+    for (const map of [daemon.queues, daemon.queued, daemon.queueWrites, daemon.drainChains, daemon.activeTurns, daemon.eventChains, daemon.appendChains, daemon.publishedState, daemon.turnStarted, daemon.currentMessage, daemon.claudeTokens, daemon.codexTokenBase, daemon.toolNames, daemon.backgroundTaskIds, daemon.backgroundTasks, daemon.subagents, daemon.subscribers]) map.delete(id);
     daemon.queueHeld.delete(id);
     daemon.interrupting.delete(id);
     daemon.interruptedEvents.delete(id);
@@ -100,14 +100,22 @@ export async function importTerminalTurns(daemon: ChatDaemon, chat: Chat): Promi
     const turns = await readSessionTurns(chat, daemon.environment.HOME ?? homedir());
     for (const turn of turns) {
       if (turn.at <= since || known.has(turn.sourceId)) continue;
-      const { kind, text: value, at, tool, messageId, parentId, subagent, sourceId } = turn;
-      await daemon.publish(chat, { id: randomUUID(), at, kind, text: value, ...(tool === undefined ? {} : { tool }), ...(messageId === undefined ? {} : { messageId }), ...(parentId === undefined ? {} : { parentId }), ...(subagent === undefined ? {} : { subagent }), sourceId });
+      const { kind, text: value, at, tool, messageId, parentId, subagent, backgroundTask, reason, detail, partial, sourceId } = turn;
+      await daemon.publish(chat, { id: randomUUID(), at, kind, text: value, ...(tool === undefined ? {} : { tool }), ...(messageId === undefined ? {} : { messageId }), ...(parentId === undefined ? {} : { parentId }), ...(subagent === undefined ? {} : { subagent }), ...(backgroundTask === undefined ? {} : { backgroundTask }), ...(reason === undefined ? {} : { reason }), ...(detail === undefined ? {} : { detail }), ...(partial === undefined ? {} : { partial }), sourceId });
     }
     // The TUIs are gone by now, so a turn the log leaves open was cut and nobody will finish it.
     const last = turns.filter((turn) => turn.at > since).at(-1);
     const marker = last === undefined ? "" : `${last.sourceId}:interrupted`;
     if (last === undefined || known.has(marker) || !await daemon.logTurnOpen(chat)) return;
-    await daemon.publish(chat, { ...event("system", "Interrupted"), at: last.at, sourceId: marker });
+    let providerStarted = false;
+    for (const turn of turns) {
+      if (turn.at <= since) continue;
+      if (turn.kind === "user") providerStarted = false;
+      else if (turn.kind === "assistant" || turn.kind === "thinking" || turn.kind === "tool-call") providerStarted = true;
+    }
+    if (!providerStarted) return;
+    await daemon.publish(chat, { ...event("turn-cut", "", undefined, { reason: "process-exited", partial: turns.some((turn) => turn.at > since && turn.kind === "assistant") }), at: last.at, sourceId: marker });
+    await daemon.publishInterrupted(chat);
   }
 
 export async function logTurnOpen(daemon: ChatDaemon, chat: Chat): Promise<boolean> {

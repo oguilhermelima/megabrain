@@ -103,6 +103,7 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
         if (!current || current.state === "suspended" || current.state === "stopped" || current.mode === "terminal") return;
         if (daemon.interrupting.has(chat.id)) {
           daemon.interrupting.delete(chat.id);
+          await daemon.publishTurnCut(current, "interrupted");
           current.state = "idle";
           current.error = null;
           await daemon.save(current);
@@ -114,9 +115,10 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
         current.state = code === 0 ? "idle" : "suspended";
         current.error = code === 0 ? null : `${signal ?? "agent exited"}${stderr.trim() ? `: ${stderr.trim()}` : ""}`;
         if (code !== 0) daemon.queues.delete(chat.id);
-        if (cut) await daemon.publishInterrupted(current);
+        if (cut) await daemon.publishTurnCut(current, "process-exited", current.error ?? undefined);
         await daemon.save(current);
-        await daemon.publish(current, event("system", current.error ?? "Agent process stopped"));
+        if (cut) await daemon.publishInterrupted(current);
+        else await daemon.publish(current, event("system", current.error ?? "Agent process stopped"));
       });
       })();
       daemon.childExits.add(settled);
@@ -209,9 +211,11 @@ export function clearStartTimer(daemon: ChatDaemon, id: string): void {
 export async function interrupt(daemon: ChatDaemon, id: string): Promise<void> {
     const chat = await daemon.requireChat(id);
     const child = daemon.children.get(id);
+    const wasWorking = chat.state === "working" || chat.state === "waiting-approval";
     daemon.queueHeld.add(id);
     if (chat.agent === "claude") {
       daemon.interrupting.add(id);
+      if (wasWorking) await daemon.publishTurnCut(chat, "interrupted");
       chat.state = "idle";
       await daemon.save(chat);
       await daemon.publishInterrupted(chat);
@@ -223,6 +227,7 @@ export async function interrupt(daemon: ChatDaemon, id: string): Promise<void> {
         daemon.interrupting.add(id);
         await chatProtocolAdapters[chat.agent].interrupt(chat, child, turnId, (method, params) => daemon.codexRequest(child, method, params));
       } else {
+        if (wasWorking) await daemon.publishTurnCut(chat, "interrupted");
         chat.state = "idle";
         await daemon.save(chat);
         await daemon.publishInterrupted(chat);
@@ -233,6 +238,7 @@ export async function interrupt(daemon: ChatDaemon, id: string): Promise<void> {
 export async function stop(daemon: ChatDaemon, id: string): Promise<void> {
     const chat = await daemon.requireChat(id);
     const child = daemon.children.get(id);
+    if (chat.state === "working" || chat.state === "waiting-approval") await daemon.publishTurnCut(chat, "interrupted", "chat stopped");
     if (child) { child.kill("SIGTERM"); daemon.children.delete(id); }
     daemon.clearStartTimer(id);
     for (const map of [daemon.queues, daemon.activeTurns]) map.delete(id);

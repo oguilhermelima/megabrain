@@ -149,6 +149,17 @@ describe("chats survive a daemon restart", () => {
     expect(await eventTexts(quiet)).not.toContain("system:Interrupted");
   });
 
+  test("a background task left running in the event log is marked lost on daemon restart", async () => {
+    const env = sandbox();
+    const store = new ChatStore(env.state);
+    await store.put(record(env, { state: "idle" }));
+    await store.append(ID, { id: "task-running", at: new Date().toISOString(), kind: "background-task", text: "Build", backgroundTask: { id: "task-1", kind: "shell", label: "Build", state: "running", startedAt: new Date().toISOString() } });
+    const daemon = await daemonFor(env);
+    const tasks = (await daemon.store.events(ID)).flatMap((line) => line.event?.backgroundTask ? [line.event.backgroundTask] : []);
+    expect(tasks.map((task) => task.state)).toEqual(["running", "lost"]);
+    expect(tasks[1]).toMatchObject({ id: "task-1", summary: expect.stringContaining("restarted") });
+  });
+
   test("a send to a suspended Claude chat respawns it with --resume and the recorded id, then delivers the message", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", FAKE_CLAUDE);

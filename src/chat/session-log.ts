@@ -6,7 +6,7 @@ import type { Chat, ChatEvent } from "./store.js";
 import { claudeHandBack, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type SubagentEnd } from "./subagents.js";
 
 /** One conversation entry read from an agent's own session log; `sourceId` is stable across reads, so an import can skip what it already holds. */
-export type LoggedTurn = Pick<ChatEvent, "kind" | "text" | "tool" | "messageId" | "parentId" | "subagent"> & { sourceId: string; at: string };
+export type LoggedTurn = Pick<ChatEvent, "kind" | "text" | "tool" | "messageId" | "parentId" | "subagent" | "backgroundTask" | "reason" | "detail" | "partial"> & { sourceId: string; at: string };
 
 function object(value: unknown): Record<string, unknown> { return typeof value === "object" && value !== null ? value as Record<string, unknown> : {}; }
 function text(value: unknown): string { return typeof value === "string" ? value : ""; }
@@ -59,19 +59,38 @@ function endTurn(end: SubagentEnd, name: string): Omit<LoggedTurn, "sourceId" | 
  */
 export function parseClaudeLog(content: string, parentId?: string): LoggedTurn[] {
   const names = new Map<string, string>();
+  const tasks = new Map<string, NonNullable<ChatEvent["backgroundTask"]>>();
   const turns: LoggedTurn[] = [];
+  let turnPartial = false;
   const parent = parentId === undefined ? {} : { parentId };
   for (const row of records(content)) {
     const uuid = text(row.uuid);
     const at = text(row.timestamp);
-    if ((row.type !== "user" && row.type !== "assistant") || uuid === "" || at === "" || (row.isSidechain === true && parentId === undefined) || row.isMeta === true) continue;
+    if (uuid === "" || at === "" || (row.isSidechain === true && parentId === undefined) || row.isMeta === true) continue;
+    if (row.type === "system" && row.subtype === "task_notification") {
+      const id = text(row.tool_use_id);
+      const task = tasks.get(id);
+      if (task) {
+        const status = text(row.status);
+        const state: NonNullable<ChatEvent["backgroundTask"]>["state"] = status === "completed" ? "completed" : status === "failed" ? "failed" : "killed";
+        const update = { ...task, state, endedAt: at, ...(text(row.summary) ? { summary: text(row.summary) } : {}) };
+        tasks.set(id, update);
+        turns.push({ kind: "background-task", text: task.label, backgroundTask: update, sourceId: uuid, at });
+      }
+      continue;
+    }
+    if (row.type !== "user" && row.type !== "assistant") continue;
     const message = object(row.message);
     const found: Omit<LoggedTurn, "sourceId" | "at">[] = [];
     if (row.type === "user") {
-      if (typeof message.content === "string") { if (parentId === undefined) found.push({ kind: "user", text: message.content }); }
+      if (typeof message.content === "string") {
+        if (parentId === undefined && message.content.startsWith(CLAUDE_INTERRUPTED)) { found.push({ kind: "turn-cut", text: "", reason: "interrupted", partial: turnPartial }); turnPartial = false; }
+        else if (parentId === undefined) { found.push({ kind: "user", text: message.content }); turnPartial = false; }
+      }
       else {
         const typed = blocks(message.content).filter((block) => block.type === "text").map((block) => text(block.text)).join("");
-        if (typed !== "" && parentId === undefined) found.push({ kind: "user", text: typed });
+        if (parentId === undefined && typed.startsWith(CLAUDE_INTERRUPTED)) { found.push({ kind: "turn-cut", text: "", reason: "interrupted", partial: turnPartial }); turnPartial = false; }
+        else if (typed !== "" && parentId === undefined) { found.push({ kind: "user", text: typed }); turnPartial = false; }
         for (const block of blocks(message.content).filter((candidate) => candidate.type === "tool_result")) {
           const name = names.get(text(block.tool_use_id)) ?? "tool";
           if (parentId === undefined && isClaudeSubagentTool(name)) {
@@ -80,6 +99,13 @@ export function parseClaudeLog(content: string, parentId?: string): LoggedTurn[]
             continue;
           }
           found.push({ kind: "tool-result", text: flatten(block.content), tool: { name, status: block.is_error === true ? "error" : "ok" }, ...parent });
+          const task = tasks.get(text(block.tool_use_id));
+          const result = object(row.toolUseResult);
+          if (task && result.status !== "async_launched") {
+            const update = { ...task, state: block.is_error === true ? "failed" as const : "completed" as const, endedAt: at, summary: flatten(block.content) };
+            tasks.set(task.id, update);
+            found.push({ kind: "background-task", text: task.label, backgroundTask: update });
+          }
         }
       }
     } else {
@@ -87,12 +113,19 @@ export function parseClaudeLog(content: string, parentId?: string): LoggedTurn[]
       const identity = { ...(messageId === "" ? {} : { messageId }), ...parent };
       for (const block of blocks(message.content)) {
         if (block.type === "thinking" && text(block.thinking) !== "") found.push({ kind: "thinking", text: text(block.thinking), ...identity });
-        else if (block.type === "text" && text(block.text) !== "") found.push({ kind: "assistant", text: text(block.text), ...identity });
+        else if (block.type === "text" && text(block.text) !== "") { found.push({ kind: "assistant", text: text(block.text), ...identity }); if (parentId === undefined) turnPartial = true; }
         else if (block.type === "tool_use") {
           const name = text(block.name);
           names.set(text(block.id), name);
           const call = { kind: "tool-call" as const, text: name, tool: { name, input: JSON.stringify(block.input ?? {}) } };
           found.push(parentId === undefined && isClaudeSubagentTool(name) ? { ...call, subagent: claudeSubagent(text(block.id), block.input) } : { ...call, ...parent });
+          const fields = object(block.input);
+          if (parentId === undefined && ((name === "Bash" && (fields.run_in_background === true || fields.run_in_background === "true")) || name.toLowerCase() === "monitor")) {
+            const id = text(block.id);
+            const task = { id, kind: name.toLowerCase() === "monitor" ? "monitor" as const : "shell" as const, label: text(fields.description) || text(fields.command) || name, state: "running" as const, startedAt: at };
+            tasks.set(id, task);
+            found.push({ kind: "background-task", text: task.label, backgroundTask: task });
+          }
         }
       }
     }
@@ -142,6 +175,7 @@ const CODEX_CONTEXT = ["# AGENTS.md instructions", "<environment_context>", "<us
 export function parseCodexRollout(content: string, parentId?: string): LoggedTurn[] {
   const names = new Map<string, string>();
   const turns: LoggedTurn[] = [];
+  let turnPartial = false;
   const parent = parentId === undefined ? {} : { parentId };
   const rows = records(content);
   const own = parentId === undefined ? 0 : Math.max(0, rows.findIndex((row) => {
@@ -155,18 +189,29 @@ export function parseCodexRollout(content: string, parentId?: string): LoggedTur
     const at = text(row.timestamp);
     const id = `codex:${typeof row.ordinal === "number" ? row.ordinal : index}`;
     if (index < own || at === "") return;
+    if (row.type === "event_msg" && parentId === undefined) {
+      const eventType = text(payload.type);
+      if (eventType === "task_started" || eventType === "turn_started") turnPartial = false;
+      else if (eventType === "turn_aborted") {
+        turns.push({ kind: "turn-cut", text: "", reason: "interrupted", partial: turnPartial, sourceId: `${id}:cut`, at });
+        turnPartial = false;
+      } else if (eventType === "task_complete" || eventType === "turn_complete") turnPartial = false;
+    }
     if (row.type === "event_msg" && payload.type === "item_completed" && parentId === undefined) {
       const item = object(payload.item);
       for (const subagent of codexSpawned(item)) {
         if (spawns.has(subagent.id)) continue;
         spawns.set(subagent.id, text(item.tool));
         turns.push({ kind: "tool-call", text: text(item.tool), tool: { name: text(item.tool), input: text(item.prompt) }, subagent, sourceId: `${id}:start:${subagent.id}`, at });
+        turns.push({ kind: "background-task", text: subagent.description || text(item.prompt) || "Agent", backgroundTask: { id: subagent.id, kind: "agent", label: subagent.description || text(item.prompt) || "Agent", state: "running", startedAt: at }, sourceId: `${id}:task-start:${subagent.id}`, at });
       }
       for (const end of codexEnded(item)) {
         const name = spawns.get(end.id);
         if (name === undefined || ended.has(end.id)) continue;
         ended.add(end.id);
         turns.push({ ...endTurn(end, name), sourceId: `${id}:end:${end.id}`, at });
+        const start = turns.slice().reverse().find((turn) => turn.kind === "background-task" && turn.backgroundTask?.id === end.id)?.backgroundTask;
+        if (start) turns.push({ kind: "background-task", text: start.label, backgroundTask: { ...start, state: end.status === "completed" ? "completed" : end.status === "failed" ? "failed" : "killed", endedAt: at, ...(end.text ? { summary: end.text } : {}) }, sourceId: `${id}:task-end:${end.id}`, at });
       }
       return;
     }
@@ -175,8 +220,8 @@ export function parseCodexRollout(content: string, parentId?: string): LoggedTur
     let found: Omit<LoggedTurn, "sourceId" | "at"> | undefined;
     if (kind === "message") {
       const value = blocks(payload.content).map((block) => text(block.text)).join("");
-      if (payload.role === "assistant" && value !== "") found = { kind: "assistant", text: value };
-      else if (payload.role === "user" && parentId === undefined && value !== "" && !CODEX_CONTEXT.some((prefix) => value.startsWith(prefix))) found = { kind: "user", text: value };
+      if (payload.role === "assistant" && value !== "") { found = { kind: "assistant", text: value }; if (parentId === undefined) turnPartial = true; }
+      else if (payload.role === "user" && parentId === undefined && value !== "" && !CODEX_CONTEXT.some((prefix) => value.startsWith(prefix))) { found = { kind: "user", text: value }; turnPartial = false; }
     } else if (kind === "reasoning") {
       const value = flatten(payload.summary);
       if (value !== "") found = { kind: "thinking", text: value };
@@ -256,7 +301,8 @@ export function sessionTurnOpen(agent: Chat["agent"], content: string): boolean 
     if (row.type === "system" && row.subtype === "turn_duration") open = false;
     else if (row.type === "assistant") {
       const stop = text(message.stop_reason);
-      if (stop !== "" && stop !== "tool_use") open = false;
+      const hasText = blocks(message.content).some((block) => block.type === "text" && text(block.text) !== "");
+      if ((stop !== "" && stop !== "tool_use") || (message.stop_reason === undefined && hasText)) open = false;
     } else if (row.type === "user") {
       const typed = typeof message.content === "string" ? message.content : blocks(message.content).filter((block) => block.type === "text").map((block) => text(block.text)).join("");
       // A slash command the TUI ran itself is no prompt: nothing answers it.

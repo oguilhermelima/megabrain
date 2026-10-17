@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createConnection } from "node:net";
 import { ChatDaemon } from "../../src/chat/daemon.js";
-import { readSessionTurns, type LoggedTurn } from "../../src/chat/session-log.js";
+import { parseClaudeLog, readSessionTurns, type LoggedTurn } from "../../src/chat/session-log.js";
 import type { Chat, ChatEvent, ChatLine } from "../../src/chat/store.js";
 
 // Fixtures, all captured on this machine and redacted:
@@ -147,6 +147,55 @@ describe("Claude subagents in a live chat", () => {
     expect(starts(stored)).toHaveLength(2);
     expect(ends(stored).map((e) => [e.subagent?.id, e.subagent?.status, e.text])).toEqual([[ALPHA, "completed", "alpha"], [MISSING, "completed", expect.stringContaining("No such file or directory")]]);
     expect(stored.some((e) => e.text.startsWith("Async agent launched"))).toBe(false);
+    const tasks = stored.flatMap((event) => event.backgroundTask ? [event.backgroundTask] : []);
+    expect(tasks.filter((task) => task.id === ALPHA).map((task) => task.state)).toEqual(["running", "completed"]);
+    expect(tasks.filter((task) => task.id === MISSING).map((task) => task.state)).toEqual(["running", "completed"]);
+  });
+
+  test("a Claude stream interrupt after partial text records one named cut", async () => {
+    const h = await harness("claude", claudeReplay([
+      JSON.stringify({ type: "system", subtype: "init", session_id: "partial-session" }),
+      JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "unfinished" } } }),
+    ]));
+    const chat = await h.daemon.handle({ operation: "start", agent: "claude", cwd: h.cwd }) as Chat;
+    const watcher = follow(h.state, chat.id);
+    try {
+      await until(() => watcher.events().some((event) => event.kind === "state"), "follow started");
+      await h.daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "go" }] });
+      await until(() => watcher.events().some((event) => event.kind === "delta" && event.text === "unfinished"), "partial text");
+      await h.daemon.handle({ operation: "interrupt", id: chat.id });
+      await until(() => watcher.events().some((event) => event.kind === "turn-cut"), "cut event");
+      const cuts = (await h.daemon.store.events(chat.id)).flatMap((line) => line.event?.kind === "turn-cut" ? [line.event] : []);
+      expect(cuts).toHaveLength(1);
+      expect(cuts[0]).toMatchObject({ reason: "interrupted", partial: true });
+    } finally { watcher.close(); await h.daemon.close(); }
+  });
+
+  test("a provider-finished turn has no cut event", async () => {
+    const { stored } = await turn("claude", claudeReplay([
+      JSON.stringify({ type: "assistant", message: { id: "finished", content: [{ type: "text", text: "complete" }] } }),
+      JSON.stringify({ type: "result", session_id: "finished-session", is_error: false }),
+    ]), (events) => events.some((event) => event.kind === "assistant" && event.text === "complete"));
+    expect(stored.filter((event) => event.kind === "turn-cut")).toEqual([]);
+  });
+
+  test("a Claude process exit during partial output names the cut", async () => {
+    const script = `const readline = require("node:readline");
+readline.createInterface({ input: process.stdin }).once("line", () => {
+  process.stdout.write(JSON.stringify({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: "unfinished" } } }) + "\\n");
+  setTimeout(() => process.exit(1), 20);
+});`;
+    const h = await harness("claude", script);
+    const chat = await h.daemon.handle({ operation: "start", agent: "claude", cwd: h.cwd }) as Chat;
+    const watcher = follow(h.state, chat.id);
+    try {
+      await until(() => watcher.events().some((event) => event.kind === "state"), "follow started");
+      await h.daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "go" }] });
+      await until(() => watcher.events().some((event) => event.kind === "turn-cut"), "process exit cut");
+      const cuts = (await h.daemon.store.events(chat.id)).flatMap((line) => line.event?.kind === "turn-cut" ? [line.event] : []);
+      expect(cuts).toHaveLength(1);
+      expect(cuts[0]).toMatchObject({ reason: "process-exited", partial: true });
+    } finally { watcher.close(); await h.daemon.close(); }
   });
 
   test("a foreground subagent still open when the turn ends is stopped", async () => {
@@ -192,6 +241,7 @@ rl.on("line", async (line) => {
     expect(starts(stored).map((e) => e.subagent)).toEqual([{ id: CHILD, description: "Map the repo" }]);
     expect(nested(stored, CHILD).map((e) => [e.kind, e.text])).toEqual([["tool-call", "ls"], ["tool-result", "a.txt"], ["assistant", "Found a.txt"]]);
     expect(ends(stored).map((e) => [e.subagent?.id, e.subagent?.status, e.text])).toEqual([[CHILD, "completed", "Found a.txt"]]);
+    expect(stored.flatMap((event) => event.backgroundTask ? [event.backgroundTask] : []).filter((task) => task.id === CHILD).map((task) => task.state)).toEqual(["running", "completed"]);
     // The child's chunks, turn and usage are not the main chat's: no live delta, no early idle, no context change.
     expect(live.filter((e) => e.kind === "delta" && e.messageId === "msg-child")).toEqual([]);
     const sent = stored.findIndex((e) => e.kind === "user");
@@ -202,6 +252,24 @@ rl.on("line", async (line) => {
 });
 
 describe("subagents imported from a session log", () => {
+  test("Claude Bash background tasks keep their id from launch through notification", () => {
+    const log = [
+      { type: "assistant", uuid: "launch-row", timestamp: "2026-10-17T10:00:00.000Z", message: { id: "m1", content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "bun run build", description: "Build", run_in_background: "true" } }] } },
+      { type: "user", uuid: "receipt-row", timestamp: "2026-10-17T10:00:01.000Z", message: { content: [{ type: "tool_result", tool_use_id: "bash-1", content: [{ type: "text", text: "Running" }] }] }, toolUseResult: { status: "async_launched" } },
+      { type: "system", subtype: "task_notification", uuid: "done-row", timestamp: "2026-10-17T10:01:00.000Z", tool_use_id: "bash-1", status: "completed", summary: "Build passed" },
+    ].map((row) => JSON.stringify(row)).join("\n");
+    const tasks = parseClaudeLog(log).flatMap((turn) => turn.backgroundTask ? [turn.backgroundTask] : []);
+    expect(tasks.map((task) => [task.id, task.state])).toEqual([["bash-1", "running"], ["bash-1", "completed"]]);
+  });
+
+  test("a Claude session log interruption imports a turn-cut event", () => {
+    const log = [
+      { type: "assistant", uuid: "answer-row", timestamp: "2026-10-17T10:00:00.000Z", message: { id: "m1", content: [{ type: "text", text: "partial answer" }] } },
+      { type: "user", uuid: "interrupt-row", timestamp: "2026-10-17T10:00:01.000Z", message: { content: "[Request interrupted by user]" } },
+    ].map((row) => JSON.stringify(row)).join("\n");
+    expect(parseClaudeLog(log).filter((turn) => turn.kind === "turn-cut").map((turn) => ({ reason: turn.reason, partial: turn.partial }))).toEqual([{ reason: "interrupted", partial: true }]);
+  });
+
   test("Claude: each Agent call joins its subagents/agent-<id>.jsonl steps under it", async () => {
     const home = scratch("megabrain-subagent-log-");
     const cwd = "/Users/operator/Workspaces/Canto";
@@ -244,7 +312,8 @@ describe("subagents imported from a session log", () => {
     ]);
     // The wait and the close both report the end; it is told once.
     expect(ends(turns).map((t) => [t.subagent?.id, t.subagent?.status, t.text])).toEqual([[CHILD, "completed", "Done without a commit: the userscript now supports the mirror domains and keeps the reader."]]);
-    expect(turns.filter((t) => t.parentId === undefined).map((t) => t.kind)).toEqual(["user", "tool-call", "tool-result", "assistant"]);
+    expect(turns.filter((t) => t.parentId === undefined).map((t) => t.kind)).toEqual(["user", "tool-call", "background-task", "tool-result", "background-task", "assistant"]);
+    expect(turns.flatMap((turn) => turn.backgroundTask ? [turn.backgroundTask.state] : [])).toEqual(["running", "completed"]);
     expectOrderedAndUnique(turns);
   });
 });

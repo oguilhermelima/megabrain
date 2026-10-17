@@ -79,7 +79,7 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
 export async function suspendActive(daemon: ChatDaemon): Promise<string[]> {
     const interrupted: string[] = [];
     for (const chat of await daemon.store.list()) {
-      if (chat.state === "suspended" || chat.state === "error" || chat.mode === "terminal") continue;
+      if (chat.state === "error" || chat.mode === "terminal") continue;
       const child = daemon.children.get(chat.id);
       if (child) {
         daemon.children.delete(chat.id);
@@ -90,8 +90,16 @@ export async function suspendActive(daemon: ChatDaemon): Promise<string[]> {
       for (const map of [daemon.queues, daemon.activeTurns]) map.delete(chat.id);
       if (chat.state === "working" || chat.state === "waiting-approval") {
         interrupted.push(chat.id);
+        await daemon.publishTurnCut(chat, "process-exited", "chat daemon restarted while the turn was active");
         await daemon.publish(chat, event("system", "Interrupted"));
       }
+      const latestTasks = new Map<string, import("../store.js").BackgroundTask>();
+      for (const line of await daemon.store.events(chat.id)) {
+        const task = line.event?.backgroundTask;
+        if (task) latestTasks.set(task.id, task);
+      }
+      for (const task of latestTasks.values()) if (task.state === "running") await daemon.publishBackgroundTask(chat, { ...task, state: "lost", endedAt: new Date().toISOString(), summary: "Chat daemon restarted before the task reported completion" });
+      if (chat.state === "suspended") continue;
       chat.state = "suspended";
       chat.error = null;
       await daemon.save(chat);

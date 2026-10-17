@@ -42,9 +42,11 @@ export async function handleClaudeStream(daemon: ChatDaemon, id: string, streamE
       const delta = object(streamEvent.delta);
       const messageId = daemon.currentMessage.get(id) ?? "";
       if (delta.type === "text_delta") {
+        if (text(delta.text) !== "") daemon.turnHasPartial.add(id);
         daemon.publishLive(id, event("delta", text(delta.text), undefined, { stream: "assistant", ...withMessage(messageId) }));
         daemon.countClaude(id, (tokens) => ({ ...tokens, textChars: tokens.textChars + text(delta.text).length }));
       }
+
       // Without summarized display a chunk carries only a token estimate, which system/thinking_tokens reports too.
       else if (delta.type === "thinking_delta" && text(delta.thinking) !== "") daemon.publishLive(id, event("delta", text(delta.thinking), undefined, { stream: "thinking", ...withMessage(messageId) }));
       return;
@@ -59,13 +61,41 @@ export async function handleClaudeStream(daemon: ChatDaemon, id: string, streamE
     if (kind === "content_block_start" && block.type === "tool_use" && !isClaudeSubagentTool(text(block.name))) await daemon.publishToolCall(id, text(block.id), text(block.name), "");
   }
 
+export async function publishTurnCut(daemon: ChatDaemon, chat: Chat, reason: NonNullable<ChatEvent["reason"]>, detail?: string): Promise<void> {
+    if (daemon.cutTurns.has(chat.id)) return;
+    daemon.cutTurns.add(chat.id);
+    await daemon.publish(chat, event("turn-cut", "", undefined, { reason, partial: daemon.turnHasPartial.has(chat.id), ...(detail ? { detail } : {}) }));
+  }
+
+export async function publishBackgroundTask(daemon: ChatDaemon, chat: Chat, task: import("../store.js").BackgroundTask): Promise<void> {
+    const known = daemon.backgroundTasks.get(chat.id) ?? new Map();
+    daemon.backgroundTasks.set(chat.id, known);
+    const previous = known.get(task.id);
+    if (previous && previous.state === task.state) return;
+    known.set(task.id, task);
+    await daemon.publish(chat, event("background-task", task.label, undefined, { backgroundTask: task }));
+  }
+
 export async function publishToolCall(daemon: ChatDaemon, id: string, toolUseId: string, name: string, input: string, extra: Partial<ChatEvent> = {}): Promise<void> {
     const names = daemon.toolNames.get(id) ?? new Map<string, string>();
     daemon.toolNames.set(id, names);
-    if (names.has(toolUseId)) return;
-    names.set(toolUseId, name);
     const chat = await daemon.requireChat(id);
-    await daemon.publish(chat, event("tool-call", name, { name, input }, extra));
+    const isNew = !names.has(toolUseId);
+    if (isNew) {
+      names.set(toolUseId, name);
+      await daemon.publish(chat, event("tool-call", name, { name, input }, extra));
+    }
+    let fields: Record<string, unknown> = {};
+    try { fields = object(JSON.parse(input)); } catch { /* tool input may be incomplete */ }
+    const isMonitor = name.toLowerCase() === "monitor";
+    if (isMonitor || (name === "Bash" && (fields.run_in_background === true || fields.run_in_background === "true"))) {
+      const label = text(fields.description) || text(fields.command) || name;
+      const kind = isMonitor ? "monitor" : "shell";
+      const ids = daemon.backgroundTaskIds.get(id) ?? new Map<string, string>();
+      ids.set(toolUseId, toolUseId);
+      daemon.backgroundTaskIds.set(id, ids);
+      await daemon.publishBackgroundTask(chat, { id: toolUseId, kind, label, state: "running", startedAt: new Date().toISOString() });
+    }
   }
 
 export async function startSubagent(daemon: ChatDaemon, chat: Chat, subagent: Subagent, name: string, input: string): Promise<void> {
@@ -74,6 +104,7 @@ export async function startSubagent(daemon: ChatDaemon, chat: Chat, subagent: Su
     if (known.has(subagent.id)) return;
     known.set(subagent.id, { name, background: false, ended: false });
     await daemon.publish(chat, event("tool-call", name, { name, input }, { subagent }));
+    await daemon.publishBackgroundTask(chat, { id: subagent.id, kind: "agent", label: subagent.description || subagent.type || name, state: "running", startedAt: new Date().toISOString() });
   }
 
 export async function endSubagent(daemon: ChatDaemon, chat: Chat, end: SubagentEnd): Promise<void> {
@@ -81,6 +112,8 @@ export async function endSubagent(daemon: ChatDaemon, chat: Chat, end: SubagentE
     if (known === undefined || known.ended) return;
     known.ended = true;
     await daemon.publish(chat, event("tool-result", end.text, { name: known.name, status: end.status === "completed" ? "ok" : "error" }, { subagent: { id: end.id, status: end.status } }));
+    const task = daemon.backgroundTasks.get(chat.id)?.get(end.id);
+    if (task) await daemon.publishBackgroundTask(chat, { ...task, state: end.status === "completed" ? "completed" : end.status === "failed" ? "failed" : "killed", endedAt: new Date().toISOString(), ...(end.text ? { summary: end.text } : {}) });
   }
 
 export async function publishClaudeStep(daemon: ChatDaemon, chat: Chat, parentId: string, item: Record<string, unknown>): Promise<void> {
@@ -118,6 +151,9 @@ export async function handleClaude(daemon: ChatDaemon, id: string, child: ChildP
       // A foreground subagent ends on its hand-back, which carries the whole report; a background one only here.
       const end = claudeNotified(item);
       if (daemon.subagents.get(id)?.get(end.id)?.background === true) await daemon.endSubagent(chat, end);
+      const taskId = daemon.backgroundTaskIds.get(id)?.get(text(item.tool_use_id)) ?? daemon.backgroundTaskIds.get(id)?.get(text(item.task_id));
+      const task = taskId ? daemon.backgroundTasks.get(id)?.get(taskId) : undefined;
+      if (task) await daemon.publishBackgroundTask(chat, { ...task, state: end.status === "completed" ? "completed" : end.status === "failed" ? "failed" : "killed", endedAt: new Date().toISOString(), ...(end.text ? { summary: end.text } : {}) });
       return;
     }
     if (item.type === "system" && item.subtype === "init") {
@@ -159,6 +195,10 @@ export async function handleClaude(daemon: ChatDaemon, id: string, child: ChildP
         }
         const name = daemon.toolNames.get(id)?.get(text(block.tool_use_id)) ?? "tool";
         await daemon.publish(chat, event("tool-result", flattenContent(block.content), { name, status: block.is_error === true ? "error" : "ok" }));
+        const taskId = daemon.backgroundTaskIds.get(id)?.get(text(block.tool_use_id));
+        const task = taskId ? daemon.backgroundTasks.get(id)?.get(taskId) : undefined;
+        const result = object(item.tool_use_result);
+        if (task && result.status !== "async_launched") await daemon.publishBackgroundTask(chat, { ...task, state: block.is_error === true ? "failed" : "completed", endedAt: new Date().toISOString(), summary: flattenContent(block.content) });
       }
       return;
     }
@@ -174,6 +214,10 @@ export async function handleClaude(daemon: ChatDaemon, id: string, child: ChildP
       chat.error = null;
       chat.lastActivityAt = new Date().toISOString();
       await daemon.save(chat);
+      if (item.is_error === true && !daemon.interrupting.has(id)) {
+        const detail = text(item.result) || text(item.error);
+        await daemon.publishTurnCut(chat, /limit|rate.?limit|quota/i.test(detail) ? "limit" : "error", detail || undefined);
+      }
       if (item.is_error === true && daemon.interrupting.has(id)) daemon.interrupting.delete(id);
       // The turn ended: a foreground subagent that never handed back was stopped with it.
       for (const [subagentId, subagent] of daemon.subagents.get(id) ?? []) if (!subagent.background) await daemon.endSubagent(chat, { id: subagentId, status: "stopped", text: "" });
@@ -215,13 +259,16 @@ export async function handleCodex(daemon: ChatDaemon, id: string, child: ChildPr
         daemon.publishProgress(id, { tokens: total - base });
       }
     } else if (method === "error") {
-      if (params.willRetry === true) daemon.publishProgress(id, { retry: { reason: text(object(params.error).message) || "error" } });
+      const detail = text(object(params.error).message) || "error";
+      if (params.willRetry === true) daemon.publishProgress(id, { retry: { reason: detail } });
+      else if (chat.state === "working" || chat.state === "waiting-approval") await daemon.publishTurnCut(chat, /limit|rate.?limit|quota/i.test(detail) ? "limit" : "error", detail);
     } else if (method === "item/reasoning/summaryPartAdded") {
       // Each summary part is a paragraph of its own, as the stored reasoning shows it.
       const index = count(params.summaryIndex);
       if (index !== undefined && index > 0) daemon.publishLive(id, event("delta", "\n\n", undefined, { stream: "thinking", ...withMessage(text(params.itemId)) }));
     } else if (/delta$/i.test(method) && /reasoning|thinking|agentMessage|assistantMessage/.test(method)) {
       const stream = /reasoning|thinking/.test(method) ? "thinking" : "assistant";
+      if (stream === "assistant" && text(params.delta ?? params.text) !== "") daemon.turnHasPartial.add(id);
       daemon.publishLive(id, event("delta", text(params.delta ?? params.text), undefined, { stream, ...withMessage(text(params.itemId)) }));
     } else if (method.includes("reasoning") || method.includes("thinking")) { if (text(params.delta ?? params.text) !== "") await daemon.publish(chat, event("thinking", text(params.delta ?? params.text))); }
     else if (method.includes("agentMessage") || method.includes("assistantMessage")) await daemon.publish(chat, event("assistant", text(params.delta ?? params.text)));
@@ -248,11 +295,16 @@ export async function handleCodex(daemon: ChatDaemon, id: string, child: ChildPr
       await daemon.save(chat);
     } else if (method === "turn/completed") {
       daemon.activeTurns.delete(id);
+      if (text(object(params.turn).status) === "interrupted" && !daemon.interrupting.has(id)) await daemon.publishTurnCut(chat, "interrupted");
       chat.state = "idle";
       await daemon.save(chat);
       if (text(object(params.turn).status) === "interrupted" && daemon.interrupting.has(id)) {
         daemon.interrupting.delete(id);
+        await daemon.publishTurnCut(chat, "interrupted");
         await daemon.publishInterrupted(chat);
+      } else if (["failed", "error", "interrupted"].includes(text(object(params.turn).status))) {
+        const status = text(object(params.turn).status);
+        await daemon.publishTurnCut(chat, status === "interrupted" ? "interrupted" : "error", text(object(params.turn).error));
       }
       await daemon.drain(id);
     }

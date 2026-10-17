@@ -126,6 +126,8 @@ export function broadcast(daemon: ChatDaemon, id: string, line: ChatLine): void 
   }
 
 export async function publish(daemon: ChatDaemon, chat: Chat, value: ChatEvent, approval?: ChatApproval): Promise<void> {
+    if (value.kind === "user") { daemon.turnHasPartial.delete(chat.id); daemon.cutTurns.delete(chat.id); }
+    if (value.kind === "assistant" && value.text !== "") daemon.turnHasPartial.add(chat.id);
     const previous = daemon.appendChains.get(chat.id) ?? Promise.resolve();
     const next = previous.then(async () => {
       if (daemon.removed.has(chat.id)) return;
