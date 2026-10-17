@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { SummariesList, Summary } from '@/api/schema'
-import { branchCount, branchLive, groupSummaries, neighbours, summariesSectionKey, summaryProjectKey, summaryProjectOpen } from '@/advanced/summaries-model'
+import { branchCount, branchLive, foldKey, groupSummaries, neighbours, newestSummary, summariesItem, summariesItemIn, summaryOfItem } from '@/advanced/summaries-model'
 
 const summary = (id: string, createdAt: string, extra: Partial<Summary> = {}): Summary => ({
   id,
@@ -123,16 +123,44 @@ describe('neighbours', () => {
   })
 })
 
-describe('folding the Summaries section', () => {
-  test('the section folds under its own key, apart from any project path', () => {
-    expect(summariesSectionKey).toBe('summaries')
-    expect(summaryProjectKey('/work/canto')).toBe('summaries:/work/canto')
-    expect(summaryProjectKey('/work/canto')).not.toBe('/work/canto')
+describe('the Summaries page item', () => {
+  test('is keyed by the summary it shows', () => {
+    expect(summariesItem('sum-0001')).toBe('summary:sum-0001')
+    expect(summaryOfItem('sum-0001')).toBe('sum-0001')
   })
 
-  test('a project in the section starts folded; its key marks one the person opened', () => {
-    expect(summaryProjectOpen(new Set(), '/work/canto')).toBe(false)
-    expect(summaryProjectOpen(new Set(['/work/canto']), '/work/canto')).toBe(false)
-    expect(summaryProjectOpen(new Set([summaryProjectKey('/work/canto')]), '/work/canto')).toBe(true)
+  test('with nothing picked it is the latest page, which picks no summary', () => {
+    expect(summariesItem(null)).toBe('summary:latest')
+    expect(summaryOfItem('latest')).toBeNull()
+  })
+
+  test('the layout holds one Summaries page: the first summary item among its items', () => {
+    expect(summariesItemIn(['native:a', 'summary:sum-0002', 'terminal:t', 'summary:sum-0003'])).toBe('summary:sum-0002')
+    expect(summariesItemIn(['native:a', 'project:/work/canto'])).toBeNull()
+    expect(summariesItemIn([])).toBeNull()
+  })
+})
+
+describe('newestSummary', () => {
+  test("is the first project's first branch's first summary, the list being by latest activity", () => {
+    const grouped = groupSummaries([summary('old', '2026-10-10T10:00:00.000Z'), summary('new', '2026-10-16T10:00:00.000Z', { repo: '/work/juntin', project: 'juntin' })], always)
+    expect(newestSummary(grouped)?.id).toBe('new')
+  })
+
+  test('none when nothing is listed', () => {
+    expect(newestSummary([])).toBeNull()
+    expect(newestSummary(null)).toBeNull()
+  })
+})
+
+describe('folding the page navigation', () => {
+  test('a project and each of its branches fold under keys of their own', () => {
+    expect(foldKey('/work/canto')).toBe('/work/canto')
+    expect(foldKey('/work/canto', 'main')).not.toBe(foldKey('/work/canto'))
+    expect(foldKey('/work/canto', 'main')).not.toBe(foldKey('/work/juntin', 'main'))
+  })
+
+  test('a branch whose name holds a slash stays apart from another project', () => {
+    expect(foldKey('/work/a', 'b/c')).not.toBe(foldKey('/work/a/b', 'c'))
   })
 })

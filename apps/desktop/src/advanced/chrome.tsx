@@ -61,6 +61,16 @@ export function CodeIcon({ size = 14 }: { size?: number }) {
   )
 }
 
+/** The Summaries page's mark: an open book. */
+export function SummariesIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M8 4.25C6.6 3.2 4.6 2.75 2 2.75v9.5c2.6 0 4.6.45 6 1.5 1.4-1.05 3.4-1.5 6-1.5v-9.5c-2.6 0-4.6.45-6 1.5Z" />
+      <path d="M8 4.25v9.5" />
+    </svg>
+  )
+}
+
 export function PlusIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">

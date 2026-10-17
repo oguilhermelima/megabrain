@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { api } from '@/api'
-import type { NativeChat, Project, ProjectSession, ProjectWorktree, Summary } from '@/api/schema'
+import type { NativeChat, Project, ProjectSession, ProjectWorktree } from '@/api/schema'
 import { relativeAge } from '@/advanced/projects-model'
 import { memberStatus, memberStatusLabel, stackActions, stackChain, visibleTree, worktreeTree, type MemberStatus, type StackAction, type StackDetail, type StackPlace, type WorktreeNode } from '@/advanced/stacks'
 import { useStackDetails, type StackDetails } from '@/advanced/useStackDetails'
@@ -9,14 +9,12 @@ import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { displayName, projectTint } from '@/advanced/appearance-model'
 import { archiveDone, archiveFailed, beginArchive, beginRestore, reconcileArchives, restoreDone, restoreFailed, withoutArchived, type ArchiveMap, type ArchiveTarget } from '@/advanced/archive-model'
 import { createFolder, deleteFolder, folderOf, layoutDropTarget, moveEntry, moveToFolder, renameFolder, sidebarEntries, stepEntry, toggleFolder, type DropPlacement, type LayoutRow, type SidebarFolder, type SidebarLayout } from '@/advanced/sidebar-folders'
-import { BranchIcon, Chevron, CodeIcon, PlusIcon } from '@/advanced/chrome'
+import { BranchIcon, Chevron, CodeIcon, PlusIcon, SummariesIcon } from '@/advanced/chrome'
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { projectActivity, projectRowClick, projectRowKey } from '@/advanced/project-row-model'
 import { applyRowOrder, endedRows, moveRow, rowToOpen, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
 import { pruneSidebarState, type SidebarState } from '@/advanced/sidebar-state'
-import { SummariesSection } from '@/advanced/SummariesSection'
-import { summariesSectionKey, summaryProjectKey } from '@/advanced/summaries-model'
 import { useSidebarState } from '@/advanced/useSidebarLayout'
 import { GroupRowView, SpanningSplits, useSplitRows, type SplitDrop } from '@/advanced/SplitRows'
 import { useRowDrag, type RowDragStart, type RowDragState } from '@/advanced/useRowDrag'
@@ -1226,16 +1224,13 @@ export const Sidebar = memo(function Sidebar({
   onCreateWorktree,
   onRetryCreation,
   onDismissCreation,
-  selectedSummaryId,
-  onOpenSummary,
-  onSummarySettings,
+  summariesSelected,
+  onOpenSummaries,
 }: {
-  /** The summary whose page is in the focused pane, if any. */
-  selectedSummaryId: string | null
-  /** Opens a summary's page in the focused pane. */
-  onOpenSummary: (summary: Summary) => void
-  /** Opens Settings on its Summaries page. */
-  onSummarySettings: () => void
+  /** The Summaries page is in the focused pane. */
+  summariesSelected: boolean
+  /** Shows the Summaries page. */
+  onOpenSummaries: () => void
   /** A row joined into a split, a member leaving its group, or a group's members reordered; see useRowDrag. */
   onSplitDrop: (drop: SplitDrop) => void
   /** Worktrees being created, shown as pending rows under their project. */
@@ -1295,8 +1290,7 @@ export const Sidebar = memo(function Sidebar({
   // Every save drops what no longer exists: folds of projects and stacks gone, orders of worktrees gone.
   const saveState = useStableCallback((next: SidebarState) => {
     const worktrees = projects.flatMap((project) => project.worktrees.map((worktree) => worktree.path))
-    // The Summaries section folds under its own key; its projects open under theirs (summaries-model).
-    const collapsible = new Set([...projects.map((project) => project.path), ...worktrees.map((path) => `stack:${path}`), summariesSectionKey, ...projects.map((project) => summaryProjectKey(project.path))])
+    const collapsible = new Set([...projects.map((project) => project.path), ...worktrees.map((path) => `stack:${path}`)])
     changeSavedState(pruneSidebarState(next, { collapsible, worktrees: new Set([...projects.map((project) => project.path), ...worktrees]) }))
   })
   const [menu, setMenu] = useState<OpenMenu | null>(null)
@@ -1777,7 +1771,20 @@ export const Sidebar = memo(function Sidebar({
         openSearch()
       }}
     >
-      {ready && <SummariesSection projects={projects} collapsed={collapsed} onToggle={toggle} selectedId={selectedSummaryId} onOpen={onOpenSummary} onOpenSettings={onSummarySettings} now={now} gutter={gutter} />}
+      {/* One entry for the Summaries page, padded and shaped like a project row above the Projects header. */}
+      <div style={{ paddingRight: 4 + gutter }} className="shrink-0 pt-1 pl-2.5">
+        <button
+          type="button"
+          onClick={onOpenSummaries}
+          aria-current={summariesSelected ? 'page' : undefined}
+          className={`flex h-9 w-full min-w-0 items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 text-left transition-colors select-none ${summariesSelected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
+        >
+          <span className="grid size-6 shrink-0 place-items-center">
+            <SummariesIcon />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-[-0.01em]">Summaries</span>
+        </button>
+      </div>
       {/* Padded like the list (pl-2.5, pr-1 plus its gutter), and the row inside like a project row, so
           the title starts on the project pictures' column and the actions end on the rows' right padding. */}
       <div style={{ paddingRight: 4 + gutter }} className={`shrink-0 space-y-2 border-b py-2 pl-2.5 transition-colors ${scrolled ? 'border-white/[0.07]' : 'border-transparent'}`}>

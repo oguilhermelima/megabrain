@@ -1,9 +1,9 @@
 import type { SummariesList, Summary } from '@/api/schema'
+import { itemKey, parseItem } from '@/panes/pane-model'
 
-// The sidebar's Summaries section: chat summaries by project and branch, as `summaries list` returns
-// them, or regrouped from `summaries search` results while the section's search has text. The section
-// folds under its own key in the sidebar state; its projects start folded, so their key in the same
-// list marks one the person opened.
+// The Summaries page: chat summaries by project and branch, as `summaries list` returns them, or
+// regrouped from `summaries search` results while the page's search has text. The page is one item in
+// the layout, keyed by the summary it shows.
 
 export type SummaryProject = SummariesList['projects'][number]
 
@@ -43,8 +43,20 @@ export function neighbours(branch: readonly Summary[], id: string): { newer: Sum
   return { newer: branch[index - 1] ?? null, older: branch[index + 1] ?? null }
 }
 
-export const summariesSectionKey = 'summaries'
+/** The Summaries page's id while it shows no summary the person picked: it opens on the newest one. */
+const latest = 'latest'
 
-export const summaryProjectKey = (repo: string): string => `${summariesSectionKey}:${repo}`
+/** The Summaries page, one item in the layout, keyed by the summary it shows so a restored layout reopens it there. */
+export const summariesItem = (id: string | null): string => itemKey('summary', id ?? latest)
 
-export const summaryProjectOpen = (collapsed: ReadonlySet<string>, repo: string): boolean => collapsed.has(summaryProjectKey(repo))
+/** The summary a Summaries page item's id picks; null on the latest page. */
+export const summaryOfItem = (id: string): string | null => (id === latest ? null : id)
+
+/** The Summaries page among a layout's items, if one shows it. */
+export const summariesItemIn = (items: readonly string[]): string | null => items.find((item) => parseItem(item)?.kind === 'summary') ?? null
+
+/** The newest summary of a list ordered by latest activity. */
+export const newestSummary = (projects: readonly SummaryProject[] | null): Summary | null => projects?.[0]?.branches[0]?.summaries[0] ?? null
+
+/** The page navigation's fold key for a project, or one of its branches; a newline never sits in a path or a branch. */
+export const foldKey = (repo: string, branch?: string): string => (branch === undefined ? repo : `${repo}\n${branch}`)

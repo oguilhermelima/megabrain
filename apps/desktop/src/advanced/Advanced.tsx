@@ -17,6 +17,7 @@ import type { WorktreeOpen } from '@/advanced/project-page-model'
 import type { ProjectPageActions } from '@/advanced/ProjectPage'
 import { ChatView } from '@/chat/ChatView'
 import { SidebarUsage } from '@/advanced/SidebarUsage'
+import { summariesItem, summariesItemIn } from '@/advanced/summaries-model'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
 import type { OpenChat, OpenPath } from '@/chat/Conversation'
@@ -77,7 +78,7 @@ const CodeLayer = lazy(() => import('@/code/CodeLayer').then((module) => ({ defa
 const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ default: module.GithubPage })))
 const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
 const ProjectPage = lazy(() => import('@/advanced/ProjectPage').then((module) => ({ default: module.ProjectPage })))
-const SummaryPage = lazy(() => import('@/advanced/SummaryPage').then((module) => ({ default: module.SummaryPage })))
+const SummariesPage = lazy(() => import('@/advanced/SummariesPage').then((module) => ({ default: module.SummariesPage })))
 const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
 
 function Loading() {
@@ -217,7 +218,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The page Settings opens on, from the Summaries section's link.
   const [settingsSection, setSettingsSection] = useState<'summaries' | null>(null)
   // The titles of the summaries opened this run, for their panes' names; a restored one reads Summary.
-  const [summaryTitles, setSummaryTitles] = useState<Record<string, string>>({})
   const [filters, setFilters] = useState<SidebarFilters>(readFilters)
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(storedSidebarCollapsed)
   const sidebarWidth = usePanelWidth('megabrain.sidebar.width', sidebarLimits)
@@ -594,7 +594,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return { title: project === undefined ? 'Project' : displayName(project), mark: { kind: 'project' }, state: 'idle', worktree }
       }
       case 'summary':
-        return { title: summaryTitles[parsed.id] ?? 'Summary', mark: { kind: 'summary' }, state: 'idle', worktree }
+        return { title: 'Summaries', mark: { kind: 'summary' }, state: 'idle', worktree }
     }
   }
   // A split never runs out of room: its columns scroll (panes/strip), so no layout is refused for size.
@@ -717,10 +717,22 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     setGithubPage({ path: project.path, kind, focus: focus ?? null })
   })
   const openProject = useStableCallback((project: Project) => showItem(itemKey('project', project.path)))
-  const openSummary = useStableCallback((summary: Summary) => {
-    setSummaryTitles((current) => (current[summary.id] === summary.title ? current : { ...current, [summary.id]: summary.title }))
-    showItem(itemKey('summary', summary.id))
+  /** The Summaries page, one in the layout: shown where it already is, on `summary` when given, else in the focused pane. */
+  const openSummary = useStableCallback((summary: Summary | null) => {
+    setGithubPage(null)
+    setLayout((current) => {
+      const open = summariesItemIn([current.single, ...current.groups.map((group) => group.panes)].flatMap((panes) => paneList(panes.root).map((leaf) => leaf.item)))
+      const item = summary === null ? (open ?? summariesItem(null)) : summariesItem(summary.id)
+      if (open === null || open === item) return openLayoutItem(current, item)
+      const swap = (panes: Panes) => {
+        const leaf = paneOfItem(panes, open)
+        return leaf === null ? panes : replaceItem(panes, leaf.id, item)
+      }
+      const group = groupOfItem(current, open)
+      return openLayoutItem(group === null ? { ...current, single: swap(current.single) } : changeGroupPanes(current, group.id, swap), item)
+    })
   })
+  const openSummaries = useStableCallback(() => openSummary(null))
   const openSummarySettings = useStableCallback(() => {
     setSettingsSection('summaries')
     setSettingsOpen(true)
@@ -926,10 +938,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       }
       case 'summary':
         return {
-          title: summaryTitles[parsed.id] ?? 'Summary',
+          title: 'Summaries',
           node: (
             <Suspense fallback={<Loading />}>
-              <SummaryPage id={parsed.id} projects={projects} chats={nativeChats} onOpen={openSummary} onOpenChat={selectNativeChat} />
+              <SummariesPage id={parsed.id} projects={projects} chats={nativeChats} onPick={openSummary} onOpenChat={selectNativeChat} onOpenSettings={openSummarySettings} />
             </Suspense>
           ),
         }
@@ -1197,9 +1209,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             onCreateWorktree={createWorktree}
             onRetryCreation={retryWorktree}
             onDismissCreation={dismissWorktree}
-            selectedSummaryId={focusedParsed?.kind === 'summary' ? focusedParsed.id : null}
-            onOpenSummary={openSummary}
-            onSummarySettings={openSummarySettings}
+            summariesSelected={focusedParsed?.kind === 'summary'}
+            onOpenSummaries={openSummaries}
           />
         </SplitRowsContext.Provider>
         <SidebarUsage onOpenSettings={() => setSettingsOpen(true)} />
