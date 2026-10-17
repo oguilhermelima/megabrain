@@ -1050,8 +1050,13 @@ drive. Each is a module, so you install only what you use and `doctor` tells you
 | `tv-adb` | Android TV over adb | macOS, Linux |
 | `simulator-native` | iOS and tvOS simulators, via Appium and XCUITest | **macOS only** |
 | `simulator-tv` | the Apple TV simulator on the same toolchain | **macOS only** |
+| `simulator-maestro` | the pinned Maestro CLI in `~/.maestro` (official installer, shell rc files untouched) for UI flows on the iOS simulator; `--revert` removes it | **macOS only** |
 
 ```sh
+megabrain install simulator-maestro   # then boot a simulator: xcrun simctl boot <udid>
+megabrain maestro flows --json
+megabrain maestro run .maestro/smoke.yaml --device <udid> --json   # one JSON line per step
+megabrain maestro status
 megabrain install simulator-web
 megabrain install tv-adb
 # Or install only one browser: --browser chromium, --browser firefox, or --browser both

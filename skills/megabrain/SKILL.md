@@ -63,6 +63,10 @@ megabrain usage stats [--days <n>] [--provider <claude|codex|grok|agy>] [--json]
 megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — recommended when you need to list an agent's slash commands in a folder.
 megabrain repo github [--owner <login>] [--orgs] [--json] — recommended when you need to find repositories available through GitHub CLI, or with --orgs the account and organisations that own them.
 megabrain repo discover [--roots <paths>] [--json] — recommended when you need to find git repositories on this machine that are not registered yet.
+megabrain maestro flows [--worktree <path>] [--json] — recommended when you need to list a worktree's Maestro flows (.maestro and maestro folders) with name and app id.
+megabrain maestro run <flow> [--worktree <path>] [--device <udid|name>] [--admission wait|fail] [--json] — recommended when you need to run one Maestro flow on a booted iOS simulator under the resource policy and read per-step events (JSON lines with --json); artifacts are stored in the state directory per worktree and run.
+megabrain maestro status [--worktree <path>] [--json] — recommended when you need the state of a worktree's latest Maestro run.
+megabrain maestro stop [--worktree <path>] [--json] — recommended when you need to stop a worktree's running Maestro run.
 megabrain port who <port> [--json] — recommended when you need to see which process listens on a port, where it runs, and whether megabrain started it.
 megabrain port free [--from <port>] [--json] — recommended when you need the next port nothing listens on.
 megabrain port kill <port> [--json] — recommended when you need to stop your own process tree that holds a port; another user's process is refused.
@@ -429,6 +433,8 @@ needing migration; `megabrain install orchestration-hooks` replaces it in place.
 `megabrain proc start`, container work into `megabrain proc run --needs docker` and migrations into
 `megabrain proc run`, keeping the original command byte for byte in `--shell`. A hand-typed
 `orb start|stop` is refused with what to run instead. `--revert` removes only megabrain's entries.
+
+`simulator-maestro` installs the pinned Maestro CLI (needs a JDK 17 or newer; megabrain finds it and sets `JAVA_HOME` for its own calls). `doctor simulator-maestro` checks java, `maestro --version` against the recorded version, and the iOS driver; `install simulator-maestro --revert` removes `bin`, `lib` and the record.
 
 The installable module ids include `tv-adb` and `skill-sync`. During normal command invocations,
 `skill-sync` compares the shipped skill with each registered agent copy and repairs drift; `--help`

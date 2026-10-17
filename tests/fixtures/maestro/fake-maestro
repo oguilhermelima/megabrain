@@ -1,0 +1,16 @@
+#!/bin/bash
+# Test double for the Maestro CLI: replays captured output instead of driving a simulator.
+dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+case "$1" in
+  --version|-v) echo "2.11.0"; exit 0 ;;
+esac
+out=""; prev=""
+for arg in "$@"; do
+  [ "$prev" = "--test-output-dir" ] && out="$arg"
+  prev="$arg"
+done
+printf '%s\n' "$*" > "${FAKE_MAESTRO_ARGS:-/dev/null}"
+[ -n "$out" ] && mkdir -p "$out" && cp -R "$dir/artifacts/." "$out/"
+if [ -n "$FAKE_MAESTRO_SLEEP" ]; then sleep "$FAKE_MAESTRO_SLEEP"; fi
+cat "$dir/${FAKE_MAESTRO_OUTPUT:-run-passed.txt}"
+exit "${FAKE_MAESTRO_EXIT:-0}"

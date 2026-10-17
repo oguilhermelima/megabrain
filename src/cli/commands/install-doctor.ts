@@ -18,6 +18,7 @@ import { tmuxCallerPaneSession } from "./queue-write.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { usageText } from "../../core/usage.js";
 import { runMachineInstall } from "./install-machine.js";
+import { installMaestro, maestroReport, revertMaestro } from "./maestro-install.js";
 import { discoverAgentDirectories } from "../../core/agent-directories.js";
 import { inspectDatabase } from "../../db/db.js";
 import { getInstallState, listDispatches, mutateInstallModule, putInstallModule, stateDatabase } from "../../adapters/state-db.js";
@@ -25,7 +26,7 @@ import { getInstallState, listDispatches, mutateInstallModule, putInstallModule,
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
 type State = Record<string, Record<string, unknown>>;
-const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers"];
+const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers"];
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
   return (await process.run("which", [command])).kind === "ok";
 }
@@ -319,6 +320,8 @@ async function report(module: string, environment: Environment, process: Process
     else if (!await appiumReady(process)) { status = "misconfigured"; reason = "appium-xcuitest-driver is not installed"; }
     else { status = "ok"; reason = "appium and xcuitest driver are installed"; }
     if (module === "simulator-tv" && status === "ok") reason = "Apple TV simulator uses the shared Appium xcuitest toolchain";
+  } else if (module === "simulator-maestro") {
+    ({ status, reason } = await maestroReport(environment, process));
   } else if (module === "tv-adb") {
     if (await available(process, "adb") && await succeeds(process, "adb", ["version"])) { status = "ok"; reason = "adb is available"; }
     else reason = "adb is not on PATH";
@@ -1240,6 +1243,7 @@ async function runInstallStep(module: string, environment: Environment, processA
     case "simulator-web": return installSimulatorWeb(environment, processAdapter, options.browser);
     case "simulator-native": return installSimulatorNative(processAdapter);
     case "simulator-tv": return installSimulatorNative(processAdapter);
+    case "simulator-maestro": return installMaestro(environment, processAdapter);
     case "tv-adb": return installTvAdb(processAdapter);
     case "tmux-runtime": return installTmuxRuntime(environment, processAdapter, options);
     case "skill-sync": installSkillSync(environment); return ok(undefined);
@@ -1378,6 +1382,7 @@ async function installModuleCommand(
   if (!modules.includes(module)) return failed(`unknown module: ${module}`, 2);
   if (revert) {
     if (module === "resource-hooks") return revertResourceHooks(environment);
+    if (module === "simulator-maestro") { writeInstalledState(environment, module, false, "reverted"); return revertMaestro(environment); }
     if (module !== "orchestration-hooks") return failed(`module cannot be reverted: ${module}`, 2);
     return revertOrchestrationHooks(environment);
   }

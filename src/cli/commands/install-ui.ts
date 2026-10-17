@@ -53,6 +53,7 @@ const MODULE_INFO: Readonly<Record<string, Readonly<{ label: string; hint: strin
   "simulator-web": { label: "Web browsers", hint: "Playwright Chromium and Firefox for web testing", group: "Testing" },
   "simulator-native": { label: "iOS simulators", hint: "Appium with the XCUITest driver", group: "Testing" },
   "simulator-tv": { label: "Apple TV simulator", hint: "tvOS on the shared XCUITest toolchain", group: "Testing" },
+  "simulator-maestro": { label: "Maestro flows", hint: "Maestro CLI for UI flows on the iOS simulator", group: "Testing" },
   "tv-adb": { label: "Android TV", hint: "physical or emulated device over adb", group: "Testing" },
 };
 

@@ -1,0 +1,5 @@
+Running on iPhone 17 - iOS 27.0 - 401F3DA8-E4C1-48B7-9BB9-2C8416115E1A
+ > Flow Preferences opens
+Launch app "com.apple.Preferences"... COMPLETED
+Assert that id: com.apple.settings.sidebar.collectionView is visible... COMPLETED
+Take screenshot prefs-home... COMPLETED
