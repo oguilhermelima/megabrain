@@ -106,6 +106,7 @@
 - Use megabrain chat model <id> <model> [--effort <level>] [--json] to change the model for an idle chat.
 - Use megabrain chat daemon drain [--json] before upgrading megabrain: running turns finish, queued messages wait for the next daemon, then chatd exits; megabrain chat daemon status [--json] reports it without starting one.
 - Use megabrain chat rename <id> <title> [--json] to name a chat by hand; automatic titles then stop for it.
+- Run megabrain summaries list [--repo <name|path>] [--branch <branch>] [--limit <n per branch>] --json | search <text> [--repo <name|path>] [--branch <branch>] [--limit <n>] --json | show <id> --json | context --cwd <path> [--limit <n>] [--json]. — recommended when you need past development summaries of a project, grouped by worktree and branch: run summaries search <text> before redoing or re-deciding earlier work.
 - Use megabrain chat summarize <id> [--json] to write a chat summary now, megabrain chat summaries <id> --json to read its summary history, and megabrain chat search <text> --json to search past chats.
 - Run megabrain resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off. — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 - Run megabrain proc start|run|list|status|stop|restart|logs .... — recommended when you need to start, inspect, stop, restart, or read logs for a managed process.

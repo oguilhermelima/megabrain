@@ -3,6 +3,8 @@ import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Chat } from "./store.js";
 import { selfInvocation } from "../core/self-invocation.js";
+import { readSummarySettings } from "./summaries.js";
+import { summariesContext } from "./summary-library.js";
 
 export type MessagePart = { type: "text"; text: string } | { type: "image"; path: string };
 export type RpcRequest = (method: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -29,12 +31,20 @@ async function claudeContent(parts: MessagePart[]): Promise<unknown[]> {
   }));
 }
 
+/** The latest summaries of the chat's worktree, when the feature is on and there is something to say. */
+async function launchContext(chat: Chat, stateDir: string): Promise<string> {
+  if (!readSummarySettings(stateDir).enabled) return "";
+  try { return await summariesContext(stateDir, chat.cwd, 3); } catch { return ""; }
+}
+
 const claude: ChatProtocolAdapter = {
   async prepare(chat, stateDir) {
     const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--thinking-display", "summarized"];
     if (chat.model) args.push("--model", chat.model);
     if (chat.effort) args.push("--effort", chat.effort);
     if (chat.agentSessionId) args.push("--resume", chat.agentSessionId);
+    const context = await launchContext(chat, stateDir);
+    if (context !== "") args.push("--append-system-prompt", context);
     if (chat.approvals !== true) return { command: "claude", args: [...args, "--dangerously-skip-permissions"] };
     // Only an approving chat needs the permission server, so a bypass chat never pays its startup.
     const server = selfInvocation(process.execPath, process.argv, ["chat", "mcp-permission", chat.id]);
@@ -57,7 +67,11 @@ const claude: ChatProtocolAdapter = {
 };
 
 const codex: ChatProtocolAdapter = {
-  async prepare() { return { command: "codex", args: ["app-server"] }; },
+  async prepare(chat, stateDir) {
+    const context = await launchContext(chat, stateDir);
+    // The value is parsed as TOML: a JSON string literal is a valid basic string, so quotes and newlines come out escaped.
+    return { command: "codex", args: ["app-server", ...(context === "" ? [] : ["-c", `developer_instructions=${JSON.stringify(context)}`])] };
+  },
   async send(chat, child, parts, request) {
     const input = codexInput(parts);
     // A summary is the only reasoning text Codex streams; without asking for one each reasoning item is empty.

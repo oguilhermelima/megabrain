@@ -26,7 +26,7 @@ import { getInstallState, listDispatches, mutateInstallModule, putInstallModule,
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
 type State = Record<string, Record<string, unknown>>;
-const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers"];
+const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "summaries-context", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers"];
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
   return (await process.run("which", [command])).kind === "ok";
 }
@@ -106,7 +106,7 @@ function hookPathIssue(agent: string, command: string): string | undefined {
   const words = shellWords(command);
   if (words === undefined) return undefined;
   const args = words.filter((word) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word));
-  if (args.at(-2) !== "hook" || (args.at(-1) !== "turn-end" && args.at(-1) !== "pre-tool")) return undefined;
+  if (args.at(-2) !== "hook" || (args.at(-1) !== "turn-end" && args.at(-1) !== "pre-tool" && args.at(-1) !== "session-start")) return undefined;
   if (args.length >= 4 && /^node(?:\.exe)?$/i.test(basename(args[0] ?? ""))) {
     const interpreter = args[0] ?? "";
     const entrypoint = args[1] ?? "";
@@ -405,7 +405,9 @@ async function report(module: string, environment: Environment, process: Process
     status = healthy ? "ok" : "misconfigured";
     reason = `${details.join("; ")}; Codex caveat: Codex shows a \"Hooks need review\" prompt on its next launch.`;
   } else if (module === "resource-hooks") {
-    ({ status, reason } = await resourceHooksReport(environment, process));
+    ({ status, reason } = await entryHooksReport(environment, process, resourceEntryHook));
+  } else if (module === "summaries-context") {
+    ({ status, reason } = await entryHooksReport(environment, process, summariesEntryHook));
   } else if (module === "tmux-runtime") {
     if (!await available(process, "tmux")) reason = "tmux is not on PATH";
     else {
@@ -565,7 +567,7 @@ export function hookEntrypointCommand(
   environment: Environment,
   agent: HookAgent,
   runtime: HookRuntime = { execPath: process.execPath, node: process.versions.bun === undefined },
-  hook: "turn-end" | "pre-tool" = "turn-end",
+  hook: "turn-end" | "pre-tool" | "session-start" = "turn-end",
 ): string | undefined {
   const root = resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT);
   const entrypoint = resolve(root, ".build/megabrain");
@@ -986,14 +988,27 @@ async function revertOrchestrationHooks(environment: Environment): Promise<Resul
   return ok("orchestration-hooks reverted\n");
 }
 
-// --- resource-hooks ------------------------------------------------------------------------
-// Opt-in: a pre-tool hook in every agent that routes resource commands into megabrain proc
-// (see hook-pre-tool.ts). Entries are found by their command, so install repairs in place and
-// revert removes exactly megabrain's entries, leaving every other hook alone.
+// --- resource-hooks and summaries-context ----------------------------------------------------
+// Opt-in modules that each add one hook entry to the agents' hook files. resource-hooks puts a
+// pre-tool hook in every agent that routes resource commands into megabrain proc (see
+// hook-pre-tool.ts); summaries-context puts a SessionStart hook in Claude and Codex that adds the
+// latest summaries of the session's worktree (see hook-session-start.ts). Entries are found by
+// their command, so install repairs in place and revert removes exactly megabrain's entries,
+// leaving every other hook alone.
 
 const resourceHookAgents = ["claude", "codex", "grok", "agy"] as const;
 type ResourceHookAgent = (typeof resourceHookAgents)[number];
 const AGY_RESOURCE_HOOK = "megabrain-resources";
+
+type EntryHook = Readonly<{
+  module: "resource-hooks" | "summaries-context";
+  event: "PreToolUse" | "SessionStart";
+  hook: "pre-tool" | "session-start";
+  agents: readonly ResourceHookAgent[];
+  note: string;
+}>;
+const resourceEntryHook: EntryHook = { module: "resource-hooks", event: "PreToolUse", hook: "pre-tool", agents: resourceHookAgents, note: "routes dev servers, docker and migrations into megabrain proc" };
+const summariesEntryHook: EntryHook = { module: "summaries-context", event: "SessionStart", hook: "session-start", agents: ["claude", "codex"], note: "adds the latest summaries of the worktree to a new session" };
 
 // Grok reads every file in its hooks directory, so this module owns a file of its own there.
 function resourceHookConfig(environment: Environment, agent: ResourceHookAgent): string {
@@ -1001,10 +1016,10 @@ function resourceHookConfig(environment: Environment, agent: ResourceHookAgent):
   return hookConfig(environment, agent);
 }
 
-function isResourceEntry(entry: unknown, agent: ResourceHookAgent): boolean {
+function isResourceEntry(entry: unknown, agent: ResourceHookAgent, spec: EntryHook): boolean {
   if (typeof entry !== "object" || entry === null) return false;
   const command = String((entry as Record<string, unknown>).command ?? "");
-  return command.startsWith(`MEGABRAIN_HOOK_AGENT=${agent} `) && command.endsWith(" hook pre-tool");
+  return command.startsWith(`MEGABRAIN_HOOK_AGENT=${agent} `) && command.endsWith(` hook ${spec.hook}`);
 }
 
 function readJsonObject(path: string): Record<string, unknown> | undefined {
@@ -1016,86 +1031,86 @@ function readJsonObject(path: string): Record<string, unknown> | undefined {
   } catch { return undefined; }
 }
 
-function resourceGroups(existing: Record<string, unknown>): unknown[] {
+function resourceGroups(existing: Record<string, unknown>, spec: EntryHook): unknown[] {
   const hooks = existing.hooks;
   if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks)) return [];
-  const list = (hooks as Record<string, unknown>).PreToolUse;
+  const list = (hooks as Record<string, unknown>)[spec.event];
   return Array.isArray(list) ? list : [];
 }
 
-function withoutResourceEntries(existing: Record<string, unknown>, agent: ResourceHookAgent): Record<string, unknown> {
+function withoutResourceEntries(existing: Record<string, unknown>, agent: ResourceHookAgent, spec: EntryHook): Record<string, unknown> {
   if (agent === "agy") { const { [AGY_RESOURCE_HOOK]: _removed, ...rest } = existing; return rest; }
   const groups: unknown[] = [];
-  for (const group of resourceGroups(existing)) {
+  for (const group of resourceGroups(existing, spec)) {
     const record = typeof group === "object" && group !== null ? group as Record<string, unknown> : {};
     const nested = Array.isArray(record.hooks) ? record.hooks as unknown[] : [];
-    if (!nested.some((entry) => isResourceEntry(entry, agent))) { groups.push(group); continue; }
-    const kept = nested.filter((entry) => !isResourceEntry(entry, agent));
+    if (!nested.some((entry) => isResourceEntry(entry, agent, spec))) { groups.push(group); continue; }
+    const kept = nested.filter((entry) => !isResourceEntry(entry, agent, spec));
     if (kept.length > 0) groups.push({ ...record, hooks: kept });
   }
   const hooks = typeof existing.hooks === "object" && existing.hooks !== null && !Array.isArray(existing.hooks) ? existing.hooks as Record<string, unknown> : {};
-  return { ...existing, hooks: { ...hooks, PreToolUse: groups } };
+  return { ...existing, hooks: { ...hooks, [spec.event]: groups } };
 }
 
-function withResourceEntry(existing: Record<string, unknown>, agent: ResourceHookAgent, command: string): Record<string, unknown> {
-  const base = withoutResourceEntries(existing, agent);
+function withResourceEntry(existing: Record<string, unknown>, agent: ResourceHookAgent, command: string, spec: EntryHook): Record<string, unknown> {
+  const base = withoutResourceEntries(existing, agent, spec);
   if (agent === "agy") return { ...base, [AGY_RESOURCE_HOOK]: { PreToolUse: [{ matcher: "run_command", hooks: [{ type: "command", command, timeout: 10 }] }] } };
   const hooks = base.hooks as Record<string, unknown>;
   // Claude names its shell tool Bash; Codex and Grok get every call and the hook ignores the rest.
-  const group = { ...(agent === "claude" ? { matcher: "Bash" } : {}), hooks: [{ type: "command", command }] };
-  return { ...base, hooks: { ...hooks, PreToolUse: [...resourceGroups(base), group] } };
+  const group = { ...(agent === "claude" && spec.event === "PreToolUse" ? { matcher: "Bash" } : {}), hooks: [{ type: "command", command }] };
+  return { ...base, hooks: { ...hooks, [spec.event]: [...resourceGroups(base, spec), group] } };
 }
 
-function resourceEntryCommands(existing: Record<string, unknown>, agent: ResourceHookAgent): string[] {
+function resourceEntryCommands(existing: Record<string, unknown>, agent: ResourceHookAgent, spec: EntryHook): string[] {
   const groups = agent === "agy" ? (() => {
     const named = existing[AGY_RESOURCE_HOOK];
     const list = typeof named === "object" && named !== null ? (named as Record<string, unknown>).PreToolUse : undefined;
     return Array.isArray(list) ? list : [];
-  })() : resourceGroups(existing);
+  })() : resourceGroups(existing, spec);
   return groups.flatMap((group) => {
     const nested = typeof group === "object" && group !== null ? (group as Record<string, unknown>).hooks : undefined;
-    return Array.isArray(nested) ? nested.filter((entry) => isResourceEntry(entry, agent)).map((entry) => String((entry as Record<string, unknown>).command)) : [];
+    return Array.isArray(nested) ? nested.filter((entry) => isResourceEntry(entry, agent, spec)).map((entry) => String((entry as Record<string, unknown>).command)) : [];
   });
 }
 
-async function installResourceHooks(environment: Environment, processAdapter: ProcessAdapter): Promise<Result<void>> {
-  for (const agent of resourceHookAgents) {
+async function installEntryHooks(environment: Environment, processAdapter: ProcessAdapter, spec: EntryHook): Promise<Result<void>> {
+  for (const agent of spec.agents) {
     if (!(await available(processAdapter, agent))) continue;
-    const command = hookEntrypointCommand(environment, agent, undefined, "pre-tool");
+    const command = hookEntrypointCommand(environment, agent, undefined, spec.hook);
     if (command === undefined) return failed(`hook entrypoint is not executable for ${agent}`);
     const path = resourceHookConfig(environment, agent);
     const existing = readJsonObject(path);
     if (existing === undefined) return failed(`${agent} config is not valid JSON: ${path}`);
-    if (existsSync(path) && resourceEntryCommands(existing, agent).length === 0) {
+    if (existsSync(path) && resourceEntryCommands(existing, agent, spec).length === 0) {
       const backup = await backupExistingFile(path, processAdapter);
       if (backup.kind !== "ok") return backup;
     }
-    try { await writeJsonAtomic(path, withResourceEntry(existing, agent, command)); } catch { return failed(`could not update ${agent} hooks: ${path}`); }
+    try { await writeJsonAtomic(path, withResourceEntry(existing, agent, command, spec)); } catch { return failed(`could not update ${agent} hooks: ${path}`); }
   }
   return ok(undefined);
 }
 
-async function revertResourceHooks(environment: Environment): Promise<Result<string>> {
-  for (const agent of resourceHookAgents) {
+async function revertEntryHooks(environment: Environment, spec: EntryHook): Promise<Result<string>> {
+  for (const agent of spec.agents) {
     const path = resourceHookConfig(environment, agent);
     if (!existsSync(path)) continue;
     if (agent === "grok") { unlinkSync(path); continue; }
     const existing = readJsonObject(path);
     if (existing === undefined) return failed(`${agent} config is not valid JSON: ${path}`);
-    if (resourceEntryCommands(existing, agent).length === 0) continue;
-    try { await writeJsonAtomic(path, withoutResourceEntries(existing, agent)); } catch { return failed(`could not update ${agent} hooks: ${path}`); }
+    if (resourceEntryCommands(existing, agent, spec).length === 0) continue;
+    try { await writeJsonAtomic(path, withoutResourceEntries(existing, agent, spec)); } catch { return failed(`could not update ${agent} hooks: ${path}`); }
   }
-  writeInstalledState(environment, "resource-hooks", false, "reverted");
-  return ok("resource-hooks reverted\n");
+  writeInstalledState(environment, spec.module, false, "reverted");
+  return ok(`${spec.module} reverted\n`);
 }
 
-async function resourceHooksReport(environment: Environment, processAdapter: ProcessAdapter): Promise<{ status: string; reason: string }> {
+async function entryHooksReport(environment: Environment, processAdapter: ProcessAdapter, spec: EntryHook): Promise<{ status: string; reason: string }> {
   const details: string[] = [];
   let healthy = true;
-  for (const agent of resourceHookAgents) {
+  for (const agent of spec.agents) {
     if (!(await available(processAdapter, agent))) { details.push(`${agent}: not-installed`); continue; }
     const existing = readJsonObject(resourceHookConfig(environment, agent));
-    const commands = existing === undefined ? [] : resourceEntryCommands(existing, agent);
+    const commands = existing === undefined ? [] : resourceEntryCommands(existing, agent, spec);
     const issue = commands.map((command) => hookPathIssue(agent, command)).find((value) => value !== undefined);
     if (commands.length === 0) { details.push(`${agent}: entry-missing`); healthy = false; }
     else if (issue !== undefined) { details.push(issue); healthy = false; }
@@ -1105,7 +1120,7 @@ async function resourceHooksReport(environment: Environment, processAdapter: Pro
   if (!details.some((detail) => detail.endsWith(": entry-present")) && details.some((detail) => detail.endsWith(": entry-missing"))) {
     return { status: "missing", reason: "module is not installed (opt-in)" };
   }
-  return { status: healthy ? "ok" : "misconfigured", reason: `${details.join("; ")}; opt-in: routes dev servers, docker and migrations into megabrain proc` };
+  return { status: healthy ? "ok" : "misconfigured", reason: `${details.join("; ")}; opt-in: ${spec.note}` };
 }
 
 // --- simulator-native / simulator-tv -------------------------------------------------------
@@ -1239,7 +1254,8 @@ async function runInstallStep(module: string, environment: Environment, processA
     case "orchestration": return ok(undefined);
     case "worktree": return ok(undefined);
     case "orchestration-hooks": return installOrchestrationHooks(environment, processAdapter);
-    case "resource-hooks": return installResourceHooks(environment, processAdapter);
+    case "resource-hooks": return installEntryHooks(environment, processAdapter, resourceEntryHook);
+    case "summaries-context": return installEntryHooks(environment, processAdapter, summariesEntryHook);
     case "simulator-web": return installSimulatorWeb(environment, processAdapter, options.browser);
     case "simulator-native": return installSimulatorNative(processAdapter);
     case "simulator-tv": return installSimulatorNative(processAdapter);
@@ -1381,7 +1397,8 @@ async function installModuleCommand(
 ): Promise<Result<string>> {
   if (!modules.includes(module)) return failed(`unknown module: ${module}`, 2);
   if (revert) {
-    if (module === "resource-hooks") return revertResourceHooks(environment);
+    if (module === "resource-hooks") return revertEntryHooks(environment, resourceEntryHook);
+    if (module === "summaries-context") return revertEntryHooks(environment, summariesEntryHook);
     if (module === "simulator-maestro") { writeInstalledState(environment, module, false, "reverted"); return revertMaestro(environment); }
     if (module !== "orchestration-hooks") return failed(`module cannot be reverted: ${module}`, 2);
     return revertOrchestrationHooks(environment);

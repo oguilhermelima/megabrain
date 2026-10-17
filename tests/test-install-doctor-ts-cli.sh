@@ -9,7 +9,7 @@ require_megabrain_test_state
 
 binary="$root/.build/megabrain"
 export MEGABRAIN_TEST_REAL_NODE="$(command -v node)"
-modules=(orchestration orchestration-hooks resource-hooks worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync terminal-openers)
+modules=(orchestration orchestration-hooks resource-hooks summaries-context worktree simulator-web simulator-native simulator-tv tv-adb tmux-runtime skill-sync terminal-openers)
 trap 'remove_test_dir "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }

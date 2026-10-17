@@ -200,6 +200,10 @@ megabrain chat rename <id> <title> [--json] — name a chat by hand; automatic t
 megabrain chat summarize <id> [--json] — write a summary of a chat now with the configured model.
 megabrain chat summaries <id> --json — a chat's summaries, newest first.
 megabrain chat search <text> --json — find past chats by project, branch, title or summary.
+megabrain summaries list [--repo <name|path>] [--branch <branch>] [--limit <n per branch>] --json — summaries grouped by project, then worktree branch, newest first.
+megabrain summaries search <text> [--repo <name|path>] [--branch <branch>] [--limit <n>] --json — look up older development work (title and branch hits rank first). Run it when you need to know what was done or decided before, instead of re-deriving it.
+megabrain summaries show <id> --json — one summary in full.
+megabrain summaries context --cwd <path> [--limit <n>] [--json] — the latest summaries of that worktree branch, then of the main branch, as a short Markdown block. Native chats get it in their system prompt when summaries are on; `megabrain install summaries-context` (opt-in) adds a SessionStart hook so Claude and Codex terminal sessions get it too.
 megabrain settings get|set chat-summaries <json> — switch automatic summaries and titles on, and pick the agent, model, effort and cadence.
 megabrain settings get|set agents <json> — the desktop app's default agent for New chat ({ version: 1, default, disabled }), and the agents turned off for it.
 megabrain resources [--json|--all] | enable|disable|status — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.

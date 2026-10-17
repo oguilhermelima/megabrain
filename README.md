@@ -339,6 +339,16 @@ the chat title unless a person renamed it with `chat rename`. `chat summarize <i
 `chat summaries <id> --json` lists them and `chat search <text> --json` searches past chats. A failing
 agent never disturbs the chat; the next turn end retries.
 
+Every summary also records the repository, project, worktree and branch of its chat's folder, resolved when
+it is written (the branch stays after the worktree is removed; entries from before this were filled in once
+from the chat folder). `megabrain summaries list --json` groups them by project and branch, `summaries search
+<text> --json` finds older work (title and branch hits rank first), `summaries show <id> --json` prints one,
+and `summaries context --cwd <path>` prints the latest three of that branch plus the latest two of the main
+branch as a Markdown block of about 2 KB. A native chat started while summaries are on gets that block in its
+system prompt (Claude: `--append-system-prompt`; Codex: `-c developer_instructions=...`). Terminal sessions get
+it through the opt-in `megabrain install summaries-context`, a SessionStart hook for Claude and Codex
+(`--revert` removes only its entries). Grok has `--rules` and Agy no such flag, so neither is wired.
+
 ## Chains: choosing who does the work
 
 A chain is an ordered list of steps. Each step names an agent, a model and an effort, and

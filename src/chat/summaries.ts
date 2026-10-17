@@ -6,6 +6,7 @@ import { basename, join } from "node:path";
 import { scrubAgentEnvironment } from "../core/agent-env.js";
 import { failed, ok, type Result } from "../core/result.js";
 import type { Chat, ChatEvent, ChatStore } from "./store.js";
+import { resolveLocation } from "./summary-library.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 export type SummaryAgent = "claude" | "codex" | "grok" | "agy";
@@ -13,7 +14,7 @@ export type SummarySettings = { enabled: boolean; agent: SummaryAgent; model: st
 /** What a chat record keeps: the latest summary. The history lives in the chat's summaries.jsonl. */
 export type ChatSummary = { text: string; updatedAt: string; model: string };
 /** One line of summaries.jsonl: the summary plus the user-turn count it covered, which is where the next one counts from. */
-export type SummaryEntry = ChatSummary & { title: string | null; userTurns: number };
+export type SummaryEntry = ChatSummary & { title: string | null; userTurns: number; id: string; chatId: string; repo: string; project: string; worktree: string; branch: string; agent: SummaryAgent; createdAt: string };
 
 export const defaultSummarySettings: SummarySettings = { enabled: false, agent: "claude", model: "claude-haiku-5-5", effort: null, everyMessages: 6, everyMinutes: 10, retitle: true };
 const AGENTS: readonly string[] = ["claude", "codex", "grok", "agy"];
@@ -207,8 +208,10 @@ export class ChatSummarizer {
     const answer = parseAnswer(output);
     if (answer.text === "") throw new Error("summary agent answered with nothing");
     const summary: ChatSummary = { text: answer.text, updatedAt: new Date().toISOString(), model: settings.model };
-    appendFileSync(summariesPath(stateDir, id), `${JSON.stringify({ ...summary, title: answer.title, userTurns: turns } satisfies SummaryEntry)}\n`, { mode: 0o600 });
     const current = await store.get(id) ?? chat;
+    // The location is read at summary time: the branch outlives a worktree that is later removed.
+    const location = await resolveLocation((current ?? chat)?.cwd ?? "");
+    appendFileSync(summariesPath(stateDir, id), `${JSON.stringify({ ...summary, title: answer.title, userTurns: turns, id: crypto.randomUUID(), chatId: id, ...location, agent: (current ?? chat)?.agent ?? "claude", createdAt: summary.updatedAt } satisfies SummaryEntry)}\n`, { mode: 0o600 });
     if (current === null) return summary;
     await this.apply(current, summary, settings.retitle ? answer.title : null);
     return summary;
