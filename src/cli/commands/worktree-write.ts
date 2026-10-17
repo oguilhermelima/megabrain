@@ -32,6 +32,7 @@ import { resolveCaller } from "./queue-write.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { openDatabase, withWrite } from "../../db/db.js";
 import { insertWorktree, finishWorktree } from "../../db/queries/worktrees.js";
+import { listRepositories } from "../../db/queries/repositories.js";
 import {
   defaultWorktreeLocation,
   parseWorktreeLocation,
@@ -179,6 +180,7 @@ export async function pathFor(
   process: ProcessAdapter,
   target: string,
   shared: string,
+  environment: Environment,
 ): Promise<Result<string>> {
   const direct = await realpath(target).catch(() => undefined);
   if (direct) {
@@ -197,54 +199,66 @@ export async function pathFor(
       );
     return ok(direct);
   }
-  if (shared) {
-    let entries: string[];
+  const checkouts = await checkoutsNamed(process, target, shared, environment);
+  const [only, ...others] = checkouts;
+  if (only === undefined) return failed(`worktree not found: ${target}`);
+  if (others.length === 0) return ok(only.path);
+  return failed(
+    `worktree selector is ambiguous: ${target} matches ${checkouts.length} worktrees:\n${checkouts.map((entry) => `  ${entry.path} (${entry.repo})`).join("\n")}\npass --repo <name|path> or the full worktree path`,
+  );
+}
+type NamedCheckout = { path: string; repo: string };
+// Repositories to ask git about: every registered one, the current one, and the owner of each folder in the shared root.
+async function lookupRepositories(
+  process: ProcessAdapter,
+  shared: string,
+  environment: Environment,
+): Promise<string[]> {
+  const candidates: string[] = [];
+  const registry = openDatabase(environment);
+  if (registry.kind === "ok") {
     try {
-      entries = await readdir(shared);
-    } catch {
-      return failed(`worktree not found: ${target}`);
+      for (const item of listRepositories(registry.value.db)) candidates.push(item.path);
+    } finally {
+      registry.value.close();
     }
-    for (const entry of entries) {
-      const candidate = join(shared, entry);
-      const top = await run(process, "git", [
-        "-C",
-        candidate,
-        "rev-parse",
-        "--show-toplevel",
-      ]);
-      if (top.kind !== "ok") continue;
-      const branch = await run(process, "git", [
-        "-C",
-        candidate,
-        "symbolic-ref",
-        "--quiet",
-        "--short",
-        "HEAD",
-      ]);
-      if (
-        branch.kind === "ok" &&
-        (branch.value.stdout.trim() === target ||
-          entry === target ||
-          entry === target.replaceAll("/", "-"))
-      )
-        return ok(
-          await realpath(top.value.stdout.trim()).catch(() => candidate),
-        );
+  }
+  candidates.push(".");
+  if (shared) {
+    for (const entry of await readdir(shared).catch(() => [] as string[])) candidates.push(join(shared, entry));
+  }
+  const repositories = new Set<string>();
+  for (const candidate of candidates) {
+    const repo = await repositoryRoot(process, candidate);
+    if (repo.kind === "ok") repositories.add(await realpath(repo.value).catch(() => repo.value));
+  }
+  return [...repositories];
+}
+async function checkoutsNamed(
+  process: ProcessAdapter,
+  target: string,
+  shared: string,
+  environment: Environment,
+): Promise<NamedCheckout[]> {
+  const found = new Map<string, NamedCheckout>();
+  for (const repo of await lookupRepositories(process, shared, environment)) {
+    const listed = await run(process, "git", ["-C", repo, "worktree", "list", "--porcelain"]);
+    if (listed.kind !== "ok") continue;
+    for (const block of listed.value.stdout.split("\n\n")) {
+      let path = "";
+      let branch = "";
+      for (const line of block.split("\n")) {
+        if (line.startsWith("worktree ")) path = line.slice(9);
+        if (line.startsWith("branch refs/heads/")) branch = line.slice(18);
+      }
+      if (path === "") continue;
+      const folder = basename(path);
+      if (branch !== target && folder !== target && folder !== target.replaceAll("/", "-")) continue;
+      const canonical = await realpath(path).catch(() => path);
+      found.set(canonical, { path: canonical, repo: basename(repo) });
     }
-    return failed(`worktree not found: ${target}`);
   }
-  const listed = await run(process, "git", ["worktree", "list", "--porcelain"]);
-  if (listed.kind !== "ok") return failed(`worktree not found: ${target}`);
-  let path = "";
-  for (const line of listed.value.stdout.split("\n")) {
-    if (line.startsWith("worktree ")) path = line.slice(9);
-    if (
-      line === `branch refs/heads/${target}` ||
-      (line.startsWith("branch ") && path.endsWith(`/${target}`))
-    )
-      return ok(path);
-  }
-  return failed(`worktree not found: ${target}`);
+  return [...found.values()];
 }
 export async function defaultBase(
   process: ProcessAdapter,
@@ -1080,7 +1094,7 @@ export async function executeWorktreeFinish(
   const found =
     workspace.value?.path !== undefined
       ? ok(workspace.value.path)
-      : await pathFor(process, value.target, shared.value);
+      : await pathFor(process, value.target, shared.value, environment);
   if (found.kind !== "ok")
     return finishRefusal(value.json, found.error, "worktree-not-found");
   const path = found.value;
@@ -1279,7 +1293,7 @@ export async function executeWorktreePr(
     );
   const shared = await root(environment, true);
   if (shared.kind !== "ok") return shared;
-  const path = await pathFor(process, value.target, shared.value);
+  const path = await pathFor(process, value.target, shared.value, environment);
   if (path.kind !== "ok") return path;
   const branch = await run(process, "git", [
     "-C",

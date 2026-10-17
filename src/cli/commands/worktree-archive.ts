@@ -82,7 +82,7 @@ export async function executeWorktreeArchive(args: readonly string[], environmen
   } else {
     const shared = await root(environment, true);
     if (shared.kind !== "ok") return shared;
-    const located = await pathFor(process, target, shared.value);
+    const located = await pathFor(process, target, shared.value, environment);
     if (located.kind !== "ok") return located;
     found = located.value;
   }
