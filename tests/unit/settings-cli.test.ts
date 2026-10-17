@@ -67,7 +67,7 @@ describe("megabrain settings", () => {
     const value = await settings(env);
 
     // Keep these field names aligned with apps/desktop/src/api/schema.ts.
-    expect(Object.keys(value).sort()).toEqual(["chains", "limits", "models", "resources", "supervisor", "terminal", "terminalEngine"]);
+    expect(Object.keys(value).sort()).toEqual(["agents", "chains", "limits", "models", "resources", "supervisor", "terminal", "terminalEngine"]);
     expect(value.terminalEngine).toBe("native");
     expect(Object.keys(value.supervisor as object).sort()).toEqual(["pid", "running"]);
     expect(Object.keys(value.resources as object).sort()).toEqual(["historyEnabled", "policy"]);
@@ -452,6 +452,37 @@ describe("settings agents", () => {
       expect((await run(["settings", "set", "agents", value], env)).kind).toBe("failed");
     }
     expect(await read(env)).toEqual(saved);
+  });
+});
+
+describe("settings agents-update", () => {
+  test("defaults to disabled and stores global and per-agent policy privately", async () => {
+    const env = sandbox();
+    const read = async () => {
+      const result = await run(["settings", "get", "agents-update"], env);
+      if (result.kind !== "ok") throw new Error(result.kind === "failed" ? result.error : "unexpected result");
+      return JSON.parse(result.value) as unknown;
+    };
+    expect(await read()).toEqual({ enabled: false, perAgent: {} });
+    const policy = { enabled: false, perAgent: { codex: true, claude: false } };
+    expect(await run(["settings", "set", "agents-update", JSON.stringify(policy)], env)).toEqual({ kind: "ok", value: "agent auto-update: off; 2 overrides\n" });
+    expect(await read()).toEqual(policy);
+    expect(statSync(join(env.state, "agent-update-settings.json")).mode & 0o777).toBe(0o600);
+  });
+
+  test("rejects invalid agents and values without changing the saved policy", async () => {
+    const env = sandbox();
+    const policy = { enabled: false, perAgent: { codex: true } };
+    await run(["settings", "set", "agents-update", JSON.stringify(policy)], env);
+    for (const value of [
+      "nope",
+      JSON.stringify({ enabled: "yes", perAgent: {} }),
+      JSON.stringify({ enabled: true, perAgent: { gemini: false } }),
+      JSON.stringify({ enabled: true, perAgent: { grok: "yes" } }),
+      JSON.stringify({ enabled: true, perAgent: {}, extra: true }),
+    ]) expect((await run(["settings", "set", "agents-update", value], env)).kind).toBe("failed");
+    const result = await run(["settings", "get", "agents-update"], env);
+    expect(result.kind === "ok" ? JSON.parse(result.value) : null).toEqual(policy);
   });
 });
 

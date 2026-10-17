@@ -12,6 +12,7 @@ import { readConversations, removeConversation, setConversationAlias, upsertConv
 import { liveSessionHolders } from "../../core/session-holders.js";
 import { APP_SESSION_PREFIX, forgetAppTerminal } from "../../core/app-terminals.js";
 import { join } from "node:path";
+import { scheduleAgentAutoUpdate } from "../../core/agent-update.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 export type SessionOptions = Readonly<{ readyTimeoutMs?: number; pollMs?: number }>;
@@ -71,6 +72,7 @@ async function own(target: Readonly<{ agent: string; id: string; key: string; js
   const alive = await getTmux().sessionExists(name, tmuxProcess);
   if (alive.kind !== "ok") return failed(alive.error);
   if (!alive.value) {
+    void scheduleAgentAutoUpdate(target.agent, environment, process).catch(() => undefined);
     const created = await createTmuxSession(name, found.cwd, command, tmuxProcess, false);
     if (created.kind !== "ok") return failed(created.error);
   }

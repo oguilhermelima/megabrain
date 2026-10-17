@@ -84,7 +84,7 @@ describe("session own and release", () => {
   test("builds the resume command each agent needs, with its bypass flag", () => {
     expect(resumeCommand("claude", "abc")).toBe("claude --resume abc --dangerously-skip-permissions");
     expect(resumeCommand("claude", "abc", "claude-opus-5-5")).toBe("claude --resume abc --dangerously-skip-permissions --model claude-opus-5-5");
-    expect(resumeCommand("codex", "abc")).toBe("codex resume abc --dangerously-bypass-approvals-and-sandbox");
+    expect(resumeCommand("codex", "abc")).toBe("codex resume abc --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false");
     expect(ownedSessionName("claude", sessionId)).toBe(tmuxName);
     expect(OWNED_TMUX_SERVER).toBe("megabrain-app");
   });

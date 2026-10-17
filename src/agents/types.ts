@@ -17,6 +17,8 @@ export type Quote = (value: string) => string;
 export type AgentFlags = Readonly<{
   readonly executable: string;
   readonly permission: readonly string[];
+  /** Fixed per-agent startup settings that must reach every launch path. */
+  readonly startup: readonly string[];
   readonly model: (value: string, quote: Quote) => readonly string[];
   readonly effort: ((value: string, quote: Quote) => readonly string[]) | null;
   // For a CLI that takes the effort as part of the model id instead of a flag of its own.
@@ -74,6 +76,7 @@ export function launchArgv(flags: AgentFlags, model: string | null, effort: stri
     flags.executable,
     ...(resumed?.lead ?? []),
     ...flags.permission,
+    ...flags.startup,
     ...(model === null ? [] : flags.model(flags.modelWithEffort?.(model, effort) ?? model, quote)),
     ...(effort === null || flags.effort === null ? [] : flags.effort(effort, quote)),
     ...(resumed?.trail ?? []),

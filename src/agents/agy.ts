@@ -16,6 +16,7 @@ const trustDialog = /^[ \t]*Do you trust the contents of this project\?[ \t]*\r?
 export const agyFlags: AgentFlags = {
   executable: "agy",
   permission: ["--dangerously-skip-permissions"],
+  startup: [],
   model: (value, quote) => ["--model", quote(value)],
   // agy 1.4.0 also has --effort, but the ids `agy models` lists carry the level, and those are the
   // ones known to start; the registry folds them per model and the launch joins them back.

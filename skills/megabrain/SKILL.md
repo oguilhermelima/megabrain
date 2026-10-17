@@ -57,6 +57,8 @@ megabrain repo unhide <name|path> — recommended when you need to restore a hid
 megabrain worktree hide <path> — recommended when you need to hide a worktree from the project list.
 megabrain worktree unhide <path> — recommended when you need to restore a hidden worktree.
 megabrain agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json — recommended when you need the argv that starts, or resumes a past session in, an agent's interactive TUI.
+megabrain agent update [<codex|claude|grok|agy|all>] [--check] [--json] — report installed/latest versions or update through each agent's official installer. Automatic checks run at most every six hours when an agent starts; use settings get|set agents-update to control the global policy and per-agent overrides.
+Every Codex launch built by megabrain disables its startup update prompt with a command-line setting; the user's Codex config file is left alone.
 megabrain agent defaults [--json] — recommended when you need each agent's default model and effort from its own config, and the shell a new terminal opens.
 megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json] — recommended when you need the past sessions of a folder, newest first.
 megabrain usage stats [--days <n>] [--provider <claude|codex|grok|agy>] [--json] — recommended when you need token usage per day and provider, estimated cost, and megabrain dispatch counts.
@@ -228,6 +230,7 @@ megabrain artifact show <id> [--revision <n>] [--json] — one artifact revision
 megabrain artifact remove <id> [--json] — delete an artifact and its revisions.
 megabrain settings get|set chat-summaries <json> — switch automatic summaries and titles on, and pick the agent, model, effort and cadence.
 megabrain settings get|set agents <json> — the desktop app's default agent for New chat ({ version: 1, default, disabled }), and the agents turned off for it.
+megabrain settings get|set agents-update — the global automatic agent update switch and per-agent overrides.
 megabrain resources [--json|--all] | enable|disable|status — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 megabrain proc start|run|list|status|stop|restart|logs ... — recommended when you need to run and inspect managed processes.
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json] — recommended when you need to archive or delete old terminal dispatch records.

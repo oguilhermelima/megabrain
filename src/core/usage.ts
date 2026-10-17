@@ -10,6 +10,7 @@ export const USAGE_LINES = {
   "sessions-history": "sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json]",
   "usage-stats": "usage stats [--days <n>] [--provider <claude|codex|grok|agy>] [--json]",
   "agent-command": "agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json",
+  "agent-update": "agent update [<codex|claude|grok|agy|all>] [--check] [--json]",
   "agent-defaults": "agent defaults [--json]",
   // The caller must opt into operator authority on the command itself.
   "send": "send --session <agent:id> --text <text> --operator [--json]",
@@ -94,7 +95,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json]",
   "supervise": "supervise [--status|--stop]",
-  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|models|worktree-location|device-idle-minutes | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|models|worktree-location|device-idle-minutes <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
+  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
   "chat": "chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json | send <id> --parts <json> [--fresh] [--json] | queue list|add|edit|move|remove|clear|send-now|steer <id> [<item>] [--parts <json>] [--to <index>] --json | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | artifacts <chat-id> --json | artifact <chat-id> <artifact-id> --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json | daemon status|drain [--json] | rename <id> <title> [--json] | summarize <id> [--json] | summaries <id> --json | search <text> --json",
   "chat-artifacts": "chat artifacts <chat-id> --json",
   "chat-artifact": "chat artifact <chat-id> <artifact-id> [--revision <n>] --json",
@@ -233,6 +234,7 @@ Commands:
   db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
   db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
+  agent update [<id|all>] [--check]     Check versions or update installed agents
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
   repo list|add|clone|remove|scripts|github|discover ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
@@ -277,6 +279,7 @@ Commands:
   settings get|set chat-summaries      Read or replace the chat summary switch, model, cadence and automatic titles
   settings get|set knowledge           Read or replace which projects are summarised, curated into topics, scanned and given as agent context
   settings get|set agents              Read or replace the desktop app's default agent and the agents turned off
+  settings get|set agents-update       Read or replace automatic agent update policy
   settings get|set worktree-location   Read or replace where new worktrees are created (megabrain, repo or custom folder)
   settings get|set device-idle-minutes Read or replace the minutes before a simulator megabrain booted goes to sleep (0 = never)
   settings get|set shortcuts           Read or replace the desktop app's changed shortcut keys

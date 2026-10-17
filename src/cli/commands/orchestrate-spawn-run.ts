@@ -35,6 +35,7 @@ import { decideAdmission, DEFAULT_AGENT_COST_BYTES } from "../../core/admission.
 import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/state-db.js";
 import { readMachineResources } from "../../core/resources.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
+import { scheduleAgentAutoUpdate } from "../../core/agent-update.js";
 
 import { stringValue, clearCallerIdentityEnv } from "./orchestrate-spawn-options.js";
 import { failureForCall } from "./orchestrate-spawn-worktree.js";
@@ -58,6 +59,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   trace.json = options.json;
   const agent = getAgent(options.agent);
   if (agent === undefined) return unknown(`agent cannot be determined: ${options.agent}`);
+  void scheduleAgentAutoUpdate(options.agent as "codex" | "claude" | "grok" | "agy", environment, process).catch(() => undefined);
   if (options.contextPolicy !== undefined) {
     if (hasCompactThreshold(options.contextPolicy) && agent.compactCommand === undefined) return failed(`${options.agent} has no measured context compact command`);
     if (agent.contextSource === undefined) return failed(`${options.agent} has no measured context meter`);

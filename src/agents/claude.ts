@@ -12,6 +12,7 @@ const markers: readonly AgentMarker[] = [
 export const claudeFlags: AgentFlags = {
   executable: "claude",
   permission: ["--dangerously-skip-permissions"],
+  startup: [],
   model: (value, quote) => ["--model", quote(value)],
   effort: (value, quote) => ["--effort", quote(value)],
   resume: (id, quote) => ({ lead: [], trail: ["--resume", quote(id)] }),

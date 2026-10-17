@@ -116,6 +116,11 @@ export const statusSchema = z.looseObject({
   processes: z.array(z.looseObject({ name: z.string() })),
   resources: z.object({ history: z.boolean(), admission: z.looseObject({}).nullable() }),
   deliveryChannels: z.array(z.looseObject({ agent: z.string(), channel: z.string(), status: z.string() })),
+  agentUpdates: z.record(z.string(), z.looseObject({
+    agent: z.string(), installed: z.string().nullable(), latest: z.string().nullable(),
+    installKind: z.string(), status: z.string(), checkedAt: z.string(),
+    lastAttempt: z.looseObject({ at: z.string(), ok: z.boolean(), error: z.string().optional() }).optional(),
+  })).optional(),
 })
 
 // `megabrain orchestrate transcript <dispatch> | --session <agent:id> [--since <cursor>] --operator --json`:

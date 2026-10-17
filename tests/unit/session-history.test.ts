@@ -128,14 +128,14 @@ describe("agent command --resume", () => {
   test("each agent resumes by id in its own TUI with permission prompts skipped", async () => {
     const adapter = installed();
     expect(await agentCommand("claude", { resume: "s1" }, adapter)).toEqual(["claude", "--dangerously-skip-permissions", "--resume", "s1"]);
-    expect(await agentCommand("codex", { resume: "s1" }, adapter)).toEqual(["codex", "resume", "s1", "--dangerously-bypass-approvals-and-sandbox"]);
+    expect(await agentCommand("codex", { resume: "s1" }, adapter)).toEqual(["codex", "resume", "s1", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false"]);
     expect(await agentCommand("grok", { resume: "s1" }, adapter)).toEqual(["grok", "--always-approve", "--resume", "s1"]);
     expect(await agentCommand("agy", { resume: "s1" }, adapter)).toEqual(["agy", "--dangerously-skip-permissions", "--conversation", "s1"]);
   });
 
   test("model and effort ride along with the resume", async () => {
     expect(await agentCommand("claude", { resume: "s1", model: "m1", effort: "high" }, installed())).toEqual(["claude", "--dangerously-skip-permissions", "--model", "m1", "--effort", "high", "--resume", "s1"]);
-    expect(await agentCommand("codex", { resume: "s1", model: "m1" }, installed())).toEqual(["codex", "resume", "s1", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=m1"]);
+    expect(await agentCommand("codex", { resume: "s1", model: "m1" }, installed())).toEqual(["codex", "resume", "s1", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "-c", "model=m1"]);
   });
 
   test("--resume prints through the command line and needs a value", async () => {

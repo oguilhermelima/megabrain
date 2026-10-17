@@ -97,6 +97,14 @@ export const usageReadingSchema = z.looseObject({
 export const settingsSchema = z.looseObject({
   /** Engine for embedded terminals; absent means native. */
   terminalEngine: z.enum(['native', 'tmux']).optional(),
+  /** Most recent checks and attempts by agent. */
+  agents: z.looseObject({
+    updates: z.record(z.string(), z.looseObject({
+      agent: z.string(), installed: z.string().nullable(), latest: z.string().nullable(),
+      installKind: z.string(), status: z.string(), checkedAt: z.string(),
+      lastAttempt: z.looseObject({ at: z.string(), ok: z.boolean(), error: z.string().optional() }).optional(),
+    })),
+  }).optional(),
   supervisor: z.looseObject({ running: z.boolean(), pid: z.number().nullable() }),
   resources: z.looseObject({
     historyEnabled: z.boolean(),
@@ -141,6 +149,21 @@ export const settingsSchema = z.looseObject({
   terminal: z.looseObject({ default: z.string().nullable(), detected: z.string().nullable(), available: z.array(z.string()) }),
 })
 
+export const agentUpdateReportSchema = z.looseObject({
+  agent: z.enum(['codex', 'claude', 'grok', 'agy']),
+  installed: z.string().nullable(),
+  latest: z.string().nullable(),
+  installKind: z.enum(['standalone', 'npm', 'brew', 'native', 'unknown']),
+  status: z.enum(['up-to-date', 'update-available', 'updating', 'updated', 'latest-unknown', 'failed']),
+  checkedAt: z.string(),
+  lastAttempt: z.looseObject({ at: z.string(), ok: z.boolean(), error: z.string().optional() }).optional(),
+})
+
+export const agentAutoUpdateSettingsSchema = z.looseObject({
+  enabled: z.boolean(),
+  perAgent: z.record(z.string(), z.boolean()),
+})
+
 const tokenKinds = { input: z.number(), output: z.number(), cacheRead: z.number(), cacheWrite: z.number(), reasoning: z.number() }
 
 /** `usage stats --json`: token usage per day and provider from the agents' own logs. */
@@ -175,8 +198,11 @@ export const usageStatsSchema = z.looseObject({
 })
 export type UsageStats = z.infer<typeof usageStatsSchema>
 export type Settings = z.infer<typeof settingsSchema>
+export type AgentUpdateReport = z.infer<typeof agentUpdateReportSchema>
+export type AgentUpdateId = AgentUpdateReport['agent']
+export type AgentAutoUpdateSettings = z.infer<typeof agentAutoUpdateSettingsSchema>
 /** The top-level keys of `settings --json`; `--only` reads some of them. */
-export type SettingsKey = 'terminalEngine' | 'supervisor' | 'resources' | 'limits' | 'chains' | 'models' | 'terminal'
+export type SettingsKey = 'terminalEngine' | 'supervisor' | 'resources' | 'limits' | 'chains' | 'models' | 'terminal' | 'agents'
 export type Chain = z.infer<typeof chainSchema>
 export type ChainStep = z.infer<typeof chainStepSchema>
 export type ChainExplain = z.infer<typeof chainExplainSchema>

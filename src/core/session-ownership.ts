@@ -15,7 +15,7 @@ export function ownedSessionName(agent: string, id: string): string {
 }
 
 export function resumeCommand(agent: OwnableAgent, id: string, model?: string): string {
-  if (agent === "codex") return `codex resume ${id} --dangerously-bypass-approvals-and-sandbox`;
+  if (agent === "codex") return `codex resume ${id} --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false`;
   return `claude --resume ${id} --dangerously-skip-permissions${model === undefined ? "" : ` --model ${model}`}`;
 }
 

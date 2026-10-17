@@ -17,6 +17,7 @@ import { defaultIdleSetting, parseIdleSetting } from "../../core/native-idle.js"
 import { defaultSummarySettings, parseSummarySettings } from "../../chat/summaries.js";
 import { defaultKnowledgeSettings, parseKnowledgeSettings, readKnowledgeSettings } from "../../knowledge/settings.js";
 import { emptyModelSettings, modelEnabled, modelSettingsFile, parseModelSettings, type ModelSettings } from "../../core/model-settings.js";
+import { agentUpdateStatus, readAgentAutoUpdateSettings, writeAgentAutoUpdateSettings } from "../../core/agent-update.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -267,10 +268,11 @@ type SettingsValue = {
   };
   chains: Array<Record<string, unknown> & { name: string }>;
   models: Array<{ agent: string; model: string; name: string; family: string | null; generation: string | null; contextWindows: number[]; status: "current" | "older" | "deprecated"; description: string | null; reasoning: { levels: string[]; default: string | null }; enabled: boolean }>;
+  agents: { updates: Awaited<ReturnType<typeof agentUpdateStatus>> };
   terminal: { default: string | null; detected: string | null; available: string[] };
 };
 
-const SETTINGS_KEYS = ["terminalEngine", "supervisor", "resources", "limits", "chains", "models", "terminal"] as const;
+const SETTINGS_KEYS = ["terminalEngine", "supervisor", "resources", "limits", "chains", "models", "terminal", "agents"] as const;
 type SettingsKey = typeof SETTINGS_KEYS[number];
 
 /** `only` limits the read to those top-level keys, so one page of the desktop window never pays for another's (limits go to the network). */
@@ -290,13 +292,14 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
   const validated = validateConfig(lenient, environment);
   if (validated.kind !== "ok") return validated;
 
-  const [historyEnabled, storedPolicy, configuredDefault, readings, terminalEngine, modelSettings] = await Promise.all([
+  const [historyEnabled, storedPolicy, configuredDefault, readings, terminalEngine, modelSettings, updates] = await Promise.all([
     want("resources") ? resourceHistoryEnabled(environment) : false,
     want("resources") ? readAdmissionPolicy(environment) : undefined,
     want("terminal") ? storedDefault(environment) : undefined,
     want("limits") ? readLimitRows(environment, validated.value, processAdapter) : [],
     want("terminalEngine") ? readTerminalEngine(environment) : "native" as const,
     want("models") ? readDesktopSetting(environment, "models") as Promise<ModelSettings> : emptyModelSettings,
+    want("agents") ? agentUpdateStatus(environment) : {},
   ]);
   const settingsPolicy = storedPolicy === undefined ? null : {
     maxAgents: storedPolicy.maxAgents ?? null,
@@ -343,6 +346,7 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
     },
     chains,
     models,
+    agents: { updates },
     terminal: {
       default: configuredDefault ?? null,
       detected: detectTerminal(environment) ?? null,
@@ -366,6 +370,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
+    if (args[1] === "agents-update" && (args.length === 2 || args.length === 3 && args[2] === "--json")) return ok(`${JSON.stringify(await readAgentAutoUpdateSettings(environment))}\n`);
     if ((args.length !== 2 && !(args.length === 3 && args[2] === "--json")) || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|models|worktree-location|device-idle-minutes|project-appearance [--json]", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
@@ -373,6 +378,12 @@ export async function executeSettings(args: readonly string[], environment: Envi
     const raw = args[2];
     if (args.length !== 3 || raw === undefined) return failed(`Usage: megabrain settings set ${args[1]} <json>`, 2);
     return writeDesktopSetting(environment, args[1], raw);
+  }
+  if (args[0] === "set" && args[1] === "agents-update") {
+    const raw = args[2];
+    if (args.length !== 3 || raw === undefined) return failed("Usage: megabrain settings set agents-update <json>", 2);
+    const result = await writeAgentAutoUpdateSettings(raw, environment);
+    return result.kind === "ok" ? ok(`agent auto-update: ${result.value.enabled ? "on" : "off"}; ${Object.keys(result.value.perAgent).length} overrides\n`) : result;
   }
   if (args[0] === "set") {
     if (args.length !== 3 || args[1] !== "terminal-engine" || (args[2] !== "native" && args[2] !== "tmux")) return failed("Usage: megabrain settings set terminal-engine native|tmux", 2);

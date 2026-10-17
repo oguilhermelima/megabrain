@@ -5,7 +5,7 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
-import { classifyLiveness, waitForStableIdle } from "../../core/liveness.js";
+import { classifyLiveness, startupDialogCause, waitForStableIdle } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -72,7 +72,7 @@ export function recordFrame(root: string, id: string, type: string, text: string
 // so it is kept in the dispatch's own messages rather than lost with the pane.
 export function recordRejectedReadinessFrame(root: string, id: string, agent: string, timeoutMs: number, frame: string): void {
   const shown = frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd();
-  const status = classifyLiveness(agent, frame).status;
+  const status = startupDialogCause(agent, frame) ?? classifyLiveness(agent, frame).status;
   recordFrame(root, id, "readiness-frame", `readiness never saw a stable idle ${agent} frame within ${timeoutMs}ms (last classified: ${status}); last frame:\n${shown}`);
 }
 

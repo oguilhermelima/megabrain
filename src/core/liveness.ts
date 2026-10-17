@@ -29,6 +29,13 @@ export function isFirstRunDialog(agentId: string, output: string): boolean {
   return dialog?.test(output) ?? false;
 }
 
+/** Startup dialogs that prevent the composer from becoming ready and must never be auto-answered. */
+export function startupDialogCause(agentId: string, output: string): "codex-update" | undefined {
+  return agentId === "codex" && /Update available/.test(output) && /Skip until next version/.test(output)
+    ? "codex-update"
+    : undefined;
+}
+
 export async function waitForStableIdle(
   agentId: string,
   timeoutMs: number,

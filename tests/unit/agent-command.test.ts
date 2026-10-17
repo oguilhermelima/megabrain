@@ -22,7 +22,7 @@ const all = fakeProcess(["claude", "codex", "grok", "agy"]);
 describe("agent command", () => {
   test("every agent starts its own TUI with permission prompts skipped", async () => {
     expect(await agentCommand("claude", {}, all)).toEqual(["claude", "--dangerously-skip-permissions"]);
-    expect(await agentCommand("codex", {}, all)).toEqual(["codex", "--dangerously-bypass-approvals-and-sandbox"]);
+    expect(await agentCommand("codex", {}, all)).toEqual(["codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false"]);
     expect(await agentCommand("grok", {}, all)).toEqual(["grok", "--always-approve"]);
     expect(await agentCommand("agy", {}, all)).toEqual(["agy", "--dangerously-skip-permissions"]);
   });
@@ -30,7 +30,7 @@ describe("agent command", () => {
   test("model and effort use the flags each CLI really accepts", async () => {
     const options = { model: "m1", effort: "high" };
     expect(await agentCommand("claude", options, all)).toEqual(["claude", "--dangerously-skip-permissions", "--model", "m1", "--effort", "high"]);
-    expect(await agentCommand("codex", options, all)).toEqual(["codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=m1", "-c", "model_reasoning_effort=high"]);
+    expect(await agentCommand("codex", options, all)).toEqual(["codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "-c", "model=m1", "-c", "model_reasoning_effort=high"]);
     expect(await agentCommand("grok", options, all)).toEqual(["grok", "--always-approve", "-m", "m1", "--reasoning-effort", "high"]);
     expect(await agentCommand("agy", options, all)).toEqual(["agy", "--dangerously-skip-permissions", "--model", "m1-high"]);
   });
@@ -49,12 +49,18 @@ describe("agent command", () => {
 });
 
 describe("agent command line", () => {
+  test("agent update has its own help text", async () => {
+    const result = await executeAgent(["update", "codex", "--help"], {}, all);
+    expect(result.kind).toBe("ok");
+    expect(result.kind === "ok" ? result.value : "").toContain("agent update [<codex|claude|grok|agy|all>] [--check] [--json]");
+  });
+
   test("--json prints the agent and its argv", async () => {
     const result = await executeAgent(["command", "codex", "--model", "m1", "--effort", "low", "--json"], {}, all);
     expect(result.kind).toBe("ok");
     expect(JSON.parse(result.kind === "ok" ? result.value : "null")).toEqual({
       agent: "codex",
-      argv: ["codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "model=m1", "-c", "model_reasoning_effort=low"],
+      argv: ["codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "-c", "model=m1", "-c", "model_reasoning_effort=low"],
     });
   });
 

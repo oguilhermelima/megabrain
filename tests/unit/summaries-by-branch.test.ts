@@ -271,14 +271,14 @@ describe("new chats get the context", () => {
     const chatOn = { ...(await chatWith(on, true, true)), agent: "codex" as const };
     const args = (await chatProtocolAdapters.codex.prepare(chatOn, on.state)).args;
     expect(args[0]).toBe("app-server");
-    const config = args.indexOf("-c");
-    expect(config).toBeGreaterThan(-1);
-    expect(args[config + 1]).toMatch(/^developer_instructions=".*fixed the login redirect/s);
+    expect(args).toContain("check_for_update_on_startup=false");
+    const developerConfig = args.find((argument) => argument.startsWith("developer_instructions="));
+    expect(developerConfig).toMatch(/^developer_instructions=".*fixed the login redirect/s);
     // The value is a TOML string: quotes and newlines are escaped, so it parses as one line.
-    expect(args[config + 1]).not.toContain("\n");
+    expect(developerConfig).not.toContain("\n");
 
     const off = world();
-    expect((await chatProtocolAdapters.codex.prepare({ ...(await chatWith(off, false, true)), agent: "codex" }, off.state)).args).toEqual(["app-server"]);
+    expect((await chatProtocolAdapters.codex.prepare({ ...(await chatWith(off, false, true)), agent: "codex" }, off.state)).args).toEqual(["app-server", "-c", "check_for_update_on_startup=false"]);
   });
 });
 

@@ -10,6 +10,7 @@ Commands:
   db migrate [--dry-run] [--json]      Migrate and seal legacy JSON state
   db show <dispatch-id-or-suffix>|--terminal <id>|--install-state|--models|--delivery-channels|--tmux-session <name> [--json] Show stored records
   context [--json]                     Detect the current orchestration host
+  agent update [<id|all>] [--check]     Check versions or update installed agents
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
   repo list|add|clone|remove|scripts|github|discover ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
@@ -54,6 +55,7 @@ Commands:
   settings get|set chat-summaries      Read or replace the chat summary switch, model, cadence and automatic titles
   settings get|set knowledge           Read or replace which projects are summarised, curated into topics, scanned and given as agent context
   settings get|set agents              Read or replace the desktop app's default agent and the agents turned off
+  settings get|set agents-update       Read or replace automatic agent update policy
   settings get|set worktree-location   Read or replace where new worktrees are created (megabrain, repo or custom folder)
   settings get|set device-idle-minutes Read or replace the minutes before a simulator megabrain booted goes to sleep (0 = never)
   settings get|set shortcuts           Read or replace the desktop app's changed shortcut keys

@@ -492,6 +492,7 @@ export const mockSettings: Settings = {
     { name: 'docs-on-megabrain', when: { repo: 'megabrain', label: 'docs*' }, steps: [{ agent: 'codex', model: 'gpt-6-luna', effort: 'low' }] },
   ],
   models: measuredModels,
+  agents: { updates: {} },
   terminal: { default: null, detected: 'terminal', available: ['terminal', 'iterm', 'ghostty'] },
 }
 

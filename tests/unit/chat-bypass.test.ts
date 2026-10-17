@@ -37,12 +37,12 @@ describe("chat protocol argv bypasses permission prompts by default", () => {
 
   test("terminal-command carries the bypass flag for both agents", () => {
     expect(chatProtocolAdapters.claude.terminalCommand(chat("claude"))).toEqual(["claude", "--resume", "sess", "--dangerously-skip-permissions", "--model", "m1"]);
-    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex"))).toEqual(["codex", "resume", "sess", "--dangerously-bypass-approvals-and-sandbox", "--model", "m1"]);
+    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex"))).toEqual(["codex", "resume", "sess", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
   });
 
   test("terminal-command omits the bypass flag when approvals are asked", () => {
     expect(chatProtocolAdapters.claude.terminalCommand(chat("claude", { approvals: true }))).toEqual(["claude", "--resume", "sess", "--model", "m1"]);
-    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex", { approvals: true }))).toEqual(["codex", "resume", "sess", "--model", "m1"]);
+    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex", { approvals: true }))).toEqual(["codex", "resume", "sess", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
   });
 });
 

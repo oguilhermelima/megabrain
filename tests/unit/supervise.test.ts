@@ -2,11 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, recommendationFor } from "../../src/core/supervise.js";
+import { classifyLiveness } from "../../src/core/liveness.js";
 
 const now = Date.parse("2026-10-11T12:03:00.000Z");
 const fixture = (name: string): Record<string, unknown> => JSON.parse(readFileSync(resolve(import.meta.dir, "../fixtures/supervise", name), "utf8")) as Record<string, unknown>;
 
 describe("supervision classification", () => {
+  test("names the Codex update dialog and recommends updating outside the blocked prompt", () => {
+    const frame = readFileSync(resolve(import.meta.dir, "../fixtures/supervise/codex-update-dialog.txt"), "utf8");
+    const finding = classifySupervision({ frame, paneExists: true, processAlive: true, promptUnsubmitted: false });
+    expect(finding.cause).toBe("codex-update");
+    expect(recommendationFor(finding)).toMatch(/update Codex/i);
+    expect(classifyLiveness("codex", frame)).toMatchObject({ status: "blocked", reason: "codex update dialog" });
+  });
+
   test("classifies Grok CLI error text from captured source strings", () => {
     const grok = (name: string) => readFileSync(resolve(import.meta.dir, `../fixtures/supervise/${name}.txt`), "utf8");
     const finding = (name: string) => classifySupervision({ frame: grok(name), paneExists: true, processAlive: true, promptUnsubmitted: false });

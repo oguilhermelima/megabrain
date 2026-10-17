@@ -112,6 +112,16 @@ Print the command line that starts an agent's own TUI, permission prompts skippe
 megabrain agent command claude --model claude-opus-5-5 --effort high --json
 ```
 
+Check or update installed agent CLIs through their official update paths. Automatic checks run in
+the background at most once every six hours when an agent starts. They are enabled by default and
+the `agents-update` setting can control them globally or per agent:
+
+```sh
+megabrain agent update --check --json
+megabrain agent update all
+megabrain settings get agents-update
+```
+
 Show each agent's default model and effort, read from its own config without changing it, and the
 shell a new terminal opens (`null` when a config sets no default):
 

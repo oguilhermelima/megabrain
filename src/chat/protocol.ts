@@ -73,7 +73,7 @@ const codex: ChatProtocolAdapter = {
   async prepare(chat, stateDir) {
     const context = await launchContext(chat, stateDir);
     // The value is parsed as TOML: a JSON string literal is a valid basic string, so quotes and newlines come out escaped.
-    return { command: "codex", args: ["app-server", ...(context === "" ? [] : ["-c", `developer_instructions=${JSON.stringify(context)}`])] };
+    return { command: "codex", args: ["app-server", "-c", "check_for_update_on_startup=false", ...(context === "" ? [] : ["-c", `developer_instructions=${JSON.stringify(context)}`])] };
   },
   async send(chat, child, parts, request) {
     const input = codexInput(parts);
@@ -90,7 +90,7 @@ const codex: ChatProtocolAdapter = {
     if (turnId) await request("turn/interrupt", { threadId: chat.agentSessionId, turnId });
   },
   terminalCommand(chat) {
-    return ["codex", ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : [])];
+    return ["codex", ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), "-c", "check_for_update_on_startup=false", ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : [])];
   },
 };
 

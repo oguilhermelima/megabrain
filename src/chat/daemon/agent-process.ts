@@ -22,6 +22,7 @@ import { ChatSummarizer } from ".././summaries.js";
 import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFingerprint, listChatArtifacts, listClaudeChatArtifacts, listMegabrainChatArtifacts, type ChatArtifact } from ".././artifacts.js";
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import type { ChatDaemon } from "../daemon.js";
+import { scheduleAgentAutoUpdate } from "../../core/agent-update.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
 
@@ -53,6 +54,7 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
     const previous = daemon.children.get(chat.id);
     if (previous) { daemon.children.delete(chat.id); await stopChild(previous); }
     if (!checked && chat.agentSessionId !== null) await daemon.clearTerminalHoldersBeforeResume(chat);
+    void scheduleAgentAutoUpdate(chat.agent, daemon.environment, daemon.processes()).catch(() => undefined);
     const invocation = await chatProtocolAdapters[chat.agent].prepare(chat, daemon.stateDir);
     if (daemon.closed) return;
     const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...scrubAgentEnvironment({ ...process.env, ...daemon.environment }), MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });

@@ -16,6 +16,7 @@ const trustDialog = /Do you trust the contents of this directory\?[\s\S]*Yes, pr
 export const grokFlags: AgentFlags = {
   executable: "grok",
   permission: ["--always-approve"],
+  startup: [],
   model: (value, quote) => ["-m", quote(value)],
   effort: (value, quote) => ["--reasoning-effort", quote(value)],
   resume: (id, quote) => ({ lead: [], trail: ["--resume", quote(id)] }),

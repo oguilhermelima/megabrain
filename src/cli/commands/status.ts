@@ -13,6 +13,7 @@ import { callerFromEnvironment } from "./orchestrate-list.js";
 import { queueItems } from "./orchestrate-queue.js";
 import { supervisorWatcher } from "./supervise.js";
 import { unhandledParentMail, type CheckDelivery } from "../../core/check.js";
+import { agentUpdateStatus } from "../../core/agent-update.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -79,6 +80,7 @@ async function collectStatus(environment: Environment, process: ProcessAdapter):
     processes: parsedJson(processes) ?? [],
     resources: { history, admission: admission ?? null },
     deliveryChannels: channels.kind === "ok" ? channels.value : [],
+    agentUpdates: await agentUpdateStatus(stateEnvironment),
   });
 }
 
@@ -89,11 +91,13 @@ function summary(status: RecordValue): string {
   for (const item of dispatches) states.set(String(item.state), (states.get(String(item.state)) ?? 0) + 1);
   const byState = [...states.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([state, count]) => `${state} ${count}`).join(", ");
   const findings = dispatches.filter((item) => (item.supervision as { finding: unknown }).finding !== null).length;
+  const updates = Object.entries(status.agentUpdates as Record<string, { status: string }>).map(([agent, report]) => `${agent} ${report.status}`).join(", ");
   return [
     `watcher: ${watcher.running ? `running (pid ${watcher.pid ?? "unknown"})` : "stopped"}`,
     `dispatches: ${dispatches.length}${byState === "" ? "" : ` (${byState})`}; findings ${findings}`,
     `queue: ${(status.queue as unknown[]).length}`,
     `processes: ${(status.processes as unknown[]).length}`,
+    ...(updates === "" ? [] : [`agent updates: ${updates}`]),
   ].join("\n") + "\n";
 }
 

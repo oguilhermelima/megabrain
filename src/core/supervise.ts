@@ -1,5 +1,6 @@
 import { acquireLease } from "../adapters/state-db.js";
 import type { DatabaseHandle } from "../db/db.js";
+import { startupDialogCause } from "./liveness.js";
 
 export type SupervisionCause =
   | "usage-limit"
@@ -8,6 +9,7 @@ export type SupervisionCause =
   | "network"
   | "auth-required"
   | "dialog-waiting"
+  | "codex-update"
   | "prompt-unsubmitted"
   | "prompt-lost"
   | "process-exited"
@@ -251,6 +253,7 @@ function lastLines(frame: string): string | undefined {
 export function classifySupervision(evidence: SupervisionEvidence): SupervisionFinding {
   if (!evidence.paneExists) return { cause: "pane-gone", worktreePath: evidence.worktreePath, dirtyFiles: evidence.dirtyFiles };
   if (!evidence.processAlive) return { cause: "process-exited", ...(evidence.exitCode === undefined ? {} : { exitCode: evidence.exitCode }), ...(lastLines(evidence.frame) === undefined ? {} : { lastLines: lastLines(evidence.frame) }), worktreePath: evidence.worktreePath, dirtyFiles: evidence.dirtyFiles };
+  if (startupDialogCause("codex", evidence.frame) === "codex-update") return { cause: "codex-update" };
   if (/(?:trust this project|trust this folder|permission required|allow this command|do you want to allow|press enter to continue)/i.test(evidence.frame)) return { cause: "dialog-waiting" };
   if (evidence.promptUnsubmitted) return { cause: "prompt-unsubmitted" };
   const frameFinding = classifyErrorText(evidence.frame);
@@ -269,6 +272,7 @@ export function recommendationFor(finding: SupervisionFinding, dispatchId = "<di
     case "network": return `Wait for the connection to recover, or continue the child with megabrain orchestrate change ${dispatchId} --text "continue"; last error: ${finding.errorCode ?? "network error"}.`;
     case "auth-required": return "Ask the operator to log in to the agent, then inspect the dispatch.";
     case "dialog-waiting": return "Please answer the dialog, or respawn this lane in the same worktree.";
+    case "codex-update": return "Update Codex with megabrain agent update codex; do not choose an option in the dialog because the choice may persist.";
     case "prompt-unsubmitted": return "The prompt was resubmitted automatically; inspect the dispatch to confirm it started.";
     case "prompt-lost": return `The prompt never reached the agent: it is idle at an empty composer with no receipt. Please resend the brief with megabrain orchestrate reply ${dispatchId} --text "<brief>".`;
     case "process-exited":
