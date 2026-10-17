@@ -101,6 +101,8 @@ export interface DesktopApi {
   simulators(): Promise<Simulator[]>
   /** Boots a simulator headless and waits for it (`native sim ensure phone --device`). */
   bootSimulator(udid: string): Promise<void>
+  /** The simulators megabrain shut down when idle, and a sign the Device tab shows (`native sim idle --touch --json`). */
+  simulatorsAsleep(): Promise<string[]>
   /** A fresh screenshot of a booted simulator (`native sim screenshot`); resolves to the file's path. */
   simulatorScreenshot(udid: string): Promise<string>
   /** Everything the Settings window shows. */

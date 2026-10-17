@@ -2,7 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, type MaestroEvent } from '@/api/schema'
-import { defaultDevice, deviceLayout, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, reduceRun, screenSource, sortDevices, stepRows, timeLabel, type RunState } from '@/device/device-model'
+import { bootThenRun, sleepNote, defaultDevice, deviceLayout, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, reduceRun, screenSource, sortDevices, stepRows, timeLabel, type RunState } from '@/device/device-model'
+import { changesPolicy, planPoll, pollInterval, projectsPolicy, screenPolicy } from '@/lib/poll-model'
 
 const captured = (name: string) => readFileSync(join(import.meta.dir, '..', 'api', 'fixtures', 'captured', name), 'utf8')
 const events = (name: string): MaestroEvent[] =>
@@ -192,5 +193,39 @@ describe('layout', () => {
     expect(deviceLayout(900)).toBe('split')
     expect(deviceLayout(720)).toBe('split')
     expect(deviceLayout(719)).toBe('stack')
+  })
+})
+
+describe('a simulator megabrain shut down', () => {
+  const phone = (state: string) => ({ udid: UDID, name: 'iPhone', state, runtime: 'iOS 27.0' }) as never
+  test('shows as asleep only when megabrain put it to sleep', () => {
+    expect(sleepNote(phone('Shutdown'), [UDID])).toBe('Asleep: boots when you run a flow')
+    expect(sleepNote(phone('Shutdown'), [])).toBeNull()
+    expect(sleepNote(phone('Booted'), [UDID])).toBeNull()
+  })
+
+  test('Run boots a shut down simulator before it starts the flow', async () => {
+    const order: string[] = []
+    await bootThenRun(true, async () => void order.push('boot'), () => void order.push('run'))
+    expect(order).toEqual(['boot', 'run'])
+  })
+
+  test('Run on a booted simulator does not boot', async () => {
+    const order: string[] = []
+    await bootThenRun(false, async () => void order.push('boot'), () => void order.push('run'))
+    expect(order).toEqual(['run'])
+  })
+
+  test('a failed boot never starts the run', async () => {
+    const order: string[] = []
+    await expect(bootThenRun(true, async () => Promise.reject(new Error('no boot')), () => void order.push('run'))).rejects.toThrow('no boot')
+    expect(order).toEqual([])
+  })
+})
+
+describe('the Device tab polls only while it shows', () => {
+  test.each([['changes', changesPolicy], ['devices', projectsPolicy], ['screen', screenPolicy]])('%s waits while the window is hidden', (_name, policy) => {
+    expect(pollInterval(policy, false)).toBeNull()
+    for (const trigger of ['timer', 'visibility'] as const) expect(planPoll(policy, trigger, { visible: false, now: 10_000_000, lastRunAt: 0 })).toEqual({ run: false, nextInMs: null })
   })
 })

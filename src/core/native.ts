@@ -67,7 +67,7 @@ export function evaluateNativeHealth(readings: NativeHealth): NativeHealthResult
 
 export function nativeUsage(topic: "native" | "list" | "ensure" | "reload" | "appium" | "health" | "crashes" | "eval" | "navigate" | "capture" | "runtime-list" | "runtime-install" | "build"): string {
   const lines = {
-    native: usageGroup(["native-sim-list", "native-sim-ensure", "native-sim-screenshot", "native-app-reload", "native-eval", "native-navigate", "native-capture-summary", "native-health", "native-crashes", "native-build", "native-appium"]),
+    native: usageGroup(["native-sim-list", "native-sim-ensure", "native-sim-idle", "native-sim-screenshot", "native-app-reload", "native-eval", "native-navigate", "native-capture-summary", "native-health", "native-crashes", "native-build", "native-appium"]),
     list: usageText("native-sim-list"),
     ensure: usageText("native-sim-ensure"),
     reload: usageText("native-app-reload"),

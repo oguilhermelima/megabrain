@@ -3,7 +3,7 @@ import { useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } fro
 import { api } from '@/api'
 import type { MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
 import { Spinner } from '@/components/ui'
-import { defaultDevice, deviceLayout, groupFlows, historyRows, isActive, needsInstall, newFlowName, screenSource, sortDevices, stepRows, type DeviceLayout, type RunState, type StepRow } from '@/device/device-model'
+import { bootThenRun, defaultDevice, deviceLayout, groupFlows, historyRows, isActive, needsInstall, newFlowName, screenSource, sleepNote, sortDevices, stepRows, type DeviceLayout, type RunState, type StepRow } from '@/device/device-model'
 import { startRun, stopRun, useDeviceRun } from '@/device/run-store'
 import { moduleRetryArgs } from '@/onboarding/model'
 import { changesPolicy, projectsPolicy, screenPolicy } from '@/lib/poll-model'
@@ -47,6 +47,8 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const [capture, setCapture] = useState<{ udid: string; path: string; at: number } | null>(null)
   const [captureError, setCaptureError] = useState<string | null>(null)
   const [selectedStep, setSelectedStep] = useState<number | null>(null)
+  const [asleep, setAsleep] = useState<string[]>([])
+  const [waking, setWaking] = useState(false)
 
   const refreshFlows = usePoll(
     changesPolicy,
@@ -65,6 +67,9 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       const listed = await api.simulators().catch((error: unknown) => ({ error }))
       if (!current()) return
       setDevices('error' in listed ? { kind: 'error', error: listed.error } : { kind: 'ready', value: sortDevices(listed) })
+      // The tab showing is what keeps a simulator megabrain booted awake; this also lists the ones it put to sleep.
+      const sleeping = await api.simulatorsAsleep().catch(() => null)
+      if (current() && sleeping !== null) setAsleep(sleeping)
     },
     [],
   )
@@ -100,9 +105,14 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const src = shown === null ? null : shown.step === null || toAsset === null ? shown.path : toAsset(shown.path)
 
   const play = () => {
-    if (flow === null || udid === null) return
+    if (flow === null || udid === null || waking) return
     setSelectedStep(null)
-    startRun(root, flow, udid)
+    // A simulator that went to sleep (or was never booted) boots first, through the same call as the Boot button.
+    setWaking(true)
+    setCaptureError(null)
+    bootThenRun(!booted, () => api.bootSimulator(udid).then(refreshDevices), () => startRun(root, flow, udid))
+      .catch((error: unknown) => setCaptureError(message(error)))
+      .finally(() => setWaking(false))
   }
 
   const flowsPanel = (
@@ -131,12 +141,12 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       onBooted={refreshDevices}
       src={src}
       step={shown?.step ?? null}
-      note={booted ? captureError : device === null ? null : `${device.name} is not booted.`}
+      note={waking ? `Booting ${device?.name ?? 'the simulator'}…` : booted ? captureError : (sleepNote(device, asleep) ?? (device === null ? null : `${device.name} is not booted.`))}
       tall={layout !== 'stack'}
     />
   )
   const runPanel = (
-    <RunPanel run={run} rows={rows} history={runs} flow={flow} canRun={flow !== null && booted && !active} selected={shown?.step ?? selectedStep} onSelect={setSelectedStep} onRun={play} onStop={() => void stopRun(root)} />
+    <RunPanel run={run} rows={rows} history={runs} flow={flow} canRun={flow !== null && udid !== null && !active && !waking} selected={shown?.step ?? selectedStep} onSelect={setSelectedStep} onRun={play} onStop={() => void stopRun(root)} />
   )
 
   return (

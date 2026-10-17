@@ -468,6 +468,7 @@ and `device`; `health` reads `bundleId`, `device`, `metroPort`, and `controlFram
 megabrain native appium start|stop|status — recommended when you need to check, start, or stop the shared Appium server for simulator work.
 megabrain native sim list <phone|tv> [--json] — recommended when you need to find available iOS or tvOS simulators.
 megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json] — recommended when you need to boot and prepare the requested Apple simulator.
+megabrain native sim idle [--sweep [--all]] [--touch] [--json] — recommended when you need the simulators megabrain booted and when they sleep, or to shut down idle ones.
 megabrain native sim screenshot <udid> [--json] — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
 megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json] — recommended when you need to check which Apple simulator runtimes are installed or available.
 megabrain native runtime install <ios|tvos> <version> [--json] — recommended when you need to install an Apple simulator runtime needed by a device.

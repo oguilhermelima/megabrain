@@ -12,6 +12,7 @@ import { createNativeSessionStore } from "../../adapters/native-session-store.js
 import { connectMetroInspector, waitForMetroInspectorTarget, type MetroEvaluation } from "../../core/native-cdp.js";
 import { buildNativeCaptureFailureRecord, buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome, type NativeCaptureRecord, type NativeCaptureScreenRecord } from "../../core/native-capture.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { executeIdle, recordBooted } from "./native-idle.js";
 import { usageText } from "../../core/usage.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
@@ -468,7 +469,7 @@ async function nativeScreenshot(args: readonly string[], environment: Environmen
   if (capture.kind !== "ok") return error(`could not capture simulator ${udid}; is it booted? ${capture.error}`);
   return args.includes("--json") ? ok(`${JSON.stringify({ device: udid, path })}\n`) : ok(`${path}\n`);
 }
-async function nativeEnsure(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+async function nativeEnsure(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter, clock: Clock): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("ensure"));
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
   const timeoutRaw = optionValue(args, "--timeout") ?? environment.MEGABRAIN_NATIVE_DEFAULT_TIMEOUT ?? "30";
@@ -481,6 +482,7 @@ async function nativeEnsure(args: readonly string[], environment: Environment, p
   if (selected.value.state !== "Booted") {
     const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid]);
     if (boot.kind !== "ok") return error(`failed to boot simulator ${selected.value.udid}: ${boot.error.replace(/^xcrun exited with status \d+$/, "simctl exited")}`);
+    await recordBooted(environment, selected.value.udid, clock.now());
   }
   for (let attempt = 0; attempt < timeout.value * 5; attempt += 1) {
     const current = await simCandidates(processAdapter, kind.value); if (current.kind !== "ok") return current;
@@ -1184,7 +1186,8 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "runtime" && operation === "list") result = await nativeRuntimeList(rest, processAdapter);
   else if (family === "runtime" && operation === "install") result = await nativeRuntimeInstall(rest, processAdapter);
   else if (family === "sim" && operation === "list") result = await nativeList(rest, processAdapter);
-  else if (family === "sim" && operation === "ensure") result = await nativeEnsure(rest, environment, processAdapter);
+  else if (family === "sim" && operation === "ensure") result = await nativeEnsure(rest, environment, processAdapter, clock);
+  else if (family === "sim" && operation === "idle") result = await executeIdle(rest, environment, processAdapter, clock);
   else if (family === "sim" && operation === "screenshot") result = await nativeScreenshot(rest, environment, processAdapter);
   else if (family === "health") result = await nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "crashes") result = await nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);

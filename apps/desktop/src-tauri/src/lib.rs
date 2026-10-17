@@ -338,6 +338,18 @@ fn stop_code_servers(app: &tauri::AppHandle) {
     }
 }
 
+// Simulators megabrain booted go to sleep when idle (`native sim idle`): checked every minute, and all
+// of them when the app quits. It only ever touches a simulator the CLI itself recorded booting.
+fn sweep_simulators(app: &tauri::AppHandle, all: bool) {
+    let mut args = vec!["native".to_string(), "sim".to_string(), "idle".to_string(), "--sweep".to_string()];
+    if all {
+        args.push("--all".to_string());
+    }
+    if let Ok(mut sweep) = app.state::<Cli>().command(&args).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        let _ = sweep.wait();
+    }
+}
+
 fn sidecar(current_exe: &Path) -> PathBuf {
     current_exe.parent().unwrap_or(Path::new(".")).join("megabrain-cli")
 }
@@ -365,6 +377,11 @@ pub fn run() {
             app.manage(code_servers::CodeServers::default());
             tray::create(app.handle())?;
             pill::setup(app.handle())?;
+            let handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+                sweep_simulators(&handle, false);
+            });
             Ok(())
         })
         // ⌥Space opens and closes the assistant from anywhere. Another app may own it already; the
@@ -431,6 +448,7 @@ pub fn run() {
             handle.state::<cli_stream::CliStreams>().stop_all();
             handle.state::<terminal::TerminalManager>().close_all();
             stop_code_servers(handle);
+            sweep_simulators(handle, true);
         }
         #[cfg(target_os = "macos")]
         if let RunEvent::Reopen { .. } = &event {

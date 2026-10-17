@@ -104,6 +104,22 @@ function allRuns(environment: Environment, worktree: string): Array<{ directory:
   });
 }
 
+/** The simulators a Maestro run is going on right now, across every worktree. */
+export function activeRunDevices(environment: Environment): Set<string> {
+  const base = join(resolveStateDirectory(environment), "maestro");
+  const devices = new Set<string>();
+  if (!existsSync(base)) return devices;
+  for (const key of readdirSync(base)) {
+    const worktree = join(base, key);
+    if (!statSync(worktree).isDirectory()) continue;
+    for (const name of readdirSync(worktree)) {
+      const record = readRecord(join(worktree, name));
+      if (record?.state === "running" && alive(record.pid)) devices.add(record.device);
+    }
+  }
+  return devices;
+}
+
 function findFiles(directory: string, pattern: RegExp): string[] {
   if (!existsSync(directory)) return [];
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

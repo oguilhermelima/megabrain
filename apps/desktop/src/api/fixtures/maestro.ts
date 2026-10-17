@@ -5,7 +5,7 @@ import type { MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
 // (the Device tab's empty state). A run queues briefly, then prints a step about every second; a flow
 // whose path names "login" fails on its third step.
 
-type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simulatorScreenshot'>
+type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simulatorsAsleep' | 'simulatorScreenshot'>
 
 const seedFlows: MaestroFlow[] = [
   { path: '.maestro/smoke.yaml', name: 'Smoke', appId: 'com.megabrain.desktop' },
@@ -146,6 +146,7 @@ export function createMockMaestroApi(): MaestroApi {
       if (device === undefined) throw new CliError(`no iPhone simulator matches ${udid}`, 1)
       device.state = 'Booted'
     },
+    simulatorsAsleep: async () => [],
     simulatorScreenshot: async (udid) => {
       await wait(120)
       if (devices.find((entry) => entry.udid === udid)?.state !== 'Booted') throw new CliError(`could not capture simulator ${udid}; is it booted?`, 1)

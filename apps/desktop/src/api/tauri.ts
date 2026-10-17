@@ -195,6 +195,7 @@ export function createTauriApi(): DesktopApi {
     maestroStop: async (root) => void (await cliText(['maestro', 'stop', '--worktree', root, '--json'])),
     simulators: async () => (await nativeJson(['native', 'sim', 'list', 'phone', '--json'], simulatorListSchema)).devices,
     bootSimulator: async (udid) => void (await nativeJson(['native', 'sim', 'ensure', 'phone', '--device', udid, '--json'], z.unknown())),
+    simulatorsAsleep: async () => (await nativeJson(['native', 'sim', 'idle', '--touch', '--json'], z.looseObject({ asleep: z.array(z.string()) }))).asleep,
     simulatorScreenshot: async (udid) => (await nativeJson(['native', 'sim', 'screenshot', udid, '--json'], z.looseObject({ path: z.string() }))).path,
     openInCode: (root, path, line) =>
       cliJson(['code', 'goto', root, path, ...(line === undefined ? [] : ['--line', String(line)]), '--json'], codeServerSchema),

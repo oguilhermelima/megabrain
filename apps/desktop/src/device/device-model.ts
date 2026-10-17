@@ -151,3 +151,14 @@ export type DeviceLayout = 'columns' | 'split' | 'stack'
 export function deviceLayout(width: number): DeviceLayout {
   return width >= 1080 ? 'columns' : width >= 720 ? 'split' : 'stack'
 }
+
+/** What the screen says about a simulator megabrain shut down when idle; null for any other. */
+export function sleepNote(device: Simulator | null, asleep: readonly string[]): string | null {
+  return device !== null && device.state !== 'Booted' && asleep.includes(device.udid) ? 'Asleep: boots when you run a flow' : null
+}
+
+/** Run on a simulator that is not booted boots it first; a failed boot never starts the run. */
+export async function bootThenRun(needsBoot: boolean, boot: () => Promise<void>, run: () => void): Promise<void> {
+  if (needsBoot) await boot()
+  run()
+}

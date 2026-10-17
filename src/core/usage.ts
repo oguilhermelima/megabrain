@@ -94,7 +94,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--operator] [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--operator] [--json]",
   "supervise": "supervise [--status|--stop]",
-  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|agents|worktree-location | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|agents|worktree-location <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
+  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|agents|worktree-location|device-idle-minutes | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|agents|worktree-location|device-idle-minutes <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
   "chat": "chat list --json | start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json | send <id> --parts <json> [--fresh] [--json] | queue list|add|edit|move|remove|clear|send-now|steer <id> [<item>] [--parts <json>] [--to <index>] --json | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | terminal-command <id> --json | rename <id> <title> [--json] | summarize <id> [--json] | summaries <id> --json | search <text> --json",
   "status": "status [--json]",
   "resources": "resources [--json|--all] | enable|disable|status | policy show|set [--max-agents N] [--min-available-mib M] [--max-pressure normal|elevated] [--max-container-suites N] | off",
@@ -132,6 +132,7 @@ export const USAGE_LINES = {
   "native-runtime-list": "native runtime list [<ios|tvos>] (--installed|--available) [--json]",
   "native-runtime-install": "native runtime install <ios|tvos> <version> [--json]",
   "native-sim-ensure": "native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]",
+  "native-sim-idle": "native sim idle [--sweep [--all]] [--touch] [--json]",
   "native-sim-screenshot": "native sim screenshot <udid> [--json]",
   "native-app-reload": "native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]",
   "native-health": "native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]",
@@ -258,6 +259,7 @@ Commands:
   settings get|set chat-summaries      Read or replace the chat summary switch, model, cadence and automatic titles
   settings get|set agents              Read or replace the desktop app's default agent and the agents turned off
   settings get|set worktree-location   Read or replace where new worktrees are created (megabrain, repo or custom folder)
+  settings get|set device-idle-minutes Read or replace the minutes before a simulator megabrain booted goes to sleep (0 = never)
   settings get|set shortcuts           Read or replace the desktop app's changed shortcut keys
   settings get|set project-appearance  Read or change a project's name, color and picture (megabrain only)
   resources [--json|--all]               Measure machine and open-dispatch resources
