@@ -12,6 +12,7 @@ import { resumeLaunch } from '@/launcher/resume-model'
 import { ResumeList } from '@/launcher/ResumeList'
 import { beginStart, bindStart, endStart, startStep } from '@/native-chat/start-trace'
 import { usePendingActions } from '@/lib/usePendingActions'
+import { defaultAgentSettings, parseAgentSettings, type AgentSettings } from '@/settings/agents-model'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
 import type { TerminalLaunch } from '@/terminal/terminal-list'
 
@@ -58,6 +59,23 @@ function useInstalledAgents() {
     }
   }, [])
   return agents
+}
+
+// The default agent and the ones turned off in Settings > Agents, read each time a launcher opens so
+// a change there shows in the next New chat; until it arrives nothing is off and Auto applies.
+function useAgentSettings() {
+  const [settings, setSettings] = useState<AgentSettings>(defaultAgentSettings)
+  useEffect(() => {
+    let stopped = false
+    api.agentSettings().then(
+      (saved) => !stopped && setSettings(parseAgentSettings(saved)),
+      () => {},
+    )
+    return () => {
+      stopped = true
+    }
+  }, [])
+  return settings
 }
 
 // Each agent's configured default and the login shell, read once per app run; without them the rows say "Default model" and "Login shell".
@@ -116,10 +134,11 @@ export function Launcher({
   /** The worktree the launcher starts in, so the top bar's run button acts there. */
   onWorktree: (cwd: string | null) => void
 }) {
-  const tiles = launchTiles(useInstalledAgents())
+  const agentSettings = useAgentSettings()
+  const tiles = launchTiles(useInstalledAgents(), agentSettings.disabled)
   const defaults = useAgentDefaults()
   const [chosenTile, setChosenTile] = useState<LaunchTileId | null>(null)
-  const tile = chosenTile ?? initialTile(remembered(tileKey), tiles)
+  const tile = chosenTile ?? initialTile(remembered(tileKey), tiles, agentSettings.default)
   const [chosenPath, setChosenPath] = useState<string | null>(null)
   const cwd = chosenPath ?? launchWorktree(clicked, remembered(worktreeKey), worktrees.map((entry) => entry.path))
   const worktree = worktrees.find((entry) => entry.path === cwd) ?? null

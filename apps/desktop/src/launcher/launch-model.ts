@@ -41,20 +41,27 @@ export function terminalDetail(shell: string | null, worktree: string): string {
   return `${shell ?? 'Login shell'} · ${worktree}`
 }
 
-/** Every tile in order; an agent the install report does not show as installed is disabled. null: no report yet, so nothing is. */
-export function launchTiles(agents: readonly { agent: string; installed: boolean }[] | null): LaunchTile[] {
+/**
+ * Every tile in order; an agent the install report does not show as installed, or one turned off in
+ * Settings > Agents, is disabled. A null report: none yet, so only the turned-off ones are.
+ */
+export function launchTiles(agents: readonly { agent: string; installed: boolean }[] | null, turnedOff: readonly string[] = []): LaunchTile[] {
   return tiles.map(({ id, label }) => {
     const installed = id === 'terminal' || agents === null || agents.some((entry) => entry.agent === id && entry.installed)
-    return { id, label, enabled: installed, hint: installed ? null : `${label} is not installed on this machine` }
+    if (!installed) return { id, label, enabled: false, hint: `${label} is not installed on this machine` }
+    if (turnedOff.includes(id)) return { id, label, enabled: false, hint: `${label} is turned off in Settings > Agents` }
+    return { id, label, enabled: true, hint: null }
   })
 }
 
 /**
- * The agent used last while it is enabled, else the first enabled agent, else the terminal. The
- * terminal opens at once instead of being selected, so it is never the one remembered.
+ * The default agent from Settings > Agents while it is enabled, else the agent used last while it
+ * is, else the first enabled agent, else the terminal. The terminal opens at once instead of being
+ * selected, so it is never the one remembered.
  */
-export function initialTile(remembered: string | null, list: LaunchTile[]): LaunchTileId {
-  const found = list.find((item) => item.id === remembered && item.id !== 'terminal' && item.enabled)
+export function initialTile(remembered: string | null, list: LaunchTile[], preferred: string | null = null): LaunchTileId {
+  const usable = (id: string | null) => list.find((item) => item.id === id && item.id !== 'terminal' && item.enabled)
+  const found = usable(preferred) ?? usable(remembered)
   if (found !== undefined) return found.id
   return list.find((item) => item.id !== 'terminal' && item.enabled)?.id ?? 'terminal'
 }

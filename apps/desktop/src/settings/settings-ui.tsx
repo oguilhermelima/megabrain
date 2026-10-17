@@ -17,6 +17,12 @@ export const ghostIcon =
   'grid size-7 shrink-0 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none'
 
 const iconPaths: Record<SectionIcon, ReactNode> = {
+  agents: (
+    <>
+      <rect x="3" y="5" width="10" height="8" rx="2.5" />
+      <path d="M8 5V2.5M6 9h.01M10 9h.01" />
+    </>
+  ),
   gauge: (
     <>
       <path d="M2.5 11a5.5 5.5 0 1 1 11 0" />

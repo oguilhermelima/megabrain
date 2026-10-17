@@ -4,6 +4,7 @@ import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
+import { mockUsageStats } from '@/api/fixtures/usage'
 import { createMockReviewApi } from '@/api/fixtures/github-review'
 import { validateRule } from '@/settings/chain-rules'
 
@@ -26,6 +27,7 @@ export function createMockApi(): DesktopApi {
   let shortcuts: unknown = { version: 1, bindings: {} }
   let usageOrder: unknown = { version: 1, order: [], hidden: [] }
   let chatSummaries: unknown = null
+  let agentSettings: unknown = { version: 1, default: null, disabled: [] }
   let worktreeLocation: unknown = null
   // What the GitHub writes changed: added comments and new states, by kind and number.
   const githubComments = new Map<string, GithubDetail['comments']>()
@@ -190,6 +192,10 @@ export function createMockApi(): DesktopApi {
     setLimitNotice: async (enabled, intervalSeconds) => void (settings = { ...settings, limits: { ...settings.limits, notice: { enabled, intervalSeconds: intervalSeconds ?? settings.limits.notice.intervalSeconds } } }),
     setLimitProvider: async (provider, enabled) =>
       void (settings = { ...settings, limits: { ...settings.limits, enabledProviders: enabled ? [...new Set([...settings.limits.enabledProviders, provider])] : settings.limits.enabledProviders.filter((item) => item !== provider) } }),
+    usageStats: async (days) => {
+      await wait(450)
+      return mockUsageStats(days)
+    },
     saveChain: async (name, chain) => {
       await wait(150)
       const saved = { name, ...chain }
@@ -419,6 +425,8 @@ export function createMockApi(): DesktopApi {
     setWorktreeLocation: async (json) => void (worktreeLocation = JSON.parse(json) as unknown),
     chatSummaries: async () => chatSummaries,
     setChatSummaries: async (json) => void (chatSummaries = JSON.parse(json) as unknown),
+    agentSettings: async () => agentSettings,
+    setAgentSettings: async (json) => void (agentSettings = JSON.parse(json) as unknown),
     setUsageOrder: async (json) => void (usageOrder = JSON.parse(json) as unknown),
     shortcuts: async () => shortcuts,
     setShortcuts: async (json) => void (shortcuts = JSON.parse(json) as unknown),

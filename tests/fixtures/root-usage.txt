@@ -13,6 +13,7 @@ Commands:
   send --session <agent:id> --text ...  Send a message to any agent session as the operator
   repo list|add|clone|remove|scripts|github|discover ... Manage the local project registry
   projects [--json]                     List projects, worktrees, and agent sessions
+  usage stats [--days <n>] [--provider <id>] [--json] Token usage per day and provider from the agents' logs
   port who|free|kill ...                Find, free and stop port listeners
   github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read, review and manage GitHub pull requests and issues
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open Code for a project
@@ -51,6 +52,7 @@ Commands:
   settings get|set hidden-sessions     Read or replace the sessions the desktop sidebar closed
   settings get|set usage-order         Read or replace the order and hidden providers of the desktop usage readout
   settings get|set chat-summaries      Read or replace the chat summary switch, model, cadence and automatic titles
+  settings get|set agents              Read or replace the desktop app's default agent and the agents turned off
   settings get|set worktree-location   Read or replace where new worktrees are created (megabrain, repo or custom folder)
   settings get|set shortcuts           Read or replace the desktop app's changed shortcut keys
   settings get|set project-appearance  Read or change a project's name, color and picture (megabrain only)

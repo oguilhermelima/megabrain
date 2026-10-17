@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey } from '@/api/schema'
+import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -97,6 +97,8 @@ export interface DesktopApi {
   setSupervisor(running: boolean): Promise<void>
   setLimitNotice(enabled: boolean, intervalSeconds?: number): Promise<void>
   setLimitProvider(provider: string, enabled: boolean): Promise<void>
+  /** Token usage per day and provider from the agents' logs (`usage stats --json`); null days is all time. */
+  usageStats(days: number | null): Promise<UsageStats>
   /** Create or replace a chain. */
   saveChain(name: string, chain: ChainBody): Promise<void>
   /** Checks a chain without saving it (`chain save --dry-run`). */
@@ -271,6 +273,9 @@ export interface DesktopApi {
   /** Who summarizes native chats and how often (`settings get chat-summaries`); settings/summaries-model.ts reads the shape. */
   chatSummaries(): Promise<unknown>
   setChatSummaries(json: string): Promise<void>
+  /** The default agent for New chat and the agents turned off for the app (`settings get agents`); settings/agents-model.ts reads the shape. */
+  agentSettings(): Promise<unknown>
+  setAgentSettings(json: string): Promise<void>
   /** Where new worktrees are created (`settings get worktree-location`); settings/worktrees-model.ts reads the shape. */
   worktreeLocation(): Promise<unknown>
   setWorktreeLocation(json: string): Promise<void>

@@ -145,6 +145,23 @@ function parseUsageOrder(raw: string): Result<UsageOrder> {
   return ok({ version: 1, order: value.order, hidden: value.hidden });
 }
 
+// The desktop app's agents: the one New chat starts with (null: the one used last) and the ones
+// turned off for the app.
+const DESKTOP_AGENTS = ["claude", "codex", "grok", "agy"];
+type AgentSettings = { version: 1; default: string | null; disabled: string[] };
+const emptyAgentSettings: AgentSettings = { version: 1, default: null, disabled: [] };
+
+function parseAgentSettings(raw: string): Result<AgentSettings> {
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch { return failed("agents: not valid JSON", 2); }
+  if (!isRecord(value) || !hasOnlyKeys(value, ["version", "default", "disabled"]) || value.version !== 1 || !("default" in value)) return failed("agents: expected { version: 1, default, disabled }", 2);
+  if (!isStringList(value.disabled)) return failed("agents: disabled must be a list of agents", 2);
+  const unknown = [value.default, ...value.disabled].find((agent) => agent !== null && !DESKTOP_AGENTS.includes(agent as string));
+  if (unknown !== undefined) return failed(`agents: unknown agent ${String(unknown)} (expected ${DESKTOP_AGENTS.join(", ")})`, 2);
+  if (typeof value.default === "string" && value.disabled.includes(value.default)) return failed(`agents: the default ${value.default} is turned off`, 2);
+  return ok({ version: 1, default: value.default as string | null, disabled: [...new Set(value.disabled)] });
+}
+
 interface DesktopFile {
   file: string;
   empty: object;
@@ -172,6 +189,7 @@ const desktopSettings = {
   "chat-summaries": desktopFileOf("chat-summaries.json", parseSummarySettings, defaultSummarySettings, (value) => `chat summaries: ${value.enabled ? `on, ${value.agent} ${value.model}` : "off"}`),
   "worktree-location": desktopFileOf("worktree-location.json", parseWorktreeLocation, defaultWorktreeLocation, (value) => `worktree location: ${value.mode}${value.layout === "nested" ? " (by project)" : ""}, ${Object.keys(value.projects).length} project overrides`),
   "usage-order": desktopFileOf("usage-order.json", parseUsageOrder, emptyUsageOrder, (value) => `usage order: ${value.order.length} ordered, ${value.hidden.length} hidden`),
+  "agents": desktopFileOf("agent-settings.json", parseAgentSettings, emptyAgentSettings, (value) => `agents: default ${value.default ?? "auto"}, ${value.disabled.length} disabled`),
 } as const;
 
 type DesktopSetting = keyof typeof desktopSettings;
@@ -334,7 +352,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
     return saved.kind === "ok" ? ok(`${JSON.stringify(saved.value)}\n`) : saved;
   }
   if (args[0] === "get") {
-    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|worktree-location|project-appearance", 2);
+    if (args.length !== 2 || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|agents|worktree-location|project-appearance", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {

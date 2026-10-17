@@ -49,6 +49,7 @@ import { executeSettings } from "./commands/settings.js";
 import { executeProc } from "../core/proc-runner.js";
 import { executeRepository } from "./commands/repository.js";
 import { executeSessions } from "./commands/sessions.js";
+import { executeUsage } from "./commands/usage.js";
 import { executeProjects } from "./commands/projects.js";
 import { executeGithub } from "./commands/github.js";
 import { executeCode } from "./commands/code.js";
@@ -141,7 +142,7 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "session", "commands", "chat", "agent", "sessions", "port"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "session", "commands", "chat", "agent", "sessions", "port", "usage"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "port" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "sessions" || command === "settings" && commandArgs[0] === "set" && commandArgs[1] === "terminal-engine";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -184,6 +185,7 @@ async function routeCommand(
   if (command === "port") return executePort(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "code") return executeCode(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "sessions") return executeSessions(commandArgs, dependencies.environment);
+  if (command === "usage") return executeUsage(commandArgs, dependencies.environment);
   if (command === "agent") return executeAgent(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "commands") return executeCommands(commandArgs, dependencies.environment);
   if (command === "model") {

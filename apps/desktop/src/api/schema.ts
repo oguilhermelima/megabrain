@@ -809,6 +809,40 @@ export interface StepPatch {
   when?: Rule | null
 }
 export type UsageReading = z.infer<typeof usageReadingSchema>
+
+const tokenKinds = { input: z.number(), output: z.number(), cacheRead: z.number(), cacheWrite: z.number(), reasoning: z.number() }
+
+/** `usage stats --json`: token usage per day and provider from the agents' own logs. */
+export const usageStatsSchema = z.looseObject({
+  range: z.looseObject({ days: z.number().nullable(), from: z.string().nullable(), to: z.string() }),
+  prices: z.looseObject({ asOf: z.string(), note: z.string() }),
+  totals: z.looseObject({ ...tokenKinds, total: z.number(), sessions: z.number(), turns: z.number(), cost: z.number().nullable(), unpricedTokens: z.number() }),
+  daily: z.array(z.looseObject({ date: z.string(), total: z.number(), byProvider: z.record(z.string(), z.number()) })),
+  activeDays: z.number(),
+  bestDay: z.looseObject({ date: z.string(), total: z.number() }).nullable(),
+  cacheShare: z.number().nullable(),
+  trackingSince: z.string().nullable(),
+  providers: z.array(
+    z.looseObject({
+      provider: z.string(),
+      tracked: z.boolean(),
+      ...tokenKinds,
+      total: z.number(),
+      sessions: z.number(),
+      turns: z.number(),
+      cost: z.number().nullable(),
+      unpricedTokens: z.number(),
+      share: z.number(),
+      lastModel: z.string().nullable(),
+      lastProject: z.string().nullable(),
+      lastActiveAt: z.string().nullable(),
+    }),
+  ),
+  models: z.array(z.looseObject({ provider: z.string(), model: z.string(), total: z.number(), cost: z.number().nullable() })),
+  projects: z.array(z.looseObject({ project: z.string(), total: z.number() })),
+  megabrain: z.looseObject({ dispatches: z.number(), agentSeconds: z.number(), chats: z.number(), since: z.string().nullable() }).nullable(),
+})
+export type UsageStats = z.infer<typeof usageStatsSchema>
 export interface AdmissionPolicy {
   maxAgents?: number
   minAvailableMib?: number

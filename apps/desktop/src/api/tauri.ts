@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { agentCommandSchema, agentDefaultsSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema } from '@/api/schema'
+import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -185,6 +185,7 @@ export function createTauriApi(): DesktopApi {
     setLimitNotice: async (enabled, intervalSeconds) =>
       void (await cliText(['chain', 'limits', enabled ? '--notice-on' : '--notice-off', ...(intervalSeconds === undefined ? [] : ['--notice-interval', String(intervalSeconds)])])),
     setLimitProvider: async (provider, enabled) => void (await cliText(['chain', 'limits', enabled ? '--enable' : '--disable', provider])),
+    usageStats: (days) => cliJson(['usage', 'stats', ...(days === null ? [] : ['--days', String(days)]), '--json'], usageStatsSchema),
     saveChain: async (name, chain) => void (await cliText(chainSaveArgs(name, chain))),
     validateChain: (name, chain) => cliJson([...chainSaveArgs(name, chain), '--dry-run'], chainValidationSchema),
     chainExplain: async (input) => {
@@ -379,6 +380,8 @@ export function createTauriApi(): DesktopApi {
     setWorktreeLocation: async (json) => void (await cliText(['settings', 'set', 'worktree-location', json])),
     chatSummaries: () => cliJson(['settings', 'get', 'chat-summaries'], z.unknown()),
     setChatSummaries: async (json) => void (await cliText(['settings', 'set', 'chat-summaries', json])),
+    agentSettings: () => cliJson(['settings', 'get', 'agents'], z.unknown()),
+    setAgentSettings: async (json) => void (await cliText(['settings', 'set', 'agents', json])),
     setUsageOrder: async (json) => void (await cliText(['settings', 'set', 'usage-order', json])),
     shortcuts: () => cliJson(['settings', 'get', 'shortcuts'], z.unknown()),
     setShortcuts: async (json) => void (await cliText(['settings', 'set', 'shortcuts', json])),

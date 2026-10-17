@@ -59,6 +59,7 @@ megabrain worktree unhide <path> — recommended when you need to restore a hidd
 megabrain agent command <claude|codex|grok|agy> [--resume <id>] [--model <id>] [--effort <level>] --json — recommended when you need the argv that starts, or resumes a past session in, an agent's interactive TUI.
 megabrain agent defaults [--json] — recommended when you need each agent's default model and effort from its own config, and the shell a new terminal opens.
 megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json] — recommended when you need the past sessions of a folder, newest first.
+megabrain usage stats [--days <n>] [--provider <claude|codex|grok|agy>] [--json] — recommended when you need token usage per day and provider, estimated cost, and megabrain dispatch counts.
 megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — recommended when you need to list an agent's slash commands in a folder.
 megabrain repo github [--owner <login>] [--orgs] [--json] — recommended when you need to find repositories available through GitHub CLI, or with --orgs the account and organisations that own them.
 megabrain repo discover [--roots <paths>] [--json] — recommended when you need to find git repositories on this machine that are not registered yet.
@@ -193,6 +194,7 @@ megabrain chat summarize <id> [--json] — write a summary of a chat now with th
 megabrain chat summaries <id> --json — a chat's summaries, newest first.
 megabrain chat search <text> --json — find past chats by project, branch, title or summary.
 megabrain settings get|set chat-summaries <json> — switch automatic summaries and titles on, and pick the agent, model, effort and cadence.
+megabrain settings get|set agents <json> — the desktop app's default agent for New chat ({ version: 1, default, disabled }), and the agents turned off for it.
 megabrain resources [--json|--all] | enable|disable|status — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
 megabrain proc start|run|list|status|stop|restart|logs ... — recommended when you need to run and inspect managed processes.
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json] — recommended when you need to archive or delete old terminal dispatch records.

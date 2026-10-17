@@ -38,6 +38,36 @@ describe('launchTiles', () => {
   })
 })
 
+describe('launchTiles with agents turned off in Settings', () => {
+  test('a turned-off agent is disabled and says where to turn it back on, even when installed', () => {
+    const tiles = launchTiles(installed('claude', 'codex'), ['codex'])
+    expect(tile(tiles, 'codex')).toMatchObject({ enabled: false })
+    expect(tile(tiles, 'codex')?.hint).toContain('Settings')
+    expect(tile(tiles, 'claude')).toMatchObject({ enabled: true, hint: null })
+  })
+
+  test('before the install report a turned-off agent is still off', () => {
+    expect(tile(launchTiles(null, ['grok']), 'grok')?.enabled).toBe(false)
+  })
+})
+
+describe('initialTile with a default agent', () => {
+  const tiles = launchTiles(installed('claude', 'codex', 'grok'))
+
+  test('the default beats the one used last', () => {
+    expect(initialTile('grok', tiles, 'codex')).toBe('codex')
+  })
+
+  test('a default that is not enabled falls back to the one used last', () => {
+    expect(initialTile('grok', tiles, 'agy')).toBe('grok')
+    expect(initialTile('grok', launchTiles(installed('claude', 'codex', 'grok'), ['codex']), 'codex')).toBe('grok')
+  })
+
+  test('no default is Auto: the one used last', () => {
+    expect(initialTile('grok', tiles, null)).toBe('grok')
+  })
+})
+
 describe('initialTile', () => {
   const tiles = launchTiles(installed('codex', 'grok'))
 

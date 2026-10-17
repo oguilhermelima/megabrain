@@ -381,6 +381,46 @@ describe("settings usage-order", () => {
   });
 });
 
+describe("settings agents", () => {
+  const saved = { version: 1, default: "codex", disabled: ["agy"] };
+
+  async function read(env: ReturnType<typeof sandbox>): Promise<unknown> {
+    const result = await run(["settings", "get", "agents"], env);
+    if (result.kind !== "ok") throw new Error(result.kind === "failed" ? result.error : "unexpected result");
+    return JSON.parse(result.value) as unknown;
+  }
+
+  test("reads no default and nothing disabled before anything was saved", async () => {
+    expect(await read(sandbox())).toEqual({ version: 1, default: null, disabled: [] });
+  });
+
+  test("stores the default agent and the disabled ones as a private state-dir file and reads them back", async () => {
+    const env = sandbox();
+    const result = await run(["settings", "set", "agents", JSON.stringify(saved)], env);
+    expect(result).toEqual({ kind: "ok", value: "agents: default codex, 1 disabled\n" });
+    expect(await read(env)).toEqual(saved);
+    expect(statSync(join(env.state, "agent-settings.json")).mode & 0o777).toBe(0o600);
+    expect((await run(["settings", "set", "agents", JSON.stringify({ version: 1, default: null, disabled: [] })], env))).toEqual({ kind: "ok", value: "agents: default auto, 0 disabled\n" });
+  });
+
+  test("refuses an unknown agent, a disabled default and any other shape, and keeps what was saved", async () => {
+    const env = sandbox();
+    expect((await run(["settings", "set", "agents", JSON.stringify(saved)], env)).kind).toBe("ok");
+    for (const value of [
+      "nope",
+      JSON.stringify({ version: 2, default: null, disabled: [] }),
+      JSON.stringify({ version: 1, default: "gemini", disabled: [] }),
+      JSON.stringify({ version: 1, default: null, disabled: ["gemini"] }),
+      JSON.stringify({ version: 1, default: "agy", disabled: ["agy"] }),
+      JSON.stringify({ version: 1, default: null }),
+      JSON.stringify({ version: 1, default: null, disabled: [], more: 1 }),
+    ]) {
+      expect((await run(["settings", "set", "agents", value], env)).kind).toBe("failed");
+    }
+    expect(await read(env)).toEqual(saved);
+  });
+});
+
 describe("chain save", () => {
   test("creates and replaces a chain without an editor", async () => {
     const env = sandbox();

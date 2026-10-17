@@ -4,6 +4,7 @@ import type { Section } from '@/settings/settings-nav'
 /** The `settings --json` keys each page reads; a page loads only these. */
 export const sectionKeys: Record<Section, SettingsKey[]> = {
   usage: ['limits'],
+  agents: [],
   shortcuts: [],
   models: ['models'],
   chains: ['chains', 'models', 'limits'],

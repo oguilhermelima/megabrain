@@ -127,6 +127,16 @@ megabrain sessions history --cwd ~/code/api --agent claude --limit 20 --json
 megabrain agent command claude --resume <id> --json
 ```
 
+Count the tokens your agents used, per day and per provider, from their own logs (Claude Code
+session logs, Codex rollouts, Grok usage files; agy keeps none), with an estimated cost at API list
+prices and megabrain's own dispatch and chat counts. The parsed totals are cached per file in the
+state dir, so a repeat run reads only what changed:
+
+```sh
+megabrain usage stats --days 30
+megabrain usage stats --provider codex --json
+```
+
 Open a registered project or worktree in the full Code editor inside the desktop app:
 
 ```sh

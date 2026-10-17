@@ -4,6 +4,7 @@ import type { AdmissionPolicy, Project, Settings } from '@/api/schema'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { SettingsSkeleton } from '@/components/Skeleton'
 import { Button, ErrorNote } from '@/components/ui'
+import { AgentsSection } from '@/settings/AgentsSection'
 import { ChainsSection } from '@/settings/ChainsSection'
 import { LimitsSection } from '@/settings/LimitsSection'
 import { ModelsSection } from '@/settings/ModelsSection'
@@ -17,7 +18,7 @@ import { SummariesSection } from '@/settings/SummariesSection'
 import { SupervisorSection } from '@/settings/SupervisorSection'
 import { TerminalSection } from '@/settings/TerminalSection'
 import { setKnownTerminalEngine } from '@/terminal/terminal-engine'
-import { UsageSection } from '@/settings/UsageCard'
+import { UsageSection } from '@/settings/UsageSection'
 import { WorktreesSection } from '@/settings/WorktreesSection'
 
 /** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. `focusChat` is the native chat focused behind the window, for Summarize now. */
@@ -188,8 +189,10 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
                   onToggleProvider={(provider, enabled) => void act(() => api.setLimitProvider(provider, enabled))}
                   onToggleNotice={(enabled) => void act(() => api.setLimitNotice(enabled))}
                   onChangeInterval={(minutes) => void act(() => api.setLimitNotice(settings.limits.notice.enabled, minutes * 60))}
+                  onRefreshLimits={reload}
                 />
               )}
+              {section === 'agents' && <AgentsSection />}
               {section === 'chains' && (
                 <ChainsSection
                   chains={settings.chains}

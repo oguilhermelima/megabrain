@@ -4,12 +4,12 @@
 import { compareByDisplayName, displayName } from '@/advanced/appearance-model'
 import type { ProjectAppearance } from '@/api/schema'
 
-export type Section = 'usage' | 'shortcuts' | 'models' | 'chains' | 'summaries' | 'supervisor' | 'limits' | 'terminal' | 'worktrees'
+export type Section = 'usage' | 'agents' | 'shortcuts' | 'models' | 'chains' | 'summaries' | 'supervisor' | 'limits' | 'terminal' | 'worktrees'
 
 /** A section, or one project's page by its repository path. */
 export type NavKey = Section | `project:${string}`
 
-export type SectionIcon = 'gauge' | 'keyboard' | 'cpu' | 'link' | 'note' | 'eye' | 'sliders' | 'terminal' | 'folder'
+export type SectionIcon = 'gauge' | 'agents' | 'keyboard' | 'cpu' | 'link' | 'note' | 'eye' | 'sliders' | 'terminal' | 'folder'
 
 export interface SectionInfo {
   key: Section
@@ -22,8 +22,9 @@ export interface SectionInfo {
 
 /** In navigation order; groups follow the order their first section appears in. */
 export const settingsSections: SectionInfo[] = [
-  { key: 'usage', label: 'Usage', description: 'How much of each provider’s limits your agents have used.', icon: 'gauge', group: 'General' },
+  { key: 'usage', label: 'Usage', description: 'Tokens, estimated cost and limits across your agents, from their own logs.', icon: 'gauge', group: 'General' },
   { key: 'shortcuts', label: 'Shortcuts', description: 'The keys for the window’s actions, Orca’s where Orca has the same action.', icon: 'keyboard', group: 'General' },
+  { key: 'agents', label: 'Agents', description: 'The agents installed here, the command each starts with, and the one New chat uses.', icon: 'agents', group: 'Agents' },
   { key: 'models', label: 'Models', description: 'The models each agent can run, and their reasoning levels.', icon: 'cpu', group: 'Agents' },
   { key: 'chains', label: 'Chains', description: 'Which agent and model a dispatch tries first, and what it falls back to.', icon: 'link', group: 'Agents' },
   { key: 'summaries', label: 'Summaries', description: 'A short summary of each chat as it goes, and the model that writes it.', icon: 'note', group: 'Agents' },
