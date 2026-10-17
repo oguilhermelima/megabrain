@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { composerBanner, promptKey, ringOffset, sendState, switchNotice, trapFocus } from '@/chat/composer-look'
+import { composerBanner, keepsDraft, promptKey, ringOffset, sendState, switchNotice, trapFocus } from '@/chat/composer-look'
 
 describe('sendState', () => {
   test('is ready only with something to send, nothing sending and the box enabled', () => {
@@ -31,6 +31,18 @@ describe('sendState', () => {
   })
 })
 
+describe('keepsDraft', () => {
+  test('a failed send and a held one keep the draft in the box', () => {
+    expect(keepsDraft({ tone: 'bad', text: 'Not delivered.' })).toBe(true)
+    expect(keepsDraft({ tone: 'held', text: 'Waiting.' })).toBe(true)
+  })
+
+  test('a send that went out clears the box', () => {
+    expect(keepsDraft(null)).toBe(false)
+    expect(keepsDraft({ tone: 'ok', text: 'Delivered.' })).toBe(false)
+  })
+})
+
 describe('composerBanner', () => {
   test('is nothing without a notice', () => {
     expect(composerBanner(null, { failedSend: true, sendable: true })).toBeNull()
@@ -52,6 +64,11 @@ describe('composerBanner', () => {
       text: 'Not delivered (tmux).',
       action: 'retry',
     })
+  })
+
+  test('a held notice shows no banner: the draft waits, nothing went wrong', () => {
+    expect(composerBanner({ tone: 'held', text: 'The terminal is still answering · your message is kept' }, { failedSend: false, sendable: true })).toBeNull()
+    expect(composerBanner({ tone: 'held', text: 'The terminal is still answering · your message is kept' }, { failedSend: true, sendable: true })).toBeNull()
   })
 
   test('an error that did not come from sending offers no Retry', () => {

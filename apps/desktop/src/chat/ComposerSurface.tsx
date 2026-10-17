@@ -11,11 +11,12 @@ import type { QueueState } from '@/chat/queue-model'
 import type { MenuNotice } from '@/chat/slash-commands'
 import { pageInset, pageX } from '@/lib/page'
 
-export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, queue, editing, onEdit, menu, banner, send, onDismiss, box, frame, editor, placeholder, empty, disabled, onInput, onFocus, onKeyDown, onPaste, onContextMenu, onClick, onPointerDown, onPointerMove, onPointerLeave, onDragOver, onDragLeave, onDrop, onDragEnd, dropCaret, toolbar }: {
+export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, edge, queue, editing, onEdit, menu, banner, send, onDismiss, box, frame, editor, placeholder, empty, disabled, onInput, onFocus, onKeyDown, onPaste, onContextMenu, onClick, onPointerDown, onPointerMove, onPointerLeave, onDragOver, onDragLeave, onDrop, onDragEnd, dropCaret, toolbar }: {
   dispatchId?: string
   dispatchQueue: QueueState
   sendable: boolean
   above?: ReactNode
+  edge?: ReactNode
   queue?: QueueControls
   editing: string | null
   onEdit: (id: string) => void
@@ -54,7 +55,7 @@ export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, qu
       </div>
       <div className="relative">
         {menu.shown !== null && <CommandMenu anchor={menu.shown.anchor} label="Commands" sections={menu.shown.sections} active={menu.shown.active} query={menu.shown.query} status={menu.shown.status} width={Math.min(720, menu.shown.anchor.right - menu.shown.anchor.left)} inside={menu.box} leaving={menu.leaving} onActive={menu.setActive} onPick={menu.pick} onClose={menu.close} />}
-        {banner !== null && <NoticeBanner banner={banner} onRetry={send} onDismiss={onDismiss} />}
+        {banner !== null ? <NoticeBanner banner={banner} onRetry={send} onDismiss={onDismiss} /> : edge}
         {/* Docked: the pane's full width, set apart by a hairline on top. */}
         <div ref={box} className="border-t border-white/[0.06] bg-ink-900">
           <div ref={frame} className={`relative min-w-0 pt-3 ${pageX}`}>

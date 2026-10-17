@@ -31,6 +31,7 @@ import { artifactRow, closeChip, openArtifact, panelLayout, type ArtifactChip } 
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
 import { runningTasks, taskRows } from '@/chat/background-tasks'
 import { BackgroundIndicator } from '@/native-chat/BackgroundTasks'
+import { OwnerStrip } from '@/native-chat/OwnerStrip'
 import { pageMx } from '@/lib/page'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
@@ -463,24 +464,6 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
               {opened !== null && layout.mode === 'overlay' && artifactPanel(opened, true)}
             </div>
             {pending !== null && <p className={`${pageMx} -mb-1 px-3 text-[12.5px] text-warn`}>{pending.tool} waits for your approval above.</p>}
-            {bar !== null && (
-              <div className={`${pageMx} -mb-1 flex items-center gap-3 px-3 text-[12.5px] text-ink-400`}>
-                <span className="min-w-0 flex-1 truncate">{bar.text}</span>
-                <button
-                  type="button"
-                  // The daemon refuses a take over mid-turn; Send when free waits for it instead.
-                  disabled={takingOver || (bar.action === 'take-over' && busy)}
-                  title={bar.action === 'take-over' && busy ? 'The terminal is still answering' : undefined}
-                  onClick={() => {
-                    if (bar.action === 'take-over') void act(takeOver)
-                    else setHold(bar.action === 'cancel' ? 'held' : 'armed')
-                  }}
-                  className="shrink-0 text-ink-300 underline-offset-2 hover:text-ink-100 hover:underline disabled:opacity-50"
-                >
-                  {bar.action === 'take-over' ? (takingOver ? 'Taking over…' : 'Take over') : bar.action === 'cancel' ? 'Cancel' : 'Send when free'}
-                </button>
-              </div>
-            )}
             <div onKeyDown={onComposerKey} className="contents">
               <Composer
                 placeholder={owner === 'terminal' ? `Reply to ${title}… (takes over from the terminal)` : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
@@ -503,6 +486,19 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
                       <BackgroundIndicator tasks={running} onJump={(taskId) => jumpToTask.current?.(taskId)} />
                       {chips !== null && <ArtifactsRow chips={chips} now={now} onOpen={(chip) => panel.open(chip.active ? null : chip.artifact.id)} onClose={closeArtifactChip} />}
                     </>
+                  )
+                }
+                edge={
+                  bar === null ? undefined : (
+                    <OwnerStrip
+                      bar={bar}
+                      busy={busy}
+                      takingOver={takingOver}
+                      onAction={() => {
+                        if (bar.action === 'take-over') void act(takeOver)
+                        else setHold(bar.action === 'cancel' ? 'held' : 'armed')
+                      }}
+                    />
                   )
                 }
                 sendDraft={sendDraft}

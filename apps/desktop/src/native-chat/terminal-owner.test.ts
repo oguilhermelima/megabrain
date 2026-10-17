@@ -67,10 +67,10 @@ describe('sending while the terminal drives', () => {
     expect(sendRoute(chat('none', 'suspended', 'terminal'))).toBe('send')
   })
 
-  test('a busy terminal keeps the draft in the composer with a calm notice', () => {
-    // A bad notice is what keeps the draft: the composer clears only what went out.
-    expect(sendFailure(new CliError('terminal-busy: the terminal is mid-turn', 1))).toEqual({ tone: 'bad', text: TERMINAL_BUSY_NOTICE })
-    expect(TERMINAL_BUSY_NOTICE).toBe('The terminal is still answering; your message is kept')
+  test('a busy terminal keeps the draft in the composer without calling it an error', () => {
+    // A held notice keeps the draft and shows no banner: the line above the composer says it is waiting.
+    expect(sendFailure(new CliError('terminal-busy: the terminal is mid-turn', 1))).toEqual({ tone: 'held', text: TERMINAL_BUSY_NOTICE })
+    expect(TERMINAL_BUSY_NOTICE).toBe('The terminal is still answering · your message is kept')
   })
 
   test('any other send failure is not held: it rethrows as before', () => {
@@ -91,9 +91,14 @@ describe('the notice above the composer', () => {
     expect(OWNER_NOTICE).toBe('The terminal is driving this session')
   })
 
-  test('with a kept draft offers Send when free, then waits with Cancel', () => {
-    expect(ownerBar(chat('terminal', 'working', 'terminal'), 'held')).toEqual({ text: OWNER_NOTICE, action: 'send-when-free' })
-    expect(ownerBar(chat('terminal', 'working', 'terminal'), 'armed')).toEqual({ text: 'Sends when the terminal is free', action: 'cancel' })
+  test('with a kept draft says it is waiting and offers Send when free, then waits with Cancel', () => {
+    expect(ownerBar(chat('terminal', 'working', 'terminal'), 'held')).toEqual({ text: TERMINAL_BUSY_NOTICE, action: 'send-when-free' })
+    expect(ownerBar(chat('terminal', 'waiting-approval', 'terminal'), 'held')).toEqual({ text: TERMINAL_BUSY_NOTICE, action: 'send-when-free' })
+    expect(ownerBar(chat('terminal', 'working', 'terminal'), 'armed')).toEqual({ text: 'Will send when the terminal is free', action: 'cancel' })
+  })
+
+  test('a kept draft once the terminal has finished answering no longer says it is answering', () => {
+    expect(ownerBar(chat('terminal', 'idle', 'terminal'), 'held')).toEqual({ text: OWNER_NOTICE, action: 'send-when-free' })
   })
 
   test('a kept draft whose owner has let go is plain again', () => {

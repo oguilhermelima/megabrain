@@ -3,7 +3,7 @@ import type { MessagePart } from '@/api/schema'
 import type { QueueControls } from '@/chat/QueueStrip'
 import { attachmentPath, type Attachment } from '@/chat/ComposerSupport'
 import { draftText, toMessageParts, tokenIds, type Draft } from '@/chat/composer-parts'
-import type { Notice } from '@/chat/composer-look'
+import { keepsDraft, type Notice } from '@/chat/composer-look'
 
 // What a queued message's edit answers when chatd had already sent the message.
 const TAKEN = Symbol('taken')
@@ -55,10 +55,9 @@ export function useComposerSend({ current, attachments, sending, setSending, dis
             show({ tone: 'ok', text: 'Already sent; your edit is in the composer.' })
             return
           }
-          const bad = result?.tone === 'bad'
-          show(result, bad)
+          show(result, result?.tone === 'bad')
           onSent()
-          if (!bad) {
+          if (!keepsDraft(result)) {
             setEditing(null)
             clear()
           }

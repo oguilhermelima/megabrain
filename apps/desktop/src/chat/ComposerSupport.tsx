@@ -8,6 +8,7 @@ import { attachmentKind } from '@/chat/composer-model'
 import { initialQueueState, queueReducer, type QueueAction, type QueueState } from '@/chat/queue-model'
 import type { Banner } from '@/chat/composer-look'
 import { pageMx } from '@/lib/page'
+import { Tooltip } from '@/components/Tooltip'
 
 // An image or PDF going with the next message. Pasted and picked files are saved through
 // saveAttachment when the message is sent; a file dropped on the window already has a path.
@@ -101,10 +102,14 @@ export function QueuePills({ state, empty }: { state: QueueState; empty: boolean
   return (
     <div className="-mx-1 mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
       {state.pending.map((item) => (
-        <span key={item.id} title={item.text} className="flex max-w-64 items-center gap-1.5 rounded-full border border-accent/25 bg-accent/[0.08] px-2.5 py-0.5 text-[12px] text-ink-200">
-          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
-          <span className="truncate">{item.text}</span>
-        </span>
+        <Tooltip key={item.id} text={item.text}>
+          {(tip) => (
+            <span {...tip} className="flex max-w-64 items-center gap-1.5 rounded-full border border-accent/25 bg-accent/[0.08] px-2.5 py-0.5 text-[12px] text-ink-200">
+              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" />
+              <span className="truncate">{item.text}</span>
+            </span>
+          )}
+        </Tooltip>
       ))}
       {state.taking !== null && (
         <span className="flex items-center gap-1.5 text-[12px] text-ink-400">

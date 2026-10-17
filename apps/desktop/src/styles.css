@@ -511,6 +511,15 @@ html.native body {
   }
 }
 
+/* A transcript beside the navigator rail: the rail shows where the reader is, so the list's own
+   scroll thumb would only be a stray pill in the gutter between them. */
+.rail-scroll {
+  scrollbar-width: none;
+}
+.rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 /* A native chat's artifacts row (native-chat/ChatArtifacts): it scrolls sideways with no bar, and a
    chip the agent just changed sends out a ring of the accent twice. */
 .artifact-row {

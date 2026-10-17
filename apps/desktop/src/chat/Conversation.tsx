@@ -681,7 +681,7 @@ export function ConversationList({
           onMouseDown={(event) => {
             if (event.button === 2) event.preventDefault()
           }}
-          className={`${rail ? railMargin : pageMx} min-h-0 flex-1 overflow-y-auto outline-none select-text`}
+          className={`${rail ? `${railMargin} rail-scroll` : pageMx} min-h-0 flex-1 overflow-y-auto outline-none select-text`}
         >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((row) => {

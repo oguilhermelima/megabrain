@@ -6,6 +6,7 @@ import { menuFocusStep } from '@/components/menu-model'
 import { Popover } from '@/components/Popover'
 import { usePresence } from '@/lib/usePresence'
 import { formatElapsed } from '@/native-chat/chat-model'
+import { Tooltip } from '@/components/Tooltip'
 
 // Above a native chat's composer while the agent's background work runs: how many tasks still run,
 // opening the list of them; picking one scrolls the transcript to the row where it started.
@@ -81,18 +82,21 @@ function TaskMenu({ tasks, anchor, leaving, trigger, onPick, onClose }: { tasks:
         {tasks.map((task) => {
           const ms = taskDurationMs(task, now)
           return (
-            <button
-              key={task.id}
-              type="button"
-              role="menuitem"
-              title={`${task.label}\nShow where it started`}
-              onClick={() => onPick(task)}
-              className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] transition-colors duration-100 hover:bg-white/[0.06] focus-visible:bg-white/[0.08] focus-visible:outline-none motion-reduce:transition-none"
-            >
-              <ToolIcon name={taskTool[task.kind]} status="running" size={13} />
-              <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-200">{task.label}</span>
-              {ms !== null && <span className="shrink-0 text-[11.5px] text-ink-400 tabular-nums">{formatElapsed(ms)}</span>}
-            </button>
+            <Tooltip key={task.id} text={`${task.label}\nShow where it started`}>
+              {(tip) => (
+                <button
+                  type="button"
+                  role="menuitem"
+                  {...tip}
+                  onClick={() => onPick(task)}
+                  className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] transition-colors duration-100 hover:bg-white/[0.06] focus-visible:bg-white/[0.08] focus-visible:outline-none motion-reduce:transition-none"
+                >
+                  <ToolIcon name={taskTool[task.kind]} status="running" size={13} />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-200">{task.label}</span>
+                  {ms !== null && <span className="shrink-0 text-[11.5px] text-ink-400 tabular-nums">{formatElapsed(ms)}</span>}
+                </button>
+              )}
+            </Tooltip>
           )
         })}
       </div>

@@ -51,6 +51,7 @@ export function Composer({
   initCommands,
   queue,
   above,
+  edge,
   sendDraft,
 }: {
   /** Text to put in the box, replacing the draft; a new object each time, as a suggestion is picked. */
@@ -67,7 +68,7 @@ export function Composer({
   model?: string | null
   /** Set for native chats, which switch model and effort themselves; without it, picking a model sends /model <model> through onSend. */
   onModelChange?: (model: string, effort: string | undefined) => Promise<void>
-  /** Sends the message as text and image parts in order; resolves to the notice to show (null: sent, nothing to say), and clears the box unless it is bad. */
+  /** Sends the message as text and image parts in order; resolves to the notice to show (null: sent, nothing to say), and clears the box unless it is bad or held. */
   onSend: (parts: MessagePart[]) => Promise<Notice | null>
   /** The agent's turn runs: with nothing typed, the send button stops it through onStop. */
   running?: boolean
@@ -80,6 +81,8 @@ export function Composer({
   queue?: QueueControls
   /** Shown above the queue and the box, inside the composer's gutter: a native chat's artifacts row. */
   above?: ReactNode
+  /** A line attached to the box's top edge, where a notice would sit; a notice takes its place while shown. */
+  edge?: ReactNode
   /** Filled with the box's send while it is mounted, so the view can send the draft that waits in it. */
   sendDraft?: MutableRefObject<(() => void) | null>
 }) {
@@ -356,6 +359,7 @@ export function Composer({
         dispatchQueue={dispatchQueue}
         sendable={sendable}
         above={above}
+        edge={edge}
         queue={queue}
         editing={editing}
         onEdit={editQueued}

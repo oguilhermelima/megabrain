@@ -16,6 +16,7 @@ import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { httpsUrl } from '@/lib/external'
 import { sidePanelSlimBar, sidePanelSmallButton } from '@/lib/side-panel'
+import { Tooltip } from '@/components/Tooltip'
 import { artifactStamps, chatPanelLimits, readChatPanel, readHiddenChips, writeChatPanel, writeHiddenChips, type ArtifactChip, type ChatPanel, type HiddenChips } from '@/native-chat/chat-artifacts'
 
 // A native chat's artifacts: the row of chips above the composer and the panel that opens one beside
@@ -38,14 +39,15 @@ const agentOf: Partial<Record<ChatArtifactSource, string>> = { 'claude-artifact'
 
 export const sourceLabel = (source: ChatArtifactSource): string => sources[source].label
 
-/** Who made the artifact: the agents' own marks, megabrain's orb, and Claude's spark on a canvas for Claude Design. */
-export function SourceMark({ source, size = 14 }: { source: ChatArtifactSource; size?: number }) {
+/** Who made the artifact: the agents' own marks, megabrain's orb, and Claude's spark on a canvas for Claude Design.
+ * Untitled inside a control that has its own tooltip, so no native one shows over it. */
+export function SourceMark({ source, size = 14, titled = true }: { source: ChatArtifactSource; size?: number; titled?: boolean }) {
   const { label, color } = sources[source]
-  if (source === 'megabrain') return <span role="img" aria-label={label} title={label} style={{ width: size - 4, height: size - 4, margin: 2, boxShadow: '0 0 6px rgba(142, 156, 255, 0.45)' }} className="orb still block shrink-0" />
+  if (source === 'megabrain') return <span role="img" aria-label={label} title={titled ? label : undefined} style={{ width: size - 4, height: size - 4, margin: 2, boxShadow: '0 0 6px rgba(142, 156, 255, 0.45)' }} className="orb still block shrink-0" />
   if (source === 'claude-design') {
     return (
       <svg viewBox="0 0 16 16" width={size} height={size} role="img" aria-label={label} style={{ color }} className="shrink-0">
-        <title>{label}</title>
+        {titled && <title>{label}</title>}
         <rect x="1.5" y="1.5" width="13" height="13" rx="3.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
         <g stroke="currentColor" strokeWidth="1.3" strokeLinecap="round">
           <path d="M8 4.75v6.5M4.75 8h6.5M5.7 5.7l4.6 4.6M10.3 5.7l-4.6 4.6" />
@@ -183,32 +185,40 @@ export function ArtifactsRow({ chips, now, onOpen, onClose }: { chips: ArtifactC
             }`}
           >
             {chip.pulse && <span key={`${artifact.updatedAt}#${artifact.revision ?? ''}`} aria-hidden="true" className="artifact-pulse pointer-events-none absolute inset-0 rounded-full" />}
-            <button
-              type="button"
-              // The composer keeps the focus: the person goes on writing while the artifact opens.
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => onOpen(chip)}
-              aria-pressed={chip.active}
-              title={`${artifact.title}\n${kind === null ? '' : `${kind} · `}${sourceLabel(artifact.source)} · ${new Date(artifact.updatedAt).toLocaleString()}`}
-              className="flex h-full min-w-0 items-center gap-1.5 rounded-full pl-2.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
-            >
-              <span className={`inline-flex shrink-0 ${chip.active ? 'text-accent' : 'text-ink-400 group-hover:text-ink-200'}`}>{artifact.kind === undefined ? <SourceMark source={artifact.source} size={13} /> : <ArtifactKindIcon kind={artifact.kind} />}</span>
-              <span className={`min-w-0 truncate ${chip.active ? 'font-semibold' : 'font-medium'}`}>{artifact.title}</span>
-            </button>
+            <Tooltip text={`${artifact.title}\n${kind === null ? '' : `${kind} · `}${sourceLabel(artifact.source)} · ${new Date(artifact.updatedAt).toLocaleString()}`}>
+              {(tip) => (
+                <button
+                  type="button"
+                  {...tip}
+                  // The composer keeps the focus: the person goes on writing while the artifact opens.
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => onOpen(chip)}
+                  aria-pressed={chip.active}
+                  className="flex h-full min-w-0 items-center gap-1.5 rounded-full pl-2.5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25"
+                >
+                  <span className={`inline-flex shrink-0 ${chip.active ? 'text-accent' : 'text-ink-400 group-hover:text-ink-200'}`}>{artifact.kind === undefined ? <SourceMark source={artifact.source} size={13} titled={false} /> : <ArtifactKindIcon kind={artifact.kind} />}</span>
+                  <span className={`min-w-0 truncate ${chip.active ? 'font-semibold' : 'font-medium'}`}>{artifact.title}</span>
+                </button>
+              )}
+            </Tooltip>
             <span className="relative mr-1 ml-1 grid h-5 min-w-5 shrink-0 place-items-center">
               <span className={`px-0.5 text-[11px] tabular-nums transition-opacity duration-100 group-focus-within:opacity-0 group-hover:opacity-0 motion-reduce:transition-none ${chip.pulse ? 'text-accent' : 'text-ink-400'}`}>{relativeAge(artifact.updatedAt, now)}</span>
-              <button
-                type="button"
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => onClose(chip)}
-                aria-label={`Close ${artifact.title}`}
-                title="Close"
-                className="absolute inset-0 m-auto grid size-5 place-items-center rounded-full text-ink-300 opacity-0 transition-opacity duration-100 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-white/[0.12] hover:text-ink-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
-              >
-                <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                  <path d="m4 4 8 8M12 4l-8 8" />
-                </svg>
-              </button>
+              <Tooltip text="Close">
+                {(tip) => (
+                  <button
+                    type="button"
+                    {...tip}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => onClose(chip)}
+                    aria-label={`Close ${artifact.title}`}
+                    className="absolute inset-0 m-auto grid size-5 place-items-center rounded-full text-ink-300 opacity-0 transition-opacity duration-100 group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-white/[0.12] hover:text-ink-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
+                  >
+                    <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                      <path d="m4 4 8 8M12 4l-8 8" />
+                    </svg>
+                  </button>
+                )}
+              </Tooltip>
             </span>
           </div>
         )

@@ -11,9 +11,9 @@ export type View = NativeChat['mode']
 export type Hold = 'none' | 'held' | 'armed'
 
 export const OWNER_NOTICE = 'The terminal is driving this session'
-export const TERMINAL_BUSY_NOTICE = 'The terminal is still answering; your message is kept'
+export const TERMINAL_BUSY_NOTICE = 'The terminal is still answering · your message is kept'
 export const CHAT_BUSY_NOTICE = 'The chat is still answering; switch to the terminal when it is done'
-const ARMED_NOTICE = 'Sends when the terminal is free'
+const ARMED_NOTICE = 'Will send when the terminal is free'
 
 /** Who owns the session; a daemon that does not report it means the mode. */
 export function ownerOf(chat: NativeChat): Owner {
@@ -47,16 +47,19 @@ export function sendRoute(chat: NativeChat): 'take-over-first' | 'send' {
   return ownerOf(chat) === 'terminal' ? 'take-over-first' : 'send'
 }
 
-/** A send the busy terminal refused keeps its draft (a bad notice); null rethrows. */
+/** A send the busy terminal refused waits with its draft (a held notice, no error); null rethrows. */
 export function sendFailure(error: unknown): Notice | null {
-  return refusalOf(error) === 'terminal-busy' ? { tone: 'bad', text: TERMINAL_BUSY_NOTICE } : null
+  return refusalOf(error) === 'terminal-busy' ? { tone: 'held', text: TERMINAL_BUSY_NOTICE } : null
 }
 
-/** The slim line above the composer while the terminal drives. */
-export function ownerBar(chat: NativeChat, hold: Hold): { text: string; action: 'take-over' | 'send-when-free' | 'cancel' } | null {
+/** The slim line above the composer while the terminal drives; it also says a kept draft is waiting. */
+export type OwnerBar = { text: string; action: 'take-over' | 'send-when-free' | 'cancel' }
+
+export function ownerBar(chat: NativeChat, hold: Hold): OwnerBar | null {
   if (ownerOf(chat) !== 'terminal') return null
   if (hold === 'armed') return { text: ARMED_NOTICE, action: 'cancel' }
-  return { text: OWNER_NOTICE, action: hold === 'held' ? 'send-when-free' : 'take-over' }
+  if (hold === 'held') return { text: turnRunning(chat) ? TERMINAL_BUSY_NOTICE : OWNER_NOTICE, action: 'send-when-free' }
+  return { text: OWNER_NOTICE, action: 'take-over' }
 }
 
 export function sendsWhenFree(hold: Hold, chat: NativeChat): boolean {

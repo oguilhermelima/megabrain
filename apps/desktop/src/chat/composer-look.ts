@@ -17,8 +17,14 @@ export function ringOffset(fraction: number, circumference: number): number {
   return circumference * (1 - shown)
 }
 
-/** What the composer reports after an action: a send's outcome, a failed model switch, a refused file. */
-export type Notice = { tone: 'ok' | 'bad'; text: string }
+/** What the composer reports after an action: a send's outcome, a failed model switch, a refused file.
+ * held: the send is waiting, not failed; the draft stays and the view says why, so no banner shows. */
+export type Notice = { tone: 'ok' | 'bad' | 'held'; text: string }
+
+/** A failed or held send keeps its draft in the box; anything else went out and clears it. */
+export function keepsDraft(result: Notice | null): boolean {
+  return result !== null && result.tone !== 'ok'
+}
 
 /** What a model switch leaves above the composer: nothing when it went through, the reason when it failed. */
 export function switchNotice(result: Notice | null): Notice | null {
@@ -27,7 +33,7 @@ export function switchNotice(result: Notice | null): Notice | null {
 
 /** A notice as the banner on the composer's top edge shows it. */
 export interface Banner {
-  tone: Notice['tone']
+  tone: 'ok' | 'bad'
   /** alert interrupts a screen reader for a failure; status waits its turn. */
   role: 'status' | 'alert'
   text: string
@@ -36,7 +42,7 @@ export interface Banner {
 }
 
 export function composerBanner(notice: Notice | null, { failedSend, sendable }: { failedSend: boolean; sendable: boolean }): Banner | null {
-  if (notice === null) return null
+  if (notice === null || notice.tone === 'held') return null
   const bad = notice.tone === 'bad'
   return { tone: notice.tone, role: bad ? 'alert' : 'status', text: notice.text, action: bad && failedSend && sendable ? 'retry' : null }
 }
