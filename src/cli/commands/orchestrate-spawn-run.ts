@@ -14,7 +14,7 @@ import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-wri
 import { repoFromOrca } from "./repository-selector.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 import { getHost, runHostSend, type HostCommand, type HostProvider } from "../../hosts/index.js";
-import { createTmuxSession, dispatchTmuxProcess, getTmux, onAppTmuxServer, sendTmuxPair, splitTmuxWorktreePane, verifyTmuxPane, waitForTmuxSession } from "../../hosts/tmux.js";
+import { createTmuxLauncher, createTmuxSession, dispatchTmuxProcess, getTmux, onAppTmuxServer, respawnTmuxPane, sendTmuxPair, splitTmuxWorktreePane, verifyTmuxPane, waitForTmuxSession } from "../../hosts/tmux.js";
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
@@ -354,15 +354,16 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       }
     } else if (step === "command-submission") {
       if (runtime === "tmux") {
-        // The launch line runs in the pane's shell, not the agent composer: it always submits on
-        // Enter regardless of the agent's own submit key (Tab for Codex, which the shell reads as
-        // completion instead of running the command). clearStrayInput=true here, and only here:
-        // this is the one call typing into a still-bare shell prompt, matching the shell's own
-        // megabrain_tmux_send_agent (see the WHY comment on sendTmuxPair).
         const terminalHost = parentContext.host === "orca" || parentContext.host === "superset" ? `MEGABRAIN_TERMINAL_HOST=${shellQuote(parentContext.host)} ` : "";
         const terminalParent = parentContext.host === "orca" && parentContext.terminalId !== null ? `MEGABRAIN_TERMINAL_PARENT_ID=${shellQuote(parentContext.terminalId)} ` : "";
-        const sent = await sendTmuxPair(root, pane ?? "", `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} ${terminalHost}${terminalParent}MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${launch}`, "Enter", environment, process, true);
-        outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux send-keys --target ${pane ?? ""}`, detail: sent.error } };
+        const command = `cd ${shellQuote(worktree.path)} && ${clearCallerIdentityEnv} ${terminalHost}${terminalParent}MEGABRAIN_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_STATE_DIR=${shellQuote(root)} MEGABRAIN_DISPATCH_ID=${shellQuote(id)} MEGABRAIN_TMUX_SESSION=${shellQuote(session ?? "")} MEGABRAIN_TMUX_PANE=${shellQuote(pane ?? "")} ${launch}`;
+        const launcher = await createTmuxLauncher(root, command);
+        if (launcher.kind !== "ok") {
+          outcome = { kind: "failed", failure: { call: "create tmux launcher", detail: launcher.error } };
+        } else {
+          const started = await respawnTmuxPane(pane ?? "", launcher.value, process);
+          outcome = started.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: `tmux respawn-pane --target ${pane ?? ""}`, detail: started.error } };
+        }
       } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");

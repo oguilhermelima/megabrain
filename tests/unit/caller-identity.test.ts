@@ -1,6 +1,6 @@
 import { guardedStateDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
@@ -515,15 +515,14 @@ describe("spawn from a caller with no terminal host", () => {
 // ---------------------------------------------------------------------------
 
 describe("spawn starts children without the parent's identity", () => {
-  test("clears every caller-identity variable on the tmux launch line", async () => {
+  test("clears every caller-identity variable in the tmux launcher", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-caller-identity-tmux-clear-`);
     const dispatchId = "dispatch-clear-tmux";
-    const commandTexts: string[] = [];
     const original = getTmux();
     registerTmux({
       ...original,
       id: "tmux",
-      sendText: async (_pane, text) => { commandTexts.push(text); return ok(undefined); },
+      sendText: async () => ok(undefined),
       sendKey: async () => ok(undefined),
     });
     const worktree: SpawnWorktree = { path: "/work/tree", branch: "feat/example", ownership: "existing", workspaceId: null };
@@ -541,7 +540,10 @@ describe("spawn starts children without the parent's identity", () => {
         process,
         { resolveWorktree: async () => ok(worktree) },
       );
-      const commandText = commandTexts.find((text) => !text.startsWith("[megabrain dispatch")) ?? "";
+      const launchCall = process.calls.find((call) => call.command === "tmux" && call.args[0] === "respawn-pane");
+      const command = launchCall?.args.at(-1) ?? "";
+      const launchPath = command.startsWith("exec '") && command.endsWith("'") ? command.slice(6, -1).replaceAll("'\\''", "'") : undefined;
+      const commandText = launchPath === undefined ? "" : await readFile(launchPath, "utf8");
       expect(commandText).not.toBe("");
       for (const name of CALLER_IDENTITY_ENV_VARS) expect(commandText).toContain(`-u ${name}`);
       expect(commandText).toContain("MEGABRAIN_STATE_DIR=");

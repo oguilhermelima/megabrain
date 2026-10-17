@@ -53,6 +53,13 @@ function processFor(events: string[], behavior: (command: string, args: readonly
   };
 }
 
+async function tmuxLaunchScript(process: { readonly calls: readonly Call[] }): Promise<string> {
+  const call = process.calls.find((item) => item.command === "tmux" && item.args[0] === "respawn-pane");
+  const command = call?.args.at(-1);
+  const path = command?.startsWith("exec '") && command.endsWith("'") ? command.slice(6, -1).replaceAll("'\\''", "'") : undefined;
+  return path === undefined ? "" : readFile(path, "utf8");
+}
+
 function environment(root: string, dispatchId: string): Record<string, string> {
   return {
     MEGABRAIN_STATE_DIR: root,
@@ -385,19 +392,11 @@ describe("executeSpawn", () => {
     }
   });
 
-  // Shell parity: megabrain_tmux_send_agent (lib/module-tmux-runtime.sh, last standing at commit
-  // 9d24366^) sent a raw `C-u` immediately before typing the launch command line into a freshly
-  // created/split pane — its own WHY comment: "the child shell can still hold startup noise or a
-  // stray keystroke, and typing onto a non-empty line produced 'mocd <path>' once". That C-u was
-  // scoped to exactly that one call site: megabrain_tmux_send_text (used for the prompt payload
-  // and for nudges into an already-running agent composer) never sent it — "C-u in an agent
-  // composer is not a line kill" is the shell's own reasoning for leaving it out there. This test
-  // proves both halves: the launch command line is preceded by a C-u, and the prompt payload sent
-  // afterward into the now-running agent's composer is not.
-  test("clears stray input with C-u before the launch command line, but never before the prompt", async () => {
+  test("starts the agent with a pane command and never types a launch line", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-clear-stray-`);
     const dispatchId = "dispatch-clear-stray";
     const events: string[] = [];
+    const process = processFor(events);
     const original = getTmux();
     registerTmux(withComposer({
       ...original,
@@ -409,17 +408,15 @@ describe("executeSpawn", () => {
       },
     }));
     try {
-      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/clear-stray", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), processFor([]), {
+      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/clear-stray", "--agent", "codex", "--prompt", "spawn", "--tmux", "true"], environment(root, dispatchId), process, {
         resolveWorktree: async () => ok(worktree("created")),
       });
       expect(result.kind).toBe("ok");
-      const launchIndex = events.indexOf("text:launch-command");
       const promptIndex = events.indexOf("text:prompt");
-      expect(launchIndex).toBeGreaterThanOrEqual(0);
-      expect(promptIndex).toBeGreaterThan(launchIndex);
-      expect(events[launchIndex - 1]).toBe("key:C-u");
-      // No C-u anywhere from the prompt send onward: the composer is a running agent by then.
-      expect(events.slice(promptIndex - 1)).not.toContain("key:C-u");
+      expect(events).not.toContain("text:launch-command");
+      expect(events).not.toContain("key:C-u");
+      expect(promptIndex).toBeGreaterThanOrEqual(0);
+      expect(process.calls.some((call) => call.command === "tmux" && call.args[0] === "respawn-pane")).toBe(true);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -455,9 +452,11 @@ describe("executeSpawn", () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-primary-cleanup-`);
     const removed: string[] = [];
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => failed("launch failed"), sendKey: async () => ok(undefined) });
+    const process = processFor([], (command, args) => command === "tmux" && args.includes("respawn-pane") ? failed("launch failed")
+      : command === "tmux" && args.includes("list-panes") ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
     try {
-      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/primary", "--agent", "codex", "--prompt", "fail", "--tmux", "true"], environment(root, `dispatch-primary-cleanup-${ownership}`), processFor([]), {
+      const result = await executeSpawn(["--repo", "/repo", "--branch", "feat/primary", "--agent", "codex", "--prompt", "fail", "--tmux", "true"], environment(root, `dispatch-primary-cleanup-${ownership}`), process, {
         resolveWorktree: async () => ok(worktree(ownership)),
         removeWorktree: async (path) => { removed.push(path); return ok(undefined); },
       });
@@ -655,17 +654,17 @@ describe("executeSpawn", () => {
   test("keeps tmux identity variables and adds the shared state directory", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-environment-`);
     const dispatchId = "dispatch-tmux-environment";
-    const commandTexts: string[] = [];
+    const process = processFor([]);
     const original = getTmux();
     registerTmux(withComposer({
       ...original,
       id: "tmux",
-      sendText: async (_pane, text) => { commandTexts.push(text); return ok(undefined); },
+      sendText: async () => ok(undefined),
       sendKey: async () => ok(undefined),
     }));
     try {
-      await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "tmux", "--tmux", "true"], environment(root, dispatchId), processFor([]), options(worktree("existing")));
-      const command = commandTexts.find((text) => text.includes("MEGABRAIN_DISPATCH_ID")) ?? "";
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "tmux", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
+      const command = await tmuxLaunchScript(process);
       expect(command).toContain("MEGABRAIN_DISPATCH_ID");
       expect(command).toContain("MEGABRAIN_TMUX_SESSION");
       expect(command).toContain("MEGABRAIN_TMUX_PANE");
@@ -676,7 +675,7 @@ describe("executeSpawn", () => {
     }
   });
 
-  test("writes metadata, creates tmux, sends command and prompt, and confirms delivery", async () => {
+  test("writes metadata, starts the tmux pane command, sends the prompt, and confirms delivery", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-`);
     const events: string[] = [];
     const dispatchId = "dispatch-success";
@@ -703,7 +702,8 @@ describe("executeSpawn", () => {
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") throw new Error(result.error);
       expect(result.exitCode).toBe(0);
-      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
+      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-2)).toEqual(["text:prompt", "key:Enter"]);
+      expect(process.calls.some((call) => call.command === "tmux" && call.args[0] === "respawn-pane")).toBe(true);
       const meta = readMeta(root, dispatchId);
       expect(meta).toMatchObject({ dispatchId, state: "running", promptDelivery: "delivered", promptState: "confirmed", runtime: "tmux", tmuxSession: tmuxWorktreeSessionName("/work/tree"), tmuxPane: "%9" });
     } finally {
@@ -890,10 +890,12 @@ describe("executeSpawn", () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-`);
     const removed: string[] = [];
     const events: string[] = [];
-    const process = processFor(events);
+    const process = processFor(events, (command, args) => command === "tmux" && args.includes("respawn-pane") ? failed("launch failed")
+      : command === "tmux" && args.includes("list-panes") ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
     const dispatchId = `dispatch-${ownership}`;
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => failed("launch failed"), sendKey: async () => ok(undefined) });
+    registerTmux({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined) });
     const dependencies: SpawnDependencies = { ...options(worktree(ownership)), removeWorktree: async (path) => { removed.push(path); return ok(undefined); } };
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "fail", "--tmux", "true"], environment(root, dispatchId), process, dependencies);
@@ -1221,7 +1223,7 @@ describe("executeSpawn", () => {
     if (result.kind === "failed") expect(result.error).toContain(flag);
   });
 
-  test.each(["codex", "claude"] as const)("submits both the tmux launch line and the initial prompt with Enter regardless of %s's own submit key", async (agent) => {
+  test.each(["codex", "claude"] as const)("starts %s directly and submits only the initial prompt", async (agent) => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-launch-enter-${agent}-`);
     const events: string[] = [];
     const dispatchId = `dispatch-launch-enter-${agent}`;
@@ -1247,12 +1249,13 @@ describe("executeSpawn", () => {
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", agent, "--prompt", "do it", "--tmux", "true"], environment(root, dispatchId), process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
-      if (agent === "claude") expect(events.some((event) => event.includes("--name 'feat/example'"))).toBe(true);
+      const launch = await tmuxLaunchScript(process);
+      if (agent === "claude") expect(launch).toContain("--name 'feat/example'");
       expect(process.calls).toContainEqual({ command: "tmux", args: ["select-pane", "-t", "%9", "-T", `${agent} · feat/example`] });
       expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_agent", agent] });
       expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_name", "feat/example"] });
       expect(process.calls).toContainEqual({ command: "tmux", args: ["set-option", "-p", "-t", "%9", "@megabrain_state", "working"] });
-      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-4)).toEqual(["text:command", "key:Enter", "text:prompt", "key:Enter"]);
+      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:")).slice(-2)).toEqual(["text:prompt", "key:Enter"]);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -1339,9 +1342,6 @@ describe("executeSpawn", () => {
 
       expect(result.kind).toBe("ok");
       expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:"))).toEqual([
-        "key:C-u",
-        "text:command",
-        "key:Enter", // submit the launch command
         "key:Enter", // answer the trust dialog once
         "text:prompt",
         "key:Enter", // submit the prompt after readiness
@@ -1359,7 +1359,6 @@ describe("executeSpawn", () => {
     const dispatchId = "dispatch-agy-log";
     const idleCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-idle.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
     const idle = idleCapture.result.terminal.tail.join("\n");
-    const commands: string[] = [];
     const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
       ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
       : ok({ stdout: "", stderr: "", exitCode: 0 }));
@@ -1369,7 +1368,6 @@ describe("executeSpawn", () => {
       id: "tmux",
       sendText: async (_pane, text) => {
         if (text.startsWith("[megabrain dispatch")) appendReceived(root, dispatchId);
-        else commands.push(text);
         return ok(undefined);
       },
       sendKey: async () => ok(undefined),
@@ -1383,7 +1381,7 @@ describe("executeSpawn", () => {
       }, process, options(worktree("existing")));
       expect(result.kind).toBe("ok");
       const logFile = join(root, "agy-logs", `${dispatchId}.log`);
-      expect(commands.join("\n")).toContain(`--log-file '${logFile}'`);
+      expect(await tmuxLaunchScript(process)).toContain(`--log-file '${logFile}'`);
       expect(readMeta(root, dispatchId)).toMatchObject({ agyLogFile: logFile });
     } finally {
       registerTmux(original);
@@ -1396,7 +1394,6 @@ describe("executeSpawn", () => {
     const root = await mkdtemp("/tmp/mbsgl-");
     const dispatchId = "dispatch-grok-leader";
     const idle = await readFile(new URL("../fixtures/tmux-capture-grok-idle.txt", import.meta.url), "utf8");
-    const commands: string[] = [];
     const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
       ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
       : ok({ stdout: "", stderr: "", exitCode: 0 }));
@@ -1406,7 +1403,6 @@ describe("executeSpawn", () => {
       id: "tmux",
       sendText: async (_pane, text) => {
         if (text.startsWith("[megabrain dispatch")) appendReceived(root, dispatchId);
-        else commands.push(text);
         return ok(undefined);
       },
       sendKey: async () => ok(undefined),
@@ -1421,7 +1417,7 @@ describe("executeSpawn", () => {
       expect(result.kind).toBe("ok");
       const socket = grokLeaderSocket(root, dispatchId);
       expect(socket).toBeDefined();
-      expect(commands.join("\n")).toContain(`--leader --leader-socket '${socket}'`);
+      expect(await tmuxLaunchScript(process)).toContain(`--leader --leader-socket '${socket}'`);
       expect(readMeta(root, dispatchId)).toMatchObject({ grokLeaderSocket: socket });
     } finally {
       registerTmux(original);
@@ -1930,8 +1926,8 @@ describe("initial brief through the agent's argv", () => {
 
   type Launch = Readonly<{ command: string; file: string; contents: string; mode: number }>;
 
-  // A pane whose agent shows `before` until the launch line is sent, then the frames in `after`
-  // one capture at a time (the last one repeats). Pastes and the launch line are recorded.
+  // A pane whose agent shows `before` until the command starts, then the frames in `after` one
+  // capture at a time (the last one repeats). Prompt pastes and the launcher are recorded.
   async function argvSpawn(agent: string, after: readonly string[], extra: Record<string, string> = {}, onLaunch?: (root: string, id: string) => void) {
     const root = await mkdtemp("/tmp/mbargv-");
     const dispatchId = `dispatch-argv-${agent}`;
@@ -1940,23 +1936,27 @@ describe("initial brief through the agent's argv", () => {
     const pastes: string[] = [];
     let launched = false;
     let frame = 0;
-    const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
-      ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
-      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const process = processFor([], async (command, args) => {
+      if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
+      if (command === "tmux" && args[0] === "respawn-pane") {
+        const commandText = args.at(-1) ?? "";
+        const launcher = commandText.startsWith("exec '") && commandText.endsWith("'") ? commandText.slice(6, -1).replaceAll("'\\''", "'") : commandText;
+        const contents = await readFile(launcher, "utf8");
+        const match = promptFile.exec(contents);
+        if (match?.[1] !== undefined) {
+          const file = match[1];
+          launches.push({ command: contents, file, contents: await readFile(file, "utf8"), mode: (await stat(file)).mode & 0o777 });
+        }
+        launched = true;
+        onLaunch?.(root, dispatchId);
+      }
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
     const original = getTmux();
     const fake: TmuxProvider = {
       ...original,
       id: "tmux",
-      sendText: async (_pane, text) => {
-        const match = promptFile.exec(text);
-        if (match?.[1] !== undefined) {
-          const file = match[1];
-          launches.push({ command: text, file, contents: await readFile(file, "utf8"), mode: (await stat(file)).mode & 0o777 });
-          launched = true;
-          onLaunch?.(root, dispatchId);
-        }
-        return ok(undefined);
-      },
+      sendText: async () => ok(undefined),
       sendKey: async () => ok(undefined),
       capturePane: async () => {
         if (!launched) return ok(before);
@@ -1992,7 +1992,7 @@ describe("initial brief through the agent's argv", () => {
       const launch = run.launches[0];
       if (launch === undefined) throw new Error("no launch line");
       expect(launch.file).toBe(join(run.root, "prompts", `${run.dispatchId}.txt`));
-      expect(launch.command.endsWith(` ${flag} "$(cat '${launch.file}')"`)).toBe(true);
+      expect(launch.command.trimEnd().endsWith(` ${flag} "$(cat '${launch.file}')"`)).toBe(true);
       expect(launch.mode).toBe(0o600);
       expect(launch.contents.startsWith("[megabrain dispatch:")).toBe(true);
       expect(launch.contents).toContain(`Dispatch identity: ${run.dispatchId}`);
@@ -2048,18 +2048,17 @@ describe("parent channels recorded at spawn", () => {
   async function spawnFrom(extra: Record<string, string>) {
     const root = await mkdtemp("/tmp/mbpc-");
     const dispatchId = "dispatch-parent-channel";
-    const commands: string[] = [];
     const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
       ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
       : ok({ stdout: "", stderr: "", exitCode: 0 }));
     const original = getTmux();
-    registerTmux(withComposer({ ...original, id: "tmux", sendText: async (_pane: string, text: string) => { commands.push(text); return ok(undefined); }, sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) }, "codex"));
+    registerTmux(withComposer({ ...original, id: "tmux", sendText: async () => ok(undefined), sendKey: async () => ok(undefined), capturePane: async () => ok(codexIdleOutput) }, "codex"));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "do it", "--tmux", "true"], { ...environment(root, dispatchId), ...extra }, process, options(worktree("existing")));
       const file = agyLanguageServerFile(root, `${dispatchId}.parent`);
       const endpoint = await readFile(file, "utf8").catch(() => undefined);
       const mode = endpoint === undefined ? undefined : (await stat(file)).mode & 0o777;
-      return { result, meta: readMeta(root, dispatchId), endpoint, mode, launch: commands.find((text) => text.includes("MEGABRAIN_DISPATCH_ID=")) ?? "" };
+      return { result, meta: readMeta(root, dispatchId), endpoint, mode, launch: await tmuxLaunchScript(process) };
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });

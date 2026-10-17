@@ -1,5 +1,6 @@
 import { type ProcessAdapter } from "../adapters/proc.js";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { failed, ok, unknown, type Result } from "../core/result.js";
@@ -206,6 +207,26 @@ export async function createTmuxSession(
   // $SHELL) instead of hardcoding one; a caller that wants a specific command still can.
   if (command !== undefined) args.push(command);
   const result = await tmuxRun(process, args);
+  return result.kind === "ok" ? ok(undefined) : failed(result.error, result.exitCode);
+}
+
+export async function createTmuxLauncher(root: string, command: string): Promise<Result<string>> {
+  const directory = join(root, "launchers");
+  const path = join(directory, `launch-${randomUUID()}.sh`);
+  try {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    await chmod(directory, 0o700);
+    await writeFile(path, `#!/bin/sh\n${command}\n`, { mode: 0o700, flag: "wx" });
+    await chmod(path, 0o700);
+    return ok(path);
+  } catch (error) {
+    return failed(`could not create tmux launcher: ${String(error)}`);
+  }
+}
+
+export async function respawnTmuxPane(pane: string, launcher: string, process: ProcessAdapter): Promise<Result<void>> {
+  const command = `exec '${launcher.replace(/'/g, "'\\''")}'`;
+  const result = await tmuxRun(process, ["respawn-pane", "-k", "-t", pane, command]);
   return result.kind === "ok" ? ok(undefined) : failed(result.error, result.exitCode);
 }
 
