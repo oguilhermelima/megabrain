@@ -171,11 +171,13 @@ export async function executeChat(args: readonly string[], environment: Environm
     }
     if (verb === "artifact") {
       if (rest.includes("-h") || rest.includes("--help")) return ok(usageText("chat-artifact"));
-      const [id, artifactId, ...tail] = rest;
-      if (!id || !artifactId || tail.length !== 1 || tail[0] !== "--json") throw new Error(usageText("chat-artifact").trimEnd());
+      const revisionArg = takeValue(rest, "--revision");
+      const [id, artifactId, ...tail] = revisionArg.rest;
+      const revision = revisionArg.value === undefined ? undefined : Number(revisionArg.value);
+      if (!id || !artifactId || tail.length !== 1 || tail[0] !== "--json" || (revisionArg.value !== undefined && (!/^\d+$/.test(revisionArg.value) || !Number.isSafeInteger(revision) || (revision ?? 0) < 1))) throw new Error(usageText("chat-artifact").trimEnd());
       const chat = await new ChatStore(dir).get(id);
       if (chat === null) throw new Error(`unknown chat: ${id}`);
-      const artifact = await readChatArtifact(dir, chat, environment.HOME ?? process.env.HOME ?? "", artifactId);
+      const artifact = await readChatArtifact(dir, chat, environment.HOME ?? process.env.HOME ?? "", artifactId, revision);
       if (artifact === null) throw new Error(`unknown artifact for chat ${id}: ${artifactId}`);
       return ok(argsJson(artifact));
     }

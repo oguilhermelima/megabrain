@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveProject } from "./project-id.js";
@@ -36,8 +36,8 @@ export type ArtifactWithContent = Artifact & { content: string };
 /** A replaced version, as revisions.jsonl keeps it. */
 export type ArtifactRevision = Stored & { content: string; replacedAt: string };
 
-export type CreateInput = { title: string; kind: ArtifactKind; content: string; format: ArtifactFormat; project: string; topics: readonly string[]; chatId: string | null; now?: string };
-export type UpdateInput = { content: string; format: ArtifactFormat; title?: string; now?: string };
+export type CreateInput = { title: string; kind: ArtifactKind; content: string; format: ArtifactFormat; project: string; topics: readonly string[]; chatId: string | null; newArtifact?: boolean; now?: string };
+export type UpdateInput = { content: string; format: ArtifactFormat; title?: string; kind?: ArtifactKind; now?: string };
 export type ListFilter = { project?: string; topic?: string };
 
 const ID = /^art-[0-9a-z-]+$/;
@@ -46,6 +46,40 @@ const knowledgeDir = (stateDir: string): string => join(stateDir, "knowledge");
 const artifactsDir = (stateDir: string, project: string): string => join(knowledgeDir(stateDir), project, "artifacts");
 
 const FONT_HOST = /fonts\.(googleapis|gstatic)\.com/i;
+const foldTitle = (title: string): string => title.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().toLocaleLowerCase("en");
+
+/** Serialize creates per project across processes so simultaneous same-title creates cannot fork identity. */
+function withCreateLock<T>(root: string, action: () => T): T {
+  mkdirSync(root, { recursive: true });
+  const lockPath = join(root, ".create.lock");
+  const token = `${process.pid}:${randomBytes(8).toString("hex")}`;
+  const deadline = Date.now() + 10_000;
+  let descriptor: number | null = null;
+  while (descriptor === null) {
+    try {
+      descriptor = openSync(lockPath, "wx", 0o600);
+      writeFileSync(descriptor, token);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let owner = "";
+      try { owner = readFileSync(lockPath, "utf8"); } catch { continue; }
+      const ownerPid = Number(owner.split(":", 1)[0]);
+      if (Number.isInteger(ownerPid) && ownerPid > 0) {
+        try { process.kill(ownerPid, 0); }
+        catch (probe) {
+          if ((probe as NodeJS.ErrnoException).code === "ESRCH") { rmSync(lockPath, { force: true }); continue; }
+        }
+      }
+      if (Date.now() >= deadline) throw new Error("timed out waiting for artifact creation lock");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  closeSync(descriptor);
+  try { return action(); }
+  finally {
+    try { if (readFileSync(lockPath, "utf8") === token) rmSync(lockPath, { force: true }); } catch { /* a replaced lock belongs to another writer */ }
+  }
+}
 
 /** The HTML without Google Fonts: its <link> tags (stylesheets and preconnects) and its @import rules. Fonts fall back to the page's own font stacks. */
 export function stripGoogleFonts(html: string): string {
@@ -111,12 +145,24 @@ export async function createArtifact(stateDir: string, input: CreateInput): Prom
   if (valid.kind !== "ok") return valid;
   const project = await resolveProject(input.project);
   const now = input.now ?? new Date().toISOString();
-  const stored: Stored = { id: newId(now), title, kind: input.kind, format: input.format, project: project.repo, projectName: project.name, projectId: project.id, topics: [...input.topics], chatId: input.chatId, createdAt: now, updatedAt: now, revision: 1 };
-  const dir = join(artifactsDir(stateDir, project.id), stored.id);
-  mkdirSync(dir, { recursive: true });
-  writeAtomic(join(dir, contentFile(stored.format)), content);
-  writeAtomic(join(dir, "artifact.json"), `${JSON.stringify(stored, null, 2)}\n`);
-  return ok(withPath(dir, stored));
+  return withCreateLock(artifactsDir(stateDir, project.id), () => {
+    if (!input.newArtifact) {
+      const root = artifactsDir(stateDir, project.id);
+      const existing = readdirSync(root).map((id) => ({ dir: join(root, id), stored: readStored(join(root, id)) }))
+        .filter((entry): entry is { dir: string; stored: Stored } => entry.stored !== null)
+        .filter(({ stored }) => stored.chatId === input.chatId && foldTitle(stored.title) === foldTitle(title))
+        .sort((left, right) => right.stored.updatedAt.localeCompare(left.stored.updatedAt) || right.stored.createdAt.localeCompare(left.stored.createdAt) || right.stored.id.localeCompare(left.stored.id))[0];
+      if (existing !== undefined) {
+        return updateArtifact(stateDir, existing.stored.id, { title, kind: input.kind, content, format: input.format, now }).then((updated) => updated);
+      }
+    }
+    const stored: Stored = { id: newId(now), title, kind: input.kind, format: input.format, project: project.repo, projectName: project.name, projectId: project.id, topics: [...input.topics], chatId: input.chatId, createdAt: now, updatedAt: now, revision: 1 };
+    const dir = join(artifactsDir(stateDir, project.id), stored.id);
+    mkdirSync(dir, { recursive: true });
+    writeAtomic(join(dir, contentFile(stored.format)), content);
+    writeAtomic(join(dir, "artifact.json"), `${JSON.stringify(stored, null, 2)}\n`);
+    return Promise.resolve(ok(withPath(dir, stored)));
+  });
 }
 
 export async function updateArtifact(stateDir: string, id: string, input: UpdateInput): Promise<Result<Artifact>> {
@@ -125,14 +171,15 @@ export async function updateArtifact(stateDir: string, id: string, input: Update
   if (dir === null || previous === null) return failed(`unknown artifact: ${id}`, 1);
   const title = input.title?.trim() ?? previous.title;
   if (title === "") return failed("--title must not be empty", 2);
-  const valid = validate(previous.kind, input.format, input.content);
+  const kind = input.kind ?? previous.kind;
+  const valid = validate(kind, input.format, input.content);
   if (valid.kind !== "ok") return valid;
   const now = input.now ?? new Date().toISOString();
   const oldFile = join(dir, contentFile(previous.format));
   const oldContent = readFileSync(oldFile, "utf8");
   const revision: ArtifactRevision = { ...previous, content: oldContent, replacedAt: now };
   appendFileSync(join(dir, "revisions.jsonl"), `${JSON.stringify(revision)}\n`);
-  const stored: Stored = { ...previous, title, format: input.format, updatedAt: now, revision: previous.revision + 1 };
+  const stored: Stored = { ...previous, title, kind, format: input.format, updatedAt: now, revision: previous.revision + 1 };
   writeAtomic(join(dir, contentFile(stored.format)), input.format === "html" ? stripGoogleFonts(input.content) : input.content);
   if (stored.format !== previous.format) rmSync(oldFile, { force: true });
   writeAtomic(join(dir, "artifact.json"), `${JSON.stringify(stored, null, 2)}\n`);
@@ -156,12 +203,17 @@ export async function listArtifacts(stateDir: string, filter: ListFilter): Promi
   return found.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
 }
 
-export async function showArtifact(stateDir: string, id: string): Promise<ArtifactWithContent | null> {
+export async function showArtifact(stateDir: string, id: string, revision?: number): Promise<ArtifactWithContent | null> {
   const dir = findDir(stateDir, id);
   const stored = dir === null ? null : readStored(dir);
   if (dir === null || stored === null) return null;
-  const artifact = withPath(dir, stored);
-  return { ...artifact, content: readFileSync(artifact.path, "utf8") };
+  if (revision === undefined || revision === stored.revision) {
+    const artifact = withPath(dir, stored);
+    return { ...artifact, content: readFileSync(artifact.path, "utf8") };
+  }
+  if (!Number.isSafeInteger(revision) || revision < 1 || revision > stored.revision) return null;
+  const previous = (await artifactRevisions(stateDir, id)).find((entry) => entry.revision === revision);
+  return previous === undefined ? null : { ...withPath(dir, previous), ...previous };
 }
 
 /** The versions an artifact's updates replaced, oldest first. */

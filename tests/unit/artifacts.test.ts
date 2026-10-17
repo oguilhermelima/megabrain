@@ -244,6 +244,19 @@ describe("the artifact store", () => {
     expect(existsSync(join(w.state, "knowledge", projectId(w.repo), "artifacts", a.value.id))).toBe(false);
     expect((await listArtifacts(w.state, {})).map((entry) => entry.id)).toEqual([b.value.id]);
   });
+
+  test("creates of the same folded title in one project and chat become revisions, while --new keeps separate", async () => {
+    const w = world();
+    const first = await executeArtifact(["create", "--title", "  Leva de correções do QA Social ", "--kind", "doc", "--stdin", "--project", w.repo, "--chat", "chat-1", "--json"], w.environment, { stdin: async () => "old" });
+    const original = JSON.parse(String(first.value));
+    const second = await executeArtifact(["create", "--title", "leva de correcoes do qa social", "--kind", "plan", "--stdin", "--project", w.repo, "--chat", "chat-1", "--json"], w.environment, { stdin: async () => "new" });
+    const updated = JSON.parse(String(second.value));
+    expect(updated).toMatchObject({ id: original.id, revision: 2, kind: "plan", format: "markdown" });
+    expect((await artifactRevisions(w.state, original.id)).map(({ revision, kind, format, content }) => [revision, kind, format, content])).toEqual([[1, "doc", "markdown", "old"]]);
+    const separate = await executeArtifact(["create", "--title", "Leva de correções do QA Social", "--kind", "doc", "--stdin", "--project", w.repo, "--chat", "chat-1", "--new", "--json"], w.environment, { stdin: async () => "third" });
+    expect(JSON.parse(String(separate.value)).id).not.toBe(original.id);
+    expect((await listArtifacts(w.state, { project: w.repo })).length).toBe(2);
+  });
 });
 
 describe("megabrain artifact", () => {
@@ -294,6 +307,41 @@ describe("megabrain artifact", () => {
     // The plain show still prints the content alone.
     const plain = await executeArtifact(["show", created.id], w.environment);
     expect(plain.kind === "ok" ? plain.value : "").toBe("three\n");
+  });
+
+  test("guide is useful in text and structured JSON, and new writes themed starters", async () => {
+    const w = world();
+    for (const kind of ["diagram", "plan", "doc"]) {
+      const guide = await executeArtifact(["guide", "--kind", kind], w.environment);
+      expect(guide.kind).toBe("ok");
+      expect(String(guide.value).toLowerCase()).toContain(kind);
+      const structured = json(await executeArtifact(["guide", "--kind", kind, "--json"], w.environment));
+      expect(JSON.stringify(structured).toLowerCase()).toContain(kind);
+      expect(JSON.stringify(structured)).toContain("update");
+    }
+    const html = json(await executeArtifact(["new", "Flow", "--kind", "diagram", "--project", w.repo, "--chat", "chat-1", "--json"], w.environment, { cwd: w.root }));
+    expect(html).toMatchObject({ title: "Flow", kind: "diagram", chatId: "chat-1" });
+    const htmlContent = readFileSync(html.path, "utf8");
+    expect(htmlContent).toContain("megabrain-theme");
+    expect(htmlContent).not.toMatch(/https?:\/\//);
+    expect(htmlContent).toContain("prefers-color-scheme: light");
+    const markdown = json(await executeArtifact(["new", "Plan", "--kind", "plan", "--project", w.repo, "--json"], w.environment, { cwd: w.root }));
+    expect(readFileSync(markdown.path, "utf8")).toContain("## Checkpoints");
+  });
+
+  test("create and update inline megabrain theme into unthemed HTML", async () => {
+    const w = world();
+    const created = json(await executeArtifact(["create", "--title", "Page", "--kind", "doc", "--stdin", "--theme", "megabrain", "--project", w.repo, "--json"], w.environment, { stdin: async () => "<html><body>hello</body></html>" }));
+    expect(readFileSync(created.path, "utf8")).toContain("megabrain-theme");
+    const updated = json(await executeArtifact(["update", created.id, "--stdin", "--theme", "megabrain", "--json"], w.environment, { stdin: async () => "<html><body>updated</body></html>" }));
+    expect(readFileSync(updated.path, "utf8")).toContain("megabrain-theme");
+  });
+
+  test("show --revision reads stored content and metadata", async () => {
+    const w = world();
+    const created = json(await executeArtifact(["create", "--title", "Plan", "--kind", "plan", "--stdin", "--project", w.repo, "--json"], w.environment, { stdin: async () => "one" }));
+    await executeArtifact(["update", created.id, "--stdin", "--json"], w.environment, { stdin: async () => "two" });
+    expect(json(await executeArtifact(["show", created.id, "--revision", "1", "--json"], w.environment)).content).toBe("one");
   });
 
   test("create with no --project uses the working folder's project", async () => {

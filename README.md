@@ -295,8 +295,8 @@ megabrain chat events <id> --follow --json
 ```
 
 List a chat's megabrain and Claude artifacts with `megabrain chat artifacts <id> --json`. Read one
-with `megabrain chat artifact <id> <artifact-id> --json`; remote-only Claude artifacts return their
-URL without downloading remote content.
+with `megabrain chat artifact <id> <artifact-id> --json`; use `--revision <n>` to read an older
+megabrain revision. Remote-only Claude artifacts return their URL without downloading remote content.
 
 A chat whose agent process is gone (daemon restart, app update, reboot, crash, `chat stop <id>`) is
 `suspended`, not lost: its record keeps the agent's session id and the next `chat send` respawns the
@@ -376,10 +376,13 @@ repository folder's name plus the first 12 hex digits of the SHA-256 of its real
 files into its main checkout's project.
 
 ```sh
+megabrain artifact guide --kind plan
+megabrain artifact new "Store layout" --kind diagram
 megabrain artifact create --title "Store layout" --kind diagram --file layout.html --topic <topic-id> --json
 megabrain artifact update <id> --stdin --title "Store layout v2" < layout.html
 megabrain artifact list --project ~/code/api --json
 megabrain artifact show <id> --json
+megabrain artifact show <id> --revision 1 --json
 megabrain artifact remove <id>
 ```
 
@@ -387,6 +390,10 @@ A diagram must be HTML; a plan or doc is Markdown or HTML (the file extension de
 opens with an HTML element). Content is capped at 1 MiB. Google Fonts `<link>` tags and `@import` rules are
 stripped on save, so an artifact renders offline with system fonts. The desktop app's Artifacts page lists
 them by project and kind and shows HTML in a sandboxed frame that runs no script and fetches nothing.
+The guide recommends when to use each kind and its structure. `artifact new` writes a themed diagram
+starter or a Markdown plan/doc skeleton without overwriting an existing file. HTML can use
+`--theme megabrain` to inline the desktop palette; matching titles in the same project and chat update
+the existing artifact, while `--new` forces a separate one.
 
 `megabrain install artifacts-diagram` (opt-in) installs the diagram-design skill for Claude, Codex, agy and
 Grok, pinned to a tested commit; see the modules table below.

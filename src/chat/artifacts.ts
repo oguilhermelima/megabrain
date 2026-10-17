@@ -2,7 +2,7 @@ import { closeSync, existsSync, fstatSync, openSync, readFileSync, readdirSync, 
 import { basename, dirname, extname, join } from "node:path";
 import type { Chat } from "./store.js";
 import { sessionLogPath } from "./session-log.js";
-import { ARTIFACT_MAX_BYTES, listArtifacts, stripGoogleFonts } from "../knowledge/artifacts.js";
+import { ARTIFACT_MAX_BYTES, listArtifacts, showArtifact, stripGoogleFonts } from "../knowledge/artifacts.js";
 
 export type ChatArtifactSource = "megabrain" | "claude-artifact" | "claude-design" | "codex-plan" | "agy" | "grok";
 export type ChatArtifactFormat = "html" | "markdown" | "text" | "url";
@@ -113,9 +113,17 @@ export async function listChatArtifacts(stateDir: string, chat: Chat, home: stri
 }
 
 /** Reads one artifact belonging to the chat; file reads are bounded even if the file grows while it is open. */
-export async function readChatArtifact(stateDir: string, chat: Chat, home: string, id: string): Promise<ChatArtifactContent | null> {
+export async function readChatArtifact(stateDir: string, chat: Chat, home: string, id: string, revision?: number): Promise<ChatArtifactContent | null> {
   const item = (await locateChatArtifacts(stateDir, chat, home)).find((candidate) => candidate.artifact.id === id);
   if (item === undefined) return null;
+  if (revision !== undefined && item.artifact.source === "megabrain") {
+    const historical = await showArtifact(stateDir, id, revision);
+    if (historical === null) return null;
+    const artifact = { ...item.artifact, title: historical.title, format: historical.format, updatedAt: historical.updatedAt, revision: historical.revision };
+    if (Buffer.byteLength(historical.content) > ARTIFACT_MAX_BYTES) return { artifact, content: null, updatedAt: historical.updatedAt, reason: `Content exceeds the ${ARTIFACT_MAX_BYTES}-byte limit.` };
+    const content = historical.format === "html" ? stripGoogleFonts(historical.content) : historical.content;
+    return { artifact, content, updatedAt: historical.updatedAt };
+  }
   if (item.localPath === undefined) return { artifact: item.artifact, content: null, updatedAt: item.artifact.updatedAt };
   let descriptor: number;
   try { descriptor = openSync(item.localPath, "r"); } catch { return { artifact: item.artifact, content: null, updatedAt: item.artifact.updatedAt, reason: "The local artifact file is no longer available." }; }

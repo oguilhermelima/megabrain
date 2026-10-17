@@ -28,10 +28,13 @@ const NOTE = `
 This copy was installed by megabrain (module ${MODULE}). When a diagram is finished, file it with its
 project so the person finds it on the megabrain app's Artifacts page:
 
+    megabrain artifact guide --kind diagram
+    megabrain artifact new "<what it shows>" --kind diagram
     megabrain artifact create --kind diagram --title "<what it shows>" --file <the .html file> [--topic <id>] --json
 
-File a later version of the same diagram with megabrain artifact update <id> --file <the .html file>.
-megabrain strips the Google Fonts links on save, so the diagram renders offline with system fonts.
+Apply the megabrain palette through references/style-guide.md and the profile workflow in references/profiles.md.
+File a later version with megabrain artifact update <id> --file <the .html file>; do not create a second artifact for the same subject.
+megabrain artifact guide describes the kinds, structures, offline theme and writing rules.
 `;
 
 /** Every agent's diagram-design folder; an agent counts as configured when its configuration folder exists. */

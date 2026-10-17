@@ -114,6 +114,18 @@ describe("chat artifact CLI", () => {
     expect(JSON.parse(capped.value)).toMatchObject({ content: null, reason: expect.any(String) });
   });
 
+  test("reads an older megabrain artifact revision from a chat", async () => {
+    const w = world();
+    await new ChatStore(w.state).put(w.chat);
+    const created = await createArtifact(w.state, { title: "Plan", kind: "plan", content: "first revision", format: "markdown", project: w.cwd, topics: [], chatId: w.chat.id });
+    expect(created.kind).toBe("ok");
+    if (created.kind !== "ok") return;
+    await updateArtifact(w.state, created.value.id, { content: "latest revision", format: "markdown" });
+    const result = await executeChat(["artifact", w.chat.id, created.value.id, "--revision", "1", "--json"], w.environment, undefined as never);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ content: "first revision", artifact: { title: "Plan", revision: 1 } });
+  });
+
   test("automatically links artifact create to its chat while explicit --chat takes precedence", async () => {
     const w = world();
     const auto = await executeArtifact(["create", "--title", "Automatic", "--kind", "doc", "--stdin", "--json"], { ...w.environment, MEGABRAIN_CHAT_ID: w.chat.id }, { cwd: w.cwd, stdin: async () => "# automatic" });

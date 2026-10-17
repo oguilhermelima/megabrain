@@ -193,7 +193,7 @@ megabrain chat stop <id> — stop the chat process while keeping its saved trans
 megabrain chat remove <id> [--json] — stop the chat if it runs and delete its record and transcript; the agent's own session stays resumable.
 megabrain chat events <id> [--since <cursor>] [--follow] --json — read or follow a chat's cursor-based transcript.
 megabrain chat artifacts <chat-id> --json — list a chat's megabrain and Claude artifacts, newest first.
-megabrain chat artifact <chat-id> <artifact-id> --json — read one chat artifact, with a 1 MiB content limit.
+megabrain chat artifact <chat-id> <artifact-id> [--revision <n>] --json — read one chat artifact revision, with a 1 MiB content limit.
 megabrain chat model <id> <model> [--effort <level>] [--json] — choose the model and reasoning effort for a chat.
 megabrain chat mode <id> chat|terminal --json — hand an idle chat to the terminal or resume it in chat mode.
 megabrain chat terminal-command <id> --json — return the argv for resuming a chat in the terminal.
@@ -219,10 +219,12 @@ megabrain summaries list [--repo <name|path>] [--branch <branch>] [--limit <n pe
 megabrain summaries search <text> [--repo <name|path>] [--branch <branch>] [--limit <n>] --json — look up older development work (title and branch hits rank first). Run it when you need to know what was done or decided before, instead of re-deriving it.
 megabrain summaries show <id> --json — one summary in full.
 megabrain summaries context --cwd <path> [--limit <n>] [--json] — the latest summaries of that worktree branch, then of the main branch, as a short Markdown block. Native chats get it in their system prompt when summaries are on; `megabrain install summaries-context` (opt-in) adds a SessionStart hook so Claude and Codex terminal sessions get it too.
-megabrain artifact create --title <title> --kind diagram|plan|doc (--file <path>|--stdin) [--project <repo path>] [--topic <id>]... [--chat <id>] [--json] — save a finished diagram, plan or doc for the project of the working folder (or --project). Diagrams are HTML; plans and docs are Markdown or HTML. Google Fonts links are stripped so the app renders it offline. Save every diagram, plan or doc you produce for the person this way; the desktop app lists them on its Artifacts page.
-megabrain artifact update <id> (--file <path>|--stdin) [--title <title>] [--json] — replace an artifact's content; the old version is kept as a revision.
+megabrain artifact guide [--kind diagram|plan|doc] [--json] — choose a kind, see its recommended structure and writing rules; use one artifact per subject and update it.
+megabrain artifact new <title> --kind diagram|plan|doc [--project <repo path>] [--chat <id>] [--json] — write a starter file, fill it, then pass it to create or update.
+megabrain artifact create --title <title> --kind diagram|plan|doc (--file <path>|--stdin) [--project <repo path>] [--topic <id>]... [--chat <id>] [--theme megabrain] [--new] [--json] — save a finished artifact for the working folder's project (or --project). Diagrams are HTML; plans and docs are Markdown or HTML. Matching titles in the same project and chat update one artifact; use --new for a separate subject. The HTML theme works offline with system fonts.
+megabrain artifact update <id> (--file <path>|--stdin) [--title <title>] [--theme megabrain] [--json] — replace an artifact's content; the old version is kept as a revision.
 megabrain artifact list [--project <repo path>] [--topic <id>] [--json] — artifacts newest change first.
-megabrain artifact show <id> [--json] — one artifact with its content; with --json also the versions its updates replaced (revision, title, updatedAt, replacedAt), oldest first.
+megabrain artifact show <id> [--revision <n>] [--json] — one artifact revision with its content; with --json also the versions its updates replaced, oldest first.
 megabrain artifact remove <id> [--json] — delete an artifact and its revisions.
 megabrain settings get|set chat-summaries <json> — switch automatic summaries and titles on, and pick the agent, model, effort and cadence.
 megabrain settings get|set agents <json> — the desktop app's default agent for New chat ({ version: 1, default, disabled }), and the agents turned off for it.
@@ -466,7 +468,7 @@ reply answers an ask as soon as megabrain records it, including while the reply 
 `megabrain proc run`, keeping the original command byte for byte in `--shell`. A hand-typed
 `orb start|stop` is refused with what to run instead. `--revert` removes only megabrain's entries.
 
-`artifacts-diagram` (opt-in) installs the MIT-licensed diagram-design skill (github.com/cathrynlavery/diagram-design, pinned to a tested commit, its LICENSE kept beside it) into the skills folder of every configured agent: Claude, Codex, agy and Grok. Its copy carries a note telling agents to save each diagram with `megabrain artifact create --kind diagram`. `doctor artifacts-diagram` checks each agent's copy against the pinned commit; `--revert` removes only the copies megabrain installed.
+`artifacts-diagram` (opt-in) installs the MIT-licensed diagram-design skill (github.com/cathrynlavery/diagram-design, pinned to a tested commit, its LICENSE kept beside it) into the skills folder of every configured agent: Claude, Codex, agy and Grok. Its copy carries a note pointing to `megabrain artifact guide` and `megabrain artifact new`; diagram-design supports profiles, so apply the megabrain palette through its `references/style-guide.md` and `references/profiles.md`. `doctor artifacts-diagram` checks each agent's copy against the pinned commit; `--revert` removes only the copies megabrain installed.
 
 `simulator-maestro` installs the pinned Maestro CLI (needs a JDK 17 or newer; megabrain finds it and sets `JAVA_HOME` for its own calls). `doctor simulator-maestro` checks java, `maestro --version` against the recorded version, and the iOS driver; `install simulator-maestro --revert` removes `bin`, `lib` and the record.
 
