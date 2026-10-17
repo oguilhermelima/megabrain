@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Settings, UsageReading } from '@/api/schema'
 import { measuredModels } from '@/api/fixtures/models'
+import { toneText } from '@/chat/ComposerStatus'
 import {
   providerUsage,
   readingAge,
@@ -869,5 +870,11 @@ describe('stale usage', () => {
     expect(staleNote(null)).toBeNull()
     expect(staleNote({ reason: 'claude 5h window is stale (provider returned HTTP 429)', retryAt: null })).toBe('rate limited, retrying')
     expect(staleNote({ reason: 'x (request timed out)', retryAt: 10 }, new Date(20_000))).toBe('unavailable, retrying')
+  })
+})
+
+describe('toneText', () => {
+  test('a limit near running out reads in the light critical rose, like the sidebar', () => {
+    expect(toneText).toEqual({ normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad-soft' })
   })
 })

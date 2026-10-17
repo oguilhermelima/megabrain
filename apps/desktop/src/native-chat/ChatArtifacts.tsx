@@ -7,6 +7,7 @@ import { ArtifactFrame } from '@/advanced/ArtifactFrame'
 import { documentElements } from '@/advanced/ArtifactsPage'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
+import { agentColor } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
 import { MenuIconGlyph } from '@/components/menu-icons'
 import { menuFocusStep } from '@/components/menu-model'
@@ -27,11 +28,11 @@ const pulseMs = 2400
 
 const sources: Record<ChatArtifactSource, { label: string; color: string }> = {
   megabrain: { label: 'megabrain', color: 'var(--color-accent)' },
-  'claude-artifact': { label: 'Claude artifact', color: '#D97757' },
-  'claude-design': { label: 'Claude Design', color: '#D97757' },
-  'codex-plan': { label: 'Codex plan', color: '#7C8CFF' },
-  agy: { label: 'agy', color: '#4C8DF6' },
-  grok: { label: 'Grok', color: '#5EC8F2' },
+  'claude-artifact': { label: 'Claude artifact', color: agentColor('claude') },
+  'claude-design': { label: 'Claude Design', color: agentColor('claude') },
+  'codex-plan': { label: 'Codex plan', color: agentColor('codex') },
+  agy: { label: 'agy', color: agentColor('agy') },
+  grok: { label: 'Grok', color: agentColor('grok') },
 }
 
 const agentOf: Partial<Record<ChatArtifactSource, string>> = { 'claude-artifact': 'claude', 'codex-plan': 'codex', agy: 'agy', grok: 'grok' }

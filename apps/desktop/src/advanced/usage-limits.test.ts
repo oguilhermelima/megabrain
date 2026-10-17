@@ -101,11 +101,11 @@ describe('agentUsage tone', () => {
     expect([0, 70, 70.5, 90, 90.5, 100].map(tone)).toEqual(['normal', 'normal', 'amber', 'amber', 'red', 'red'])
   })
 
-  test('the percent colour stays neutral, warns and turns critical; a stale one is muted', () => {
+  test('the percent colour stays neutral, warns and turns a light rose when critical; a stale one is dimmed but legible', () => {
     expect(percentClass('normal')).toBe('text-ink-300')
     expect(percentClass('amber')).toBe('text-warn')
-    expect(percentClass('red')).toBe('text-bad')
-    expect(percentClass('stale')).toBe('text-ink-500')
+    expect(percentClass('red')).toBe('text-bad-soft')
+    expect(percentClass('stale')).toBe('text-ink-400')
   })
 })
 
@@ -179,8 +179,8 @@ describe('UsageFooterItem', () => {
 })
 
 describe('agentColor', () => {
-  test('each agent its brand colour, an unknown one the accent', () => {
-    expect(['claude', 'codex', 'agy', 'grok'].map(agentColor)).toEqual(['#D97757', '#7C8CFF', '#4C8DF6', '#5EC8F2'])
+  test('each agent its own colour, Codex and Grok the near-white ink, an unknown one the accent', () => {
+    expect(['claude', 'codex', 'agy', 'grok'].map(agentColor)).toEqual(['#D97757', 'var(--color-ink-100)', '#4C8DF6', 'var(--color-ink-100)'])
     expect(agentColor('other')).toBe('var(--color-accent)')
   })
 })

@@ -19,12 +19,12 @@ export interface AgentMarkLook {
   motion: 'spin' | 'wave' | 'pulse' | null
 }
 
-// Claude's brand orange; the others take a tint of their own marks' usual colours.
+// Claude's brand orange and agy's blue; Codex and Grok, whose marks are monochrome, take the near-white ink.
 const working: Record<string, AgentMarkLook> = {
   claude: { color: '#D97757', motion: 'spin' },
-  codex: { color: '#7C8CFF', motion: 'spin' },
+  codex: { color: 'var(--color-ink-100)', motion: 'spin' },
   agy: { color: '#4C8DF6', motion: 'spin' },
-  grok: { color: '#5EC8F2', motion: 'wave' },
+  grok: { color: 'var(--color-ink-100)', motion: 'wave' },
 }
 
 const fallbackColor = 'var(--color-accent)'

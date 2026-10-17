@@ -34,7 +34,7 @@ import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { appSettings } from '@/lib/app-settings'
 import { isStale } from '@/lib/shared-read'
 
-export const toneText: Record<LimitTone, string> = { normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad' }
+export const toneText: Record<LimitTone, string> = { normal: 'text-ink-400', amber: 'text-warn', red: 'text-bad-soft' }
 export const toneBar: Record<LimitTone, string> = { normal: 'bg-ok', amber: 'bg-warn', red: 'bg-bad' }
 
 /** The settings, whether they are older than a fresh read would be, and whether the last read failed. */

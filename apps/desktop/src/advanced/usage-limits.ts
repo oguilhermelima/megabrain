@@ -106,7 +106,7 @@ export function agentUsage(readings: UsageReading[], now: Date = new Date()): Ag
   })
 }
 
-const percentClasses: Record<MeterTone, string> = { normal: 'text-ink-300', amber: 'text-warn', red: 'text-bad', stale: 'text-ink-500' }
+const percentClasses: Record<MeterTone, string> = { normal: 'text-ink-300', amber: 'text-warn', red: 'text-bad-soft', stale: 'text-ink-400' }
 
-/** A share's text colour: neutral, then warning and critical near the limit, muted when stale. */
+/** A share's text colour: neutral, then warning and a light critical rose near the limit, dimmed but legible when stale. */
 export const percentClass = (tone: MeterTone) => percentClasses[tone]

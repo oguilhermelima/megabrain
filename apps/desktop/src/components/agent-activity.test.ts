@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { activityOf, agentMarkLook } from '@/components/agent-activity'
+import { activityOf, agentColor, agentMarkLook } from '@/components/agent-activity'
 
 describe('activityOf', () => {
   test('a chat starting or running a turn is working', () => {
@@ -32,6 +32,13 @@ describe('agentMarkLook', () => {
       expect(look.motion).toBe('spin')
       expect(look.color).not.toBeNull()
     }
+  })
+
+  test('Codex and Grok marks take the near-white ink; Claude stays orange and agy blue', () => {
+    expect(agentColor('codex')).toBe('var(--color-ink-100)')
+    expect(agentColor('grok')).toBe('var(--color-ink-100)')
+    expect(agentColor('claude')).toBe('#D97757')
+    expect(agentColor('agy')).toBe('#4C8DF6')
   })
 
   test('Grok working shows a coloured wave instead of spinning', () => {

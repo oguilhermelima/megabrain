@@ -20,6 +20,8 @@
   --color-ok: #34d399;
   --color-warn: #fbbf24;
   --color-bad: #fb7185;
+  /* Critical as small text: a lighter rose that stays easy to read on the sidebar's glass. */
+  --color-bad-soft: #fda4af;
   /* Sidebar rows: hover and selection are a faint lift of the glass, never a coloured block. */
   --color-row-hover: rgb(255 255 255 / 0.05);
   --color-row-selected: rgb(255 255 255 / 0.09);
