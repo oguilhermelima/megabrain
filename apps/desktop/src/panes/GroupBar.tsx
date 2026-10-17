@@ -69,8 +69,8 @@ export function SplitFrame({ shared, inset, children }: { shared: SharedBar | nu
               <RunPanelToggle />
             </div>
           </div>
-          {/* The tabs start where the name does, past the 24px picture and its 10px gap. */}
-          <div data-tauri-drag-region className={`mt-1 flex min-w-0 ${bar.shared.identity.project === null ? '' : 'pl-[34px]'}`}>
+          {/* The tabs start at the picture's left edge, the bar's padding, as a pane's own bar does. */}
+          <div data-tauri-drag-region className="mt-1 flex min-w-0">
             <ActionBar segments={bar.available} shown={shown} onSelect={bar.shared.setView} />
           </div>
         </header>
