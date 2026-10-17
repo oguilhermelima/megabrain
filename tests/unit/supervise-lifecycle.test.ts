@@ -2,11 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { executeSupervisorWorker, superviseOnce } from "../../src/cli/commands/supervise.js";
-import { appendMessage, createDispatch, listMessages } from "../../src/adapters/state-db.js";
+import { appendMessage, createDispatch, enqueueOutbox, listDeliveries, listMessages, listOutbox } from "../../src/adapters/state-db.js";
 import { failed, ok } from "../../src/core/result.js";
 import { openDatabase } from "../../src/db/db.js";
 import { listLeases } from "../../src/adapters/state-db.js";
 import { acquireSupervisorLease, hasOpenDispatches, isLiveProcessState, mayAutoRecover, shouldNotifyFinding } from "../../src/core/supervise.js";
+import { getHost, registerHost } from "../../src/hosts/index.js";
+import type { HostProvider } from "../../src/hosts/types.js";
+import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
 async function paneGoneFixture(dispatchId = "pane-gone") {
   const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-finding-`);
@@ -148,6 +152,69 @@ describe("supervisor lifecycle decisions", () => {
       opened.value.db.run("DELETE FROM leases WHERE key = ?", ["supervise"]);
       expect(acquireSupervisorLease(opened.value, "second", 30)).toEqual({ kind: "ok", value: true });
     } finally {
+      opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("supervisor queued child answers", () => {
+  test("delivers a queued reply after the child is observed idle", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-answer-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const meta = {
+      dispatchId: "idle-answer", state: "running", processState: "running", runtime: "host",
+      childHost: "orca", workspaceId: null, terminalId: "child-terminal", agent: "codex",
+      promptReceipt: "received", promptState: "confirmed", promptTransport: "delivered",
+      parentHost: "local", parentSessionId: "parent", terminalState: "owned",
+    };
+    const created = createDispatch(opened.value, meta);
+    if (created.kind !== "ok") throw new Error(created.error);
+    const appended = appendMessage(opened.value, "idle-answer", { from: "parent", type: "reply", text: "continue with the stable branch" }, {
+      delivery: { id: "idle-answer-delivery", recipient: "child", status: "outstanding" },
+    });
+    if (appended.kind !== "ok") throw new Error(appended.error);
+    const queued = enqueueOutbox(opened.value.db, {
+      id: "idle-answer-outbox", dispatchId: "idle-answer", targetKind: "child-delivery", target: "orca:child-terminal",
+      payload: { ...meta, meta, dispatchId: "idle-answer", targetKind: "child-delivery", sequence: appended.value.seq, fullMessage: "continue with the stable branch", pointer: "megabrain check" },
+    });
+    if (queued.kind !== "ok") throw new Error(queued.error);
+
+    const original = getHost("orca") as HostProvider;
+    const host: HostProvider = {
+      ...original,
+      list: () => ok({ command: "orca", args: ["terminal", "list", "--json"] }),
+      read: () => ok({ command: "orca", args: ["terminal", "read", "--screen", "--json"] }),
+      send: ({ text = "", enter = true }) => ok({ command: "orca", args: ["terminal", "send", "--text", text, ...(enter ? ["--enter"] : [])] }),
+    };
+    registerHost(host);
+    const calls: string[] = [];
+    let process: ProcessAdapter;
+    process = {
+      async run(command: string, args: readonly string[]) {
+        calls.push(`${command} ${args.join(" ")}`);
+        if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal" }] } }), stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "read") return ok({ stdout: JSON.stringify({ result: { terminal: { tail: ["› Ask Codex to do anything"] } } }), stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached(command: string, args: readonly string[]) {
+        const index = args.indexOf("__delivery-worker");
+        if (index >= 0) await executeDeliveryWorker(args.slice(index + 1), environment, process);
+        return ok({ pid: 123 });
+      },
+      invocationCount() { return calls.length; },
+    };
+    try {
+      await superviseOnce(directory, opened.value, environment, process, Date.now());
+      const outbox = listOutbox(opened.value);
+      const deliveries = listDeliveries(opened.value, "idle-answer");
+      expect(calls.some((call) => call.includes("--text continue with the stable branch"))).toBe(true);
+      expect(outbox).toMatchObject({ kind: "ok", value: [{ id: "idle-answer-outbox", status: "sent" }] });
+      expect(deliveries).toMatchObject({ kind: "ok", value: [{ transport: "typed" }] });
+    } finally {
+      registerHost(original);
       opened.value.close();
       await rm(directory, { recursive: true, force: true });
     }

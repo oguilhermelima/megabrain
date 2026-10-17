@@ -33,6 +33,29 @@ export function classifyMail(from: string, type: string, hasPriorDone: boolean):
   return { kind: "unknown" };
 }
 
+export type UnhandledParentMail = Readonly<{ delivery: CheckDelivery; messages: readonly CheckMessage[] }>;
+
+// The turn-end hook, dispatch list and status view all answer the same question: which child mail
+// is still outstanding for the parent? An ask is handled once a later parent reply exists, even
+// while that reply is still queued for delivery to the child.
+export function unhandledParentMail(deliveries: readonly CheckDelivery[], messages: readonly CheckMessage[]): UnhandledParentMail[] {
+  const seen = new Set<string>();
+  const replies = messages.filter((message) => message.from === "parent" && message.type === "reply");
+  const result: UnhandledParentMail[] = [];
+  for (const delivery of deliveries) {
+    if (delivery.recipient !== "parent" || delivery.status !== "outstanding" || delivery.transport === "hook-notified" || seen.has(delivery.id)) continue;
+    seen.add(delivery.id);
+    const batch = orderMessages(messages.filter((message) => delivery.messageSeqs.includes(message.seq)));
+    const unhandled = batch.filter((message) => {
+      const priorDone = messages.some((candidate) => candidate.seq < message.seq && candidate.from === "child" && candidate.type === "done");
+      if (classifyMail(message.from, message.type, priorDone) !== "actionable") return false;
+      return message.type !== "ask" || !replies.some((reply) => reply.seq > message.seq);
+    });
+    if (unhandled.length > 0) result.push({ delivery, messages: unhandled });
+  }
+  return result;
+}
+
 function messageFor(delivery: CheckDelivery, messages: readonly CheckMessage[]): CheckMessage[] {
   return orderMessages(messages).filter((message) => delivery.messageSeqs.includes(message.seq));
 }

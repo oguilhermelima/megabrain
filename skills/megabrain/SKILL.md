@@ -454,6 +454,11 @@ turn-end`, per agent config (Claude's `Stop` hook, Codex/agy `hooks.json`, Curso
 older install (pointing at the now-deleted `hooks/megabrain-turn-end.sh`) and reports it as
 needing migration; `megabrain install orchestration-hooks` replaces it in place.
 
+At turn end, the hook uses the same unhandled child-mail decision shown by `orchestrate list` and
+`status`. It blocks only for an outstanding ask that has not been answered or other actionable
+child mail that has not been acknowledged, and surfaces a delivery at most once. A later parent
+reply answers an ask as soon as megabrain records it, including while the reply is still queued.
+
 `resource-hooks` is opt-in and never selected by default. It installs a pre-tool hook
 (`MEGABRAIN_HOOK_AGENT=<agent> <binary> hook pre-tool`) into Claude, Codex, Grok
 (`~/.grok/hooks/megabrain-resources.json`) and Agy that rewrites dev servers into

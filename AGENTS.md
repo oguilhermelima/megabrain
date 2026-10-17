@@ -188,3 +188,10 @@ imports legacy state, verifies parity, moves transcripts to
 `~/.megabrain/legacy/json-<UTC>/`. A fresh state with no legacy JSON has no snapshot. For rollback,
 restore the snapshot and run the previous binary; database changes made after cutover are lost.
 Tests must export `MEGABRAIN_STATE_DIR` to an isolated temporary directory before any megabrain call.
+
+## Child mail and turn-end hooks
+
+The turn-end hook uses the same unhandled child-mail decision as `orchestrate list` and `status`.
+It blocks only for an outstanding delivery that megabrain still considers unanswered or unacked,
+and marks each surfaced delivery so the same mail cannot block again. A later parent reply answers
+an ask even while that reply is queued for delivery to the child.

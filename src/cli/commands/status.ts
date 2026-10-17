@@ -1,5 +1,5 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { listDeliveryChannels, listDispatchEntries, readAdmissionPolicy, resourceHistoryEnabled, stateDatabase } from "../../adapters/state-db.js";
+import { listDeliveries, listDeliveryChannels, listDispatchEntries, listMessages, readAdmissionPolicy, resourceHistoryEnabled, stateDatabase } from "../../adapters/state-db.js";
 import { decorateDispatchRecord, parseDispatchRecord, type DecoratedDispatch } from "../../core/dispatch.js";
 import { listProcQueue } from "../../core/proc-queue.js";
 import { executeProc } from "../../core/proc-runner.js";
@@ -12,6 +12,7 @@ import { executeContext } from "./context.js";
 import { callerFromEnvironment } from "./orchestrate-list.js";
 import { queueItems } from "./orchestrate-queue.js";
 import { supervisorWatcher } from "./supervise.js";
+import { unhandledParentMail, type CheckDelivery } from "../../core/check.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -47,7 +48,13 @@ async function collectStatus(environment: Environment, process: ProcessAdapter):
     const parsed = parseDispatchRecord(record);
     if (parsed.kind !== "ok" || parsed.value.raw.state === "closed") return [];
     const decorated = decorateDispatchRecord(parsed.value, caller);
-    return [{ ...decorated, supervision: supervision(decorated) }];
+    const dispatch = String(decorated.dispatchId ?? "");
+    const deliveries = listDeliveries(database.value, dispatch);
+    const messages = listMessages(database.value, dispatch);
+    const unhandledChildMailCount = deliveries.kind === "ok" && messages.kind === "ok"
+      ? unhandledParentMail(deliveries.value as unknown as CheckDelivery[], messages.value.map((message) => ({ ...message, path: `db:${dispatch}:${message.seq}` }))).length
+      : 0;
+    return [{ ...decorated, unhandledChildMailCount, supervision: supervision(decorated) }];
   });
   const queued = queueItems(database.value, dispatches.map((item) => String((item as RecordValue).dispatchId)));
   if (queued.kind !== "ok") return failed(queued.error, queued.exitCode);

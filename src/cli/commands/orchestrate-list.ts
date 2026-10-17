@@ -3,7 +3,8 @@ import { decorateDispatchRecord, filterDispatchRecords, formatDispatchList, pars
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveCaller } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
-import { stateDatabase, listDispatchEntries } from "../../adapters/state-db.js";
+import { stateDatabase, listDispatchEntries, listDeliveries, listMessages } from "../../adapters/state-db.js";
+import { unhandledParentMail, type CheckDelivery } from "../../core/check.js";
 
 export type OrchestrateListEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -50,7 +51,14 @@ export async function executeOrchestrateList(args: readonly string[], environmen
   if (entries.kind !== "ok") return failed(entries.error, entries.exitCode);
   const records: DispatchRecord[] = entries.value.map(({ record, archived }) => {
     const parsed = parseDispatchRecord(record);
-    return parsed.kind === "ok" ? { ...parsed.value, raw: { ...parsed.value.raw, archived } } : { raw: {} };
+    if (parsed.kind !== "ok") return { raw: {} };
+    const dispatch = String(parsed.value.dispatchId ?? "");
+    const deliveries = listDeliveries(database.value, dispatch);
+    const messages = listMessages(database.value, dispatch);
+    const unhandled = deliveries.kind === "ok" && messages.kind === "ok"
+      ? unhandledParentMail(deliveries.value as unknown as CheckDelivery[], messages.value.map((message) => ({ ...message, path: `db:${dispatch}:${message.seq}` }))).length
+      : 0;
+    return { ...parsed.value, raw: { ...parsed.value.raw, archived, unhandledChildMailCount: unhandled } };
   });
   if (records.length === 0) {
     return parsedArgs.value.json ? ok("[]\n") : ok(formatDispatchList([], false));

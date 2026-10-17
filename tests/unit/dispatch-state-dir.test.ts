@@ -72,6 +72,57 @@ describe("a child's state directory is the dispatch's own", () => {
     }
   });
 
+  test("ask and check find the dispatch by its recorded agent session when the dispatch id is absent", async () => {
+    const real = await mkdtemp(`${tmpdir()}/megabrain-dispatch-real-`);
+    const temporary = await mkdtemp(`${tmpdir()}/megabrain-dispatch-temp-`);
+    try {
+      const db = stateDatabase({ HOME: real, MEGABRAIN_STATE_DIR: real });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const created = createDispatch(db.value, {
+        dispatchId: "d-session", agent: "codex", agentThreadId: "child-thread", state: "running",
+        processState: "running", runtime: "host", childHost: "local", terminalId: "child-term",
+      });
+      if (created.kind !== "ok") throw new Error(created.error);
+      const environment = {
+        HOME: real, MEGABRAIN_STATE_DIR: temporary, MEGABRAIN_DISPATCH_STATE_DIR: real,
+        CODEX_THREAD_ID: "child-thread",
+      };
+      const ask = await executeQueueWrite("ask", ["need a decision"], environment, processAdapter);
+      expect(ask).toMatchObject({ kind: "ok", value: "ask sent: d-session\n" });
+      expect(messageTypes(real, "d-session")).toContain("ask");
+
+      const checked = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], environment, processAdapter);
+      expect(checked).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(checked.kind === "ok" ? checked.value : "{}")).toMatchObject({ dispatchId: "d-session", status: "empty" });
+    } finally {
+      await rm(real, { recursive: true, force: true });
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
+  test("ack refuses an unknown delivery in the dispatch state instead of a redirected state", async () => {
+    const real = await mkdtemp(`${tmpdir()}/megabrain-dispatch-real-`);
+    const temporary = await mkdtemp(`${tmpdir()}/megabrain-dispatch-temp-`);
+    try {
+      const db = stateDatabase({ HOME: real, MEGABRAIN_STATE_DIR: real });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const created = createDispatch(db.value, {
+        dispatchId: "d-ack-session", agent: "codex", agentThreadId: "child-thread", state: "running",
+        processState: "running", runtime: "host", childHost: "local", terminalId: "child-term",
+      });
+      if (created.kind !== "ok") throw new Error(created.error);
+      const { executeChildAck } = await import("../../src/cli/commands/child-ack.js");
+      const result = await executeChildAck(["missing-delivery"], {
+        HOME: real, MEGABRAIN_STATE_DIR: temporary, MEGABRAIN_DISPATCH_STATE_DIR: real,
+        CODEX_THREAD_ID: "child-thread",
+      }, processAdapter);
+      expect(result).toMatchObject({ kind: "failed", error: "delivery missing-delivery refused: delivery is unknown" });
+    } finally {
+      await rm(real, { recursive: true, force: true });
+      await rm(temporary, { recursive: true, force: true });
+    }
+  });
+
   test("without the dispatch variable the ordinary state directory still applies", async () => {
     const real = await mkdtemp(`${tmpdir()}/megabrain-dispatch-real-`);
     try {

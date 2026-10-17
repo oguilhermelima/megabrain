@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
@@ -905,7 +905,7 @@ async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnvironmen
       sameWorktree = callerRealPath !== null && targetRealPath !== null && callerRealPath === targetRealPath;
     }
   }
-  const root = resolveStateDirectory(environment);
+  const root = resolve(resolveStateDirectory(environment));
   const existingWorktreeSession = selectedRuntime === "tmux" && !sameWorktree
     ? await existingTmuxSessionForWorktree(root, worktree.path, process)
     : undefined;

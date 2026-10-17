@@ -2,10 +2,11 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type CheckDelivery, type CheckMessage } from "../../core/check.js";
 import { resolveChildStateDirectory } from "../../core/state.js";
+import { findChild, type QueueEnvironment } from "./queue-write.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
-import { claimDelivery, createDelivery, getDispatch, listDeliveries, listDispatches, listMessages, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { claimDelivery, createDelivery, listDeliveries, listMessages, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import type { DeliveryRecord } from "../../db/queries/deliveries.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
@@ -25,37 +26,16 @@ function checkDeliveries(root: string, dispatch: string): CheckDelivery[] {
   return result.kind === "ok" ? result.value as unknown as CheckDelivery[] : [];
 }
 
-export async function dispatchId(environment: CheckEnvironment, root: string, processAdapter: ProcessAdapter): Promise<string | undefined> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
-  if (database.kind !== "ok") return undefined;
-  const direct = environment.MEGABRAIN_DISPATCH_ID;
-  if (direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct)) {
-    const resolved = getDispatch(database.value, direct);
-    if (resolved.kind === "ok" && resolved.value?.dispatchId === direct) return direct;
-  }
-  let host: string | undefined;
-  let id: string | undefined;
-  let tmuxSession: string | undefined;
-  if (environment.TMUX && environment.TMUX_PANE) {
-    const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
-    if (result.kind !== "ok" || result.value === "") return undefined;
-    host = "tmux"; tmuxSession = result.value;
-  } else {
-    host = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : undefined;
-    id = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
-    if (host === undefined || id === undefined) return undefined;
-  }
-  const listed = listDispatches(database.value);
-  if (listed.kind !== "ok") return undefined;
-  const matched = listed.value.find((meta) => host === "tmux"
-    ? meta.runtime === "tmux" && meta.tmuxSession === tmuxSession && meta.tmuxPane === environment.TMUX_PANE
-    : meta.terminalId === id && meta.childHost === host);
-  return matched?.dispatchId;
+export async function dispatchId(environment: CheckEnvironment, root: string, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  const child = await findChild(root, environment as QueueEnvironment, processAdapter);
+  return "kind" in child ? child : ok(child.dispatch);
 }
 
 export async function childIdentity(environment: CheckEnvironment, processAdapter: ProcessAdapter): Promise<Pick<ConsumerIdentityInput, "childHost" | "childSessionId" | "tmux">> {
-  const childHost = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : "tmux";
-  const childSessionId = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE;
+  const childHost = environment.SUPERSET_TERMINAL_ID !== undefined ? "superset" : environment.ORCA_TERMINAL_HANDLE !== undefined ? "orca" : environment.TMUX ? "tmux" : "local";
+  const childSessionId = environment.SUPERSET_TERMINAL_ID ?? environment.ORCA_TERMINAL_HANDLE
+    ?? (environment.CLAUDE_CODE_SESSION_ID === undefined ? undefined : `claude:${environment.CLAUDE_CODE_SESSION_ID}`)
+    ?? (environment.CODEX_THREAD_ID === undefined ? undefined : `codex:${environment.CODEX_THREAD_ID}`);
   if (environment.TMUX !== undefined && environment.TMUX.length > 0 && environment.TMUX_PANE !== undefined && environment.TMUX_PANE.length > 0) {
     const result = await getTmux().sessionForPane(environment.TMUX_PANE, processAdapter);
     return { childHost, tmux: { session: result.kind === "ok" ? result.value : undefined, pane: environment.TMUX_PANE } };
@@ -115,8 +95,9 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
   if (waitMode !== "poll") return failed("--wait-mode must be poll", 2);
   if (!Number.isInteger(generation) || generation < 1) return failed("--generation must be a positive number", 2);
   const root = resolveChildStateDirectory(environment);
-  const dispatch = await dispatchId(environment, root, processAdapter);
-  if (dispatch === undefined) return failed(`no managed dispatch belongs to superset/${environment.SUPERSET_TERMINAL_ID ?? "unknown"}`);
+  const resolvedDispatch = await dispatchId(environment, root, processAdapter);
+  if (resolvedDispatch.kind !== "ok") return resolvedDispatch;
+  const dispatch = resolvedDispatch.value;
   const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
   if (database.kind !== "ok") return database;
   const resolvedIdentity = resolveConsumerIdentity({

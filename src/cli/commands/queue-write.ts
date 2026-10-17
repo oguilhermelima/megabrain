@@ -162,6 +162,10 @@ async function session(environment: QueueEnvironment, processAdapter: ProcessAda
 // MEGABRAIN_DISPATCH_ID fast path, which must apply the identical ownership rule rather than
 // trusting the named dispatch's existence alone.
 function callerOwnsDispatch(meta: JsonRecord | undefined, current: Session): boolean {
+  const matchesAgentSession = (typeof meta?.agentSessionId === "string" && current.id === `claude:${meta.agentSessionId}`)
+    || (typeof meta?.agentThreadId === "string" && current.id === `codex:${meta.agentThreadId}`)
+    || (typeof meta?.agentSessionId === "string" && current.id === meta.agentSessionId)
+    || (typeof meta?.agentThreadId === "string" && current.id === meta.agentThreadId);
   const matchesTerminal = meta?.runtime !== "tmux" && meta?.terminalId === current.id && meta?.childHost === current.host;
   const matchesTmux = current.host === "tmux" &&
     meta?.runtime === "tmux" &&
@@ -170,7 +174,17 @@ function callerOwnsDispatch(meta: JsonRecord | undefined, current: Session): boo
     (typeof meta?.tmuxSessionId === "string"
       ? current.tmuxSessionId !== undefined && meta.tmuxSessionId === current.tmuxSessionId
       : meta?.tmuxSession === current.tmuxSession);
-  return matchesTerminal || matchesTmux;
+  return matchesTerminal || matchesTmux || matchesAgentSession;
+}
+
+function hasRecordedChildIdentity(meta: JsonRecord | undefined): boolean {
+  return meta?.runtime === "tmux"
+    || typeof meta?.terminalId === "string"
+    || typeof meta?.agentSessionId === "string"
+    || typeof meta?.agentThreadId === "string"
+    || typeof meta?.tmuxSession === "string"
+    || typeof meta?.tmuxSessionId === "string"
+    || typeof meta?.tmuxPane === "string";
 }
 
 export async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
@@ -181,15 +195,17 @@ export async function findChild(root: string, environment: QueueEnvironment, pro
   const direct = environment.MEGABRAIN_DISPATCH_ID;
   const directRecord = direct !== undefined && /^[A-Za-z0-9._-]+$/.test(direct) ? getDispatch(database.value, direct) : undefined;
   const directMeta = directRecord?.kind === "ok" ? directRecord.value : undefined;
-  // The fast path only short-circuits the scan for a dispatch that actually belongs to the
-  // current caller. A stale MEGABRAIN_DISPATCH_ID (inherited by a process from a different
-  // dispatch's environment) still names a real database row, so checking existence alone
-  // locked the candidate list to a dispatch that then failed its own ownership check. Falling
-  // back to the identity scan here matches the retired shell implementation.
-  const directDispatch = direct !== undefined && directMeta?.dispatchId === direct && callerOwnsDispatch(directMeta, current) ? direct : undefined;
-  const listed = directDispatch !== undefined ? undefined : listDispatches(database.value);
-  if (listed?.kind === "failed") return listed;
-  const dispatches = directDispatch !== undefined ? [directDispatch] : listed?.kind === "ok" ? listed.value.map((record) => record.dispatchId) : [];
+  // A dispatch id supplied by spawn is authoritative when its record has no child identity
+  // to contradict it. If the record carries a different child identity, or the id is stale,
+  // use the session scan so an inherited id cannot route mail to another child.
+  const directDispatch = direct !== undefined && directMeta?.dispatchId === direct
+    && (!hasRecordedChildIdentity(directMeta) || callerOwnsDispatch(directMeta, current))
+    ? direct
+    : undefined;
+  if (directDispatch !== undefined) return { dispatch: directDispatch, session: current };
+  const listed = listDispatches(database.value);
+  if (listed.kind !== "ok") return listed;
+  const dispatches = listed.value.map((record) => record.dispatchId);
   const matches: string[] = [];
   for (const dispatch of dispatches) {
     const record = getDispatch(database.value, dispatch);

@@ -4,7 +4,7 @@ import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js";
-import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
+import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { acquireSupervisorLease, agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
@@ -13,7 +13,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
-import { readDeliveryScreen } from "./delivery-screen.js";
+import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
 import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
 import { collectResources } from "./resources.js";
@@ -289,6 +289,26 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   return blocked.cause === "dialog-waiting" ? blocked : { cause: "unknown" };
 }
 
+async function retryIdleChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, frame: string, process: ProcessAdapter): Promise<void> {
+  const agent = string(meta.agent) ?? "";
+  if (classifyLiveness(agent, frame).status !== "idle" || deliveryComposer(agent, frame) !== "") return;
+  const outbox = listOutbox(database);
+  const deliveries = listDeliveries(database, dispatch);
+  const messages = listMessages(database, dispatch);
+  if (outbox.kind !== "ok" || deliveries.kind !== "ok" || messages.kind !== "ok") return;
+  const pendingReplies = outbox.value.filter((item) => item.dispatchId === dispatch && item.targetKind === "child-delivery" && item.status === "pending");
+  for (const item of pendingReplies) {
+    const payload = object(item.payload);
+    const sequence = Number(payload?.sequence);
+    if (!Number.isSafeInteger(sequence) || sequence < 1) continue;
+    const message = messages.value.find((candidate) => candidate.seq === sequence);
+    if (message?.from !== "parent" || message.type !== "reply") continue;
+    const delivery = deliveries.value.find((candidate) => Array.isArray(candidate.messageSeqs) && candidate.messageSeqs.includes(sequence));
+    if (delivery?.status !== "outstanding") continue;
+    await startDeliveryWorker(root, dispatch, item.id, { ...meta, targetKind: "child-delivery" }, process);
+  }
+}
+
 export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
   const listed = listDispatches(database);
   if (listed.kind !== "ok") return { open: false, findings: 0 };
@@ -325,6 +345,7 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now);
     const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
     const running = screen?.kind === "ok" ? backgroundTasks(screen.value) : undefined;
+    if (screen?.kind === "ok") await retryIdleChildReplies(root, database, dispatch, meta, screen.value, process);
     const recordedPrevious = previousFinding(meta);
     const recovered = recordedPrevious !== undefined && await recoveredSince(database, dispatch, meta, environment, recordedPrevious.notifiedAt);
     const previous = recovered ? undefined : recordedPrevious;

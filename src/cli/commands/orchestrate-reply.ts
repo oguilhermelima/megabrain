@@ -117,7 +117,7 @@ async function requireParent(database: DatabaseHandle, dispatch: string, environ
 
 function outputReply(dispatch: string, json: boolean, nudge: string, summary: SupersedeSummary): string {
   if (json) return `${JSON.stringify({ dispatchId: dispatch, status: "queued", nudge, supersededQueued: summary.queued, supersededDelivered: summary.delivered, deliveredSequences: summary.deliveredSequences }, null, 2)}\n`;
-  return `queued: ${dispatch}\n${summary.queued > 0 || summary.delivered > 0 ? `superseded queued: ${summary.queued}\nsuperseded delivered: ${summary.delivered}\n` : ""}${nudge === "typed" ? "" : "nudge not typed; the child will still find this reply with megabrain check\n"}`;
+  return `queued: ${dispatch}\n${summary.queued > 0 || summary.delivered > 0 ? `superseded queued: ${summary.queued}\nsuperseded delivered: ${summary.delivered}\n` : ""}${nudge === "typed" ? "" : nudge === "supervisor" ? "reply queued for idle delivery; the supervisor will restart delivery if needed\n" : "nudge not typed; the child will still find this reply with megabrain check\n"}`;
 }
 
 export async function executeOrchestrateReply(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
@@ -146,16 +146,14 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   const summary: SupersedeSummary = append.value.supersedeSummary as SupersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
   const notification = await notifyChild(root, parent.value, dispatchId, processAdapter, environment, childMessage).catch((error: unknown) => ({ outcome: "failed", reason: error instanceof Error ? `notification failed: ${error.message}` : "notification failed", transport: "failed" as const }));
   let transport = notification.transport ?? "failed";
+  let supervisorRetry = false;
   if (transport === "queue") {
     const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
     if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "sent", "Codex queue delivery");
   } else if (transport === "deferred") {
     const scheduled = await startDeliveryWorker(root, dispatchId, outboxId, parent.value, processAdapter);
-    transport = scheduled === "failed" ? "failed" : "deferred";
-    if (scheduled === "failed") {
-      const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
-      if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "failed", "Could not start deferred delivery");
-    }
+    transport = "deferred";
+    supervisorRetry = scheduled === "failed";
   } else {
     const claim = claimOutbox(opened.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
     if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(opened.value, outboxId, "failed", notification.reason);
@@ -166,7 +164,7 @@ export async function executeOrchestrateReply(args: readonly string[], environme
     if (updated.kind !== "ok") return updated;
     if (parent.value.runtime === "tmux" && typeof parent.value.tmuxPane === "string") await setTmuxChatPane(parent.value.tmuxPane, String(parent.value.agent ?? "unknown"), String(parent.value.chatName ?? parent.value.branch ?? dispatchId), "running", processAdapter);
   }
-  return ok(outputReply(dispatchId, parsed.value.json, notification.outcome === "delivered" ? "typed" : "not-typed", summary));
+  return ok(outputReply(dispatchId, parsed.value.json, notification.outcome === "delivered" ? "typed" : transport === "deferred" || supervisorRetry ? "supervisor" : "not-typed", summary));
 }
 
 export async function executeOrchestrateChange(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
@@ -205,14 +203,13 @@ export async function executeOrchestrateChange(args: readonly string[], environm
     });
     if (queued.kind !== "ok") return queued;
     const scheduled = await startDeliveryWorker(root, dispatchId, outboxId, { ...meta, targetKind: "child-delivery" }, processAdapter);
-    const transport = scheduled === "failed" ? "failed" : "deferred";
+    const transport = "deferred";
     setDeliveryTransport(database.value, dispatchId, appended.value.seq, transport);
-    if (scheduled === "failed") {
-      const claim = claimOutbox(database.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
-      if (claim.kind === "ok" && claim.value !== undefined) finishOutbox(database.value, outboxId, "failed", "Could not start deferred delivery");
-    }
-    await recordChangeEvent(root, dispatchId, "delivery-result", `${reason}; delivery ${transport}`, session, environment, processAdapter);
-    return ok(changeOutput(dispatchId, parsed.value.json, { ...summary, delivered: false, reason: `${reason}; delivery ${transport}` }));
+    const followup = scheduled === "failed"
+      ? "delivery worker could not start; supervisor will retry when the child is idle"
+      : "reply queued for idle delivery; supervisor will restart delivery if needed";
+    await recordChangeEvent(root, dispatchId, "delivery-result", `${reason}; delivery ${transport}; ${followup}`, session, environment, processAdapter);
+    return ok(changeOutput(dispatchId, parsed.value.json, { ...summary, delivered: false, reason: `${reason}; delivery ${transport}; ${followup}` }));
   };
 
   if (meta.runtime !== "tmux" && meta.childHost === "superset") {

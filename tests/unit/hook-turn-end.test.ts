@@ -193,6 +193,25 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
+  test("does not block again for an ask that already has a parent answer", async () => {
+    await withRoot("answered-mail", async (root) => {
+      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const ask = appendDatabaseMessage(database.value, "d1", { from: "child", type: "ask", text: "which branch?" }, {
+        delivery: { id: "ask-delivery", recipient: "parent", status: "outstanding" },
+      });
+      if (ask.kind !== "ok") throw new Error(ask.error);
+      setDeliveryTransport(database.value, "d1", ask.value.seq, "failed", "peer delivery was not consumed");
+      const answer = appendDatabaseMessage(database.value, "d1", { from: "parent", type: "reply", text: "use the stable branch" }, {
+        delivery: { id: "answer-delivery", recipient: "child", status: "outstanding" },
+      });
+      if (answer.kind !== "ok") throw new Error(answer.error);
+
+      expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
+    });
+  });
+
   test("stays quiet while an outstanding parent-pointer delivery is in flight", async () => {
     await withRoot("pending-mail", async (root) => {
       await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });

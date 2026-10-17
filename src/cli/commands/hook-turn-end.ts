@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { checkDispatchTransition, openDispatchStates } from "../../core/dispatch-states.js";
-import { classifyQueueMail } from "../../core/queue-write.js";
+import { unhandledParentMail, type CheckDelivery } from "../../core/check.js";
 import { resolveChildStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
@@ -417,17 +417,16 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
   if (deliveries.kind !== "ok" || messages.kind !== "ok") return { failed: [], pending: [] };
   const failed: string[] = [];
   const pending: string[] = [];
+  const checkMessages = messages.value.map((message) => ({ ...message, path: `db:${dispatchId}:${message.seq}` }));
+  const unhandled = unhandledParentMail(deliveries.value as unknown as CheckDelivery[], checkMessages);
   const outstandingParentDeliveryCount = deliveries.value.filter((delivery) => delivery.recipient === "parent" && delivery.status === "outstanding").length;
-  for (const delivery of deliveries.value) {
-    if (delivery.recipient !== "parent" || delivery.status !== "outstanding") continue;
-    if (delivery.transport === "hook-notified") continue;
+  for (const item of unhandled) {
+    const delivery = item.delivery;
     const sequences = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : [];
-    const message = messages.value.find((candidate) => sequences.includes(candidate.seq));
+    const message = item.messages[0];
     if (message === undefined) continue;
-    const priorDone = messages.value.some((candidate) => candidate.seq < message.seq && candidate.from === "child" && candidate.type === "done");
-    if (classifyQueueMail(message.from, message.type, priorDone) !== "actionable") continue;
     const line = `${message.type || "mail"} ${parentMailSummary(message.text)} — megabrain orchestrate watch ${dispatchId}`;
-    const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((item) => item.dispatchId === dispatchId && item.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(item, sequences, outstandingParentDeliveryCount === 1)) : [];
+    const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((entry) => entry.dispatchId === dispatchId && entry.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(entry, sequences, outstandingParentDeliveryCount === 1)) : [];
     if (matchingOutbox.some((item) => item.status === "sending" && item.detail?.startsWith("peer-sent:"))) continue;
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
     const heldOutbox = matchingOutbox.some((item) => item.status === "failed" && /composer-occupied|composer-race|superset-unverifiable-composer|target is no longer idle|session is no longer idle|keystroke dialog/i.test(item.detail ?? ""));
