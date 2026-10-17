@@ -29,6 +29,16 @@ describe('keepKnownReadings', () => {
     ])
   })
 
+  test('each bucket of a window is its own reading', () => {
+    const gemini = { ...reading('agy', '5h', 7), bucket: 'Gemini Models' }
+    const others = { ...reading('agy', '5h', 40), bucket: 'Claude and GPT models' }
+    const next = keepKnownReadings(settings(gemini, others), settings({ ...gemini, usedPercent: null, status: 'unknown' }, { ...others, usedPercent: 41 }))
+    expect(next.limits.readings.map((item) => [item.bucket, item.usedPercent, item.status])).toEqual([
+      ['Gemini Models', 7, 'stale'],
+      ['Claude and GPT models', 41, 'current'],
+    ])
+  })
+
   test('a new value always replaces the old one, and nothing before it means nothing to keep', () => {
     const fresh = settings(reading('claude', '5h', 9))
     expect(keepKnownReadings(settings(reading('claude', '5h', 5)), fresh).limits.readings).toEqual(fresh.limits.readings)

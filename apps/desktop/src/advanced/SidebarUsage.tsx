@@ -1,29 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type PointerEvent, type RefObject } from 'react'
 import { api } from '@/api'
 import type { AnchorRect } from '@/advanced/menu-placement'
-import { arrangeUsage, isEmptyUsageOrder, moveUsage, noUsageOrder, parseUsageOrder, serialiseUsageOrder, toggleUsageHidden, usageChip, type UsageOrder } from '@/advanced/usage-order'
+import { arrangeUsage, isEmptyUsageOrder, moveUsage, noUsageOrder, parseUsageOrder, serialiseUsageOrder, toggleUsageHidden, type UsageOrder } from '@/advanced/usage-order'
+import { agentUsage, type AgentUsage } from '@/advanced/usage-limits'
+import { AgentUsageRow, UsageFooterItem } from '@/advanced/UsageMeters'
 import { useSavedSetting } from '@/advanced/useSavedSetting'
-import { providerUsage, resetDistance, type AgentLimit, type ProviderUsage } from '@/chat/composer-status'
-import { Ring, shimmer, toneBar, toneText, useSettings } from '@/chat/ComposerStatus'
-import { AgentIcon } from '@/components/agent-icons'
+import { shimmer, useSettings } from '@/chat/ComposerStatus'
 import { Popover } from '@/components/Popover'
 import { usePresence } from '@/lib/usePresence'
 import { agentLabel } from '@/native-chat/empty-chat'
-
-const windowNames: Record<string, string> = { '5h': '5-hour', weekly: 'Weekly' }
-const windowName = (window: string) => windowNames[window] ?? window
-
-const resetClock = (at: Date) => at.toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })
-
-/** A limit as a ring and its share, coloured by tone: the compact readout the sidebar's foot shows. */
-function RingShare({ limit }: { limit: AgentLimit }) {
-  return (
-    <>
-      <Ring fraction={limit.usedPercent / 100} tone={limit.tone} />
-      <span className={`tabular-nums ${limit.tone === 'normal' ? 'text-ink-300' : toneText[limit.tone]}`}>{`${Math.round(limit.usedPercent)}%`}</span>
-    </>
-  )
-}
 
 /** The order and hidden providers the person chose, saved through `settings set usage-order`. */
 function useUsageOrder(): { saved: UsageOrder; change: (next: UsageOrder) => void } {
@@ -40,10 +25,10 @@ function useUsageOrder(): { saved: UsageOrder; change: (next: UsageOrder) => voi
 }
 
 /**
- * The sidebar's foot: a mark, ring and share per provider with a reading, from the one settings store,
- * in the order the person chose and without the ones they hid. A click opens a card per provider with
- * every window's bar and share, when each resets and how old the reading is; Edit there reorders and
- * hides them. Nothing shows until a provider has one.
+ * The sidebar's foot: a mark in the agent's colour and a share per provider, from the one settings store,
+ * in the order the person chose and without the ones they hid. A click opens a row per provider with a
+ * meter per window, the most constraining first, and when each resets; a reading that is old or only
+ * the last one known says so. Edit there reorders and hides them. Nothing shows until a provider has one.
  */
 export function SidebarUsage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { settings, stale, failed } = useSettings()
@@ -54,7 +39,7 @@ export function SidebarUsage({ onOpenSettings }: { onOpenSettings: () => void })
   // The provider whose item opened the popover, which scrolls to its card.
   const [focused, setFocused] = useState<string | null>(null)
   const { saved, change } = useUsageOrder()
-  const usage = settings === null ? [] : providerUsage(settings.limits.readings)
+  const usage = settings === null ? [] : agentUsage(settings.limits.readings)
   const { listed, strip } = arrangeUsage(usage, saved)
   const frame = 'shrink-0 border-t border-white/[0.07] px-2 py-2'
   if (settings === null)
@@ -80,7 +65,7 @@ export function SidebarUsage({ onOpenSettings }: { onOpenSettings: () => void })
         }}
       />
       {menu.shown !== null && (
-        <Popover role="dialog" focus="button" className="max-h-[calc(100vh-16px)] w-[288px] overflow-y-auto p-1" anchor={menu.shown} label="Usage limits" leaving={menu.leaving} onClose={close} trigger={trigger.current}>
+        <Popover role="dialog" focus="h2" className="max-h-[calc(100vh-16px)] w-[288px] overflow-y-auto p-1" anchor={menu.shown} label="Usage limits" leaving={menu.leaving} onClose={close} trigger={trigger.current}>
           <UsageDetails
             focused={focused}
             usage={usage}
@@ -116,7 +101,7 @@ function UsageStrip({
   onPick,
 }: {
   ref: RefObject<HTMLDivElement | null>
-  strip: ProviderUsage[]
+  strip: AgentUsage[]
   /** The provider whose item opened the popover, or null when it is closed. */
   open: string | null
   dimmed: boolean
@@ -197,7 +182,7 @@ function UsageStrip({
           data-usage-item={item.agent}
           aria-haspopup="dialog"
           aria-expanded={open === item.agent}
-          aria-label={`${agentLabel(item.agent)} ${Math.round(item.highest.usedPercent)}% used`}
+          aria-label={`${agentLabel(item.agent)} ${Math.round(item.lead.usedPercent)}% used${item.lead.tone === 'stale' ? ', last known' : ''}`}
           onMouseDown={keepOpenToggle}
           onClick={(event) => {
             event.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' })
@@ -205,8 +190,7 @@ function UsageStrip({
           }}
           className={itemLook}
         >
-          <AgentIcon agent={item.agent} size={13} className="text-ink-400" />
-          <RingShare limit={item.highest} />
+          <UsageFooterItem usage={item} />
         </button>
       ))}
     </div>
@@ -220,6 +204,8 @@ const keepOpenToggle = (event: MouseEvent<HTMLButtonElement>) => {
   event.preventDefault()
   event.stopPropagation()
 }
+
+const footerAction = 'flex h-7 items-center rounded-[6px] px-2 text-[11.5px] text-ink-400 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:bg-white/[0.06] focus-visible:text-ink-100 focus-visible:outline-none'
 
 interface Drag {
   agent: string
@@ -236,8 +222,8 @@ function UsageDetails({
   onOpenSettings,
 }: {
   focused: string | null
-  usage: ProviderUsage[]
-  listed: ProviderUsage[]
+  usage: AgentUsage[]
+  listed: AgentUsage[]
   saved: UsageOrder
   onChange: (next: UsageOrder) => void
   retrying: string | null
@@ -323,22 +309,12 @@ function UsageDetails({
 
   return (
     <>
-      <header className="flex h-8 items-center gap-2 pr-1 pl-3">
-        <h2 className="min-w-0 flex-1 truncate text-[11px] font-semibold tracking-[0.08em] text-ink-500 uppercase">Usage limits</h2>
-        <button
-          type="button"
-          aria-pressed={editing}
-          aria-label={editing ? 'Done reordering usage providers' : 'Reorder and hide usage providers'}
-          onClick={() => setEditing((current) => !current)}
-          className="flex h-6 items-center rounded-[6px] px-2 text-[11.5px] text-ink-400 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:bg-white/[0.06] focus-visible:text-ink-100 focus-visible:outline-none aria-pressed:bg-white/[0.08] aria-pressed:text-ink-100"
-        >
-          {editing ? 'Done' : 'Edit'}
-        </button>
-      </header>
+      {/* The heading takes focus on open, which leaves the footer actions unlit until the person moves to them. */}
+      <h2 tabIndex={-1} className="flex h-8 items-center px-3 outline-none text-[11px] font-semibold tracking-[0.08em] text-ink-500 uppercase">Usage limits</h2>
       {editing && <p className="px-3 pb-2 text-[11px] leading-4 text-ink-500">Drag a handle, or press Alt+Up or Alt+Down on it, to reorder. The eye shows or hides a provider in the sidebar.</p>}
-      <div ref={list} className="flex flex-col gap-1">
+      <div ref={list} className="flex flex-col gap-0.5">
         {listed.map((item) => (
-          <ProviderCard
+          <AgentUsageRow
             key={item.agent}
             usage={item}
             focused={item.agent === focused}
@@ -361,100 +337,21 @@ function UsageDetails({
       <p aria-live="polite" className="sr-only">
         {announce}
       </p>
-      {retrying !== null && <p className="px-3 pt-2 text-[11.5px] text-ink-500">{retrying}</p>}
-      <div className="mt-1 border-t border-white/[0.06] pt-1">
-        <button
-          type="button"
-          onClick={onOpenSettings}
-          className="flex h-8 w-full items-center rounded-[8px] px-3 text-left text-[12.5px] text-ink-300 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:bg-white/[0.06] focus-visible:outline-none"
-        >
+      {retrying !== null && <p className="px-3 pt-2 text-[11px] text-ink-500">{retrying}</p>}
+      <footer className="mt-1 flex items-center justify-between gap-2 border-t border-white/[0.06] pt-1">
+        <button type="button" onClick={onOpenSettings} className={footerAction}>
           Usage in Settings
         </button>
-      </div>
+        <button
+          type="button"
+          aria-pressed={editing}
+          aria-label={editing ? 'Done reordering usage providers' : 'Reorder and hide usage providers'}
+          onClick={() => setEditing((current) => !current)}
+          className={`${footerAction} aria-pressed:text-ink-100`}
+        >
+          {editing ? 'Done' : 'Edit'}
+        </button>
+      </footer>
     </>
-  )
-}
-
-/** When each window resets, in one quiet line: "Resets 5-hour in 2h 10m · weekly in 5d 9h"; the exact times are read out. */
-function ResetLine({ limits }: { limits: AgentLimit[] }) {
-  const known = limits.flatMap((limit) => (limit.resetsAt === null ? [] : [{ window: limit.window, at: limit.resetsAt }]))
-  if (known.length === 0) return <p className="truncate pt-1 text-[11px] text-ink-500">Reset time unknown</p>
-  return (
-    <p className="truncate pt-1 text-[11px] text-ink-500" aria-label={`Resets: ${known.map((reset) => `${windowName(reset.window)} ${resetClock(reset.at)}`).join(', ')}`}>
-      {`Resets ${known.map((reset) => `${windowName(reset.window).toLowerCase()} ${resetDistance(reset.at)}`).join(' · ')}`}
-    </p>
-  )
-}
-
-function GripIcon() {
-  return (
-    <svg viewBox="0 0 16 16" className="size-3.5" fill="currentColor" aria-hidden="true">
-      {[4.5, 8, 11.5].flatMap((y) => [6, 10].map((x) => <circle key={`${x}:${y}`} cx={x} cy={y} r="1.1" />))}
-    </svg>
-  )
-}
-
-function EyeIcon({ hidden }: { hidden: boolean }) {
-  return (
-    <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 8s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4ZM8 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 1 0 0-3" />
-      {hidden && <path d="M3 13 13 3" />}
-    </svg>
-  )
-}
-
-interface CardEdit {
-  hidden: boolean
-  dragging: boolean
-  onToggle: () => void
-  grip: {
-    onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void
-    onPointerDown: (event: PointerEvent<HTMLButtonElement>) => void
-  }
-}
-
-const smallButton = 'flex size-6 shrink-0 items-center justify-center rounded-[6px] text-ink-500 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:bg-white/[0.06] focus-visible:text-ink-100 focus-visible:outline-none'
-
-/** One provider: its mark, name and a chip for how old the reading is, then a line per window; editing, a grip to move it and an eye to hide it. */
-function ProviderCard({ usage, focused, edit }: { usage: ProviderUsage; focused: boolean; edit: CardEdit | null }) {
-  const chip = usageChip(usage)
-  const name = agentLabel(usage.agent)
-  const hidden = edit?.hidden === true
-  return (
-    <section
-      data-provider-limits={usage.agent}
-      data-hidden={hidden || undefined}
-      className={`rounded-[8px] px-3 py-2 transition-[background-color,opacity] motion-reduce:transition-none ${edit?.dragging === true ? 'bg-white/[0.08]' : focused ? 'bg-white/[0.06]' : 'bg-white/[0.03]'} ${hidden ? 'opacity-50' : ''}`}
-    >
-      <div className="flex h-6 items-center gap-2">
-        {edit !== null && (
-          <button type="button" data-usage-grip={usage.agent} aria-label={`Move ${name}`} aria-roledescription="drag handle" {...edit.grip} className={`${smallButton} -ml-2 cursor-grab touch-none active:cursor-grabbing`}>
-            <GripIcon />
-          </button>
-        )}
-        <AgentIcon agent={usage.agent} size={14} className="text-ink-300" />
-        <h3 className="min-w-0 flex-1 truncate text-[12.5px] font-semibold text-ink-100">{name}</h3>
-        {edit !== null && (
-          <button type="button" aria-pressed={!hidden} aria-label={`Show ${name} in the sidebar`} onClick={edit.onToggle} className={`${smallButton} -mr-2`}>
-            <EyeIcon hidden={hidden} />
-          </button>
-        )}
-        {edit === null && chip !== null && <span className={`flex h-5 shrink-0 items-center rounded-full px-2 text-[11px] ${chip.stale ? 'bg-warn/10 text-warn' : 'bg-white/[0.05] text-ink-500'}`}>{chip.text}</span>}
-      </div>
-      <ul className="pt-1">
-        {usage.limits.map((limit) => (
-          <li key={limit.window} className="grid h-6 grid-cols-[64px_minmax(0,1fr)_36px] items-center gap-2" aria-label={`${windowName(limit.window)}: ${Math.round(limit.usedPercent)}% used`}>
-            <span aria-hidden="true" className="truncate text-[12px] text-ink-300">
-              {windowName(limit.window)}
-            </span>
-            <span aria-hidden="true" className="block h-1 overflow-hidden rounded-full bg-white/[0.1]">
-              <span className={`block h-full rounded-full ${toneBar[limit.tone]}`} style={{ width: `${Math.max(3, Math.round(limit.usedPercent))}%` }} />
-            </span>
-            <span aria-hidden="true" className={`text-right text-[12px] font-semibold tabular-nums ${limit.tone === 'normal' ? 'text-ink-100' : toneText[limit.tone]}`}>{`${Math.round(limit.usedPercent)}%`}</span>
-          </li>
-        ))}
-      </ul>
-      <ResetLine limits={usage.limits} />
-    </section>
   )
 }

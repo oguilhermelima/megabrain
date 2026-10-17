@@ -1,8 +1,5 @@
-import { readingAge, staleNote, type ProviderUsage } from '@/chat/composer-status'
-
 // The sidebar's usage readout: the order the person put the providers in and the ones they took off
-// the strip, saved through `megabrain settings set usage-order`, and what each provider's card says of
-// its reading. The order names providers, so one without a reading today keeps its place for when it
+// the strip, saved through `megabrain settings set usage-order`. The order names providers, so one without a reading today keeps its place for when it
 // has one again.
 
 export interface UsageOrder {
@@ -62,12 +59,4 @@ export function moveUsage(saved: UsageOrder, usage: { agent: string }[], agent: 
 export function toggleUsageHidden(saved: UsageOrder, agent: string): UsageOrder {
   const hidden = saved.hidden.includes(agent) ? saved.hidden.filter((name) => name !== agent) : [...saved.hidden, agent]
   return { ...saved, hidden }
-}
-
-/** The quiet chip beside a provider's name: how old its reading is, or, when the CLI shows its last good one, why and when it retries. */
-export function usageChip(usage: ProviderUsage, now: Date = new Date()): { text: string; stale: boolean } | null {
-  const note = staleNote(usage.stale, now)
-  if (note !== null) return { text: note, stale: true }
-  const age = readingAge(usage.fetchedAt, now)
-  return age === null ? null : { text: age, stale: false }
 }

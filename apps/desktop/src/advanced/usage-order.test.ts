@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { UsageReading } from '@/api/schema'
 import { providerUsage } from '@/chat/composer-status'
-import { arrangeUsage, moveUsage, noUsageOrder, parseUsageOrder, serialiseUsageOrder, toggleUsageHidden, usageChip, type UsageOrder } from '@/advanced/usage-order'
+import { arrangeUsage, moveUsage, noUsageOrder, parseUsageOrder, serialiseUsageOrder, toggleUsageHidden, type UsageOrder } from '@/advanced/usage-order'
 
 const reading = (provider: string, usedPercent: number, extra: Partial<UsageReading> = {}): UsageReading => ({
   provider,
@@ -76,25 +76,5 @@ describe('toggleUsageHidden', () => {
     const hidden = toggleUsageHidden(saved, 'codex')
     expect(agents(arrangeUsage(usage, hidden).strip)).toEqual(['claude', 'agy', 'grok'])
     expect(agents(arrangeUsage(usage, toggleUsageHidden(hidden, 'codex')).strip)).toEqual(['claude', 'codex', 'agy', 'grok'])
-  })
-})
-
-describe('usageChip', () => {
-  const now = new Date(1_000 * 1000 + 5 * 60_000)
-
-  test('a current reading shows its age, quietly', () => {
-    const [item] = providerUsage([reading('codex', 10)])
-    expect(item === undefined ? null : usageChip(item, now)).toEqual({ text: '5m ago', stale: false })
-  })
-
-  test('a stale reading says it is rate limited and when it retries, in amber', () => {
-    const retryAt = now.getTime() / 1000 + 4 * 60
-    const [item] = providerUsage([reading('claude', 26, { status: 'stale', reason: 'claude usage request failed: HTTP 429', retryAt })])
-    expect(item === undefined ? null : usageChip(item, now)).toEqual({ text: 'rate limited, retrying in 4m', stale: true })
-  })
-
-  test('nothing to say without a time or a lapse', () => {
-    const [item] = providerUsage([reading('agy', 0, { fetchedAt: null })])
-    expect(item === undefined ? null : usageChip(item, now)).toBeNull()
   })
 })

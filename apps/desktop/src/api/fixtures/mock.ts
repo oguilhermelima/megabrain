@@ -418,6 +418,9 @@ export const mockDiscovered: DiscoveredRepository[] = [
 
 export const mockImported = (path: string, remote: string | null): Repository => ({ name: path.split('/').at(-1) ?? path, path, remote, source: 'import', addedAt: ago(0) })
 
+// Readings taken a moment before the mock starts, so the popover shows them as fresh.
+const fresh = Math.floor(Date.now() / 1000) - 20
+
 export const mockSettings: Settings = {
   supervisor: { running: true, pid: 21194 },
   resources: { historyEnabled: false, policy: null },
@@ -425,15 +428,17 @@ export const mockSettings: Settings = {
     enabledProviders: ['codex', 'claude'],
     notice: { enabled: true, intervalSeconds: 1800 },
     readings: [
-      { provider: 'claude', window: '5h', status: 'current', usedPercent: 4, resetsAt: '1792090800', fetchedAt: 1792064494, reason: 'claude 5h window at 4 percent' },
-      { provider: 'claude', window: 'weekly', status: 'current', usedPercent: 88, resetsAt: '1792087200', fetchedAt: 1792064494, reason: 'claude weekly window at 88 percent' },
-      { provider: 'codex', window: '5h', status: 'current', usedPercent: 17, resetsAt: '1792082310', fetchedAt: 1792064494, reason: 'codex 5h window at 17.0 percent' },
-      { provider: 'codex', window: 'weekly', status: 'current', usedPercent: 66, resetsAt: '1792489191', fetchedAt: 1792064494, reason: 'codex weekly window at 66.0 percent' },
-      // The last good agy readings, kept while its provider answers 429.
-      { provider: 'agy', window: '5h', status: 'stale', usedPercent: 0, resetsAt: '1792082310', fetchedAt: 1792063894, reason: 'agy usage request failed: HTTP 429', retryAt: Math.floor(Date.now() / 1000) + 240 },
-      { provider: 'agy', window: 'weekly', status: 'stale', usedPercent: 41, resetsAt: '1792489191', fetchedAt: 1792063894, reason: 'agy usage request failed: HTTP 429', retryAt: Math.floor(Date.now() / 1000) + 240 },
-      { provider: 'grok', window: '5h', status: 'current', usedPercent: 12, resetsAt: '1792082310', fetchedAt: 1792064494, reason: 'grok 5h window at 12 percent' },
-      { provider: 'grok', window: 'weekly', status: 'unknown', usedPercent: null, resetsAt: null, fetchedAt: null, reason: 'grok weekly window unknown' },
+      { provider: 'claude', window: '5h', status: 'current', usedPercent: 4, resetsAt: String(fresh + 3 * 3600 + 43 * 60), fetchedAt: fresh, reason: 'claude 5h window at 4 percent' },
+      { provider: 'claude', window: 'weekly', status: 'current', usedPercent: 88, resetsAt: String(fresh + 5 * 86_400), fetchedAt: fresh, reason: 'claude weekly window at 88 percent' },
+      { provider: 'codex', window: '5h', status: 'current', usedPercent: 17, resetsAt: String(fresh + 2 * 3600 + 28 * 60), fetchedAt: fresh - 2 * 3600, reason: 'codex 5h window at 17.0 percent' },
+      { provider: 'codex', window: 'weekly', status: 'current', usedPercent: 66, resetsAt: String(fresh + 4 * 86_400 + 14 * 3600), fetchedAt: fresh - 2 * 3600, reason: 'codex weekly window at 66.0 percent' },
+      // agy counts its own models and the others in separate pools.
+      { provider: 'agy', window: '5h', bucket: 'Gemini Models', status: 'current', usedPercent: 7, resetsAt: String(fresh + 2 * 3600 + 28 * 60), fetchedAt: fresh, reason: 'agy 5h window (Gemini Models) at 7 percent', source: 'live' },
+      { provider: 'agy', window: 'weekly', bucket: 'Gemini Models', status: 'current', usedPercent: 3, resetsAt: String(fresh + 4 * 86_400 + 14 * 3600), fetchedAt: fresh, reason: 'agy weekly window (Gemini Models) at 3 percent', source: 'live' },
+      { provider: 'agy', window: '5h', bucket: 'Claude and GPT models', status: 'current', usedPercent: 46, resetsAt: String(fresh + 2 * 3600 + 28 * 60), fetchedAt: fresh, reason: 'agy 5h window (Claude and GPT models) at 46 percent', source: 'live' },
+      { provider: 'agy', window: 'weekly', bucket: 'Claude and GPT models', status: 'current', usedPercent: 18, resetsAt: String(fresh + 4 * 86_400 + 14 * 3600), fetchedAt: fresh, reason: 'agy weekly window (Claude and GPT models) at 18 percent', source: 'live' },
+      // The last good grok reading, kept while its sign-in has expired.
+      { provider: 'grok', window: 'weekly', bucket: 'default', status: 'stale', usedPercent: 81, resetsAt: String(fresh + 30 * 3600), fetchedAt: fresh - 26 * 3600, reason: 'grok weekly window is stale (sign-in expired)', source: 'cache', stale: true, staleReason: 'sign-in expired' },
     ],
   },
   chains: [

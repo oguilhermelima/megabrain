@@ -7,7 +7,8 @@ import type { Settings, UsageReading } from '@/api/schema'
  */
 export function keepKnownReadings(previous: Settings | null, next: Settings): Settings {
   if (previous === null) return next
-  const key = (reading: UsageReading) => `${reading.provider}:${reading.window}`
+  // A provider with several pools of models (agy) has a reading per pool for each window.
+  const key = (reading: UsageReading) => `${reading.provider}:${reading.bucket ?? 'default'}:${reading.window}`
   const known = new Map(previous.limits.readings.filter((reading) => reading.usedPercent !== null).map((reading) => [key(reading), reading]))
   const asStale = (reading: UsageReading): UsageReading => (reading.status === 'current' ? { ...reading, status: 'stale' } : reading)
   const readings = next.limits.readings.map((reading) => {

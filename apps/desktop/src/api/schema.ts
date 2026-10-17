@@ -198,6 +198,13 @@ export const usageReadingSchema = z.looseObject({
   reason: z.string(),
   /** Unix seconds of the next live attempt, when the status is stale; absent from an older CLI. */
   retryAt: z.number().nullable().optional(),
+  /** The pool of models the window counts ("Gemini Models"); "default" or absent when the provider has one, null when it could not be read. */
+  bucket: z.string().nullable().optional(),
+  /** Where the reading came from: disk, cache or live. */
+  source: z.string().optional(),
+  /** Set when the value is the last one known rather than a current reading, with why. */
+  stale: z.boolean().optional(),
+  staleReason: z.string().optional(),
 })
 export const settingsSchema = z.looseObject({
   /** Engine for embedded terminals; absent means native. */
