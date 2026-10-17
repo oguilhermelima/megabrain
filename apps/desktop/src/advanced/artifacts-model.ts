@@ -1,6 +1,7 @@
 import type { Artifact, ArtifactContent, ArtifactKind } from '@/api/schema'
 import type { WidthStorage } from '@/lib/panel-width'
 import { rememberedTabs } from '@/lib/remembered-tabs'
+import { revisionEntries, type RevisionEntry } from '@/native-chat/chat-artifacts'
 import { itemKey, parseItem } from '@/panes/pane-model'
 
 // The Artifacts page: the diagrams, plans and docs agents filed, by project and kind, as `artifact list`
@@ -90,6 +91,17 @@ export function revisionRows(artifact: Pick<ArtifactContent, 'revision' | 'title
   const earlier = [...(artifact.revisions ?? [])].reverse().map((entry): RevisionRow => ({ revision: entry.revision, title: entry.title, at: entry.updatedAt, replacedAt: entry.replacedAt, current: false }))
   return [{ revision: artifact.revision, title: artifact.title, at: artifact.updatedAt, replacedAt: null, current: true }, ...earlier]
 }
+
+/** The top bar's revision picker over one artifact, as the chat's panel lists versions: newest first, numbered oldest 1. */
+export const artifactRevisionEntries = (artifact: Pick<ArtifactContent, 'id' | 'revision' | 'title' | 'updatedAt' | 'revisions'>): RevisionEntry[] =>
+  revisionEntries([artifact], new Map([[artifact.id, artifact.revisions ?? []]]))
+
+/** What the top bar shows of the picked artifact: the tab chosen on it (null shows Preview) and the version picked (null is the latest). */
+export type ArtifactView = { id: string | null; tab: ArtifactTab | null; pick: string | null }
+
+/** The view kept while the same artifact shows; another opens on its remembered tab at its latest version. */
+export const artifactView = (kept: ArtifactView, id: string | null, remembered: (id: string) => ArtifactTab | null): ArtifactView =>
+  kept.id === id ? kept : { id, tab: id === null ? null : remembered(id), pick: null }
 
 /** The artifacts filed under a topic, newest first. */
 export const artifactsForTopic = (artifacts: readonly Artifact[], topic: string): Artifact[] => artifacts.filter((artifact) => artifact.topics.includes(topic)).sort(newestFirst)

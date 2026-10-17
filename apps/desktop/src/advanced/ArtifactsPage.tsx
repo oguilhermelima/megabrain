@@ -11,7 +11,7 @@ import { column, useRead } from '@/advanced/knowledge-parts'
 import { displayName } from '@/advanced/appearance-model'
 import { relativeAge } from '@/advanced/projects-model'
 import { ArtifactFrame } from '@/advanced/ArtifactFrame'
-import { artifactKindLabel, artifactKinds, artifactOfItem, artifactTabs, filterArtifactProject, groupArtifacts, newestArtifact, readArtifactTab, revisionRows, shownArtifactProject, shownArtifactTab, writeArtifactTab, type ArtifactProject, type ArtifactTab } from '@/advanced/artifacts-model'
+import { artifactKindLabel, artifactKinds, artifactOfItem, artifactRevisionEntries, artifactTabs, artifactView, filterArtifactProject, groupArtifacts, newestArtifact, readArtifactTab, revisionRows, shownArtifactProject, shownArtifactTab, writeArtifactTab, type ArtifactProject, type ArtifactTab, type ArtifactView } from '@/advanced/artifacts-model'
 import { MarkdownText } from '@/chat/markdown'
 import { Collapse } from '@/components/Collapse'
 import { SegmentedTabs } from '@/components/SegmentedTabs'
@@ -20,13 +20,18 @@ import { ErrorNote } from '@/components/ui'
 import { useNow } from '@/github/parts'
 import { projectsPolicy } from '@/lib/poll-model'
 import { usePoll } from '@/lib/usePoll'
+import { revisionRead, revisionView } from '@/native-chat/chat-artifacts'
+import { OldRevisionNote, RevisionPicker } from '@/native-chat/RevisionPicker'
 
 // The Artifacts page, the diagrams, plans and docs agents filed with `megabrain artifact`, in the
 // Knowledge page's shell and pattern (WikiShell): one project at a time, its artifacts by kind in a
 // panel on the right, and beside it a top bar with the project switcher and a search on titles over
-// the picked artifact. The artifact reads in tabs (artifacts-model.ts): Preview renders it, Markdown
-// in the app's renderer and HTML in a sandboxed frame that fills the column; Details says what it is,
-// where it came from and its versions; Source shows its raw text.
+// the picked artifact. The artifact carries its own title, so the page draws none: the bar holds its
+// tabs (artifacts-model.ts) and its revision picker, the chat panel's (native-chat/RevisionPicker).
+// Preview renders it, HTML in a sandboxed frame filling everything under the bar, Markdown in the
+// app's renderer in the reading column; Details says what it is, where it came from and its versions;
+// Source shows its raw text. An earlier revision reads in Preview and Source under a note; Details
+// keeps telling of the latest.
 
 /**
  * What the page had when it last showed. Its item changes with every artifact picked, which mounts
@@ -58,8 +63,13 @@ function useArtifacts() {
 }
 
 /** One artifact's content; `version` changes when the list sees a newer revision, which reads it again. */
-function useArtifact(id: string, version: string) {
-  return useRead(`${id}\n${version}`, (key) => api.artifact(key.slice(0, key.indexOf('\n'))))
+function useArtifact(id: string | null, version: string) {
+  return useRead(id === null ? null : `${id}\n${version}`, (key) => api.artifact(key.slice(0, key.indexOf('\n'))))
+}
+
+/** An earlier revision's content, read while one is picked. */
+function useEarlierRevision(id: string | null, revision: number | undefined) {
+  return useRead(id === null || revision === undefined ? null : `${id}\n${revision}`, (key) => api.artifact(key.slice(0, key.indexOf('\n')), Number(key.slice(key.indexOf('\n') + 1))))
 }
 
 function NavArtifact({ artifact, selected, now, onPick }: { artifact: Artifact; selected: boolean; now: number; onPick: (artifact: Artifact) => void }) {
@@ -232,39 +242,26 @@ function Details({ artifact, listed, chats, now, onOpenChat, onOpenTopic }: { ar
 
 const browserStorage = () => localStorage
 
-function ArtifactTabs({ artifact, listed, chats, now, onOpenChat, onOpenTopic }: { artifact: ArtifactContent; listed: Project | undefined; chats: NativeChat[]; now: number; onOpenChat: (chat: NativeChat) => void; onOpenTopic: (repo: string, topic: string) => void }) {
-  const [chosen, setChosen] = useState<ArtifactTab | null>(() => readArtifactTab(browserStorage, artifact.id))
-  const tabs = artifactTabs(artifact)
-  const shown = shownArtifactTab(tabs, chosen)
-  const segments = tabs.map(({ tab, label, count }) => ({ view: tab, label, enabled: true, title: label, badge: count === null ? null : String(count) }))
-  const header = (
-    <header className="space-y-5">
-      <h2 className="text-[28px] leading-tight font-semibold tracking-[-0.02em] text-ink-100">{artifact.title}</h2>
-      <SegmentedTabs label="Artifact" segments={segments} shown={shown} onSelect={(tab) => setChosen(writeArtifactTab(browserStorage, artifact.id, tab))} />
-    </header>
-  )
-  // A rendered HTML artifact takes the height the header leaves, and its frame scrolls on its own.
-  if (shown === 'preview' && artifact.format === 'html') {
+/** The picked tab's panel for a version: the rendered artifact, its facts, or its raw text. */
+function ArtifactBody({ tab, artifact, details }: { tab: ArtifactTab; artifact: ArtifactContent; details: ReactNode }) {
+  // A rendered HTML artifact takes all the room under the bar, and its frame scrolls on its own.
+  if (tab === 'preview' && artifact.format === 'html') {
     return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className={`${column} shrink-0 pb-6`}>{header}</div>
-        <div role="tabpanel" aria-label="Preview" className="min-h-0 flex-1 px-6 pb-6">
-          <ArtifactFrame title={artifact.title} html={artifact.content} className="h-full w-full rounded-[14px] border border-white/[0.07] bg-white" />
-        </div>
+      <div role="tabpanel" aria-label="Preview" className="h-full">
+        <ArtifactFrame title={artifact.title} html={artifact.content} className="h-full w-full" />
       </div>
     )
   }
   return (
     <div className="h-full overflow-y-auto">
-      <div className={`${column} space-y-8`}>
-        {header}
-        {shown === 'preview' && (
+      <div className={column}>
+        {tab === 'preview' && (
           <div role="tabpanel" aria-label="Preview">
             <MarkdownText text={artifact.content} elements={documentElements} className="space-y-3 text-[14.5px] leading-relaxed text-ink-200" />
           </div>
         )}
-        {shown === 'details' && <Details artifact={artifact} listed={listed} chats={chats} now={now} onOpenChat={onOpenChat} onOpenTopic={onOpenTopic} />}
-        {shown === 'source' && (
+        {tab === 'details' && details}
+        {tab === 'source' && (
           <div role="tabpanel" aria-label="Source">
             <pre className="overflow-x-auto rounded-[20px] border border-white/[0.07] bg-ink-900/60 px-5 py-4 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink-200 select-text [overflow-wrap:anywhere]">{artifact.content}</pre>
           </div>
@@ -272,14 +269,6 @@ function ArtifactTabs({ artifact, listed, chats, now, onOpenChat, onOpenTopic }:
       </div>
     </div>
   )
-}
-
-function ArtifactReading({ id, version, ...rest }: { id: string; version: string; listed: Project | undefined; chats: NativeChat[]; now: number; onOpenChat: (chat: NativeChat) => void; onOpenTopic: (repo: string, topic: string) => void }) {
-  const load = useArtifact(id, version)
-  if (load.state !== 'ready') {
-    return <div className={column}>{load.state === 'loading' ? <TextSkeleton lines={8} /> : <ErrorNote error={load.error} />}</div>
-  }
-  return <ArtifactTabs artifact={load.value} {...rest} />
 }
 
 export function ArtifactsPage({
@@ -323,6 +312,18 @@ export function ArtifactsPage({
   // The artifact picked, while the list has not answered or still has it; else the project's newest.
   const selectedId = (picked !== null && (list === null || projectArtifacts.some((artifact) => artifact.id === picked)) ? picked : null) ?? (project === null ? null : newestArtifact([project])?.id) ?? null
   const selected = projectArtifacts.find((artifact) => artifact.id === selectedId)
+  // The tab and version the bar shows for the picked artifact; another artifact starts from its remembered tab, at its latest.
+  const [kept, setKept] = useState<ArtifactView>({ id: null, tab: null, pick: null })
+  const view = artifactView(kept, selectedId, (artifact) => readArtifactTab(browserStorage, artifact))
+  const latest = useArtifact(selectedId, selected?.updatedAt ?? '')
+  const ready = latest.state === 'ready' ? latest.value : null
+  const entries = ready === null ? [] : artifactRevisionEntries(ready)
+  const revisions = revisionView(entries, view.pick)
+  const old = revisions?.old === true ? revisions : null
+  const earlier = useEarlierRevision(selectedId, old === null ? undefined : revisionRead(old.shown).revision)
+  // Tabs come from the listed artifact, so they show before its content has read.
+  const tabs = selectedId === null ? null : artifactTabs(selected ?? ready ?? { revision: 1 })
+  const tab = shownArtifactTab(tabs ?? [], view.tab)
   const shown = project === null ? null : filterArtifactProject(project, query)
   const searching = query.trim() !== ''
   const none = list !== null && list.length === 0
@@ -346,10 +347,17 @@ export function ArtifactsPage({
       )
     }
     if (selectedId === null) return <div className={column}>{error === null ? <TextSkeleton lines={8} /> : <ErrorNote error={error} />}</div>
-    return <ArtifactReading key={selectedId} id={selectedId} version={selected?.updatedAt ?? ''} listed={project === null ? undefined : listed.get(project.project)} chats={chats} now={now} onOpenChat={onOpenChat} onOpenTopic={onOpenTopic} />
+    // Details always tells of the artifact as it is now; Preview and Source read the version picked.
+    const load = old !== null && tab !== 'details' ? earlier : latest
+    if (load.state !== 'ready' || ready === null) {
+      const failed = load.state === 'failed' ? load : latest.state === 'failed' ? latest : null
+      return <div className={column}>{failed === null ? <TextSkeleton lines={8} /> : <ErrorNote error={failed.error} />}</div>
+    }
+    const details = <Details artifact={ready} listed={project === null ? undefined : listed.get(project.project)} chats={chats} now={now} onOpenChat={onOpenChat} onOpenTopic={onOpenTopic} />
+    return <ArtifactBody tab={tab} artifact={load.value} details={details} />
   }
 
-  const crumb =
+  const switcher =
     project !== null && grouped !== null ? (
       <ProjectSwitcher name={nameOf(project)} path={project.project} listed={listed.get(project.project)} options={grouped.map((entry) => ({ label: nameOf(entry), title: entry.project, onSelect: () => pickProject(entry) }))} />
     ) : (
@@ -360,13 +368,27 @@ export function ArtifactsPage({
         <h1 className="truncate text-[14px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">Artifacts</h1>
       </span>
     )
+  const segments = tabs?.map(({ tab: entry, label, count }) => ({ view: entry, label, enabled: true, title: label, badge: count === null ? null : String(count) }))
+  const crumb = (
+    <>
+      {switcher}
+      {selectedId !== null && segments !== undefined && <SegmentedTabs label="Artifact" segments={segments} shown={tab} onSelect={(next) => setKept({ ...view, tab: writeArtifactTab(browserStorage, selectedId, next) })} />}
+    </>
+  )
   const shownCount = shown?.kinds.reduce((sum, group) => sum + group.artifacts.length, 0) ?? null
 
   return (
     <WikiShell
       keys={wikiPanels.artifacts}
       crumb={crumb}
-      tools={project !== null && <BarSearch value={query} onChange={setQuery} label="Search artifacts" />}
+      tools={
+        project !== null && (
+          <>
+            {revisions !== null && entries.length > 1 && ready !== null && <RevisionPicker entries={entries} shown={revisions.shown} old={revisions.old} title={ready.title} now={now} size="bar" onPick={(pick) => setKept({ ...view, pick })} />}
+            <BarSearch value={query} onChange={setQuery} label="Search artifacts" />
+          </>
+        )
+      }
       panelLabel={none ? null : 'Artifacts'}
       panelCount={shownCount}
       panel={
@@ -384,7 +406,10 @@ export function ArtifactsPage({
         </>
       }
     >
-      <article className="h-full min-w-0">{reading()}</article>
+      <article className="flex h-full min-w-0 flex-col">
+        {old !== null && <OldRevisionNote shown={old.shown} latest={old.latest} onBack={() => setKept({ ...view, pick: null })} className="shrink-0 border-b pr-5 pl-6" />}
+        <div className="min-h-0 flex-1">{reading()}</div>
+      </article>
     </WikiShell>
   )
 }

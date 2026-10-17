@@ -3,7 +3,7 @@ import type { Artifact, ArtifactContent, ArtifactList } from '@/api/schema'
 // Artifacts for the mock, shaped like `artifact list|show --json`: two projects, a diagram (HTML with
 // inline SVG, fonts already stripped as the store saves them), plans and a doc in Markdown, and one
 // artifact filed under a topic so the topic strip has something to show; `show` names the versions
-// updates replaced.
+// updates replaced, and the content of those versions reads with `--revision`.
 
 const root = '/Users/operator/Workspaces'
 const state = '/Users/operator/.megabrain/knowledge'
@@ -149,4 +149,19 @@ export function mockArtifactList(options: { project?: string; topic?: string } =
   return { artifacts }
 }
 
-export const mockArtifact = (id: string): ArtifactContent | null => entries.find((entry) => entry.id === id) ?? null
+/** The content of the versions updates replaced, by artifact and number. */
+const earlier: Record<string, Record<number, string>> = {
+  'art-20261017-qa1newer': { 1: qaBatch(3, 5), 2: qaBatch(4, 7) },
+  'art-20261017-qa0older': { 1: qaBatch(1, 0) },
+  'art-20261017-a1b2c3d4': { 1: pipeline.replace('Knowledge pipeline', 'Knowledge flow'), 2: pipeline.replace('</body>', '<p>Draft</p></body>') },
+  'art-20261015-5e4d3c2b': { 1: offlineDoc.replace(' 30 days', ' 14 days') },
+}
+
+/** The artifact with its current content, or the revision named as `show --revision` returns it; null for one not kept. */
+export function mockArtifact(id: string, revision?: number): ArtifactContent | null {
+  const entry = entries.find((candidate) => candidate.id === id)
+  if (entry === undefined || revision === undefined || revision === entry.revision) return entry ?? null
+  const listed = entry.revisions?.find((candidate) => candidate.revision === revision)
+  const content = earlier[id]?.[revision]
+  return listed === undefined || content === undefined ? null : { ...entry, title: listed.title, updatedAt: listed.updatedAt, revision, content }
+}

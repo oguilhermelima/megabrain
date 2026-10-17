@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Artifact, ArtifactContent } from '@/api/schema'
-import { artifactFrameCsp, artifactFrameDocument, artifactOfItem, artifactsForTopic, artifactsItem, artifactsItemIn, artifactTabs, artifactTabsKey, filterArtifactProject, groupArtifacts, newestArtifact, readArtifactTab, revisionRows, shownArtifactProject, shownArtifactTab, writeArtifactTab } from '@/advanced/artifacts-model'
+import { artifactFrameCsp, artifactFrameDocument, artifactOfItem, artifactRevisionEntries, artifactsForTopic, artifactsItem, artifactsItemIn, artifactTabs, artifactTabsKey, artifactView, filterArtifactProject, groupArtifacts, newestArtifact, readArtifactTab, revisionRows, shownArtifactProject, shownArtifactTab, writeArtifactTab } from '@/advanced/artifacts-model'
 import type { WidthStorage } from '@/lib/panel-width'
 import { itemKey, parseItem } from '@/panes/pane-model'
 
@@ -216,5 +216,47 @@ describe('revisionRows', () => {
 
   test('a CLI that lists no revisions leaves the current version alone', () => {
     expect(revisionRows(content(2)).map((row) => row.revision)).toEqual([2])
+  })
+})
+
+describe('the revision picker in the top bar', () => {
+  const twice = content(3, [
+    { revision: 1, title: 'Plan v1', updatedAt: '2026-10-15T10:00:00.000Z', replacedAt: '2026-10-16T10:00:00.000Z' },
+    { revision: 2, title: 'Plan v2', updatedAt: '2026-10-16T10:00:00.000Z', replacedAt: '2026-10-17T12:00:00.000Z' },
+  ])
+
+  test('every version newest first, numbered oldest 1, only the newest current', () => {
+    expect(artifactRevisionEntries(twice).map(({ key, number, revision, title, at, current }) => ({ key, number, revision, title, at, current }))).toEqual([
+      { key: 'art-1#3', number: 3, revision: 3, title: 'Plan v3', at: '2026-10-17T12:00:00.000Z', current: true },
+      { key: 'art-1#2', number: 2, revision: 2, title: 'Plan v2', at: '2026-10-16T10:00:00.000Z', current: false },
+      { key: 'art-1#1', number: 1, revision: 1, title: 'Plan v1', at: '2026-10-15T10:00:00.000Z', current: false },
+    ])
+  })
+
+  test('a CLI that lists no revisions gives the current version alone', () => {
+    expect(artifactRevisionEntries(content(2)).map((entry) => [entry.revision, entry.current])).toEqual([[2, true]])
+  })
+})
+
+describe('the tab and version the top bar shows', () => {
+  const remembered = (tabs: Record<string, 'preview' | 'details' | 'source'>) => (id: string) => tabs[id] ?? null
+
+  test('the same artifact keeps the tab and version picked on it', () => {
+    const kept = { id: 'art-1', tab: 'source' as const, pick: 'art-1#1' }
+    expect(artifactView(kept, 'art-1', remembered({ 'art-1': 'details' }))).toBe(kept)
+  })
+
+  test('another artifact opens on its remembered tab at its latest version', () => {
+    expect(artifactView({ id: 'art-1', tab: 'source', pick: 'art-1#1' }, 'art-2', remembered({ 'art-2': 'details' }))).toEqual({ id: 'art-2', tab: 'details', pick: null })
+  })
+
+  test('an artifact never read opens with no tab chosen, which shows Preview', () => {
+    const view = artifactView({ id: 'art-1', tab: 'source', pick: null }, 'art-2', remembered({}))
+    expect(view).toEqual({ id: 'art-2', tab: null, pick: null })
+    expect(shownArtifactTab(artifactTabs(content(1)), view.tab)).toBe('preview')
+  })
+
+  test('no artifact picked yet keeps nothing', () => {
+    expect(artifactView({ id: 'art-1', tab: 'source', pick: 'art-1#1' }, null, remembered({ 'art-1': 'source' }))).toEqual({ id: null, tab: null, pick: null })
   })
 })

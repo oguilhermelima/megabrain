@@ -60,7 +60,7 @@ export type RevisionEntry = { key: string; artifactId: string; revision: number 
  * The versions of the artifacts sharing a title, newest first: each one's current version and the
  * earlier ones `artifact show` listed for it (none for a source that keeps none), in time order.
  */
-export function revisionEntries(members: readonly ChatArtifact[], earlier: ReadonlyMap<string, readonly ArtifactRevision[]>): RevisionEntry[] {
+export function revisionEntries(members: readonly Pick<ChatArtifact, 'id' | 'revision' | 'title' | 'updatedAt'>[], earlier: ReadonlyMap<string, readonly ArtifactRevision[]>): RevisionEntry[] {
   const versions = members.flatMap((member) => [
     { artifactId: member.id, revision: member.revision, title: member.title, at: member.updatedAt, current: true },
     ...(earlier.get(member.id) ?? []).filter((entry) => entry.revision !== member.revision).map((entry) => ({ artifactId: member.id, revision: entry.revision, title: entry.title, at: entry.updatedAt, current: false })),

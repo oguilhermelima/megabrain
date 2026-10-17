@@ -253,8 +253,8 @@ export interface DesktopApi {
   knowledgeTranscript(chatId: string): Promise<KnowledgeTranscript>
   /** Artifacts newest change first, of one project (its path) or topic (`artifact list --json`). */
   artifacts(options?: { project?: string; topic?: string }): Promise<ArtifactList>
-  /** One artifact with its content and the revisions its updates replaced (`artifact show <id> --json`). */
-  artifact(id: string): Promise<ArtifactContent>
+  /** One artifact with its content, or an earlier revision's, and the revisions its updates replaced (`artifact show <id> [--revision <n>] --json`). */
+  artifact(id: string, revision?: number): Promise<ArtifactContent>
   /** A native chat's artifacts, newest change first (`chat artifacts <chat-id> --json`). */
   chatArtifacts(chatId: string): Promise<ChatArtifactList>
   /** One of a chat's artifacts with its content, or an earlier revision's (`chat artifact <chat-id> <artifact-id> [--revision <n>] --json`). */

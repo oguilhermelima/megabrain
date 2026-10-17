@@ -405,9 +405,9 @@ export function createMockApi(): DesktopApi {
       await wait(200)
       return mockArtifactList(options)
     },
-    artifact: async (id) => {
-      const found = mockArtifact(id)
-      if (found === null) throw new CliError(`unknown artifact: ${id}`, 1)
+    artifact: async (id, revision) => {
+      const found = mockArtifact(id, revision)
+      if (found === null) throw new CliError(revision === undefined ? `unknown artifact: ${id}` : `unknown artifact revision ${revision} for ${id}`, 1)
       return found
     },
     chatArtifacts: async (chatId) => {

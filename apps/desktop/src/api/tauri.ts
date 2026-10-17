@@ -369,7 +369,7 @@ export function createTauriApi(): DesktopApi {
     knowledgeTopic: (id) => cliJson(['knowledge', 'show', id, '--json'], knowledgeTopicSchema),
     knowledgeTranscript: (chatId) => cliJson(['knowledge', 'transcript', chatId, '--json'], knowledgeTranscriptSchema),
     artifacts: (options = {}) => cliJson(['artifact', 'list', ...(options.project === undefined ? [] : ['--project', options.project]), ...(options.topic === undefined ? [] : ['--topic', options.topic]), '--json'], artifactListSchema),
-    artifact: (id) => cliJson(['artifact', 'show', id, '--json'], artifactContentSchema),
+    artifact: (id, revision) => cliJson(['artifact', 'show', id, ...(revision === undefined ? [] : ['--revision', String(revision)]), '--json'], artifactContentSchema),
     chatArtifacts: (chatId) => cliJson(['chat', 'artifacts', chatId, '--json'], chatArtifactListSchema),
     chatArtifact: (chatId, artifactId, revision) => cliJson(['chat', 'artifact', chatId, artifactId, ...(revision === undefined ? [] : ['--revision', String(revision)]), '--json'], chatArtifactContentSchema),
     setChatModel: async (chatId, model, effort) => void (await cliText(['chat', 'model', chatId, model, ...(effort === undefined ? [] : ['--effort', effort])])),

@@ -1,8 +1,7 @@
-import { forwardRef, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { ArtifactRevision, ChatArtifact, ChatArtifactContent, ChatArtifactSource } from '@/api/schema'
 import { ArtifactsIcon } from '@/advanced/chrome'
-import type { AnchorRect } from '@/advanced/menu-placement'
 import { ArtifactFrame } from '@/advanced/ArtifactFrame'
 import { documentElements } from '@/advanced/ArtifactsPage'
 import { relativeAge } from '@/advanced/projects-model'
@@ -10,14 +9,12 @@ import { MarkdownText } from '@/chat/markdown'
 import { agentColor } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
 import { MenuIconGlyph } from '@/components/menu-icons'
-import { menuFocusStep } from '@/components/menu-model'
-import { Popover } from '@/components/Popover'
 import { ResizeHandle } from '@/components/ResizeHandle'
 import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { httpsUrl } from '@/lib/external'
-import { usePresence } from '@/lib/usePresence'
-import { artifactStamps, chatPanelLimits, pickRevision, readChatPanel, revisionEntries, revisionRead, revisionView, titleKey, writeChatPanel, type ArtifactChip, type ChatPanel, type RevisionEntry } from '@/native-chat/chat-artifacts'
+import { OldRevisionNote, RevisionPicker, updated } from '@/native-chat/RevisionPicker'
+import { artifactStamps, chatPanelLimits, readChatPanel, revisionEntries, revisionRead, revisionView, writeChatPanel, type ArtifactChip, type ChatPanel } from '@/native-chat/chat-artifacts'
 
 // A native chat's artifacts: the row of chips above the composer and the panel that opens one beside
 // the chat (chat-artifacts.ts holds the rules). The chat's follow says when they change; the row lists
@@ -195,10 +192,6 @@ function useFiledDetails(members: readonly ChatArtifact[], version: string): { r
 const headerButton =
   'grid size-7 shrink-0 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none'
 
-const updated = (at: string, now: number) => (relativeAge(at, now) === 'now' ? 'just now' : `${relativeAge(at, now)} ago`)
-
-const stampOf = (at: string) => new Date(at).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })
-
 function Body({ artifact, load, onOpenUrl }: { artifact: ChatArtifact; load: Loaded; onOpenUrl: (() => void) | null }): ReactNode {
   if (load.state === 'loading') return <div className="px-5 py-5"><TextSkeleton lines={6} /></div>
   if (load.state === 'failed') return <div className="px-5 py-5"><ErrorNote error={load.error} /></div>
@@ -226,83 +219,6 @@ function Body({ artifact, load, onOpenUrl }: { artifact: ChatArtifact; load: Loa
   if (artifact.format === 'html') return <div className="min-h-0 flex-1 p-3"><ArtifactFrame title={artifact.title} html={content} className="h-full w-full rounded-[12px] border border-white/[0.07] bg-white" /></div>
   if (artifact.format === 'markdown') return <MarkdownText text={content} elements={documentElements} className="space-y-3 px-6 py-5 text-[14px] leading-relaxed text-ink-200" />
   return <pre className="px-5 py-5 font-mono text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink-200 select-text">{content}</pre>
-}
-
-/** The revision picker's trigger: the version shown, of how many, a pill like the Artifacts page's project switcher. */
-const RevisionTrigger = forwardRef<HTMLButtonElement, { shown: RevisionEntry; total: number; old: boolean; open: boolean; onToggle: (anchor: AnchorRect) => void }>(function RevisionTrigger({ shown, total, old, open, onToggle }, ref) {
-  return (
-    <button
-      ref={ref}
-      type="button"
-      aria-haspopup="menu"
-      aria-expanded={open}
-      title={`Revision ${shown.number} of ${total}: pick another to read`}
-      onClick={(event) => {
-        const { left, top, right, bottom } = event.currentTarget.getBoundingClientRect()
-        onToggle({ left, top, right, bottom })
-      }}
-      className={`-my-0.5 ml-auto flex h-6 shrink-0 items-center gap-1 rounded-full pr-1.5 pl-2 text-[12px] font-medium tabular-nums transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
-        old ? 'bg-accent/[0.14] text-accent hover:bg-accent/[0.2]' : open ? 'bg-white/[0.08] text-ink-100' : 'text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'
-      }`}
-    >
-      Revision {shown.number} of {total}
-      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 opacity-70">
-        <path d="m5 6.5 3-3 3 3M5 9.5l3 3 3-3" />
-      </svg>
-    </button>
-  )
-})
-
-/** Every version of the artifact, newest first, each with when it was written; the one shown is checked. */
-function RevisionMenu({ entries, shown, title, now, anchor, leaving, trigger, onPick, onClose }: { entries: RevisionEntry[]; shown: RevisionEntry; title: string; now: number; anchor: AnchorRect; leaving: boolean; trigger: HTMLElement | null; onPick: (entry: RevisionEntry) => void; onClose: () => void }) {
-  // Up and down walk the versions, wrapping; Home and End jump.
-  const walk = (event: KeyboardEvent<HTMLDivElement>) => {
-    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitemradio"]')]
-    const next = menuFocusStep(items.length, items.indexOf(event.target as HTMLElement), event.key)
-    if (next === null) return
-    event.preventDefault()
-    items[next]?.focus()
-  }
-  return (
-    <Popover role="menu" focus='[aria-checked="true"]' className="max-h-[min(420px,calc(100vh-16px))] overflow-y-auto p-1.5" anchor={anchor} label="Revisions" leaving={leaving} onClose={onClose} trigger={trigger} gap={4}>
-      <div className="w-[268px] max-w-[calc(100vw-32px)]" onKeyDown={walk}>
-        <p className="px-2.5 pt-1.5 pb-1 text-[11px] font-medium tracking-[0.04em] text-ink-400 uppercase">Revisions</p>
-        {entries.map((entry, index) => {
-          const checked = entry === shown
-          const renamed = titleKey(entry.title) !== titleKey(title)
-          return (
-            <button
-              key={entry.key}
-              type="button"
-              role="menuitemradio"
-              aria-checked={checked}
-              title={`${entry.title}\n${new Date(entry.at).toLocaleString()}`}
-              onClick={() => onPick(entry)}
-              className={`flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left transition-colors duration-100 focus-visible:outline-none motion-reduce:transition-none ${checked ? 'bg-accent/[0.14] hover:bg-accent/[0.18] focus-visible:bg-accent/[0.2]' : 'hover:bg-white/[0.06] focus-visible:bg-white/[0.08]'}`}
-            >
-              <span className={`grid h-6 min-w-6 shrink-0 place-items-center rounded-full px-1.5 text-[11.5px] font-semibold tabular-nums ${index === 0 ? 'bg-white/[0.14] text-ink-100' : 'bg-white/[0.05] text-ink-400'}`}>{entry.number}</span>
-              <span className="min-w-0 flex-1">
-                <span className={`flex items-center gap-1.5 text-[13px] leading-5 ${checked ? 'font-semibold text-ink-100' : 'font-medium text-ink-200'}`}>
-                  <span className="truncate">{renamed ? entry.title : `Revision ${entry.number}`}</span>
-                  {index === 0 && <span className="shrink-0 rounded-full bg-white/[0.07] px-1.5 text-[10.5px] leading-[16px] font-medium text-ink-300">Latest</span>}
-                </span>
-                <span className="block truncate text-[11.5px] leading-4 text-ink-400 tabular-nums">
-                  {stampOf(entry.at)} · {updated(entry.at, now)}
-                </span>
-              </span>
-              <span aria-hidden="true" className={`grid size-5 shrink-0 place-items-center rounded-full ${checked ? 'bg-accent text-accent-ink' : ''}`}>
-                {checked && (
-                  <svg viewBox="0 0 24 24" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="m5 12.5 4.5 4.5L19 7.5" />
-                  </svg>
-                )}
-              </span>
-            </button>
-          )
-        })}
-      </div>
-    </Popover>
-  )
 }
 
 /**
@@ -342,10 +258,6 @@ export function ArtifactPanel({
   const artifact = members.find((member) => member.id === shown?.artifactId) ?? newest
   const read = shown === null ? { artifactId: newest.id, revision: undefined } : revisionRead(shown)
   const load = useArtifactContent(chatId, read.artifactId, read.revision, read.revision === undefined ? `${artifact.updatedAt}#${artifact.revision ?? ''}` : '')
-  const [menuAt, setMenuAt] = useState<AnchorRect | null>(null)
-  const menu = usePresence(menuAt)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const closeMenu = useRef(() => setMenuAt(null)).current
   const url = artifact.url === undefined ? null : httpsUrl(artifact.url)
   const openUrl = url === null ? null : () => void api.openUrl(url).catch(() => {})
   const scrolls = artifact.format === 'markdown' || artifact.format === 'text'
@@ -385,43 +297,11 @@ export function ArtifactPanel({
           <span className="truncate" title={sourceLabel(artifact.source)}>{filed.project ?? sourceLabel(artifact.source)}</span>
           <span aria-hidden="true" className="text-ink-500">·</span>
           <span title={new Date(at).toLocaleString()} className="shrink-0 tabular-nums">Updated {updated(at, now)}</span>
-          {view !== null && shown !== null && entries.length > 1 && (
-            <RevisionTrigger ref={trigger} shown={shown} total={entries.length} old={view.old} open={menuAt !== null} onToggle={(anchor) => setMenuAt((current) => (current === null ? anchor : null))} />
-          )}
+          {view !== null && shown !== null && entries.length > 1 && <RevisionPicker entries={entries} shown={shown} old={view.old} title={newest.title} now={now} size="inline" className="-my-0.5 ml-auto" onPick={setPick} />}
           {view !== null && shown !== null && entries.length === 1 && shown.revision !== null && <span className="ml-auto shrink-0 tabular-nums">Revision {shown.revision}</span>}
         </div>
-        {view?.old === true && shown !== null && (
-          <div role="status" className="flex items-center gap-2 border-t border-accent/20 bg-accent/[0.07] py-1.5 pr-2 pl-4 text-[12px]">
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-accent">
-              <circle cx="8" cy="8" r="5.75" />
-              <path d="M8 5v3.25l2 1.25" />
-            </svg>
-            <span className="min-w-0 flex-1 truncate text-ink-200">
-              Viewing revision {shown.number}, read-only. <span className="text-ink-400">Newest is {view.latest.number}.</span>
-            </span>
-            <button type="button" onClick={() => setPick(null)} className="h-6 shrink-0 rounded-full px-2.5 text-[12px] font-medium text-accent transition-colors duration-100 hover:bg-accent/[0.14] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 motion-reduce:transition-none">
-              Back to latest
-            </button>
-          </div>
-        )}
+        {view?.old === true && shown !== null && <OldRevisionNote shown={shown} latest={view.latest} onBack={() => setPick(null)} className="border-t pr-2 pl-4" />}
       </header>
-      {menu.shown !== null && shown !== null && (
-        <RevisionMenu
-          entries={entries}
-          shown={shown}
-          title={newest.title}
-          now={now}
-          anchor={menu.shown}
-          leaving={menu.leaving}
-          trigger={trigger.current}
-          onPick={(entry) => {
-            setPick(pickRevision(entries, entry.key))
-            setMenuAt(null)
-            trigger.current?.focus({ preventScroll: true })
-          }}
-          onClose={closeMenu}
-        />
-      )}
       <div className={`min-h-0 flex-1 overflow-y-auto ${scrolls ? '' : 'flex flex-col'}`}>
         <Body artifact={artifact} load={load} onOpenUrl={openUrl} />
       </div>
