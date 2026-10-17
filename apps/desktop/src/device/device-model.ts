@@ -1,4 +1,5 @@
 import type { BootedSimulator, MaestroEvent, MaestroFlow, MaestroRun, Simulator, SimulatorKind } from '@/api/schema'
+import { runPanelLimits, sidebarLimits } from '@/lib/panel-width'
 
 // The Device tab: a worktree's Maestro flows, an iOS simulator's screen and a run's steps as
 // `maestro run --json` prints them. The CLI says a step only once it finished; the step in progress
@@ -145,6 +146,8 @@ export interface OpenDevice {
   state: 'Booted' | 'Asleep'
   /** The worktree that claimed it; null when no worktree has, or megabrain put it to sleep. */
   worktree: string | null
+  /** The project the CLI says owns it, by path or name; absent or null when it does not say. */
+  project?: string | null
 }
 
 const byKindThenName = (a: { kind: SimulatorKind; name: string }, b: { kind: SimulatorKind; name: string }) => Number(a.kind === 'tv') - Number(b.kind === 'tv') || a.name.localeCompare(b.name)
@@ -159,10 +162,10 @@ export function runtimeLabel(runtime: string | null): string | null {
 }
 
 /** The sidebar's devices: the booted ones and the ones megabrain put to sleep, phones first, then by name. */
-export function openDevices(booted: readonly BootedSimulator[], available: readonly DeviceChoice[], asleep: readonly string[]): OpenDevice[] {
-  const open: OpenDevice[] = booted.filter((row) => row.state === 'Booted').map((row) => ({ udid: row.udid, name: row.name, runtime: row.runtime, kind: row.kind, state: 'Booted', worktree: row.worktree ?? null }))
+export function openDevices(booted: readonly (BootedSimulator & { project?: string | null })[], available: readonly DeviceChoice[], asleep: readonly string[]): OpenDevice[] {
+  const open: OpenDevice[] = booted.filter((row) => row.state === 'Booted').map((row) => ({ udid: row.udid, name: row.name, runtime: row.runtime, kind: row.kind, state: 'Booted', worktree: row.worktree ?? null, project: row.project ?? null }))
   for (const device of available) {
-    if (asleep.includes(device.udid) && !open.some((entry) => entry.udid === device.udid)) open.push({ udid: device.udid, name: device.name, runtime: null, kind: device.kind, state: 'Asleep', worktree: null })
+    if (asleep.includes(device.udid) && !open.some((entry) => entry.udid === device.udid)) open.push({ udid: device.udid, name: device.name, runtime: null, kind: device.kind, state: 'Asleep', worktree: null, project: null })
   }
   return open.sort(byKindThenName)
 }
@@ -190,55 +193,83 @@ export function afterRestart(open: readonly OpenDevice[], chosen: string | null,
   return { open: next, selected: selectDevice(next, chosen) }
 }
 
-/** A project as the sidebar's list has it: its name and its worktrees' paths and branches. */
+/** A project as the sidebar's list has it: its name, its main checkout and its worktrees' paths and branches. */
 export interface ProjectRef {
   name: string
+  path: string
   worktrees: readonly { path: string; branch: string | null }[]
 }
 
-/** Another worktree's devices, under its project's name and branch. */
-export interface OtherProject {
-  root: string
-  project: string
+/** A device another project owns, or none does, with the branch it is on when its worktree is known. */
+export interface ElsewhereDevice {
+  device: OpenDevice
   branch: string | null
-  devices: OpenDevice[]
+}
+
+/** The devices of one other project, or the ones no project owns (`assigned` false, titled Not assigned). */
+export interface ElsewhereGroup {
+  key: string
+  title: string
+  assigned: boolean
+  devices: ElsewhereDevice[]
 }
 
 export interface DeviceSections {
-  /** The devices this worktree owns and the unowned ones it may claim. */
+  /** The devices this project owns, from any of its worktrees. */
   mine: OpenDevice[]
-  /** The unowned among them: selecting one claims it. */
-  available: string[]
-  others: OtherProject[]
-  othersCount: number
+  elsewhere: ElsewhereGroup[]
+  elsewhereCount: number
 }
 
-const samePath = (a: string, b: string) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '')
+const trimPath = (path: string) => path.replace(/\/+$/, '')
+const samePath = (a: string, b: string) => trimPath(a) === trimPath(b)
+const folderName = (path: string) => trimPath(path).split('/').at(-1) ?? path
+const hasWorktree = (project: ProjectRef, path: string) => samePath(project.path, path) || project.worktrees.some((worktree) => samePath(worktree.path, path))
 
-/** The sidebar's split: this worktree's devices and the free ones, and the ones other worktrees own by project. */
+/**
+ * Who owns a device: the project the CLI reports, matched by path or name, else the one whose worktree
+ * claimed it; a project the list does not know keys by its own path. Null when nothing owns it.
+ */
+function ownerOf(device: OpenDevice, projects: readonly ProjectRef[]): { key: string; title: string } | null {
+  const reported = device.project ?? null
+  if (reported !== null) {
+    const known = projects.find((project) => samePath(project.path, reported) || project.name === reported)
+    return known === undefined ? { key: trimPath(reported), title: folderName(reported) } : { key: trimPath(known.path), title: known.name }
+  }
+  if (device.worktree === null) return null
+  const claimed = device.worktree
+  const known = projects.find((project) => hasWorktree(project, claimed))
+  return known === undefined ? { key: trimPath(claimed), title: folderName(claimed) } : { key: trimPath(known.path), title: known.name }
+}
+
+const notAssigned = 'Not assigned'
+
+/** The sidebar's split: the devices this worktree's project owns, and the rest by project, Not assigned last. */
 export function deviceSections(open: readonly OpenDevice[], root: string, projects: readonly ProjectRef[]): DeviceSections {
-  const mine = open.filter((device) => device.worktree === null || samePath(device.worktree, root))
-  const groups = new Map<string, OtherProject>()
+  const current = projects.find((project) => hasWorktree(project, root))
+  const here = trimPath(current?.path ?? root)
+  const mine: OpenDevice[] = []
+  const groups = new Map<string, ElsewhereGroup>()
   for (const device of open) {
-    if (device.worktree === null || samePath(device.worktree, root)) continue
-    const key = device.worktree.replace(/\/+$/, '')
-    const group = groups.get(key)
-    if (group !== undefined) {
-      group.devices.push(device)
+    const owner = ownerOf(device, projects)
+    if (owner?.key === here) {
+      mine.push(device)
       continue
     }
-    const project = projects.find((entry) => entry.worktrees.some((worktree) => samePath(worktree.path, key)))
-    const branch = project?.worktrees.find((worktree) => samePath(worktree.path, key))?.branch ?? null
-    groups.set(key, { root: key, project: project?.name ?? key.split('/').at(-1) ?? key, branch, devices: [device] })
+    const key = owner?.key ?? ''
+    const group = groups.get(key) ?? { key, title: owner?.title ?? notAssigned, assigned: owner !== null, devices: [] }
+    const worktree = device.worktree
+    const branch = worktree === null ? null : (projects.flatMap((project) => project.worktrees).find((entry) => samePath(entry.path, worktree))?.branch ?? null)
+    group.devices.push({ device, branch })
+    groups.set(key, group)
   }
-  const others = [...groups.values()].sort((a, b) => a.project.localeCompare(b.project) || (a.branch ?? '').localeCompare(b.branch ?? ''))
-  return { mine, available: mine.filter((device) => device.worktree === null).map((device) => device.udid), others, othersCount: others.reduce((sum, group) => sum + group.devices.length, 0) }
+  const elsewhere = [...groups.values()].sort((a, b) => Number(!a.assigned) - Number(!b.assigned) || a.title.localeCompare(b.title))
+  return { mine, elsewhere, elsewhereCount: elsewhere.reduce((sum, group) => sum + group.devices.length, 0) }
 }
 
-/** The indicator under the list; null when no other worktree owns a device. */
-export function othersLabel(count: number): string | null {
-  if (count === 0) return null
-  return count === 1 ? '1 running in another project' : `${count} running in other projects`
+/** The indicator under the list; null when every open device is this project's. */
+export function elsewhereLabel(count: number): string | null {
+  return count === 0 ? null : `${count} elsewhere`
 }
 
 /** A name being typed over a device's. */
@@ -263,21 +294,24 @@ export function afterRename(open: readonly OpenDevice[], udid: string, name: str
 /** Where the Device tab remembers whether each side panel is open (wiki-shell-model's readPanelOpen). */
 export const devicePanels = { devices: 'megabrain.device.devices.open', flows: 'megabrain.device.flows.open' } as const
 
+export type DevicePanel = keyof typeof devicePanels
+
+/** Where a panel is: beside the screen, over it, or folded to its toggle. */
+export type PanelPlace = 'side' | 'overlay' | 'hidden'
+
+/** The room each takes beside the others: the panels at their width, the screen at the least it needs. */
+export const deviceWidths = { devices: sidebarLimits.min, flows: runPanelLimits.min, screen: 360 } as const
+
 /**
- * Which panels show: side by side each as remembered; in the middle layout the devices sit in the flows'
- * column, so they go with it; stacked, both always, as nothing sits beside them to make room for.
+ * Where each panel goes in a Device tab `width` wide: the devices always at the left, the flows at the
+ * right, never merged. A panel the person keeps open sits beside the screen while there is room; the
+ * flows fold first, then the devices. One folded panel the person reopens (`peek`) overlays the screen.
  */
-export function panelsShown(layout: DeviceLayout, open: { devices: boolean; flows: boolean }): { devices: boolean; flows: boolean } {
-  if (layout === 'stack') return { devices: true, flows: true }
-  if (layout === 'split') return { devices: open.devices && open.flows, flows: open.flows }
-  return { ...open }
-}
-
-export type DeviceLayout = 'columns' | 'split' | 'stack'
-
-/** Devices, screen and the flows-and-run panel side by side when wide; the screen beside devices over the panel in the middle; one column below 720px. */
-export function deviceLayout(width: number): DeviceLayout {
-  return width >= 1080 ? 'columns' : width >= 720 ? 'split' : 'stack'
+export function panelPlaces(width: number, open: Record<DevicePanel, boolean>, peek: DevicePanel | null): Record<DevicePanel, PanelPlace> {
+  const devicesSide = open.devices && width >= deviceWidths.devices + deviceWidths.screen
+  const flowsSide = open.flows && width >= deviceWidths.flows + deviceWidths.screen + (devicesSide ? deviceWidths.devices : 0)
+  const place = (side: boolean, panel: DevicePanel): PanelPlace => (side ? 'side' : peek === panel ? 'overlay' : 'hidden')
+  return { devices: place(devicesSide, 'devices'), flows: place(flowsSide, 'flows') }
 }
 
 /** What the screen says about a simulator megabrain shut down when idle; null for any other. */

@@ -6,7 +6,7 @@ import { Collapse } from '@/components/Collapse'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { Popover } from '@/components/Popover'
 import { Spinner } from '@/components/ui'
-import { othersLabel, renameCommit, runtimeLabel, type DeviceChoice, type OpenDevice, type OtherProject, type RenameDraft } from '@/device/device-model'
+import { elsewhereLabel, renameCommit, runtimeLabel, type DeviceChoice, type ElsewhereDevice, type ElsewhereGroup, type OpenDevice, type RenameDraft } from '@/device/device-model'
 import { sidePanelBar, sidePanelButton, sidePanelGroup, sidePanelHeaderRow, sidePanelList, sidePanelNote, sidePanelRow, sidePanelSlot, sidePanelTitle, sidePanelTrailing } from '@/lib/side-panel'
 import { usePresence } from '@/lib/usePresence'
 
@@ -19,15 +19,14 @@ const busyLabel: Record<DeviceBusy, string> = { booting: 'Booting…', restartin
  * The Device tab's left panel, laid out as every support panel is (lib/side-panel): the open
  * simulators grouped as phones and TVs, each row a state dot, the name and the runtime; rename,
  * restart and shut down on hover or focus (a double-click on the name renames too: Enter saves, Escape
- * cancels); and a + that lists the simulators not open yet, to boot one. It lists
- * the worktree's own devices and the free ones (a ring for a dot: selecting one claims it); under the
- * list, the ones other worktrees own fold out by project, each claimable after a confirmation.
+ * cancels); and a + that lists the simulators not open yet, to boot one. It lists the devices of this
+ * worktree's project, from any of its worktrees; under the list, the rest fold out by project, the ones
+ * no project owns last as Not assigned, each one usable here after a confirmation.
  */
 export function DevicesSidebar({
   open,
-  available,
-  others,
-  othersCount,
+  elsewhere,
+  elsewhereCount,
   booting,
   error,
   loading,
@@ -43,12 +42,10 @@ export function DevicesSidebar({
   onRename,
   onHide,
 }: {
-  /** This worktree's devices and the free ones. */
+  /** The devices of this worktree's project. */
   open: OpenDevice[]
-  /** The free ones among them. */
-  available: string[]
-  others: OtherProject[]
-  othersCount: number
+  elsewhere: ElsewhereGroup[]
+  elsewhereCount: number
   /** Picked from the + and still booting: shown as rows until the booted list has them. */
   booting: DeviceChoice[]
   error: string | null
@@ -64,8 +61,7 @@ export function DevicesSidebar({
   onShutdown: (device: OpenDevice) => Promise<void>
   onClaim: (device: OpenDevice) => Promise<void>
   onRename: (device: OpenDevice, name: string) => void
-  /** Hides the panel; absent where it cannot hide. */
-  onHide?: () => void
+  onHide: () => void
 }) {
   const [picker, setPicker] = useState<AnchorRect | null>(null)
   const menu = usePresence(picker)
@@ -74,12 +70,12 @@ export function DevicesSidebar({
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
   const [othersOpen, setOthersOpen] = useState(false)
   const [draft, setDraft] = useState<RenameDraft>(null)
-  const othersText = othersLabel(othersCount)
+  const othersText = elsewhereLabel(elsewhereCount)
 
-  const askClaim = (device: OpenDevice, group: OtherProject) =>
+  const askClaim = ({ device, branch }: ElsewhereDevice, group: ElsewhereGroup) =>
     setConfirm({
       title: `Use ${device.name} here?`,
-      body: `It moves from ${group.project}${group.branch === null ? '' : ` · ${group.branch}`} to this worktree; a flow running on it there keeps going.`,
+      body: `${group.assigned ? `It moves from ${group.title}${branch === null ? '' : ` · ${branch}`} to this worktree; a flow running on it there keeps going.` : 'No project owns it yet; it becomes this worktree’s.'}${device.state === 'Asleep' ? ' It boots first.' : ''}`,
       action: 'Use here',
       tone: 'primary',
       run: () => onClaim(device),
@@ -114,11 +110,9 @@ export function DevicesSidebar({
           >
             <PlusIcon />
           </button>
-          {onHide !== undefined && (
-            <button type="button" onClick={onHide} aria-label="Hide devices" title="Hide devices" className={sidePanelButton}>
-              <PanelIcon />
-            </button>
-          )}
+          <button type="button" onClick={onHide} aria-label="Hide devices" title="Hide devices" className={sidePanelButton}>
+            <PanelIcon />
+          </button>
         </div>
       </div>
       <div style={{ scrollbarGutter: 'stable' }} className={sidePanelList}>
@@ -140,7 +134,7 @@ export function DevicesSidebar({
               </div>
               <div className="space-y-0.5 pt-0.5 pb-2">
                 {rows.map((device) => (
-                  <DeviceRow key={device.udid} device={device} free={available.includes(device.udid)} selected={device.udid === selected} locked={locked} busy={busy[device.udid] ?? null} onSelect={() => onSelect(device.udid)} onRestart={() => onRestart(device)} onShutdown={() => askShutdown(device)}
+                  <DeviceRow key={device.udid} device={device} selected={device.udid === selected} locked={locked} busy={busy[device.udid] ?? null} onSelect={() => onSelect(device.udid)} onRestart={() => onRestart(device)} onShutdown={() => askShutdown(device)}
                     draft={draft?.udid === device.udid ? draft.text : null}
                     onDraft={(text) => setDraft(text === null ? null : { udid: device.udid, text })}
                     onCommit={() => {
@@ -173,19 +167,18 @@ export function DevicesSidebar({
           </button>
           <Collapse open={othersOpen}>
             <div className="max-h-[40vh] space-y-1 overflow-y-auto pb-1">
-              {others.map((group) => (
-                <section key={group.root} aria-label={`${group.project}${group.branch === null ? '' : ` ${group.branch}`}`}>
-                  <p title={group.root} className="truncate px-2.5 pt-1.5 pb-0.5 text-[11.5px] text-ink-500">
-                    <span className="font-medium text-ink-400">{group.project}</span>
-                    {group.branch !== null && ` · ${group.branch}`}
+              {elsewhere.map((group) => (
+                <section key={group.key} aria-label={group.title}>
+                  <p title={group.assigned ? group.key : undefined} className="truncate px-2.5 pt-1.5 pb-0.5 text-[11.5px] font-medium text-ink-400">
+                    {group.title}
                   </p>
-                  {group.devices.map((device) => (
-                    <button key={device.udid} type="button" onClick={() => askClaim(device, group)} title={`Use ${device.name} in this worktree\n${device.udid}`} className={sidePanelRow(false)}>
+                  {group.devices.map((entry) => (
+                    <button key={entry.device.udid} type="button" onClick={() => askClaim(entry, group)} title={`Use ${entry.device.name} in this worktree${entry.branch === null ? '' : `\nOn ${entry.branch}`}${entry.device.state === 'Asleep' ? '\nAsleep' : ''}\n${entry.device.udid}`} className={sidePanelRow(false)}>
                       <span aria-hidden="true" className={sidePanelSlot} />
                       <span aria-hidden="true" className={sidePanelSlot}>
-                        {device.kind === 'tv' ? <TvIcon /> : <PhoneIcon />}
+                        {entry.device.kind === 'tv' ? <TvIcon /> : <PhoneIcon />}
                       </span>
-                      <span className="min-w-0 flex-1 truncate">{device.name}</span>
+                      <span className="min-w-0 flex-1 truncate">{entry.device.name}</span>
                       <span className={sidePanelTrailing}>Use here</span>
                     </button>
                   ))}
@@ -213,7 +206,6 @@ export function DevicesSidebar({
 
 function DeviceRow({
   device,
-  free,
   selected,
   locked,
   busy,
@@ -225,7 +217,6 @@ function DeviceRow({
   onCommit,
 }: {
   device: OpenDevice
-  free: boolean
   selected: boolean
   locked: boolean
   busy: DeviceBusy | null
@@ -242,8 +233,7 @@ function DeviceRow({
   // The group says phone or TV, so the row keeps the runtime's version and leaves the name its room.
   const runtime = runtimeLabel(device.runtime)
   const detail = busy !== null ? busyLabel[busy] : asleep ? 'Asleep' : (runtime?.replace(/^(iOS|tvOS)\s+/, '') ?? '')
-  // A free device's dot is a ring: no worktree owns it yet.
-  const dot = busy !== null ? 'animate-pulse bg-warn' : asleep ? 'bg-ink-500' : free ? 'border-[1.5px] border-ok' : 'bg-ok'
+  const dot = busy !== null ? 'animate-pulse bg-warn' : asleep ? 'bg-ink-500' : 'bg-ok'
   if (draft !== null)
     return (
       <div className={sidePanelRow(selected)}>
@@ -282,12 +272,12 @@ function DeviceRow({
         onDoubleClick={() => busy === null && onDraft(device.name)}
         disabled={locked && !selected}
         aria-current={selected || undefined}
-        title={`${device.name}${runtime === null ? '' : ` · ${runtime}`}${asleep ? '\nAsleep: boots when you run a flow' : free ? '\nFree: selecting it claims it for this worktree' : ''}\n${device.udid}`}
+        title={`${device.name}${runtime === null ? '' : ` · ${runtime}`}${asleep ? '\nAsleep: boots when you run a flow' : ''}\n${device.udid}`}
         className={`${sidePanelRow(selected)} disabled:opacity-50`}
       >
         <span aria-hidden="true" className={sidePanelSlot} />
         <span className={sidePanelSlot}>
-          <span aria-label={busy ?? (asleep ? 'asleep' : free ? 'free' : 'booted')} className={`size-2 rounded-full ${dot}`} />
+          <span aria-label={busy ?? (asleep ? 'asleep' : 'booted')} className={`size-2 rounded-full ${dot}`} />
         </span>
         <span className="min-w-0 flex-1 truncate">{device.name}</span>
         {/* The runtime gives way to the actions while the row is hovered or focused. */}

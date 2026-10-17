@@ -1,5 +1,6 @@
 import { useState, type PointerEvent } from 'react'
 import { clampWidth, readWidth, writeWidth, type WidthLimits } from '@/lib/panel-width'
+import { trackDrag } from '@/lib/pointer-drag'
 
 const browserStorage = () => localStorage
 
@@ -30,20 +31,15 @@ export function ResizeHandle({ edge, label, panel, grip = false }: { edge: 'left
     const startWidth = panel.width
     const widthAt = (x: number) => startWidth + (edge === 'right' ? x - startX : startX - x)
     setDragging(true)
-    const previousCursor = document.body.style.cursor
-    document.body.style.cursor = 'col-resize'
-    const onMove = (move: globalThis.PointerEvent) => panel.preview(widthAt(move.clientX))
-    const finish = (end: globalThis.PointerEvent) => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', finish)
-      window.removeEventListener('pointercancel', finish)
-      document.body.style.cursor = previousCursor
-      setDragging(false)
-      panel.commit(widthAt(end.clientX))
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', finish)
-    window.addEventListener('pointercancel', finish)
+    trackDrag(
+      event,
+      'col-resize',
+      (move) => panel.preview(widthAt(move.clientX)),
+      (last) => {
+        setDragging(false)
+        panel.commit(widthAt(last.clientX))
+      },
+    )
   }
   return (
     <div

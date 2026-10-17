@@ -2,7 +2,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { BootedSimulator, MaestroFlow, MaestroRun } from '@/api/schema'
-import { afterRename, afterRestart, afterShutdown, bootThenRun, deviceLayout, devicePanels, deviceSections, panelsShown, isActive, openDevices, pickerChoices, runtimeLabel, screenSource, selectDevice, stepRows, type DeviceChoice, type DeviceLayout, type OpenDevice, type ProjectRef } from '@/device/device-model'
+import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, isActive, panelPlaces, openDevices, pickerChoices, screenSource, selectDevice, stepRows, type DeviceChoice, type DevicePanel, type OpenDevice, type ProjectRef } from '@/device/device-model'
 import { PanelIcon } from '@/advanced/WikiShell'
 import { readPanelOpen, writePanelOpen } from '@/advanced/wiki-shell-model'
 import { SlidePanel } from '@/components/SlidePanel'
@@ -10,7 +10,6 @@ import { DevicesSidebar, type DeviceBusy } from '@/device/DevicesSidebar'
 import { FlowsRunPanel, type Load } from '@/device/FlowsRunPanel'
 import { startRun, stopRun, useDeviceRun } from '@/device/run-store'
 import { changesPolicy, projectsPolicy, screenPolicy } from '@/lib/poll-model'
-import { runPanelLimits, sidebarLimits } from '@/lib/panel-width'
 import { sidePanelButton } from '@/lib/side-panel'
 import { native } from '@/lib/surface'
 import { usePoll } from '@/lib/usePoll'
@@ -33,18 +32,19 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 /**
  * A worktree's Device tab: the open simulators at the left (DevicesSidebar: boot, restart, shut down),
  * the selected one's screen framed like a device in the middle, and its Maestro flows and the run at
- * the right (FlowsRunPanel), the steps filling in as the CLI prints them. The
- * columns stack when the pane is narrow (device-model's deviceLayout). The run itself lives in
+ * the right (FlowsRunPanel), the steps filling in as the CLI prints them. The panels never merge: when
+ * the pane is narrow they fold to their toggles, and one reopened overlays the screen (device-model's
+ * panelPlaces). The run itself lives in
  * run-store, so leaving the tab keeps it going. The screen is the chosen step's screenshot, else a
  * capture taken every 2 s while a run goes on (once otherwise), else the run's latest screenshot.
  */
 export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (path: string) => void }) {
   const box = useRef<HTMLDivElement>(null)
-  const [layout, setLayout] = useState<DeviceLayout>('columns')
+  const [width, setWidth] = useState(0)
   useLayoutEffect(() => {
     const element = box.current
     if (element === null) return
-    const measure = () => setLayout(deviceLayout(element.clientWidth))
+    const measure = () => setWidth(element.clientWidth)
     measure()
     const observer = new ResizeObserver(measure)
     observer.observe(element)
@@ -53,8 +53,19 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
 
   const [devicesOpen, setDevicesOpen] = usePanelOpen(devicePanels.devices)
   const [flowsOpen, setFlowsOpen] = usePanelOpen(devicePanels.flows)
-  const shown = panelsShown(layout, { devices: devicesOpen, flows: flowsOpen })
-  const canHide = layout !== 'stack'
+  // The folded panel the person reopened, over the screen until they hide it again.
+  const [peek, setPeek] = useState<DevicePanel | null>(null)
+  const places = panelPlaces(width, { devices: devicesOpen, flows: flowsOpen }, peek)
+  const setOpen = (panel: DevicePanel, next: boolean) => (panel === 'devices' ? setDevicesOpen(next) : setFlowsOpen(next))
+  const showPanel = (panel: DevicePanel) => {
+    setOpen(panel, true)
+    setPeek(panel)
+  }
+  // Hiding an overlay only folds it back; hiding a panel beside the screen is remembered.
+  const hidePanel = (panel: DevicePanel) => {
+    if (places[panel] !== 'overlay') setOpen(panel, false)
+    setPeek(null)
+  }
 
   const run = useDeviceRun(root)
   const active = isActive(run)
@@ -72,7 +83,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const [selectedStep, setSelectedStep] = useState<number | null>(null)
   const [asleep, setAsleep] = useState<string[]>([])
   const [waking, setWaking] = useState(false)
-  // Names and branches for the devices other worktrees own; read once, as the list barely changes.
+  // Which project each worktree belongs to, to tell this project's devices from the rest; read once, as the list barely changes.
   const [projects, setProjects] = useState<ProjectRef[]>([])
   useEffect(() => {
     let current = true
@@ -162,9 +173,20 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   }
 
   // Claiming shows at once; the next read confirms it, or a refusal says why and the read puts it back.
+  // A device asleep boots for this worktree instead, which claims it.
   const claim = async (target: OpenDevice) => {
     setLifecycleError(null)
-    setBooted((current) => (current.kind === 'ready' ? { kind: 'ready', value: current.value.map((row) => (row.udid === target.udid ? { ...row, worktree: root } : row)) } : current))
+    if (target.state === 'Asleep') {
+      markBusy(target.udid, 'booting')
+      try {
+        await api.bootSimulator(target.udid, target.kind, root)
+      } finally {
+        markBusy(target.udid, null)
+        refreshDevices()
+      }
+      return
+    }
+    setBooted((current) => (current.kind === 'ready' ? { kind: 'ready', value: current.value.map((row) => (row.udid === target.udid ? { ...row, worktree: root, project: null } : row)) } : current))
     try {
       await api.simClaim(target.udid, root)
     } finally {
@@ -191,8 +213,6 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const select = (next: string) => {
     setChosenDevice(next)
     setSelectedStep(null)
-    const target = open.find((entry) => entry.udid === next)
-    if (target !== undefined && target.worktree === null && target.state === 'Booted') claim(target).catch((error: unknown) => setLifecycleError(message(error)))
   }
 
   const flowList = flows.kind === 'ready' ? flows.value : []
@@ -235,9 +255,8 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const devicesPanel = (
     <DevicesSidebar
       open={open}
-      available={sections.available}
-      others={sections.others}
-      othersCount={sections.othersCount}
+      elsewhere={sections.elsewhere}
+      elsewhereCount={sections.elsewhereCount}
       booting={booting}
       error={booted.kind === 'error' ? message(booted.error) : lifecycleError}
       loading={booted.kind === 'loading'}
@@ -250,7 +269,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       onRestart={restart}
       onShutdown={shutdown}
       onRename={rename}
-      onHide={canHide ? () => setDevicesOpen(false) : undefined}
+      onHide={() => hidePanel('devices')}
       onClaim={async (target) => {
         await claim(target)
         select(target.udid)
@@ -263,9 +282,8 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       src={src}
       step={screen?.step ?? null}
       note={waking ? `Booting ${device?.name ?? 'the simulator'}…` : device !== null && busy[device.udid] !== undefined ? `${device.name} is ${busy[device.udid] === 'restarting' ? 'restarting' : 'shutting down'}…` : isBooted ? captureError : device?.state === 'Asleep' ? 'Asleep: boots when you run a flow' : null}
-      tall={layout !== 'stack'}
-      showDevices={canHide && !shown.devices ? () => setDevicesOpen(true) : null}
-      showFlows={canHide && !shown.flows ? () => setFlowsOpen(true) : null}
+      showDevices={places.devices === 'hidden' ? () => showPanel('devices') : null}
+      showFlows={places.flows === 'hidden' ? () => showPanel('flows') : null}
     />
   )
   const sidePanel = (
@@ -287,48 +305,41 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       onSelect={setSelectedStep}
       onRun={play}
       onStop={() => void stopRun(root)}
-      onHide={canHide ? () => setFlowsOpen(false) : undefined}
+      onHide={() => hidePanel('flows')}
     />
   )
 
   return (
-    <div ref={box} data-device-layout={layout} className="flex min-h-0 flex-1 overflow-hidden bg-ink-950">
-      {layout === 'columns' ? (
-        <>
-          <SlidePanel open={shown.devices} side="left" width={sidebarLimits.min} className={panelEdge.left} handle={null}>
-            {devicesPanel}
-          </SlidePanel>
-          <div className="flex min-w-0 flex-1 flex-col">{screenPanel}</div>
-          <SlidePanel open={shown.flows} side="right" width={runPanelLimits.min} className={panelEdge.right} handle={null}>
-            {sidePanel}
-          </SlidePanel>
-        </>
-      ) : layout === 'split' ? (
-        <>
-          <div className="flex min-w-0 flex-1 flex-col">{screenPanel}</div>
-          <SlidePanel open={shown.flows} side="right" width={runPanelLimits.min} className={panelEdge.right} handle={null}>
-            {shown.devices && <div className="flex max-h-[35%] min-h-0 flex-col border-b border-white/[0.06]">{devicesPanel}</div>}
-            <div className="flex min-h-0 flex-1 flex-col">{sidePanel}</div>
-          </SlidePanel>
-        </>
-      ) : (
-        <div className="h-full min-w-0 flex-1 overflow-y-auto">
-          <div className="flex flex-col">
-            <div className="flex flex-col border-b border-white/[0.06]">{devicesPanel}</div>
-            {screenPanel}
-            <div className="flex h-[560px] flex-col border-t border-white/[0.06]">{sidePanel}</div>
-          </div>
-        </div>
+    <div ref={box} className="relative flex min-h-0 flex-1 overflow-hidden bg-ink-950">
+      <SlidePanel open={places.devices === 'side'} side="left" width={deviceWidths.devices} className={panelEdge.left} handle={null}>
+        {devicesPanel}
+      </SlidePanel>
+      <div className="flex min-w-0 flex-1 flex-col">{screenPanel}</div>
+      <SlidePanel open={places.flows === 'side'} side="right" width={deviceWidths.flows} className={panelEdge.right} handle={null}>
+        {sidePanel}
+      </SlidePanel>
+      {places.devices === 'overlay' && (
+        <aside style={{ width: deviceWidths.devices }} className={`${panelEdge.left} ${panelOverlay} left-0`}>
+          {devicesPanel}
+        </aside>
+      )}
+      {places.flows === 'overlay' && (
+        <aside style={{ width: deviceWidths.flows }} className={`${panelEdge.right} ${panelOverlay} right-0`}>
+          {sidePanel}
+        </aside>
       )}
     </div>
   )
 }
 
+// A folded panel reopened in a narrow pane: over the screen at its own edge, casting a shadow onto it.
+const panelOverlay = 'absolute inset-y-0 z-20 flex max-w-full flex-col shadow-[0_0_48px_-12px_rgba(0,0,0,0.9)]'
+
 /** The screen fills the middle: the device centred and scaled to fit, the hidden panels' toggles in its top corners. */
-function ScreenPanel({ device, src, step, note, tall, showDevices, showFlows }: { device: OpenDevice | null; src: string | null; step: number | null; note: string | null; tall: boolean; showDevices: (() => void) | null; showFlows: (() => void) | null }) {
+function ScreenPanel({ device, src, step, note, showDevices, showFlows }: { device: OpenDevice | null; src: string | null; step: number | null; note: string | null; showDevices: (() => void) | null; showFlows: (() => void) | null }) {
   const [aspect, setAspect] = useState(1206 / 2622)
   return (
-    <div className={`relative flex min-h-0 flex-col bg-ink-950 ${tall ? 'flex-1' : ''}`}>
+    <div className="relative flex min-h-0 flex-1 flex-col bg-ink-950">
       {showDevices !== null && (
         <button type="button" onClick={showDevices} aria-label="Show devices" title="Show devices" className={`${sidePanelButton} absolute top-3 left-3 z-10`}>
           <PanelIcon />
@@ -341,8 +352,8 @@ function ScreenPanel({ device, src, step, note, tall, showDevices, showFlows }: 
       )}
       {step !== null && <span className="absolute top-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11.5px] text-ink-300 tabular-nums">Step {step}</span>}
       {/* A size container, so the frame takes the largest box of the screenshot's aspect that fits. */}
-      <div style={{ containerType: 'size' }} className={`flex min-h-0 items-center justify-center ${tall ? 'm-12 flex-1' : 'mx-8 my-6 h-[520px]'}`}>
-        <div data-device-frame="" title={device === null ? undefined : `${device.name}${runtimeLabel(device.runtime) === null ? '' : ` · ${runtimeLabel(device.runtime)}`}`} style={{ aspectRatio: String(aspect), width: `min(100cqw, calc(100cqh * ${aspect}))` }} className={`border border-white/[0.14] bg-black shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] ${aspect > 1 ? 'rounded-[20px] p-[8px]' : 'rounded-[44px] p-[10px]'}`}>
+      <div style={{ containerType: 'size' }} className="m-12 flex min-h-0 flex-1 items-center justify-center">
+        <div data-device-frame="" style={{ aspectRatio: String(aspect), width: `min(100cqw, calc(100cqh * ${aspect}))` }} className={`border border-white/[0.14] bg-black shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] ${aspect > 1 ? 'rounded-[20px] p-[8px]' : 'rounded-[44px] p-[10px]'}`}>
           <div className={`relative flex h-full w-full items-center justify-center overflow-hidden bg-ink-900 ${aspect > 1 ? 'rounded-[12px]' : 'rounded-[34px]'}`}>
             {src !== null ? (
               <img

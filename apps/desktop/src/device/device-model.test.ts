@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, type MaestroEvent } from '@/api/schema'
-import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, othersLabel, panelsShown, renameCommit, sleepNote, deviceLayout, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
+import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, elsewhereLabel, panelPlaces, renameCommit, sleepNote, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
 import { changesPolicy, planPoll, pollInterval, projectsPolicy, screenPolicy } from '@/lib/poll-model'
 
 const captured = (name: string) => readFileSync(join(import.meta.dir, '..', 'api', 'fixtures', 'captured', name), 'utf8')
@@ -188,7 +188,7 @@ describe('devices', () => {
 
   test('the open devices are the booted ones, phones first, then by name', () => {
     expect(open.map((device) => device.udid)).toEqual(['p1', 'p2', 'tv'])
-    expect(open[0]).toEqual({ udid: 'p1', name: 'iPhone 17', runtime: 'iOS 27.0', kind: 'phone', state: 'Booted', worktree: null })
+    expect(open[0]).toEqual({ udid: 'p1', name: 'iPhone 17', runtime: 'iOS 27.0', kind: 'phone', state: 'Booted', worktree: null, project: null })
   })
 
   test('a row that is not booted is not open', () => {
@@ -246,64 +246,95 @@ describe('devices', () => {
   })
 })
 
-describe('devices belong to a worktree', () => {
+describe('devices belong to a project', () => {
   const ROOT = '/w/megabrain-feat-a'
   const projects = [
-    { name: 'megabrain', worktrees: [{ path: '/w/megabrain', branch: 'main' }, { path: ROOT, branch: 'feat/a' }, { path: '/w/megabrain-fix-b', branch: 'fix/b' }] },
-    { name: 'canto', worktrees: [{ path: '/w/canto', branch: 'main' }] },
+    { name: 'megabrain', path: '/w/megabrain', worktrees: [{ path: '/w/megabrain', branch: 'main' }, { path: ROOT, branch: 'feat/a' }, { path: '/w/megabrain-fix-b', branch: 'fix/b' }] },
+    { name: 'canto', path: '/w/canto', worktrees: [{ path: '/w/canto', branch: 'main' }] },
   ]
-  const row = (udid: string, name: string, worktree: string | null, kind: 'phone' | 'tv' = 'phone') => ({ udid, name, runtime: 'iOS 27.0', state: 'Booted', kind, worktree })
+  const row = (udid: string, name: string, worktree: string | null, kind: 'phone' | 'tv' = 'phone', project?: string | null) => ({ udid, name, runtime: 'iOS 27.0', state: 'Booted', kind, worktree, ...(project === undefined ? {} : { project }) })
   const booted = [
     row('mine', 'iPhone 17', ROOT),
     row('mine-slash', 'iPhone 16', `${ROOT}/`),
+    row('sibling', 'iPhone 18 Pro', '/w/megabrain-fix-b'),
+    row('main-checkout', 'iPad Air', '/w/megabrain'),
     row('free', 'iPhone Air', null),
     row('tv-free', 'Apple TV', null, 'tv'),
-    row('fix', 'iPhone 18 Pro', '/w/megabrain-fix-b'),
     row('canto', 'iPhone 17e', '/w/canto'),
     row('canto-tv', 'Apple TV 4K', '/w/canto', 'tv'),
+    row('reported', 'iPhone 15', null, 'phone', '/w/canto'),
+    row('reported-name', 'iPhone 14', '/w/somewhere', 'phone', 'canto'),
     row('lost', 'iPhone SE', '/w/gone-project'),
   ]
   const open = openDevices(booted, [], [])
   const sections = deviceSections(open, ROOT, projects)
 
-  test('a booted row carries its worktree, and an older CLI without one reads as unowned', () => {
-    expect(open.find((device) => device.udid === 'fix')?.worktree).toBe('/w/megabrain-fix-b')
-    expect(openDevices([{ udid: 'old', name: 'iPhone', runtime: 'iOS 27.0', state: 'Booted', kind: 'phone' }], [], [])[0]?.worktree).toBeNull()
+  test('a booted row carries its worktree and project, and an older CLI without them reads as unowned', () => {
+    expect(open.find((device) => device.udid === 'sibling')?.worktree).toBe('/w/megabrain-fix-b')
+    expect(open.find((device) => device.udid === 'reported')?.project).toBe('/w/canto')
+    const old = openDevices([{ udid: 'old', name: 'iPhone', runtime: 'iOS 27.0', state: 'Booted', kind: 'phone' }], [], [])[0]
+    expect([old?.worktree, old?.project]).toEqual([null, null])
   })
 
-  test('the list keeps the devices this worktree owns and the unowned ones, a trailing slash ignored', () => {
-    expect(sections.mine.map((device) => device.udid)).toEqual(['mine-slash', 'mine', 'free', 'tv-free'])
+  test('the list keeps only the devices of this project, from any of its worktrees, a trailing slash ignored', () => {
+    expect(sections.mine.map((device) => device.udid)).toEqual(['main-checkout', 'mine-slash', 'mine', 'sibling'])
   })
 
-  test('an unowned device shows as available; an owned one does not', () => {
-    expect(sections.available).toEqual(['free', 'tv-free'])
+  test('an unowned device is never listed as this project\'s', () => {
+    expect(sections.mine.some((device) => device.worktree === null && device.project === null)).toBe(false)
   })
 
-  test('a device asleep has no owner known, so it is available here', () => {
-    const asleep = deviceSections(openDevices([], [{ udid: 'zz', name: 'iPhone 15', state: 'Shutdown', kind: 'phone' }], ['zz']), ROOT, projects)
-    expect(asleep.mine.map((device) => device.udid)).toEqual(['zz'])
-    expect(asleep.available).toEqual(['zz'])
+  test('the project the CLI reports wins over the worktree, by path or by name', () => {
+    const canto = sections.elsewhere.find((group) => group.title === 'canto')
+    expect(canto?.devices.map((entry) => entry.device.udid)).toEqual(['reported-name', 'reported', 'canto', 'canto-tv'])
   })
 
-  test('devices owned elsewhere are grouped by project and branch, projects by name', () => {
-    expect(sections.others.map((group) => [group.project, group.branch, group.root, group.devices.map((device) => device.udid)])).toEqual([
-      ['canto', 'main', '/w/canto', ['canto', 'canto-tv']],
-      ['gone-project', null, '/w/gone-project', ['lost']],
-      ['megabrain', 'fix/b', '/w/megabrain-fix-b', ['fix']],
+  test('devices elsewhere are grouped by project, projects by name, Not assigned last', () => {
+    expect(sections.elsewhere.map((group) => [group.title, group.assigned, group.devices.map((entry) => entry.device.udid)])).toEqual([
+      ['canto', true, ['reported-name', 'reported', 'canto', 'canto-tv']],
+      ['gone-project', true, ['lost']],
+      ['Not assigned', false, ['free', 'tv-free']],
     ])
   })
 
-  test('the count is every device owned by another worktree', () => {
-    expect(sections.othersCount).toBe(4)
-    expect(othersLabel(sections.othersCount)).toBe('4 running in other projects')
-    expect(othersLabel(1)).toBe('1 running in another project')
-    expect(othersLabel(0)).toBeNull()
+  test('each device elsewhere names the branch it is on when its worktree is known', () => {
+    const canto = sections.elsewhere.find((group) => group.title === 'canto')
+    expect(canto?.devices.map((entry) => [entry.device.udid, entry.branch])).toEqual([
+      ['reported-name', null],
+      ['reported', null],
+      ['canto', 'main'],
+      ['canto-tv', 'main'],
+    ])
+  })
+
+  test('the indicator counts every device elsewhere, Not assigned included', () => {
+    expect(sections.elsewhereCount).toBe(7)
+    expect(elsewhereLabel(sections.elsewhereCount)).toBe('7 elsewhere')
+    expect(elsewhereLabel(1)).toBe('1 elsewhere')
+    expect(elsewhereLabel(0)).toBeNull()
+  })
+
+  test('a device asleep with no owner known is Not assigned, not this project\'s', () => {
+    const asleep = deviceSections(openDevices([], [{ udid: 'zz', name: 'iPhone 15', state: 'Shutdown', kind: 'phone' }], ['zz']), ROOT, projects)
+    expect(asleep.mine).toEqual([])
+    expect(asleep.elsewhere.map((group) => [group.title, group.assigned, group.devices.map((entry) => [entry.device.udid, entry.device.state])])).toEqual([['Not assigned', false, [['zz', 'Asleep']]]])
+  })
+
+  test('a worktree no project lists keeps only the devices it owns itself', () => {
+    const loose = deviceSections(openDevices([row('here', 'iPhone 17', '/w/loose'), row('free', 'iPhone Air', null)], [], []), '/w/loose', projects)
+    expect(loose.mine.map((device) => device.udid)).toEqual(['here'])
+    expect(loose.elsewhere.map((group) => group.title)).toEqual(['Not assigned'])
+  })
+
+  test('a project the list does not know is titled by its folder', () => {
+    const unknown = deviceSections(openDevices([row('x', 'iPhone 17', null, 'phone', '/w/other-repo')], [], []), ROOT, projects)
+    expect(unknown.elsewhere.map((group) => group.title)).toEqual(['other-repo'])
   })
 
   test('nothing elsewhere leaves no groups', () => {
     const alone = deviceSections(openDevices([row('mine', 'iPhone 17', ROOT)], [], []), ROOT, projects)
-    expect(alone.others).toEqual([])
-    expect(alone.othersCount).toBe(0)
+    expect(alone.elsewhere).toEqual([])
+    expect(alone.elsewhereCount).toBe(0)
   })
 })
 
@@ -335,34 +366,54 @@ describe('renaming a device', () => {
   })
 })
 
-describe('collapsing the panels', () => {
+describe('the panels never merge', () => {
+  const both = { devices: true, flows: true }
+  const { devices: D, flows: F, screen: S } = deviceWidths
+
   test('each panel remembers its own open state', () => {
     expect(devicePanels.devices).not.toBe(devicePanels.flows)
   })
 
-  test('side by side, each panel shows only while open', () => {
-    expect(panelsShown('columns', { devices: true, flows: true })).toEqual({ devices: true, flows: true })
-    expect(panelsShown('columns', { devices: false, flows: true })).toEqual({ devices: false, flows: true })
-    expect(panelsShown('columns', { devices: false, flows: false })).toEqual({ devices: false, flows: false })
+  test('wide enough for both and the screen, both sit beside it', () => {
+    expect(panelPlaces(D + F + S, both, null)).toEqual({ devices: 'side', flows: 'side' })
+    expect(panelPlaces(1600, both, null)).toEqual({ devices: 'side', flows: 'side' })
   })
 
-  test('in the middle layout the devices sit over the flows, so closing the flows closes the column', () => {
-    expect(panelsShown('split', { devices: false, flows: true })).toEqual({ devices: false, flows: true })
-    expect(panelsShown('split', { devices: true, flows: false })).toEqual({ devices: false, flows: false })
+  test('too narrow for both, the flows collapse first', () => {
+    expect(panelPlaces(D + F + S - 1, both, null)).toEqual({ devices: 'side', flows: 'hidden' })
+    expect(panelPlaces(D + S, both, null)).toEqual({ devices: 'side', flows: 'hidden' })
   })
 
-  test('stacked, nothing collapses', () => {
-    expect(panelsShown('stack', { devices: false, flows: false })).toEqual({ devices: true, flows: true })
+  test('too narrow for the devices too, both collapse', () => {
+    expect(panelPlaces(D + S - 1, both, null)).toEqual({ devices: 'hidden', flows: 'hidden' })
   })
-})
 
-describe('layout', () => {
-  test('three columns when wide, two in the middle, stacked when narrow', () => {
-    expect(deviceLayout(1280)).toBe('columns')
-    expect(deviceLayout(1080)).toBe('columns')
-    expect(deviceLayout(900)).toBe('split')
-    expect(deviceLayout(720)).toBe('split')
-    expect(deviceLayout(719)).toBe('stack')
+  test('a panel the person closed stays closed, and leaves its room to the other', () => {
+    expect(panelPlaces(1600, { devices: false, flows: true }, null)).toEqual({ devices: 'hidden', flows: 'side' })
+    expect(panelPlaces(F + S, { devices: false, flows: true }, null)).toEqual({ devices: 'hidden', flows: 'side' })
+    expect(panelPlaces(F + S - 1, { devices: false, flows: true }, null)).toEqual({ devices: 'hidden', flows: 'hidden' })
+  })
+
+  test('a collapsed panel reopened overlays the screen, the other keeping its place', () => {
+    expect(panelPlaces(D + S, both, 'flows')).toEqual({ devices: 'side', flows: 'overlay' })
+    expect(panelPlaces(D + S - 1, both, 'devices')).toEqual({ devices: 'overlay', flows: 'hidden' })
+    expect(panelPlaces(D + S - 1, both, 'flows')).toEqual({ devices: 'hidden', flows: 'overlay' })
+  })
+
+  test('a reopened panel that fits sits beside the screen', () => {
+    expect(panelPlaces(1600, both, 'flows')).toEqual({ devices: 'side', flows: 'side' })
+  })
+
+  test('at any width every panel is beside, over or hidden, and at most one overlays', () => {
+    for (let width = 200; width <= 2000; width += 10)
+      for (const peek of [null, 'devices', 'flows'] as const) {
+        const places = panelPlaces(width, both, peek)
+        expect(['side', 'overlay', 'hidden']).toContain(places.devices)
+        expect(['side', 'overlay', 'hidden']).toContain(places.flows)
+        expect(Number(places.devices === 'overlay') + Number(places.flows === 'overlay')).toBeLessThanOrEqual(1)
+        // What sits beside the screen always leaves it its room.
+        expect((places.devices === 'side' ? D : 0) + (places.flows === 'side' ? F : 0) + S).toBeLessThanOrEqual(Math.max(width, S))
+      }
   })
 })
 

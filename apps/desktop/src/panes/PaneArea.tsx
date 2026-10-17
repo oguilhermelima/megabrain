@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode, type RefObject } from 'react'
+import { trackDrag } from '@/lib/pointer-drag'
 import { equaliseSplit, resizeSplit, zonePreview, type Divider, type Edge, type Panes, type Rect } from '@/panes/pane-model'
 import { sideBand, type PaneDrag } from '@/panes/usePaneDrag'
 import { columnAt, dragOuterEdge, equaliseBetween, minPaneHeight, minPaneWidth, resetColumn, resizeBetween, reveal, stripEdges, type Strip, type StripColumn, type StripLayout } from '@/panes/strip'
@@ -254,20 +255,6 @@ function SideBand({ edge, lit }: { edge: Edge; lit: boolean }) {
   )
 }
 
-/** Follows a press with pointer moves until release, the cursor held as `cursor` meanwhile. */
-function track(cursor: string, onMove: (move: globalThis.PointerEvent) => void) {
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
-    document.body.style.cursor = ''
-  }
-  document.body.style.cursor = cursor
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
-}
-
 /** A divider between two panes of a column: drag to resize (never under the minimum), double-click to equalise the split. */
 function DividerHandle({ divider, column, offset, panes, onPanes }: { divider: Divider; column: StripColumn; offset: number; panes: Panes; onPanes: (change: (current: Panes) => Panes) => void }) {
   const row = divider.direction === 'row'
@@ -284,7 +271,7 @@ function DividerHandle({ divider, column, offset, panes, onPanes }: { divider: D
     const span = row ? divider.split.width * column.width : divider.split.height * column.height
     if (span <= 0) return
     const min = (row ? minPaneWidth : minPaneHeight) / span
-    track(row ? 'col-resize' : 'row-resize', (move) => {
+    trackDrag(event, row ? 'col-resize' : 'row-resize', (move) => {
       const delta = ((row ? move.clientX : move.clientY) - origin) / span
       onPanes(() => resizeSplit(startTree, divider.splitId, divider.index, delta, min))
     })
@@ -335,7 +322,7 @@ function ColumnEdges({
     if (event.button !== 0) return
     event.preventDefault()
     const origin = event.clientX
-    track('col-resize', (move) => onMove(move.clientX - origin))
+    trackDrag(event, 'col-resize', (move) => onMove(move.clientX - origin))
   }
   const outer = (column: StripColumn, side: 'left' | 'right') => (event: PointerEvent<HTMLDivElement>) => {
     const startStrip = strip
