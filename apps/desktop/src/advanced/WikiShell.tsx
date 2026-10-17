@@ -18,7 +18,8 @@ function usePanelOpen(key: string) {
   return { open, setOpen: (next: boolean) => setOpen(writePanelOpen(browserStorage, key, next)) }
 }
 
-function PanelIcon() {
+/** The panel toggle's glyph, shared by every page whose side panels hide and show. */
+export function PanelIcon() {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
       <rect x="2" y="2.75" width="12" height="10.5" rx="2" />

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, type MaestroEvent } from '@/api/schema'
-import { afterRestart, afterShutdown, bootThenRun, sleepNote, deviceLayout, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
+import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, othersLabel, panelsShown, renameCommit, sleepNote, deviceLayout, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
 import { changesPolicy, planPoll, pollInterval, projectsPolicy, screenPolicy } from '@/lib/poll-model'
 
 const captured = (name: string) => readFileSync(join(import.meta.dir, '..', 'api', 'fixtures', 'captured', name), 'utf8')
@@ -188,7 +188,7 @@ describe('devices', () => {
 
   test('the open devices are the booted ones, phones first, then by name', () => {
     expect(open.map((device) => device.udid)).toEqual(['p1', 'p2', 'tv'])
-    expect(open[0]).toEqual({ udid: 'p1', name: 'iPhone 17', runtime: 'iOS 27.0', kind: 'phone', state: 'Booted' })
+    expect(open[0]).toEqual({ udid: 'p1', name: 'iPhone 17', runtime: 'iOS 27.0', kind: 'phone', state: 'Booted', worktree: null })
   })
 
   test('a row that is not booted is not open', () => {
@@ -243,6 +243,116 @@ describe('devices', () => {
     expect(restarted.open.map((device) => device.udid)).toEqual(['p1', 'p2', 'p3', 'tv'])
     expect(restarted.open.find((device) => device.udid === 'p3')?.state).toBe('Booted')
     expect(afterRestart(open, 'p2', 'tv').selected).toBe('p2')
+  })
+})
+
+describe('devices belong to a worktree', () => {
+  const ROOT = '/w/megabrain-feat-a'
+  const projects = [
+    { name: 'megabrain', worktrees: [{ path: '/w/megabrain', branch: 'main' }, { path: ROOT, branch: 'feat/a' }, { path: '/w/megabrain-fix-b', branch: 'fix/b' }] },
+    { name: 'canto', worktrees: [{ path: '/w/canto', branch: 'main' }] },
+  ]
+  const row = (udid: string, name: string, worktree: string | null, kind: 'phone' | 'tv' = 'phone') => ({ udid, name, runtime: 'iOS 27.0', state: 'Booted', kind, worktree })
+  const booted = [
+    row('mine', 'iPhone 17', ROOT),
+    row('mine-slash', 'iPhone 16', `${ROOT}/`),
+    row('free', 'iPhone Air', null),
+    row('tv-free', 'Apple TV', null, 'tv'),
+    row('fix', 'iPhone 18 Pro', '/w/megabrain-fix-b'),
+    row('canto', 'iPhone 17e', '/w/canto'),
+    row('canto-tv', 'Apple TV 4K', '/w/canto', 'tv'),
+    row('lost', 'iPhone SE', '/w/gone-project'),
+  ]
+  const open = openDevices(booted, [], [])
+  const sections = deviceSections(open, ROOT, projects)
+
+  test('a booted row carries its worktree, and an older CLI without one reads as unowned', () => {
+    expect(open.find((device) => device.udid === 'fix')?.worktree).toBe('/w/megabrain-fix-b')
+    expect(openDevices([{ udid: 'old', name: 'iPhone', runtime: 'iOS 27.0', state: 'Booted', kind: 'phone' }], [], [])[0]?.worktree).toBeNull()
+  })
+
+  test('the list keeps the devices this worktree owns and the unowned ones, a trailing slash ignored', () => {
+    expect(sections.mine.map((device) => device.udid)).toEqual(['mine-slash', 'mine', 'free', 'tv-free'])
+  })
+
+  test('an unowned device shows as available; an owned one does not', () => {
+    expect(sections.available).toEqual(['free', 'tv-free'])
+  })
+
+  test('a device asleep has no owner known, so it is available here', () => {
+    const asleep = deviceSections(openDevices([], [{ udid: 'zz', name: 'iPhone 15', state: 'Shutdown', kind: 'phone' }], ['zz']), ROOT, projects)
+    expect(asleep.mine.map((device) => device.udid)).toEqual(['zz'])
+    expect(asleep.available).toEqual(['zz'])
+  })
+
+  test('devices owned elsewhere are grouped by project and branch, projects by name', () => {
+    expect(sections.others.map((group) => [group.project, group.branch, group.root, group.devices.map((device) => device.udid)])).toEqual([
+      ['canto', 'main', '/w/canto', ['canto', 'canto-tv']],
+      ['gone-project', null, '/w/gone-project', ['lost']],
+      ['megabrain', 'fix/b', '/w/megabrain-fix-b', ['fix']],
+    ])
+  })
+
+  test('the count is every device owned by another worktree', () => {
+    expect(sections.othersCount).toBe(4)
+    expect(othersLabel(sections.othersCount)).toBe('4 running in other projects')
+    expect(othersLabel(1)).toBe('1 running in another project')
+    expect(othersLabel(0)).toBeNull()
+  })
+
+  test('nothing elsewhere leaves no groups', () => {
+    const alone = deviceSections(openDevices([row('mine', 'iPhone 17', ROOT)], [], []), ROOT, projects)
+    expect(alone.others).toEqual([])
+    expect(alone.othersCount).toBe(0)
+  })
+})
+
+describe('renaming a device', () => {
+  const device: OpenDevice = { udid: 'p1', name: 'iPhone 17', runtime: 'iOS 27.0', kind: 'phone', state: 'Booted', worktree: null }
+
+  test('a new name is saved trimmed', () => {
+    expect(renameCommit({ udid: 'p1', text: '  QA phone ' }, device)).toEqual({ udid: 'p1', name: 'QA phone' })
+  })
+
+  test('an empty, unchanged or over-long name saves nothing', () => {
+    expect(renameCommit({ udid: 'p1', text: '   ' }, device)).toBeNull()
+    expect(renameCommit({ udid: 'p1', text: 'iPhone 17 ' }, device)).toBeNull()
+    expect(renameCommit({ udid: 'p1', text: 'x'.repeat(256) }, device)).toBeNull()
+    expect(renameCommit({ udid: 'p1', text: 'x'.repeat(255) }, device)).toEqual({ udid: 'p1', name: 'x'.repeat(255) })
+  })
+
+  test('no draft, or a draft for another device, saves nothing', () => {
+    expect(renameCommit(null, device)).toBeNull()
+    expect(renameCommit({ udid: 'p2', text: 'QA phone' }, device)).toBeNull()
+  })
+
+  test('a saved name shows at once, keeping the order by name', () => {
+    const open: OpenDevice[] = [device, { ...device, udid: 'p2', name: 'iPhone 18' }]
+    expect(afterRename(open, 'p1', 'Zed phone').map((entry) => [entry.udid, entry.name])).toEqual([
+      ['p2', 'iPhone 18'],
+      ['p1', 'Zed phone'],
+    ])
+  })
+})
+
+describe('collapsing the panels', () => {
+  test('each panel remembers its own open state', () => {
+    expect(devicePanels.devices).not.toBe(devicePanels.flows)
+  })
+
+  test('side by side, each panel shows only while open', () => {
+    expect(panelsShown('columns', { devices: true, flows: true })).toEqual({ devices: true, flows: true })
+    expect(panelsShown('columns', { devices: false, flows: true })).toEqual({ devices: false, flows: true })
+    expect(panelsShown('columns', { devices: false, flows: false })).toEqual({ devices: false, flows: false })
+  })
+
+  test('in the middle layout the devices sit over the flows, so closing the flows closes the column', () => {
+    expect(panelsShown('split', { devices: false, flows: true })).toEqual({ devices: false, flows: true })
+    expect(panelsShown('split', { devices: true, flows: false })).toEqual({ devices: false, flows: false })
+  })
+
+  test('stacked, nothing collapses', () => {
+    expect(panelsShown('stack', { devices: false, flows: false })).toEqual({ devices: true, flows: true })
   })
 })
 

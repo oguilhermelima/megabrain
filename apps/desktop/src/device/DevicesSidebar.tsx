@@ -1,10 +1,12 @@
 import { useRef, useState, type ReactNode } from 'react'
-import { PlusIcon } from '@/advanced/chrome'
+import { Chevron, PlusIcon } from '@/advanced/chrome'
+import { PanelIcon } from '@/advanced/WikiShell'
 import type { AnchorRect } from '@/advanced/menu-placement'
+import { Collapse } from '@/components/Collapse'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { Popover } from '@/components/Popover'
 import { Spinner } from '@/components/ui'
-import { runtimeLabel, type DeviceChoice, type OpenDevice } from '@/device/device-model'
+import { othersLabel, renameCommit, runtimeLabel, type DeviceChoice, type OpenDevice, type OtherProject, type RenameDraft } from '@/device/device-model'
 import { sidePanelBar, sidePanelButton, sidePanelGroup, sidePanelHeaderRow, sidePanelList, sidePanelNote, sidePanelRow, sidePanelSlot, sidePanelTitle, sidePanelTrailing } from '@/lib/side-panel'
 import { usePresence } from '@/lib/usePresence'
 
@@ -15,11 +17,17 @@ const busyLabel: Record<DeviceBusy, string> = { booting: 'Booting…', restartin
 
 /**
  * The Device tab's left panel, laid out as every support panel is (lib/side-panel): the open
- * simulators grouped as phones and TVs, each row a state dot, the name and the runtime; restart and
- * shut down on hover or focus; and a + that lists the simulators not open yet, to boot one.
+ * simulators grouped as phones and TVs, each row a state dot, the name and the runtime; rename,
+ * restart and shut down on hover or focus (a double-click on the name renames too: Enter saves, Escape
+ * cancels); and a + that lists the simulators not open yet, to boot one. It lists
+ * the worktree's own devices and the free ones (a ring for a dot: selecting one claims it); under the
+ * list, the ones other worktrees own fold out by project, each claimable after a confirmation.
  */
 export function DevicesSidebar({
   open,
+  available,
+  others,
+  othersCount,
   booting,
   error,
   loading,
@@ -31,8 +39,16 @@ export function DevicesSidebar({
   onBoot,
   onRestart,
   onShutdown,
+  onClaim,
+  onRename,
+  onHide,
 }: {
+  /** This worktree's devices and the free ones. */
   open: OpenDevice[]
+  /** The free ones among them. */
+  available: string[]
+  others: OtherProject[]
+  othersCount: number
   /** Picked from the + and still booting: shown as rows until the booted list has them. */
   booting: DeviceChoice[]
   error: string | null
@@ -46,12 +62,28 @@ export function DevicesSidebar({
   onBoot: (device: DeviceChoice) => void
   onRestart: (device: OpenDevice) => void
   onShutdown: (device: OpenDevice) => Promise<void>
+  onClaim: (device: OpenDevice) => Promise<void>
+  onRename: (device: OpenDevice, name: string) => void
+  /** Hides the panel; absent where it cannot hide. */
+  onHide?: () => void
 }) {
   const [picker, setPicker] = useState<AnchorRect | null>(null)
   const menu = usePresence(picker)
   const trigger = useRef<HTMLButtonElement>(null)
   const close = useRef(() => setPicker(null)).current
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
+  const [othersOpen, setOthersOpen] = useState(false)
+  const [draft, setDraft] = useState<RenameDraft>(null)
+  const othersText = othersLabel(othersCount)
+
+  const askClaim = (device: OpenDevice, group: OtherProject) =>
+    setConfirm({
+      title: `Use ${device.name} here?`,
+      body: `It moves from ${group.project}${group.branch === null ? '' : ` · ${group.branch}`} to this worktree; a flow running on it there keeps going.`,
+      action: 'Use here',
+      tone: 'primary',
+      run: () => onClaim(device),
+    })
 
   const askShutdown = (device: OpenDevice) =>
     setConfirm({
@@ -62,7 +94,7 @@ export function DevicesSidebar({
     })
 
   return (
-    <nav aria-label="Devices" data-sidebar-surface="" className="flex min-h-0 flex-1 flex-col">
+    <nav aria-label="Devices" className="flex min-h-0 flex-1 flex-col">
       <div className={sidePanelBar}>
         <div className={sidePanelHeaderRow}>
           <h2 className={sidePanelTitle}>Devices</h2>
@@ -82,6 +114,11 @@ export function DevicesSidebar({
           >
             <PlusIcon />
           </button>
+          {onHide !== undefined && (
+            <button type="button" onClick={onHide} aria-label="Hide devices" title="Hide devices" className={sidePanelButton}>
+              <PanelIcon />
+            </button>
+          )}
         </div>
       </div>
       <div style={{ scrollbarGutter: 'stable' }} className={sidePanelList}>
@@ -103,7 +140,15 @@ export function DevicesSidebar({
               </div>
               <div className="space-y-0.5 pt-0.5 pb-2">
                 {rows.map((device) => (
-                  <DeviceRow key={device.udid} device={device} selected={device.udid === selected} locked={locked} busy={busy[device.udid] ?? null} onSelect={() => onSelect(device.udid)} onRestart={() => onRestart(device)} onShutdown={() => askShutdown(device)} />
+                  <DeviceRow key={device.udid} device={device} free={available.includes(device.udid)} selected={device.udid === selected} locked={locked} busy={busy[device.udid] ?? null} onSelect={() => onSelect(device.udid)} onRestart={() => onRestart(device)} onShutdown={() => askShutdown(device)}
+                    draft={draft?.udid === device.udid ? draft.text : null}
+                    onDraft={(text) => setDraft(text === null ? null : { udid: device.udid, text })}
+                    onCommit={() => {
+                      const saved = renameCommit(draft, device)
+                      setDraft(null)
+                      if (saved !== null) onRename(device, saved.name)
+                    }}
+                  />
                 ))}
                 {pending.map((device) => (
                   <div key={device.udid} aria-busy="true" className={`${sidePanelRow(false)} pointer-events-none`}>
@@ -120,6 +165,36 @@ export function DevicesSidebar({
           )
         })}
       </div>
+      {othersText !== null && (
+        <div className="shrink-0 border-t border-white/[0.06] px-2.5 py-1.5">
+          <button type="button" onClick={() => setOthersOpen((shown) => !shown)} aria-expanded={othersOpen} className={sidePanelGroup}>
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{othersText}</span>
+            <Chevron open={othersOpen} />
+          </button>
+          <Collapse open={othersOpen}>
+            <div className="max-h-[40vh] space-y-1 overflow-y-auto pb-1">
+              {others.map((group) => (
+                <section key={group.root} aria-label={`${group.project}${group.branch === null ? '' : ` ${group.branch}`}`}>
+                  <p title={group.root} className="truncate px-2.5 pt-1.5 pb-0.5 text-[11.5px] text-ink-500">
+                    <span className="font-medium text-ink-400">{group.project}</span>
+                    {group.branch !== null && ` · ${group.branch}`}
+                  </p>
+                  {group.devices.map((device) => (
+                    <button key={device.udid} type="button" onClick={() => askClaim(device, group)} title={`Use ${device.name} in this worktree\n${device.udid}`} className={sidePanelRow(false)}>
+                      <span aria-hidden="true" className={sidePanelSlot} />
+                      <span aria-hidden="true" className={sidePanelSlot}>
+                        {device.kind === 'tv' ? <TvIcon /> : <PhoneIcon />}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate">{device.name}</span>
+                      <span className={sidePanelTrailing}>Use here</span>
+                    </button>
+                  ))}
+                </section>
+              ))}
+            </div>
+          </Collapse>
+        </div>
+      )}
       {menu.shown !== null && (
         <Popover role="menu" focus='[role="menuitem"]' className="max-h-[min(420px,calc(100vh-16px))] w-[240px] overflow-y-auto p-1.5 select-none" anchor={menu.shown} label="Open a device" leaving={menu.leaving} onClose={close} trigger={trigger.current}>
           <DevicePicker
@@ -136,25 +211,83 @@ export function DevicesSidebar({
   )
 }
 
-function DeviceRow({ device, selected, locked, busy, onSelect, onRestart, onShutdown }: { device: OpenDevice; selected: boolean; locked: boolean; busy: DeviceBusy | null; onSelect: () => void; onRestart: () => void; onShutdown: () => void }) {
+function DeviceRow({
+  device,
+  free,
+  selected,
+  locked,
+  busy,
+  draft,
+  onSelect,
+  onRestart,
+  onShutdown,
+  onDraft,
+  onCommit,
+}: {
+  device: OpenDevice
+  free: boolean
+  selected: boolean
+  locked: boolean
+  busy: DeviceBusy | null
+  /** The name being typed over this device's; null when it is not being renamed. */
+  draft: string | null
+  onSelect: () => void
+  onRestart: () => void
+  onShutdown: () => void
+  /** A new draft, or null to cancel. */
+  onDraft: (text: string | null) => void
+  onCommit: () => void
+}) {
   const asleep = device.state === 'Asleep'
   // The group says phone or TV, so the row keeps the runtime's version and leaves the name its room.
   const runtime = runtimeLabel(device.runtime)
   const detail = busy !== null ? busyLabel[busy] : asleep ? 'Asleep' : (runtime?.replace(/^(iOS|tvOS)\s+/, '') ?? '')
-  const dot = busy !== null ? 'animate-pulse bg-warn' : asleep ? 'bg-ink-500' : 'bg-ok'
+  // A free device's dot is a ring: no worktree owns it yet.
+  const dot = busy !== null ? 'animate-pulse bg-warn' : asleep ? 'bg-ink-500' : free ? 'border-[1.5px] border-ok' : 'bg-ok'
+  if (draft !== null)
+    return (
+      <div className={sidePanelRow(selected)}>
+        <span aria-hidden="true" className={sidePanelSlot} />
+        <span className={sidePanelSlot}>
+          <span aria-hidden="true" className={`size-2 rounded-full ${dot}`} />
+        </span>
+        <input
+          autoFocus
+          value={draft}
+          aria-label={`Rename ${device.name}`}
+          maxLength={255}
+          onChange={(event) => onDraft(event.target.value)}
+          onFocus={(event) => event.currentTarget.select()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              onCommit()
+            } else if (event.key === 'Escape') {
+              event.preventDefault()
+              event.stopPropagation()
+              onDraft(null)
+            }
+          }}
+          // Leaving the field cancels: only Enter saves.
+          onBlur={() => onDraft(null)}
+          className="-mx-1 h-6 min-w-0 flex-1 rounded-[6px] bg-white/[0.06] px-1 text-[13px] text-ink-100 outline-none ring-1 ring-accent/60"
+        />
+      </div>
+    )
   return (
     <div className="group relative">
       <button
         type="button"
         onClick={onSelect}
+        onDoubleClick={() => busy === null && onDraft(device.name)}
         disabled={locked && !selected}
         aria-current={selected || undefined}
-        title={`${device.name}${runtime === null ? '' : ` · ${runtime}`}${asleep ? '\nAsleep: boots when you run a flow' : ''}\n${device.udid}`}
+        title={`${device.name}${runtime === null ? '' : ` · ${runtime}`}${asleep ? '\nAsleep: boots when you run a flow' : free ? '\nFree: selecting it claims it for this worktree' : ''}\n${device.udid}`}
         className={`${sidePanelRow(selected)} disabled:opacity-50`}
       >
         <span aria-hidden="true" className={sidePanelSlot} />
         <span className={sidePanelSlot}>
-          <span aria-label={busy ?? (asleep ? 'asleep' : 'booted')} className={`size-2 rounded-full ${dot}`} />
+          <span aria-label={busy ?? (asleep ? 'asleep' : free ? 'free' : 'booted')} className={`size-2 rounded-full ${dot}`} />
         </span>
         <span className="min-w-0 flex-1 truncate">{device.name}</span>
         {/* The runtime gives way to the actions while the row is hovered or focused. */}
@@ -162,6 +295,9 @@ function DeviceRow({ device, selected, locked, busy, onSelect, onRestart, onShut
       </button>
       {busy === null && (
         <span className="absolute top-1/2 right-1 flex -translate-y-1/2 items-center opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+          <RowAction label={`Rename ${device.name}`} onClick={() => onDraft(device.name)}>
+            <PencilIcon />
+          </RowAction>
           <RowAction label={`Restart ${device.name}`} onClick={onRestart}>
             <RestartIcon />
           </RowAction>
@@ -217,6 +353,14 @@ function DevicePicker({ choices, onPick }: { choices: DeviceChoice[] | null; onP
         </div>
       ))}
     </>
+  )
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.5 3 13 5.5 6 12.5H3.5V10z" />
+    </svg>
   )
 }
 

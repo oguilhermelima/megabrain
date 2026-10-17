@@ -143,6 +143,8 @@ export interface OpenDevice {
   runtime: string | null
   kind: SimulatorKind
   state: 'Booted' | 'Asleep'
+  /** The worktree that claimed it; null when no worktree has, or megabrain put it to sleep. */
+  worktree: string | null
 }
 
 const byKindThenName = (a: { kind: SimulatorKind; name: string }, b: { kind: SimulatorKind; name: string }) => Number(a.kind === 'tv') - Number(b.kind === 'tv') || a.name.localeCompare(b.name)
@@ -158,9 +160,9 @@ export function runtimeLabel(runtime: string | null): string | null {
 
 /** The sidebar's devices: the booted ones and the ones megabrain put to sleep, phones first, then by name. */
 export function openDevices(booted: readonly BootedSimulator[], available: readonly DeviceChoice[], asleep: readonly string[]): OpenDevice[] {
-  const open: OpenDevice[] = booted.filter((row) => row.state === 'Booted').map((row) => ({ udid: row.udid, name: row.name, runtime: row.runtime, kind: row.kind, state: 'Booted' }))
+  const open: OpenDevice[] = booted.filter((row) => row.state === 'Booted').map((row) => ({ udid: row.udid, name: row.name, runtime: row.runtime, kind: row.kind, state: 'Booted', worktree: row.worktree ?? null }))
   for (const device of available) {
-    if (asleep.includes(device.udid) && !open.some((entry) => entry.udid === device.udid)) open.push({ udid: device.udid, name: device.name, runtime: null, kind: device.kind, state: 'Asleep' })
+    if (asleep.includes(device.udid) && !open.some((entry) => entry.udid === device.udid)) open.push({ udid: device.udid, name: device.name, runtime: null, kind: device.kind, state: 'Asleep', worktree: null })
   }
   return open.sort(byKindThenName)
 }
@@ -186,6 +188,89 @@ export function afterShutdown(open: readonly OpenDevice[], chosen: string | null
 export function afterRestart(open: readonly OpenDevice[], chosen: string | null, udid: string): { open: OpenDevice[]; selected: string | null } {
   const next = open.map((device): OpenDevice => (device.udid === udid ? { ...device, state: 'Booted' } : device))
   return { open: next, selected: selectDevice(next, chosen) }
+}
+
+/** A project as the sidebar's list has it: its name and its worktrees' paths and branches. */
+export interface ProjectRef {
+  name: string
+  worktrees: readonly { path: string; branch: string | null }[]
+}
+
+/** Another worktree's devices, under its project's name and branch. */
+export interface OtherProject {
+  root: string
+  project: string
+  branch: string | null
+  devices: OpenDevice[]
+}
+
+export interface DeviceSections {
+  /** The devices this worktree owns and the unowned ones it may claim. */
+  mine: OpenDevice[]
+  /** The unowned among them: selecting one claims it. */
+  available: string[]
+  others: OtherProject[]
+  othersCount: number
+}
+
+const samePath = (a: string, b: string) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '')
+
+/** The sidebar's split: this worktree's devices and the free ones, and the ones other worktrees own by project. */
+export function deviceSections(open: readonly OpenDevice[], root: string, projects: readonly ProjectRef[]): DeviceSections {
+  const mine = open.filter((device) => device.worktree === null || samePath(device.worktree, root))
+  const groups = new Map<string, OtherProject>()
+  for (const device of open) {
+    if (device.worktree === null || samePath(device.worktree, root)) continue
+    const key = device.worktree.replace(/\/+$/, '')
+    const group = groups.get(key)
+    if (group !== undefined) {
+      group.devices.push(device)
+      continue
+    }
+    const project = projects.find((entry) => entry.worktrees.some((worktree) => samePath(worktree.path, key)))
+    const branch = project?.worktrees.find((worktree) => samePath(worktree.path, key))?.branch ?? null
+    groups.set(key, { root: key, project: project?.name ?? key.split('/').at(-1) ?? key, branch, devices: [device] })
+  }
+  const others = [...groups.values()].sort((a, b) => a.project.localeCompare(b.project) || (a.branch ?? '').localeCompare(b.branch ?? ''))
+  return { mine, available: mine.filter((device) => device.worktree === null).map((device) => device.udid), others, othersCount: others.reduce((sum, group) => sum + group.devices.length, 0) }
+}
+
+/** The indicator under the list; null when no other worktree owns a device. */
+export function othersLabel(count: number): string | null {
+  if (count === 0) return null
+  return count === 1 ? '1 running in another project' : `${count} running in other projects`
+}
+
+/** A name being typed over a device's. */
+export type RenameDraft = { udid: string; text: string } | null
+
+/** simctl's limit on a device name. */
+const nameLimit = 255
+
+/** What Enter saves: the trimmed name, or nothing when it is empty, unchanged, too long or for another device. */
+export function renameCommit(draft: RenameDraft, device: OpenDevice): { udid: string; name: string } | null {
+  if (draft === null || draft.udid !== device.udid) return null
+  const name = draft.text.trim()
+  if (name === '' || name === device.name || name.length > nameLimit) return null
+  return { udid: device.udid, name }
+}
+
+/** A renamed device shows its new name at once, in its place by name. */
+export function afterRename(open: readonly OpenDevice[], udid: string, name: string): OpenDevice[] {
+  return open.map((device) => (device.udid === udid ? { ...device, name } : device)).sort(byKindThenName)
+}
+
+/** Where the Device tab remembers whether each side panel is open (wiki-shell-model's readPanelOpen). */
+export const devicePanels = { devices: 'megabrain.device.devices.open', flows: 'megabrain.device.flows.open' } as const
+
+/**
+ * Which panels show: side by side each as remembered; in the middle layout the devices sit in the flows'
+ * column, so they go with it; stacked, both always, as nothing sits beside them to make room for.
+ */
+export function panelsShown(layout: DeviceLayout, open: { devices: boolean; flows: boolean }): { devices: boolean; flows: boolean } {
+  if (layout === 'stack') return { devices: true, flows: true }
+  if (layout === 'split') return { devices: open.devices && open.flows, flows: open.flows }
+  return { ...open }
 }
 
 export type DeviceLayout = 'columns' | 'split' | 'stack'

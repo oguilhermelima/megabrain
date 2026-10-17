@@ -3,6 +3,7 @@ import { PlusIcon } from '@/advanced/chrome'
 import { api } from '@/api'
 import type { MaestroFlow, MaestroRun } from '@/api/schema'
 import type { SegmentOf } from '@/chat/action-bar-model'
+import { PanelIcon } from '@/advanced/WikiShell'
 import { SegmentedTabs } from '@/components/SegmentedTabs'
 import { Spinner } from '@/components/ui'
 import { durationLabel, groupFlows, historyRows, isActive, needsInstall, newFlowName, type RunState, type StepRow } from '@/device/device-model'
@@ -36,6 +37,7 @@ export function FlowsRunPanel({
   onSelect,
   onRun,
   onStop,
+  onHide,
 }: {
   root: string
   flows: Load<MaestroFlow[]>
@@ -50,6 +52,8 @@ export function FlowsRunPanel({
   onSelect: (index: number | null) => void
   onRun: () => void
   onStop: () => void
+  /** Hides the panel; absent where it cannot hide. */
+  onHide?: () => void
 }) {
   const active = isActive(run)
   const [tab, setTab] = useState<PanelTab>(active ? 'run' : 'flows')
@@ -101,6 +105,11 @@ export function FlowsRunPanel({
               className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full bg-accent px-3 text-[12px] font-semibold text-accent-ink transition-colors hover:bg-[#a3aeff] disabled:bg-white/[0.06] disabled:text-ink-500"
             >
               <PlayIcon /> Run
+            </button>
+          )}
+          {onHide !== undefined && (
+            <button type="button" onClick={onHide} aria-label="Hide flows" title="Hide flows" className={sidePanelButton}>
+              <PanelIcon />
             </button>
           )}
         </div>
