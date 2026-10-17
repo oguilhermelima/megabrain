@@ -1,14 +1,14 @@
 import { useState, type ReactNode } from 'react'
 import { SearchIcon } from '@/advanced/SidebarTools'
-import { readPanelOpen, wikiPanelLimits, wikiShellLayout, writePanelOpen, type WikiPanel } from '@/advanced/wiki-shell-model'
+import { readPanelOpen, wikiPanelLimits, wikiPanelSurface, wikiShellLayout, writePanelOpen, type WikiPanel } from '@/advanced/wiki-shell-model'
 import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { SlidePanel } from '@/components/SlidePanel'
 
 // The shell the Knowledge and Artifacts pages share: the page's navigation in a panel on the right that
 // runs the pane's full height and opens, closes and resizes like the run panel, drawn like the left
-// sidebar; and beside it, over what the page reads, a top bar sized like a chat's (chat/ChatHeader:
-// 12px above a 36px row, 30px pill controls). The panel's header lines up with the bar. See
-// wiki-shell-model.ts for what it remembers.
+// sidebar and on its surface; and beside it, over what the page reads, a top bar sized like a chat's
+// (chat/ChatHeader: 12px above a 36px row, 30px pill controls). The panel's header lines up with the
+// bar. See wiki-shell-model.ts for what it remembers.
 
 const browserStorage = () => localStorage
 
@@ -80,7 +80,8 @@ export function WikiShell({
   return (
     // A container, so the panel's 50% cap reads the same for its frame and its body.
     <div className="@container flex h-full min-h-0">
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* The column paints the black itself: the pane under the panel is see-through (styles.css). */}
+      <div className="flex min-w-0 flex-1 flex-col bg-ink-950">
         <header data-tauri-drag-region className="@container/header flex shrink-0 items-center gap-2 border-b border-white/[0.06] pt-3 pr-6 pb-2.5 pl-6">
           <div data-tauri-drag-region className="flex h-9 min-w-0 flex-1 items-center gap-2">
             {crumb}
@@ -97,9 +98,9 @@ export function WikiShell({
         <div className="min-h-0 flex-1">{children}</div>
       </div>
       {panelLabel !== null && (
-        // No fill of its own, like the left sidebar: the pane shows through, a hairline at its edge.
-        <SlidePanel open={layout.panel} side="right" width={width.width} maxWidth="50cqw" className="border-l border-white/[0.06]" handle={<ResizeHandle edge="left" label={`Resize ${panelLabel.toLowerCase()}`} panel={width} grip />}>
-          <nav aria-label={panelLabel} className="flex min-h-0 flex-1 flex-col">
+        // The left sidebar's glass over the window's vibrancy, its hairline at the edge it faces.
+        <SlidePanel open={layout.panel} side="right" width={width.width} maxWidth="50cqw" className={wikiPanelSurface} handle={<ResizeHandle edge="left" label={`Resize ${panelLabel.toLowerCase()}`} panel={width} grip />}>
+          <nav aria-label={panelLabel} data-sidebar-surface="" className="flex min-h-0 flex-1 flex-col">
             {/* The bar's height (12px above a 36px row, 10px below), padded and laid out like the left
                 sidebar's Projects header (the list's 4px plus its 6px gutter at the right): the title on the rows' text column, the toggle overhanging by
                 its inset so its glyph ends where the counts below end. */}

@@ -10,6 +10,13 @@ export type WidthStorage = Pick<Storage, 'getItem' | 'setItem'>
 export const sidebarLimits: WidthLimits = { min: 220, max: 480, initial: 300 }
 export const runPanelLimits: WidthLimits = { min: 320, max: 760, initial: 420 }
 
+/**
+ * The left sidebar's surface, for every panel that should read as the same material: the glass over the
+ * window's sidebar vibrancy and a hairline on the edge facing the content. A panel inside the content
+ * also marks itself data-sidebar-surface, so the content stops painting black under it (styles.css).
+ */
+export const sidebarSurface = (edge: 'left' | 'right'): string => (edge === 'left' ? 'glass border-r border-white/[0.06]' : 'glass border-l border-white/[0.06]')
+
 export function clampWidth(width: number, limits: WidthLimits): number {
   if (!Number.isFinite(width)) return limits.initial
   return Math.min(limits.max, Math.max(limits.min, Math.round(width)))

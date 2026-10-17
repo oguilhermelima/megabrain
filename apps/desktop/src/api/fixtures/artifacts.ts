@@ -2,7 +2,8 @@ import type { Artifact, ArtifactContent, ArtifactList } from '@/api/schema'
 
 // Artifacts for the mock, shaped like `artifact list|show --json`: two projects, a diagram (HTML with
 // inline SVG, fonts already stripped as the store saves them), plans and a doc in Markdown, and one
-// artifact filed under a topic so the topic strip has something to show.
+// artifact filed under a topic so the topic strip has something to show; `show` names the versions
+// updates replaced.
 
 const root = '/Users/operator/Workspaces'
 const state = '/Users/operator/.megabrain/knowledge'
@@ -116,10 +117,13 @@ const offlineDoc = `# Offline playback notes
 `
 
 const entries: ArtifactContent[] = [
-  { id: 'art-20261017-a1b2c3d4', title: 'Knowledge pipeline', kind: 'diagram', format: 'html', ...megabrain, topics: ['topic-knowledge'], chatId: 'chat-0001', createdAt: ago(240), updatedAt: ago(6), revision: 3, path: `${state}/${megabrain.projectId}/artifacts/art-20261017-a1b2c3d4/index.html`, content: pipeline },
+  { id: 'art-20261017-a1b2c3d4', title: 'Knowledge pipeline', kind: 'diagram', format: 'html', ...megabrain, topics: ['topic-knowledge'], chatId: 'chat-0001', createdAt: ago(240), updatedAt: ago(6), revision: 3, path: `${state}/${megabrain.projectId}/artifacts/art-20261017-a1b2c3d4/index.html`, content: pipeline, revisions: [
+    { revision: 1, title: 'Knowledge flow', updatedAt: ago(240), replacedAt: ago(150) },
+    { revision: 2, title: 'Knowledge pipeline', updatedAt: ago(150), replacedAt: ago(6) },
+  ] },
   { id: 'art-20261017-0f1e2d3c', title: 'Artifacts lane', kind: 'plan', format: 'markdown', ...megabrain, topics: ['topic-knowledge'], chatId: null, createdAt: ago(300), updatedAt: ago(45), revision: 1, path: `${state}/${megabrain.projectId}/artifacts/art-20261017-0f1e2d3c/doc.md`, content: lanePlan },
   { id: 'art-20261016-9a8b7c6d', title: 'Search rollout plan', kind: 'plan', format: 'markdown', ...canto, topics: [], chatId: null, createdAt: ago(1500), updatedAt: ago(1500), revision: 1, path: `${state}/${canto.projectId}/artifacts/art-20261016-9a8b7c6d/doc.md`, content: searchPlan },
-  { id: 'art-20261015-5e4d3c2b', title: 'Offline playback notes', kind: 'doc', format: 'markdown', ...canto, topics: [], chatId: null, createdAt: ago(2900), updatedAt: ago(2900), revision: 2, path: `${state}/${canto.projectId}/artifacts/art-20261015-5e4d3c2b/doc.md`, content: offlineDoc },
+  { id: 'art-20261015-5e4d3c2b', title: 'Offline playback notes', kind: 'doc', format: 'markdown', ...canto, topics: [], chatId: null, createdAt: ago(2900), updatedAt: ago(2900), revision: 2, path: `${state}/${canto.projectId}/artifacts/art-20261015-5e4d3c2b/doc.md`, content: offlineDoc, revisions: [{ revision: 1, title: 'Offline playback notes', updatedAt: ago(4300), replacedAt: ago(2900) }] },
 ]
 
 export function mockArtifactList(options: { project?: string; topic?: string } = {}): ArtifactList {

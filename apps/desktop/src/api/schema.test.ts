@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mockSettings, mockGithubDetail, mockPullRequestFiles, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees } from '@/api/fixtures/mock'
-import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema } from '@/api/schema'
+import { agentDefaultsSchema, settingsSchema, githubDetailSchema, githubPullRequestFileSchema, githubIssueListSchema, githubPullRequestListSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectsSchema, branchChangesSchema, chatReadSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactContentSchema } from '@/api/schema'
 import { openProject } from '../../../../src/knowledge/store'
 
 const captured = join(import.meta.dir, 'fixtures', 'captured')
@@ -179,5 +179,18 @@ describe('the staged CLI still speaks the schemas', () => {
   test('doctor --json', () => {
     const result = run(['doctor', '--json'])
     expect(doctorReportSchema.safeParse(JSON.parse(result.stdout)).error).toBeUndefined()
+  })
+})
+
+describe('artifact show --json', () => {
+  const shown = { id: 'art-1', title: 'Plan v3', kind: 'plan', format: 'markdown', project: '/work/api', projectName: 'api', projectId: 'api-0123456789ab', topics: [], chatId: null, createdAt: '2026-10-15T10:00:00.000Z', updatedAt: '2026-10-17T12:00:00.000Z', revision: 3, path: '/state/knowledge/api-0123456789ab/artifacts/art-1/doc.md', content: '# Plan' }
+
+  test('reads the versions its updates replaced', () => {
+    const revisions = [{ revision: 1, title: 'Plan v1', updatedAt: '2026-10-15T10:00:00.000Z', replacedAt: '2026-10-16T10:00:00.000Z' }]
+    expect(artifactContentSchema.parse({ ...shown, revisions }).revisions).toEqual(revisions)
+  })
+
+  test('an older megabrain that lists none still parses', () => {
+    expect(artifactContentSchema.parse(shown).revisions).toBeUndefined()
   })
 })

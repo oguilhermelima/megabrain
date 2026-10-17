@@ -759,7 +759,10 @@ export const artifactSchema = z.looseObject({
   path: z.string(),
 })
 export const artifactListSchema = z.looseObject({ artifacts: z.array(artifactSchema) })
-export const artifactContentSchema = artifactSchema.extend({ content: z.string() })
+// `show` also names the versions its updates replaced, oldest first, without their content; a megabrain
+// before that lists none.
+export const artifactRevisionSchema = z.looseObject({ revision: z.number(), title: z.string(), updatedAt: z.string(), replacedAt: z.string() })
+export const artifactContentSchema = artifactSchema.extend({ content: z.string(), revisions: z.array(artifactRevisionSchema).optional() })
 // A native chat's artifacts (`chat artifacts <chat-id> --json`): what megabrain filed for it and what
 // its agent made elsewhere (a Claude artifact or Claude Design project, a Codex plan, agy's or Grok's),
 // newest first with stable ids. A url-only artifact has no content to read; `revision` is null when the
@@ -1032,6 +1035,7 @@ export type Artifact = z.infer<typeof artifactSchema>
 export type ArtifactKind = Artifact['kind']
 export type ArtifactList = z.infer<typeof artifactListSchema>
 export type ArtifactContent = z.infer<typeof artifactContentSchema>
+export type ArtifactRevision = z.infer<typeof artifactRevisionSchema>
 export type ChatArtifact = z.infer<typeof chatArtifactSchema>
 export type ChatArtifactSource = ChatArtifact['source']
 export type ChatArtifactList = z.infer<typeof chatArtifactListSchema>

@@ -210,6 +210,8 @@ export function RemoveFromSplitIcon() {
 function PaneHeader({ title, focused, inset, onDrag, onClose }: { title: string; focused: boolean; inset: number | null; onDrag: (event: PointerEvent<HTMLElement>) => void; onClose: () => void }) {
   return (
     <div
+      data-pane-header=""
+      data-focused={focused ? '' : undefined}
       onPointerDown={onDrag}
       style={{ paddingLeft: inset ?? 12, transition: 'height var(--motion-panel) var(--motion-ease-panel), padding var(--motion-panel) var(--motion-ease-panel)' }}
       className={`flex ${inset === null ? 'h-7' : 'h-[44px]'} shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-1 select-none active:cursor-grabbing ${focused ? 'bg-white/[0.04] text-ink-200' : 'text-ink-400'}`}

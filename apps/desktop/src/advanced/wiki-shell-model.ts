@@ -1,4 +1,4 @@
-import { sidebarLimits, type WidthLimits, type WidthStorage } from '@/lib/panel-width'
+import { sidebarLimits, sidebarSurface, type WidthLimits, type WidthStorage } from '@/lib/panel-width'
 
 // The Knowledge and Artifacts pages share one shell (WikiShell.tsx): a top bar over the reading column
 // and a navigation panel on the right, beside the bar, shown or hidden and resized like the run panel.
@@ -14,6 +14,9 @@ export type WikiPanel = (typeof wikiPanels)[keyof typeof wikiPanels]
 
 /** The panel is a list like the left sidebar, so it may be as narrow and as wide as that. */
 export const wikiPanelLimits: WidthLimits = sidebarLimits
+
+/** And it is drawn as the left sidebar is, a panel on the right. */
+export const wikiPanelSurface = sidebarSurface('right')
 
 // Like a width, a remembered open state is a convenience: storage missing, blocked or holding
 // something else leaves the panel open.

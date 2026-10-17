@@ -222,7 +222,7 @@ megabrain summaries context --cwd <path> [--limit <n>] [--json] — the latest s
 megabrain artifact create --title <title> --kind diagram|plan|doc (--file <path>|--stdin) [--project <repo path>] [--topic <id>]... [--chat <id>] [--json] — save a finished diagram, plan or doc for the project of the working folder (or --project). Diagrams are HTML; plans and docs are Markdown or HTML. Google Fonts links are stripped so the app renders it offline. Save every diagram, plan or doc you produce for the person this way; the desktop app lists them on its Artifacts page.
 megabrain artifact update <id> (--file <path>|--stdin) [--title <title>] [--json] — replace an artifact's content; the old version is kept as a revision.
 megabrain artifact list [--project <repo path>] [--topic <id>] [--json] — artifacts newest change first.
-megabrain artifact show <id> [--json] — one artifact with its content.
+megabrain artifact show <id> [--json] — one artifact with its content; with --json also the versions its updates replaced (revision, title, updatedAt, replacedAt), oldest first.
 megabrain artifact remove <id> [--json] — delete an artifact and its revisions.
 megabrain settings get|set chat-summaries <json> — switch automatic summaries and titles on, and pick the agent, model, effort and cadence.
 megabrain settings get|set agents <json> — the desktop app's default agent for New chat ({ version: 1, default, disabled }), and the agents turned off for it.

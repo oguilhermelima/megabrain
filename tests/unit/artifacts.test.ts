@@ -274,6 +274,28 @@ describe("megabrain artifact", () => {
     expect(json(await executeArtifact(["list", "--json"], w.environment)).artifacts).toEqual([]);
   });
 
+  test("show --json lists the versions updates replaced, oldest first, without their content", async () => {
+    const w = world();
+    const created = json(await executeArtifact(["create", "--title", "Plan v1", "--kind", "plan", "--stdin", "--project", w.repo, "--json"], w.environment, { stdin: async () => "one" }));
+    expect(json(await executeArtifact(["show", created.id, "--json"], w.environment)).revisions).toEqual([]);
+
+    await executeArtifact(["update", created.id, "--stdin", "--json"], w.environment, { stdin: async () => "two" });
+    await executeArtifact(["update", created.id, "--stdin", "--title", "Plan v3", "--json"], w.environment, { stdin: async () => "three" });
+    const shown = json(await executeArtifact(["show", created.id, "--json"], w.environment));
+    expect(shown).toMatchObject({ title: "Plan v3", revision: 3, content: "three" });
+    expect(shown.revisions.map((entry: Record<string, unknown>) => Object.keys(entry).sort())).toEqual([
+      ["replacedAt", "revision", "title", "updatedAt"],
+      ["replacedAt", "revision", "title", "updatedAt"],
+    ]);
+    expect(shown.revisions.map((entry: { revision: number; title: string }) => [entry.revision, entry.title])).toEqual([[1, "Plan v1"], [2, "Plan v1"]]);
+    expect(shown.revisions[0].updatedAt).toBe(created.updatedAt);
+    expect(shown.revisions[0].replacedAt <= shown.revisions[1].replacedAt).toBe(true);
+
+    // The plain show still prints the content alone.
+    const plain = await executeArtifact(["show", created.id], w.environment);
+    expect(plain.kind === "ok" ? plain.value : "").toBe("three\n");
+  });
+
   test("create with no --project uses the working folder's project", async () => {
     const w = world();
     const created = json(await executeArtifact(["create", "--title", "Plan", "--kind", "plan", "--stdin", "--json"], w.environment, { cwd: w.feature, stdin: async () => plan }));

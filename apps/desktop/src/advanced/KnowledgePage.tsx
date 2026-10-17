@@ -7,18 +7,16 @@ import { ChatTranscript } from '@/advanced/KnowledgeTranscript'
 import { BranchIcon, Chevron, KnowledgeIcon } from '@/advanced/chrome'
 import { KnowledgeMap } from '@/advanced/KnowledgeMap'
 import { BarSearch, WikiShell, barToggle } from '@/advanced/WikiShell'
+import { Blank, ProjectSwitcher, Section, SectionCount, listBox } from '@/advanced/WikiParts'
 import { wikiPanels } from '@/advanced/wiki-shell-model'
 import { chatCards, decisionsOf, groupTopics, kindColors, kindGroups, refLabel, refNumber, statusLabels, type KnowledgeView } from '@/advanced/knowledge-model'
 import { branchGroups, githubRefGroups, readTopicTab, shownTopicTab, topicTabs, writeTopicTab, type GithubRefRow as GithubRefRowData, type TopicTab } from '@/advanced/topic-tabs-model'
 import { displayName } from '@/advanced/appearance-model'
-import { ProjectPicture } from '@/advanced/ProjectPicture'
-import { projectColor, projectInitials } from '@/advanced/picture-model'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
 import { AgentIcon } from '@/components/agent-icons'
 import { Collapse } from '@/components/Collapse'
 import { SegmentedTabs } from '@/components/SegmentedTabs'
-import { ContextMenu, useContextMenu } from '@/components/ContextMenu'
 import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { useNow } from '@/github/parts'
@@ -36,16 +34,6 @@ import { effectiveToggles, inEffect, parseKnowledgeSettings, type KnowledgeSetti
 // (knowledge-model.ts); with no topic picked it shows the project's newest.
 
 type KnowledgeProject = KnowledgeList['projects'][number]
-
-/** A project's picture when megabrain lists it, else its initials on its colour. */
-function KnowledgePicture({ project, name }: { project: Project | undefined; name: string }) {
-  if (project !== undefined) return <ProjectPicture project={project} />
-  return (
-    <span aria-hidden="true" style={{ backgroundColor: projectColor(name) }} className="grid size-6 shrink-0 place-items-center rounded-[8px] text-[10.5px] font-bold tracking-[0.02em] text-white">
-      {projectInitials(name)}
-    </span>
-  )
-}
 
 /** The project the page shows: the one picked, else the enabled project with the newest topic. */
 function pickProject(projects: readonly KnowledgeProject[], repo: string | null): KnowledgeProject | null {
@@ -233,18 +221,6 @@ function GithubRefIcon({ kind, state }: { kind: 'issue' | 'pr'; state: string | 
   )
 }
 
-function Section({ title, aside, children }: { title: string; aside?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <div className="flex items-baseline gap-3">
-        <h2 className="text-[11px] font-medium tracking-[0.04em] text-ink-400 uppercase">{title}</h2>
-        {aside}
-      </div>
-      {children}
-    </section>
-  )
-}
-
 const prose = 'text-[14.5px] leading-relaxed text-ink-200'
 
 function Decisions({ topic, now }: { topic: KnowledgeTopic; now: number }) {
@@ -369,7 +345,6 @@ function stateTone(kind: 'issue' | 'pr', state: string | null): string | undefin
   return state === 'merged' || state === 'closed' || state === 'draft' ? stateColors[state] : stateColors.open
 }
 
-const listBox = 'divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60'
 const row = 'grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-3.5 px-5 py-3.5 text-left'
 
 function GithubRefRow({ row: entry, repo, listed, onOpenGithub }: { row: GithubRefRowData; repo: string; listed: boolean; onOpenGithub: (repo: string, kind: 'pr' | 'issue', number: number) => void }) {
@@ -420,7 +395,7 @@ function GithubRefs({ topic, repo, listed, onOpenGithub }: { topic: KnowledgeTop
   const { open, closed } = githubRefGroups(topic.refs, stateOf)
   const group = (title: string, rows: GithubRefRowData[]) =>
     rows.length > 0 && (
-      <Section title={title} aside={<span className="text-[12px] text-ink-500 tabular-nums">{rows.length}</span>}>
+      <Section title={title} aside={<SectionCount count={rows.length} />}>
         <ul className={listBox}>
           {rows.map((entry) => (
             <li key={`${entry.ref.kind}\n${entry.ref.id}`}>
@@ -455,7 +430,7 @@ function Branches({ topic }: { topic: KnowledgeTopic }) {
   return (
     <>
       {branches.length > 0 && (
-        <Section title="Branches" aside={<span className="text-[12px] text-ink-500 tabular-nums">{branches.length}</span>}>
+        <Section title="Branches" aside={<SectionCount count={branches.length} />}>
           <ul className={listBox}>
             {branches.map(({ ref, state, commits: own }) => (
               <li key={ref.id} className="space-y-2 px-5 py-3.5">
@@ -487,7 +462,7 @@ function Branches({ topic }: { topic: KnowledgeTopic }) {
         </Section>
       )}
       {commits.length > 0 && (
-        <Section title="Commits" aside={<span className="text-[12px] text-ink-500 tabular-nums">{commits.length}</span>}>
+        <Section title="Commits" aside={<SectionCount count={commits.length} />}>
           <ul className={`${listBox} py-1.5`}>
             {commits.map((commit) => (
               <li key={commit.id} className="px-5 py-2">
@@ -582,7 +557,7 @@ function TopicTabs({
         <div role="tabpanel" aria-label="Messages" className="space-y-9">
           <KeyMessages topic={topic} now={now} onOpenChat={onOpenChat} />
           {cards.length > 0 && (
-            <Section title="Chats" aside={<span className="text-[12px] text-ink-500 tabular-nums">{topic.chatRecords.length}</span>}>
+            <Section title="Chats" aside={<SectionCount count={topic.chatRecords.length} />}>
               <ul className="grid gap-3 sm:grid-cols-2">
                 {cards.map((card) => (
                   <ChatCard key={card.chat.id} chat={card.chat} workers={card.workers} now={now} onOpen={(chat) => onOpenChat(chat.id)} />
@@ -641,43 +616,11 @@ function TopicReading({
   return <TopicTabs topic={load.value} {...rest} />
 }
 
-/** The reading column with nothing to read: why, and what to do about it. */
-export function Blank({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className={`${column} pt-24 text-center`}>
-      <h1 className="text-[18px] font-semibold tracking-[-0.01em] text-ink-100">{title}</h1>
-      <p className="mx-auto mt-2 max-w-[420px] text-[13.5px] leading-relaxed text-ink-400">{children}</p>
-    </div>
-  )
-}
-
 function SettingsLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return (
     <button type="button" onClick={onClick} className="font-medium text-accent hover:underline">
       {children}
     </button>
-  )
-}
-
-function ProjectSwitcher({ current, listed, projects, isOn, onPick }: { current: KnowledgeProject; listed: Project | undefined; projects: KnowledgeProject[]; isOn: (project: KnowledgeProject) => boolean; onPick: (repo: string) => void }) {
-  const { menu, open, close } = useContextMenu()
-  return (
-    <>
-      <button
-        type="button"
-        onClick={(event) => open(event, [projects.map((project) => ({ label: isOn(project) ? project.project : `${project.project} (off)`, title: project.repo, onSelect: () => onPick(project.repo) }))])}
-        aria-haspopup="menu"
-        title={`${current.project}\n${current.repo}`}
-        className="flex h-[30px] max-w-[240px] min-w-0 shrink-0 items-center gap-2 rounded-full pr-2 pl-[3px] text-left transition-colors select-none hover:bg-white/[0.08]"
-      >
-        <KnowledgePicture project={listed} name={current.project} />
-        <span className="min-w-0 truncate text-[13px] font-semibold tracking-[-0.01em] text-ink-200 @max-[520px]/header:hidden">{listed === undefined ? current.project : displayName(listed)}</span>
-        <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-ink-400">
-          <path d="m5 6.5 3-3 3 3M5 9.5l3 3 3-3" />
-        </svg>
-      </button>
-      <ContextMenu menu={menu} onClose={close} />
-    </>
   )
 }
 
@@ -769,7 +712,12 @@ export function KnowledgePage({
 
   const crumb =
     project !== null && list !== null ? (
-      <ProjectSwitcher current={project} listed={listed.get(project.repo)} projects={list.projects} isOn={projectOn} onPick={pickProjectRepo} />
+      <ProjectSwitcher
+        name={nameOf(project)}
+        path={project.repo}
+        listed={listed.get(project.repo)}
+        options={list.projects.map((entry) => ({ label: projectOn(entry) ? entry.project : `${entry.project} (off)`, title: entry.repo, onSelect: () => pickProjectRepo(entry.repo) }))}
+      />
     ) : (
       <span className="flex min-w-0 items-center gap-2 text-ink-300">
         <span className="grid size-6 shrink-0 place-items-center">

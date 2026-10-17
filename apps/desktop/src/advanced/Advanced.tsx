@@ -36,7 +36,7 @@ import { PaneSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { SlidePanel } from '@/components/SlidePanel'
-import { runPanelLimits, sidebarLimits } from '@/lib/panel-width'
+import { runPanelLimits, sidebarLimits, sidebarSurface } from '@/lib/panel-width'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { closable, closeOf } from '@/chat/session-ownership'
 import { RunContext, type RunControls } from '@/run-panel/run-context'
@@ -737,6 +737,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     })
   })
   const openKnowledgeHome = useStableCallback(() => openKnowledge(null))
+  const openKnowledgeTopic = useStableCallback((repo: string, topic: string) => openKnowledge({ repo, topic, chat: null, map: false }))
   /** The Artifacts page, one in the layout like the Knowledge page: shown where it already is, on `artifact` when given. */
   const openArtifact = useStableCallback((artifact: Artifact | null) => openArtifactId(artifact?.id ?? null))
   const openArtifactId = useStableCallback((artifactId: string | null) => {
@@ -976,7 +977,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           title: 'Artifacts',
           node: (
             <Suspense fallback={<Loading />}>
-              <ArtifactsPage id={parsed.id} projects={projects} chats={nativeChats} onPick={openArtifact} onOpenChat={selectNativeChat} />
+              <ArtifactsPage id={parsed.id} projects={projects} chats={nativeChats} onPick={openArtifact} onOpenChat={selectNativeChat} onOpenTopic={openKnowledgeTopic} />
             </Suspense>
           ),
         }
@@ -1207,7 +1208,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 
   return (
     <div className="relative flex h-full">
-      <SlidePanel open={!sidebarCollapsed} side="left" width={sidebarWidth.width} className="glass border-r border-white/[0.06]" handle={<ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />}>
+      <SlidePanel open={!sidebarCollapsed} side="left" width={sidebarWidth.width} className={sidebarSurface('left')} handle={<ResizeHandle edge="right" label="Resize the sidebar" panel={sidebarWidth} />}>
         <SidebarHeader onCollapse={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} />
         <SplitRowsContext.Provider value={splitRows}>
           <Sidebar
@@ -1252,7 +1253,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         </SplitRowsContext.Provider>
         <SidebarUsage onOpenSettings={() => setSettingsOpen(true)} />
       </SlidePanel>
-      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
+      <main data-window-content="" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
         {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} joined={windowRow !== null || sharedJoined} />}
         {error !== null && (
           <div className="px-8 pt-4">
@@ -1322,7 +1323,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           maxWidth="50vw"
           keepMounted
           appear
-          className="glass border-l border-white/[0.06]"
+          className={sidebarSurface('right')}
           handle={<ResizeHandle edge="left" label="Resize the run panel" panel={runPanelWidth} grip />}
         >
           {(present) =>

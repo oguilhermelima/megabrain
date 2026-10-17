@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { sidebarLimits, type WidthStorage } from '@/lib/panel-width'
-import { readPanelOpen, wikiPanelLimits, wikiPanels, wikiShellLayout, writePanelOpen } from '@/advanced/wiki-shell-model'
+import { sidebarLimits, sidebarSurface, type WidthStorage } from '@/lib/panel-width'
+import { readPanelOpen, wikiPanelLimits, wikiPanelSurface, wikiPanels, wikiShellLayout, writePanelOpen } from '@/advanced/wiki-shell-model'
 
 function memory(initial: Record<string, string> = {}): WidthStorage & { values: Record<string, string> } {
   const values = { ...initial }
@@ -82,5 +82,13 @@ describe('wikiShellLayout', () => {
   test('a page without a panel has neither', () => {
     expect(wikiShellLayout(false, true)).toEqual({ panel: false, barToggle: false })
     expect(wikiShellLayout(false, false)).toEqual({ panel: false, barToggle: false })
+  })
+})
+
+describe('wikiPanelSurface', () => {
+  test('the panel is drawn with the left sidebar’s surface, its hairline on the edge it faces', () => {
+    expect(wikiPanelSurface).toBe(sidebarSurface('right'))
+    expect(sidebarSurface('left').replace('border-r', 'border-l')).toBe(sidebarSurface('right'))
+    expect(sidebarSurface('left').split(' ')).toContain('glass')
   })
 })

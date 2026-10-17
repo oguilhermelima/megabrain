@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageMessage, usageText, type UsageKey } from "../../core/usage.js";
-import { artifactFormat, createArtifact, listArtifacts, removeArtifact, showArtifact, updateArtifact, type Artifact, type ArtifactKind } from "../../knowledge/artifacts.js";
+import { artifactFormat, artifactRevisions, createArtifact, listArtifacts, removeArtifact, showArtifact, updateArtifact, type Artifact, type ArtifactKind } from "../../knowledge/artifacts.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 /** Where a relative path or a missing --project points, and how stdin is read; tests replace both. */
@@ -104,7 +104,10 @@ export async function executeArtifact(args: readonly string[], environment: Envi
   if (verb === "show") {
     const artifact = await showArtifact(dir, id);
     if (artifact === null) return failed(`unknown artifact: ${id}`, 1);
-    return flags.json ? print(artifact) : ok(artifact.content.endsWith("\n") ? artifact.content : `${artifact.content}\n`);
+    if (!flags.json) return ok(artifact.content.endsWith("\n") ? artifact.content : `${artifact.content}\n`);
+    // The versions updates replaced, oldest first, named and dated but without their content.
+    const revisions = (await artifactRevisions(dir, id)).map(({ revision, title, updatedAt, replacedAt }) => ({ revision, title, updatedAt, replacedAt }));
+    return print({ ...artifact, revisions });
   }
   const removed = await removeArtifact(dir, id);
   if (removed.kind !== "ok") return removed;

@@ -1,6 +1,7 @@
 import type { KnowledgeRef, KnowledgeTopic } from '@/api/schema'
 import { refNumber } from '@/advanced/knowledge-model'
 import type { WidthStorage } from '@/lib/panel-width'
+import { rememberedTabs } from '@/lib/remembered-tabs'
 
 // A topic's page in tabs: what is understood (Overview), the conversation that built it (Messages),
 // its issues and pull requests, its branches with their commits, and its files. A tab with nothing to
@@ -94,36 +95,8 @@ export function branchGroups(topic: Pick<KnowledgeTopic, 'refs' | 'chatRecords'>
 /** Where every topic's last tab is kept: [topic id, tab] pairs, the one picked last at the end. */
 export const topicTabsKey = 'megabrain.knowledge.topic.tabs'
 
-/** How many topics keep their tab; the ones picked longest ago are forgotten first. */
-const keptTopics = 200
+const remembered = rememberedTabs<TopicTab>(topicTabsKey, tabOrder.map((entry) => entry.tab))
 
-const isTab = (value: unknown): value is TopicTab => tabOrder.some((entry) => entry.tab === value)
+export const readTopicTab: (storage: () => WidthStorage, topic: string) => TopicTab | null = remembered.read
 
-const isPair = (value: unknown): value is [string, TopicTab] => Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && isTab(value[1])
-
-// Like a panel's width, a remembered tab is a convenience: storage missing, blocked or holding
-// something else remembers nothing. Pairs, not an object, so the order picked survives (an object
-// puts number-like keys first).
-function readAll(storage: () => WidthStorage): [string, TopicTab][] {
-  try {
-    const parsed: unknown = JSON.parse(storage().getItem(topicTabsKey) ?? '[]')
-    return Array.isArray(parsed) ? parsed.filter(isPair) : []
-  } catch {
-    return []
-  }
-}
-
-export function readTopicTab(storage: () => WidthStorage, topic: string): TopicTab | null {
-  return readAll(storage).find(([id]) => id === topic)?.[1] ?? null
-}
-
-export function writeTopicTab(storage: () => WidthStorage, topic: string, tab: TopicTab): TopicTab {
-  const pairs = readAll(storage).filter(([id]) => id !== topic)
-  pairs.push([topic, tab])
-  try {
-    storage().setItem(topicTabsKey, JSON.stringify(pairs.slice(-keptTopics)))
-  } catch {
-    // Not remembering it is fine.
-  }
-  return tab
-}
+export const writeTopicTab: (storage: () => WidthStorage, topic: string, tab: TopicTab) => TopicTab = remembered.write
