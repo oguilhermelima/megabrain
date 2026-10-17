@@ -293,6 +293,10 @@ megabrain chat send <id> --parts '[{"type":"text","text":"Explain this project"}
 megabrain chat events <id> --follow --json
 ```
 
+List a chat's megabrain and Claude artifacts with `megabrain chat artifacts <id> --json`. Read one
+with `megabrain chat artifact <id> <artifact-id> --json`; remote-only Claude artifacts return their
+URL without downloading remote content.
+
 A chat whose agent process is gone (daemon restart, app update, reboot, crash, `chat stop <id>`) is
 `suspended`, not lost: its record keeps the agent's session id and the next `chat send` respawns the
 agent with resume. If that resume fails the chat stays suspended with the error;

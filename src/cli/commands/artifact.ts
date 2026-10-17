@@ -80,7 +80,7 @@ export async function executeArtifact(args: readonly string[], environment: Envi
     const input = await contentOf(flags, io);
     if (input === null) return usage;
     if (input.kind !== "ok") return input;
-    const created = await createArtifact(dir, { title, kind: kind as ArtifactKind, ...input.value, project: project ?? cwd, topics: flags.topics, chatId: flags.values["--chat"] ?? null });
+    const created = await createArtifact(dir, { title, kind: kind as ArtifactKind, ...input.value, project: project ?? cwd, topics: flags.topics, chatId: flags.values["--chat"] ?? environment.MEGABRAIN_CHAT_ID ?? null });
     if (created.kind !== "ok") return created;
     return flags.json ? print(created.value) : ok(`${created.value.id} ${created.value.path}\n`);
   }

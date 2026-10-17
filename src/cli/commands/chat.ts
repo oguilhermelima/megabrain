@@ -8,6 +8,7 @@ import { readModelSettings, startModel } from "../../core/model-settings.js";
 import { callChatd, callPermissionServer, chatdStatus, drainChatd } from "../../chat/daemon.js";
 import { ChatStore, type ChatLine } from "../../chat/store.js";
 import { readSummaries, searchSummaries } from "../../chat/summaries.js";
+import { listChatArtifacts, readChatArtifact } from "../../chat/artifacts.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
 function stateDir(environment: Environment): string { return environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain"); }
@@ -152,6 +153,25 @@ export async function executeChat(args: readonly string[], environment: Environm
       if (!id || tail.length !== 1 || tail[0] !== "--json") throw new Error("Usage: megabrain chat summaries <id> --json");
       // The history is a plain file, so it reads without a daemon.
       return ok(argsJson(readSummaries(dir, id)));
+    }
+    if (verb === "artifacts") {
+      if (rest.includes("-h") || rest.includes("--help")) return ok(usageText("chat-artifacts"));
+      const [id, ...tail] = rest;
+      if (!id || tail.length !== 1 || tail[0] !== "--json") throw new Error(usageText("chat-artifacts").trimEnd());
+      const chat = await new ChatStore(dir).get(id);
+      if (chat === null) throw new Error(`unknown chat: ${id}`);
+      value = { artifacts: await listChatArtifacts(dir, chat, environment.HOME ?? process.env.HOME ?? "") };
+      return ok(argsJson(value));
+    }
+    if (verb === "artifact") {
+      if (rest.includes("-h") || rest.includes("--help")) return ok(usageText("chat-artifact"));
+      const [id, artifactId, ...tail] = rest;
+      if (!id || !artifactId || tail.length !== 1 || tail[0] !== "--json") throw new Error(usageText("chat-artifact").trimEnd());
+      const chat = await new ChatStore(dir).get(id);
+      if (chat === null) throw new Error(`unknown chat: ${id}`);
+      const artifact = await readChatArtifact(dir, chat, environment.HOME ?? process.env.HOME ?? "", artifactId);
+      if (artifact === null) throw new Error(`unknown artifact for chat ${id}: ${artifactId}`);
+      return ok(argsJson(artifact));
     }
     if (verb === "search") {
       const [query, ...tail] = rest;

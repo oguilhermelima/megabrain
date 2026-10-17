@@ -20,6 +20,7 @@ import { backfillSummaries } from "../knowledge/backfill.js";
 import { KnowledgePipeline } from "../knowledge/pipeline.js";
 import { scanProjects } from "../knowledge/scanner.js";
 import { ChatSummarizer } from "./summaries.js";
+import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFingerprint, listChatArtifacts, listClaudeChatArtifacts, listMegabrainChatArtifacts, type ChatArtifact } from "./artifacts.js";
 
 type Part = MessagePart;
 type Request = { operation: string; [key: string]: unknown };
@@ -125,6 +126,7 @@ function codexReasoning(item: Record<string, unknown>): string {
   return parts.join("\n\n") || flattenContent(item.content);
 }
 const count = (value: unknown): number | undefined => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+type ArtifactWatch = { timer: ReturnType<typeof setInterval>; artifacts: ChatArtifact[]; storeFingerprint: string; fileFingerprint: string; refreshing: boolean };
 
 /** Owns every chat child. The CLI is a short-lived socket client; chatd keeps this object alive. */
 export class ChatDaemon {
@@ -146,6 +148,7 @@ export class ChatDaemon {
   private readonly interruptedEvents = new Set<string>();
   private readonly pendingApprovals = new Map<string, { approval: ChatApproval; resolve: (decision: string) => void }>();
   private readonly subscribers = new Map<string, Set<(line: ChatLine, live?: boolean) => void>>();
+  private readonly artifactWatches = new Map<string, ArtifactWatch>();
   private readonly eventChains = new Map<string, Promise<void>>();
   private readonly startTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly outputSeen = new Set<string>();
@@ -509,7 +512,7 @@ export class ChatDaemon {
     const holders = checked ? [] : await this.foreignHolders(chat);
     if (holders.length > 0) throw new Error(heldMessage(chat, holders));
     const invocation = await chatProtocolAdapters[chat.agent].prepare(chat, this.stateDir);
-    const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: scrubAgentEnvironment({ ...process.env, ...this.environment }), stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...scrubAgentEnvironment({ ...process.env, ...this.environment }), MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });
     this.children.set(chat.id, child);
     this.outputSeen.delete(chat.id);
     let stdout = "";
@@ -947,6 +950,7 @@ export class ChatDaemon {
     this.clearStartTimer(id);
     if (child) child.kill("SIGTERM");
     await Promise.allSettled([this.eventChains.get(id), this.appendChains.get(id), this.queueWrites.get(id)]);
+    this.stopArtifactWatch(id);
     for (const map of [this.queues, this.queued, this.queueWrites, this.drainChains, this.activeTurns, this.eventChains, this.appendChains, this.publishedState, this.turnStarted, this.currentMessage, this.claudeTokens, this.codexTokenBase, this.toolNames, this.subagents, this.subscribers]) map.delete(id);
     this.queueHeld.delete(id);
     this.interrupting.delete(id);
@@ -1118,6 +1122,68 @@ export class ChatDaemon {
     return chat;
   }
 
+  private async startArtifactWatch(chat: Chat): Promise<void> {
+    if (this.artifactWatches.has(chat.id)) return;
+    const artifacts = await listChatArtifacts(this.stateDir, chat, this.environment.HOME ?? homedir());
+    const watch: ArtifactWatch = { timer: setInterval(() => { void this.checkArtifactWatch(chat); }, 1000), artifacts, storeFingerprint: "", fileFingerprint: "", refreshing: false };
+    watch.storeFingerprint = chatArtifactStoreFingerprint(this.stateDir, artifacts);
+    watch.fileFingerprint = chatArtifactFileFingerprint(artifacts);
+    watch.timer.unref?.();
+    this.artifactWatches.set(chat.id, watch);
+  }
+
+  private stopArtifactWatch(id: string): void {
+    const watch = this.artifactWatches.get(id);
+    if (watch !== undefined) clearInterval(watch.timer);
+    this.artifactWatches.delete(id);
+  }
+
+  private async replaceArtifactSnapshot(chat: Chat, watch: ArtifactWatch, artifacts: ChatArtifact[]): Promise<void> {
+    artifacts.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+    const changed = chatArtifactSignature(watch.artifacts) !== chatArtifactSignature(artifacts);
+    watch.artifacts = artifacts;
+    watch.storeFingerprint = chatArtifactStoreFingerprint(this.stateDir, artifacts);
+    watch.fileFingerprint = chatArtifactFileFingerprint(artifacts);
+    if (changed) this.publishLive(chat.id, event("artifacts", ""));
+  }
+
+  private async refreshClaudeArtifacts(chat: Chat): Promise<void> {
+    const watch = this.artifactWatches.get(chat.id);
+    if (watch === undefined || watch.refreshing) return;
+    watch.refreshing = true;
+    try {
+      const claude = await listClaudeChatArtifacts(chat, this.environment.HOME ?? homedir());
+      const artifacts = [...watch.artifacts.filter((artifact) => artifact.source !== "claude-artifact" && artifact.source !== "claude-design"), ...claude.map((item) => item.artifact)];
+      await this.replaceArtifactSnapshot(chat, watch, artifacts);
+    } catch { /* a session log can be mid-write; the next tool result or local mtime check will retry */ }
+    finally { watch.refreshing = false; }
+  }
+
+  private async checkArtifactWatch(chat: Chat): Promise<void> {
+    const watch = this.artifactWatches.get(chat.id);
+    if (watch === undefined || watch.refreshing || this.subscribers.get(chat.id)?.size === 0) return;
+    const storeFingerprint = chatArtifactStoreFingerprint(this.stateDir, watch.artifacts);
+    const fileFingerprint = chatArtifactFileFingerprint(watch.artifacts);
+    if (storeFingerprint === watch.storeFingerprint && fileFingerprint === watch.fileFingerprint) return;
+    watch.refreshing = true;
+    try {
+      let artifacts = watch.artifacts;
+      if (storeFingerprint !== watch.storeFingerprint) {
+        const megabrain = await listMegabrainChatArtifacts(this.stateDir, chat);
+        artifacts = [...artifacts.filter((artifact) => artifact.source !== "megabrain"), ...megabrain.map((item) => item.artifact)];
+      }
+      if (fileFingerprint !== watch.fileFingerprint) {
+        artifacts = artifacts.map((artifact) => {
+          if (artifact.path === undefined) return artifact;
+          try { return { ...artifact, updatedAt: statSync(artifact.path).mtime.toISOString() }; }
+          catch { return artifact; }
+        });
+      }
+      await this.replaceArtifactSnapshot(chat, watch, artifacts);
+    } catch { /* files can disappear during a check; keep the last complete snapshot */ }
+    finally { watch.refreshing = false; }
+  }
+
   private async events(id: string, since: number, follow: boolean, socket?: Socket): Promise<ChatLine[]> {
     const chat = await this.requireChat(id);
     const head: ChatLine = { cursor: String(since), chat, queue: [...await this.loadQueue(id)] };
@@ -1129,7 +1195,7 @@ export class ChatDaemon {
         let replaying = true;
         const pending: ChatLine[] = [];
         const write = (line: ChatLine, live = false) => {
-          if (live) { socket.write(`${JSON.stringify({ ...line, cursor: String(cursor) })}\n`); return; }
+          if (live) { socket.write(`${JSON.stringify({ ...line, cursor: "" })}\n`); return; }
           const next = Number(line.cursor);
           if (!Number.isSafeInteger(next) || next <= cursor) return;
           socket.write(`${JSON.stringify(line)}\n`);
@@ -1140,8 +1206,9 @@ export class ChatDaemon {
           if (replaying) { pending.push(line); if (live) pendingLive.add(line); } else write(line, live);
         };
         listeners.add(listener); this.subscribers.set(id, listeners);
-        socket.once("close", () => { listeners.delete(listener); });
+        socket.once("close", () => { listeners.delete(listener); if (listeners.size === 0) this.stopArtifactWatch(id); });
         try {
+          await this.startArtifactWatch(chat);
           for (const line of await this.store.events(id, since)) write(line);
           for (let index = 0; index < pending.length; index += 1) { const line = pending[index] as ChatLine; write(line, pendingLive.has(line)); }
           replaying = false;
@@ -1149,6 +1216,7 @@ export class ChatDaemon {
           if (current) write({ cursor: "", event: this.stateEvent(current) }, true);
         } catch (error) {
           listeners.delete(listener);
+          if (listeners.size === 0) this.stopArtifactWatch(id);
           throw error;
         }
         return [];
@@ -1306,6 +1374,7 @@ export class ChatDaemon {
       if (this.removed.has(chat.id)) return;
       const line = await this.store.append(chat.id, value, approval);
       for (const listener of this.subscribers.get(chat.id) ?? []) listener(line);
+      if (value.kind === "tool-result") void this.refreshClaudeArtifacts(chat);
     });
     this.appendChains.set(chat.id, next);
     await next;
@@ -1331,6 +1400,7 @@ export class ChatDaemon {
   async close(): Promise<void> {
     this.closed = true;
     this.idleTimer && clearTimeout(this.idleTimer);
+    for (const id of this.artifactWatches.keys()) this.stopArtifactWatch(id);
     if (this.terminalTimer !== undefined) clearInterval(this.terminalTimer);
     this.server?.close();
     this.server = undefined;
