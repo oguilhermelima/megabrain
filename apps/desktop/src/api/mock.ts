@@ -14,7 +14,6 @@ import { validateRule } from '@/settings/chain-rules'
 import { effectiveToggles, inEffect, parseKnowledgeSettings } from '@/settings/knowledge-model'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-const pillListeners = new Set<(expanded: boolean) => void>()
 
 // Runs the UI in a plain browser (`bun run dev`) with fixed data and believable timing.
 export function createMockApi(): DesktopApi {
@@ -137,15 +136,6 @@ export function createMockApi(): DesktopApi {
       await wait(200)
       return mockDispatchReport
     },
-    pillGeometry: async () => ({ notchWidth: 200, barHeight: 37 }),
-    setPillExpanded: async (expanded) => {
-      for (const listener of pillListeners) listener(expanded)
-    },
-    onPillExpanded(listener) {
-      pillListeners.add(listener)
-      return () => pillListeners.delete(listener)
-    },
-    openMain: async () => {},
     transcript: async (target) => ({ ...mockTranscript, dispatchId: 'dispatchId' in target ? target.dispatchId : null, sessionId: 'sessionId' in target ? target.sessionId : mockTranscript.sessionId }),
     setHidden: async () => {},
     removeProject: async () => {},

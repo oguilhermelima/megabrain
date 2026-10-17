@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { mockStatus, mockWorktrees } from '@/api/fixtures/mock'
 import type { Dispatch, Project } from '@/api/schema'
-import { chatState, groupChats, pillSummary, worktreeRepositories } from '@/advanced/model'
+import { chatState, groupChats, worktreeRepositories } from '@/advanced/model'
 
 function chat(id: string, fields: Partial<Dispatch> = {}): Dispatch {
   return {
@@ -72,19 +72,6 @@ describe('groupChats', () => {
   })
   test('the mock groups into more than one repository', () => {
     expect(groupChats(mockStatus.dispatches, mockWorktrees).repositories.length).toBeGreaterThan(1)
-  })
-})
-
-describe('pillSummary', () => {
-  test('counts chats at work and chats that need you', () => {
-    const summary = pillSummary([
-      chat('a', { state: 'running' }),
-      chat('b', { state: 'spawning' }),
-      chat('c', { state: 'queued' }),
-      chat('d', { state: 'failed' }),
-      chat('e', { state: 'running', supervision: { lastCheck: null, finding: { cause: 'usage-limit' } } }),
-    ])
-    expect(summary).toEqual({ working: 2, needsYou: 1, queued: 1 })
   })
 })
 

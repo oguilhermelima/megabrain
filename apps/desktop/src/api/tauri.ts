@@ -8,7 +8,7 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
-import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
+import { CliError, type DesktopApi, type InstallExit, type PathLink } from '@/api/adapter'
 import { chatStreamReader, streamMarkerSchema } from '@/api/chat-stream'
 import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactListSchema, artifactContentSchema, chatArtifactListSchema, chatArtifactContentSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema } from '@/api/schema'
 
@@ -140,21 +140,6 @@ export function createTauriApi(): DesktopApi {
       const record = await cliJson(['db', 'show', dispatchId, '--json'], dispatchMessagesSchema)
       return record.messages.filter((message) => message.from === 'child').at(-1)?.text ?? null
     },
-    pillGeometry: () => invoke<PillGeometry>('pill_geometry'),
-    setPillExpanded: (expanded) => invoke('set_pill_expanded', { expanded }),
-    onPillExpanded(listener) {
-      let stop: (() => void) | undefined
-      let cancelled = false
-      void listen<boolean>('pill-expanded', ({ payload }) => listener(payload)).then((unlisten) => {
-        if (cancelled) unlisten()
-        else stop = unlisten
-      })
-      return () => {
-        cancelled = true
-        stop?.()
-      }
-    },
-    openMain: () => invoke('open_main'),
     transcript: (target, since) =>
       cliJson(
         ['orchestrate', 'transcript', ...('dispatchId' in target ? [target.dispatchId] : ['--session', target.sessionId]), ...(since === undefined ? [] : ['--since', since]), '--operator', '--json'],

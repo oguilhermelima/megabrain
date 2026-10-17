@@ -67,11 +67,3 @@ export function groupChats(chats: Dispatch[], worktrees: WorktreeRepository[]): 
   }
 }
 
-export function pillSummary(chats: Dispatch[]): { working: number; needsYou: number; queued: number } {
-  const states = chats.map(chatState)
-  return {
-    working: states.filter((state) => state === 'working').length,
-    needsYou: states.filter((state) => state === 'needs-you').length,
-    queued: states.filter((state) => state === 'queued').length,
-  }
-}

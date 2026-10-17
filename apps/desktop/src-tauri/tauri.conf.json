@@ -31,22 +31,6 @@
           ],
           "state": "active"
         }
-      },
-      {
-        "label": "pill",
-        "title": "megabrain pill",
-        "width": 380,
-        "height": 38,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "visibleOnAllWorkspaces": true,
-        "resizable": false,
-        "shadow": false,
-        "focus": false,
-        "x": 0,
-        "y": 0
       }
     ],
     "security": {

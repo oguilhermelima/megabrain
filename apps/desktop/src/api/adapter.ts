@@ -11,12 +11,6 @@ export interface PathLink {
   resolvesTo: string | null
 }
 
-/** The notch of the main screen, in points; no notch on Linux or older Macs. */
-export interface PillGeometry {
-  notchWidth: number | null
-  barHeight: number
-}
-
 export interface InstallExit {
   code: number | null
   stderr: string
@@ -51,10 +45,6 @@ export interface DesktopApi {
   reply(dispatchId: string, text: string): Promise<ReplyResult>
   /** The last message a chat's child sent, in full (`db show`); null when it sent none. */
   readDispatchMessage(dispatchId: string): Promise<string | null>
-  pillGeometry(): Promise<PillGeometry>
-  setPillExpanded(expanded: boolean): Promise<void>
-  onPillExpanded(listener: (expanded: boolean) => void): () => void
-  openMain(): Promise<void>
   /** Hide or show a project or a worktree in the sidebar (stored by megabrain). */
   setHidden(target: { project: string } | { worktree: string }, hidden: boolean): Promise<void>
   /** Remove a project from the registry; files stay. */

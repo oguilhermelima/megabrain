@@ -3,8 +3,7 @@
   "identifier": "default",
   "description": "What the main window may call",
   "windows": [
-    "main",
-    "pill"
+    "main"
   ],
   "permissions": [
     "core:default",
