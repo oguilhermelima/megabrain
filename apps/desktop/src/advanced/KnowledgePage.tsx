@@ -4,11 +4,12 @@ import type { Artifact, KnowledgeChat, KnowledgeKind, KnowledgeList, KnowledgeRe
 import { ArtifactStrip } from '@/advanced/ArtifactStrip'
 import { column, useRead } from '@/advanced/knowledge-parts'
 import { ChatTranscript } from '@/advanced/KnowledgeTranscript'
-import { Chevron, KnowledgeIcon } from '@/advanced/chrome'
+import { BranchIcon, Chevron, KnowledgeIcon } from '@/advanced/chrome'
 import { KnowledgeMap } from '@/advanced/KnowledgeMap'
 import { BarSearch, WikiShell, barToggle } from '@/advanced/WikiShell'
 import { wikiPanels } from '@/advanced/wiki-shell-model'
-import { chatCards, decisionsOf, groupTopics, kindColors, kindGroups, pageTitle, refLabel, refNumber, statusLabels, type KnowledgeView } from '@/advanced/knowledge-model'
+import { chatCards, decisionsOf, groupTopics, kindColors, kindGroups, refLabel, refNumber, statusLabels, type KnowledgeView } from '@/advanced/knowledge-model'
+import { branchGroups, githubRefGroups, readTopicTab, shownTopicTab, topicTabs, writeTopicTab, type GithubRefRow as GithubRefRowData, type TopicTab } from '@/advanced/topic-tabs-model'
 import { displayName } from '@/advanced/appearance-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { projectColor, projectInitials } from '@/advanced/picture-model'
@@ -16,6 +17,7 @@ import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
 import { AgentIcon } from '@/components/agent-icons'
 import { Collapse } from '@/components/Collapse'
+import { SegmentedTabs } from '@/components/SegmentedTabs'
 import { ContextMenu, useContextMenu } from '@/components/ContextMenu'
 import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
@@ -26,11 +28,12 @@ import { projectsPolicy } from '@/lib/poll-model'
 import { usePoll } from '@/lib/usePoll'
 import { effectiveToggles, inEffect, parseKnowledgeSettings, type KnowledgeSettings } from '@/settings/knowledge-model'
 
-// The Knowledge page, a wiki of one project's topics in one pane (WikiShell): a top bar with the
-// project switcher, the page's title, a search and the map's toggle, the topics by kind in a panel on
-// the right, and between them the picked topic in a reading column: its
-// kind and status, refs, sections, decisions, key messages and the chats that built it. The item's id
-// is what the page shows (knowledge-model.ts); with no topic picked it shows the project's newest.
+// The Knowledge page, a wiki of one project's topics in one pane (WikiShell): the topics by kind in a
+// panel on the right, and beside it a top bar with the project switcher, a search and the map's
+// toggle over the picked topic in a reading column. The topic reads in tabs (topic-tabs-model.ts):
+// its kind, status, sections and decisions; its key messages and chats; its issues and pull
+// requests; its branches and commits; its files. The item's id is what the page shows
+// (knowledge-model.ts); with no topic picked it shows the project's newest.
 
 type KnowledgeProject = KnowledgeList['projects'][number]
 
@@ -178,27 +181,37 @@ function StatusChip({ status }: { status: KnowledgeStatus }) {
 /** Live GitHub states of a topic's issues and pull requests, read once per page and kept for the run. */
 const refStates = new Map<string, Promise<string | null>>()
 
-function useRefState(repo: string, ref: KnowledgeRef, listed: boolean): string | null {
-  const number = refNumber(ref)
-  const key = `${repo}\n${ref.kind}\n${number ?? ''}`
-  const [state, setState] = useState<{ key: string; value: string | null } | null>(null)
+const refStateKey = (repo: string, ref: KnowledgeRef) => `${repo}\n${ref.kind}\n${refNumber(ref) ?? ''}`
+
+/** Each issue's and pull request's live state (draft for an open draft), else the state the topic recorded. */
+function useRefStates(repo: string, refs: readonly KnowledgeRef[], listed: boolean): (ref: KnowledgeRef) => string | null {
+  const [states, setStates] = useState<ReadonlyMap<string, string | null>>(new Map())
+  const wanted = refs.filter((ref) => (ref.kind === 'issue' || ref.kind === 'pr') && refNumber(ref) !== null)
+  const keys = wanted.map((ref) => refStateKey(repo, ref)).join('\t')
   useEffect(() => {
-    if (number === null || !listed) return
+    if (!listed) return
     let current = true
-    let read = refStates.get(key)
-    if (read === undefined) {
-      read = (ref.kind === 'pr' ? api.githubPullRequest(repo, number) : api.githubIssue(repo, number)).then(
-        (detail) => (detail.isDraft === true && detail.state.toLowerCase() === 'open' ? 'draft' : detail.state.toLowerCase()),
-        () => null,
-      )
-      refStates.set(key, read)
+    for (const ref of wanted) {
+      const number = refNumber(ref)
+      if (number === null) continue
+      const key = refStateKey(repo, ref)
+      let read = refStates.get(key)
+      if (read === undefined) {
+        read = (ref.kind === 'pr' ? api.githubPullRequest(repo, number) : api.githubIssue(repo, number)).then(
+          (detail) => (detail.isDraft === true && detail.state.toLowerCase() === 'open' ? 'draft' : detail.state.toLowerCase()),
+          () => null,
+        )
+        refStates.set(key, read)
+      }
+      read.then((value) => current && setStates((known) => new Map(known).set(key, value)))
     }
-    read.then((value) => current && setState({ key, value }))
     return () => {
       current = false
     }
-  }, [key, number, listed, repo, ref.kind])
-  return (state?.key === key ? state.value : null) ?? ref.state?.toLowerCase() ?? null
+    // The refs are named by their keys; a new array with the same refs reads nothing again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keys, listed, repo])
+  return (ref) => states.get(refStateKey(repo, ref)) ?? ref.state?.toLowerCase() ?? null
 }
 
 function GithubRefIcon({ kind, state }: { kind: 'issue' | 'pr'; state: string | null }) {
@@ -217,36 +230,6 @@ function GithubRefIcon({ kind, state }: { kind: 'issue' | 'pr'; state: string | 
     <span style={{ color: state === null ? undefined : stateColors[visual] }} className="shrink-0">
       <Icon size={13} />
     </span>
-  )
-}
-
-const chip = 'inline-flex h-7 max-w-[280px] shrink-0 items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 text-[12.5px] text-ink-200'
-
-function RefChip({ repo, ref: entry, listed, onOpenGithub }: { repo: string; ref: KnowledgeRef; listed: boolean; onOpenGithub: (repo: string, kind: 'pr' | 'issue', number: number) => void }) {
-  const state = useRefState(repo, entry, listed)
-  const number = refNumber(entry)
-  const label = refLabel(entry)
-  const title = [label, entry.title, state === null ? null : `${state[0]?.toUpperCase() ?? ''}${state.slice(1)}`, entry.kind === 'commit' ? entry.id : null].filter((part) => part !== null && part !== undefined).join(' · ')
-  const body = (
-    <>
-      {(entry.kind === 'issue' || entry.kind === 'pr') && <GithubRefIcon kind={entry.kind} state={state} />}
-      <span className={`shrink-0 font-medium ${entry.kind === 'commit' || entry.kind === 'branch' ? 'font-mono text-[11.5px]' : ''}`}>{label}</span>
-      {entry.title !== undefined && <span className="min-w-0 truncate text-ink-400">{entry.title}</span>}
-    </>
-  )
-  // An issue or pull request opens in the app's GitHub view when the project is listed, else on GitHub.
-  const open = (entry.kind === 'issue' || entry.kind === 'pr') && number !== null && listed ? () => onOpenGithub(repo, entry.kind === 'pr' ? 'pr' : 'issue', number) : entry.url !== undefined ? () => void api.openUrl(entry.url ?? '') : null
-  if (open === null) {
-    return (
-      <span className={chip} title={title}>
-        {body}
-      </span>
-    )
-  }
-  return (
-    <button type="button" onClick={open} title={title} className={`${chip} transition-colors hover:border-white/[0.16] hover:bg-white/[0.07]`}>
-      {body}
-    </button>
   )
 }
 
@@ -377,14 +360,260 @@ function ChatCard({ chat, workers, now, onOpen }: { chat: KnowledgeChat; workers
   )
 }
 
-function TopicReading({
-  id,
+const stateLabel = (state: string) => `${state[0]?.toUpperCase() ?? ''}${state.slice(1)}`
+
+/** An issue's or pull request's state in GitHub's colour for it. */
+function stateTone(kind: 'issue' | 'pr', state: string | null): string | undefined {
+  if (state === null) return undefined
+  if (kind === 'issue') return state === 'closed' ? stateColors.merged : stateColors.open
+  return state === 'merged' || state === 'closed' || state === 'draft' ? stateColors[state] : stateColors.open
+}
+
+const listBox = 'divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60'
+const row = 'grid w-full grid-cols-[auto_minmax(0,1fr)] items-start gap-3.5 px-5 py-3.5 text-left'
+
+function GithubRefRow({ row: entry, repo, listed, onOpenGithub }: { row: GithubRefRowData; repo: string; listed: boolean; onOpenGithub: (repo: string, kind: 'pr' | 'issue', number: number) => void }) {
+  const { ref, kind, number, state } = entry
+  const label = refLabel(ref)
+  const noun = `${kind === 'pr' ? 'Pull request' : 'Issue'} ${number === null ? ref.id : `#${number}`}`
+  const body = (
+    <>
+      <span className="pt-0.5">
+        <GithubRefIcon kind={kind} state={state} />
+      </span>
+      <span className="min-w-0 space-y-1">
+        <span className="block truncate text-[14px] leading-snug font-semibold text-ink-100">{ref.title ?? noun}</span>
+        <span className="flex min-w-0 items-center gap-1.5 text-[12.5px] text-ink-400">
+          {/* Untitled, the row's title already says what and which; the line keeps only its state. */}
+          {ref.title !== undefined && (
+            <>
+              <span className="shrink-0 tabular-nums">{number === null ? ref.id : `#${number}`}</span>
+              <span className="text-ink-600">·</span>
+              <span className="shrink-0">{kind === 'pr' ? 'Pull request' : 'Issue'}</span>
+            </>
+          )}
+          {ref.title === undefined && state === null && <span className="shrink-0">State unknown</span>}
+          {state !== null && (
+            <>
+              {ref.title !== undefined && <span className="text-ink-600">·</span>}
+              <span style={{ color: stateTone(kind, state) }} className="shrink-0 font-medium">
+                {stateLabel(state)}
+              </span>
+            </>
+          )}
+        </span>
+      </span>
+    </>
+  )
+  // An issue or pull request opens in the app's GitHub view when the project is listed, else on GitHub.
+  const open = number !== null && listed ? () => onOpenGithub(repo, kind, number) : ref.url !== undefined ? () => void api.openUrl(ref.url ?? '') : null
+  if (open === null) return <div className={row}>{body}</div>
+  return (
+    <button type="button" onClick={open} title={[label, ref.title].filter((part) => part !== undefined).join(' · ')} className={`${row} transition-colors duration-[var(--motion-enter)] hover:bg-white/[0.03]`}>
+      {body}
+    </button>
+  )
+}
+
+function GithubRefs({ topic, repo, listed, onOpenGithub }: { topic: KnowledgeTopic; repo: string; listed: boolean; onOpenGithub: (repo: string, kind: 'pr' | 'issue', number: number) => void }) {
+  const stateOf = useRefStates(repo, topic.refs, listed)
+  const { open, closed } = githubRefGroups(topic.refs, stateOf)
+  const group = (title: string, rows: GithubRefRowData[]) =>
+    rows.length > 0 && (
+      <Section title={title} aside={<span className="text-[12px] text-ink-500 tabular-nums">{rows.length}</span>}>
+        <ul className={listBox}>
+          {rows.map((entry) => (
+            <li key={`${entry.ref.kind}\n${entry.ref.id}`}>
+              <GithubRefRow row={entry} repo={repo} listed={listed} onOpenGithub={onOpenGithub} />
+            </li>
+          ))}
+        </ul>
+      </Section>
+    )
+  return (
+    <>
+      {group('Open', open)}
+      {group('Closed and merged', closed)}
+    </>
+  )
+}
+
+/** What a branch's recorded state says, in words. */
+const branchStates: Record<string, string> = { merged: 'Merged', open: 'Open PR', pr: 'Open PR', gone: 'Gone', deleted: 'Gone' }
+
+function CommitLine({ commit }: { commit: KnowledgeRef }) {
+  return (
+    <span title={commit.id} className="flex min-w-0 items-baseline gap-2.5 text-[13px]">
+      <span className="shrink-0 font-mono text-[11.5px] text-ink-400">{refLabel(commit)}</span>
+      <span className="min-w-0 truncate text-ink-300">{commit.title ?? ''}</span>
+    </span>
+  )
+}
+
+function Branches({ topic }: { topic: KnowledgeTopic }) {
+  const { branches, commits } = branchGroups(topic)
+  return (
+    <>
+      {branches.length > 0 && (
+        <Section title="Branches" aside={<span className="text-[12px] text-ink-500 tabular-nums">{branches.length}</span>}>
+          <ul className={listBox}>
+            {branches.map(({ ref, state, commits: own }) => (
+              <li key={ref.id} className="space-y-2 px-5 py-3.5">
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <span className="shrink-0 text-ink-400">
+                    <BranchIcon />
+                  </span>
+                  <span title={ref.id} className="min-w-0 flex-1 truncate font-mono text-[13px] text-ink-100">
+                    {ref.id}
+                  </span>
+                  {state !== null && (
+                    <span style={{ color: state === 'merged' ? stateColors.merged : state === 'open' || state === 'pr' ? stateColors.open : undefined }} className="shrink-0 text-[12px] font-medium text-ink-400">
+                      {branchStates[state] ?? stateLabel(state)}
+                    </span>
+                  )}
+                </span>
+                {own.length > 0 && (
+                  <ul className="ml-[6px] space-y-1 border-l border-white/[0.08] pl-4" aria-label={`Commits on ${ref.id}`}>
+                    {own.map((commit) => (
+                      <li key={commit.id}>
+                        <CommitLine commit={commit} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+      {commits.length > 0 && (
+        <Section title="Commits" aside={<span className="text-[12px] text-ink-500 tabular-nums">{commits.length}</span>}>
+          <ul className={`${listBox} py-1.5`}>
+            {commits.map((commit) => (
+              <li key={commit.id} className="px-5 py-2">
+                <CommitLine commit={commit} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
+    </>
+  )
+}
+
+function Files({ topic }: { topic: KnowledgeTopic }) {
+  const files = [...new Set(topic.refs.filter((ref) => ref.kind === 'file').map((ref) => ref.id))].sort()
+  return (
+    <ul className={`${listBox} py-1.5`}>
+      {files.map((file) => {
+        const slash = file.lastIndexOf('/')
+        return (
+          <li key={file} title={file} className="flex min-w-0 items-baseline gap-2 px-5 py-2 font-mono text-[12.5px]">
+            <span className="shrink-0 text-ink-100">{file.slice(slash + 1)}</span>
+            {slash > 0 && <span className="min-w-0 truncate text-ink-500">{file.slice(0, slash)}</span>}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+const browserStorage = () => localStorage
+
+function TopicTabs({
+  topic,
   repo,
   listed,
   now,
   onOpenGithub,
   onOpenChat,
   onOpenArtifact,
+}: {
+  topic: KnowledgeTopic
+  repo: string
+  listed: Project | undefined
+  now: number
+  onOpenGithub: (repo: string, kind: 'pr' | 'issue', number: number) => void
+  onOpenChat: (chatId: string) => void
+  onOpenArtifact: (artifact: Artifact) => void
+}) {
+  const [chosen, setChosen] = useState<TopicTab | null>(() => readTopicTab(browserStorage, topic.id))
+  const tabs = topicTabs(topic)
+  const shown = shownTopicTab(tabs, chosen)
+  const segments = tabs.map(({ tab, label, count }) => ({ view: tab, label, enabled: true, title: label, badge: count === null ? null : String(count) }))
+  const cards = chatCards(topic.chatRecords)
+  return (
+    <div className={`${column} space-y-8`}>
+      <header className="space-y-5">
+        <h2 className="text-[28px] leading-tight font-semibold tracking-[-0.02em] text-ink-100">{topic.title}</h2>
+        {tabs.length > 1 && <SegmentedTabs label="Topic" segments={segments} shown={shown} onSelect={(tab) => setChosen(writeTopicTab(browserStorage, topic.id, tab))} />}
+      </header>
+      {shown === 'overview' && (
+        <div role="tabpanel" aria-label="Overview" className="space-y-9">
+          <div className="flex flex-wrap items-center gap-2">
+            <KindChip kind={topic.kind} />
+            <StatusChip status={topic.status} />
+            <span className="pl-1 text-[12.5px] text-ink-400" title={new Date(topic.updatedAt).toLocaleString()}>
+              Updated {relativeAge(topic.updatedAt, now)} ago
+            </span>
+            {topic.aliases.length > 0 && <span className="truncate text-[12.5px] text-ink-500">· Also {topic.aliases.join(', ')}</span>}
+          </div>
+          {topic.sections.overview.trim() !== '' && <MarkdownText text={topic.sections.overview} className={`${prose} text-[15px]`} />}
+          <ArtifactStrip topic={topic.id} onOpen={onOpenArtifact} />
+          {topic.sections.state.trim() !== '' && (
+            <Section title="Where it stands">
+              <MarkdownText text={topic.sections.state} className={prose} />
+            </Section>
+          )}
+          <Decisions topic={topic} now={now} />
+          {topic.sections.pitfalls.trim() !== '' && (
+            <Section title="Pitfalls">
+              <MarkdownText text={topic.sections.pitfalls} className={prose} />
+            </Section>
+          )}
+          {topic.sections.open.trim() !== '' && (
+            <Section title="Open">
+              <MarkdownText text={topic.sections.open} className={prose} />
+            </Section>
+          )}
+        </div>
+      )}
+      {shown === 'messages' && (
+        <div role="tabpanel" aria-label="Messages" className="space-y-9">
+          <KeyMessages topic={topic} now={now} onOpenChat={onOpenChat} />
+          {cards.length > 0 && (
+            <Section title="Chats" aside={<span className="text-[12px] text-ink-500 tabular-nums">{topic.chatRecords.length}</span>}>
+              <ul className="grid gap-3 sm:grid-cols-2">
+                {cards.map((card) => (
+                  <ChatCard key={card.chat.id} chat={card.chat} workers={card.workers} now={now} onOpen={(chat) => onOpenChat(chat.id)} />
+                ))}
+              </ul>
+            </Section>
+          )}
+        </div>
+      )}
+      {shown === 'refs' && (
+        <div role="tabpanel" aria-label="Issues and PRs" className="space-y-9">
+          <GithubRefs topic={topic} repo={repo} listed={listed !== undefined} onOpenGithub={onOpenGithub} />
+        </div>
+      )}
+      {shown === 'branches' && (
+        <div role="tabpanel" aria-label="Branches" className="space-y-9">
+          <Branches topic={topic} />
+        </div>
+      )}
+      {shown === 'files' && (
+        <div role="tabpanel" aria-label="Files">
+          <Files topic={topic} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TopicReading({
+  id,
+  ...rest
 }: {
   id: string
   repo: string
@@ -409,71 +638,7 @@ function TopicReading({
       </div>
     )
   }
-  const topic = load.value
-  const refs = topic.refs.filter((ref) => ref.kind !== 'file')
-  const files = topic.refs.filter((ref) => ref.kind === 'file')
-  const cards = chatCards(topic.chatRecords)
-  return (
-    <div className={`${column} space-y-9`}>
-      <header className="space-y-4">
-        <h2 className="text-[28px] leading-tight font-semibold tracking-[-0.02em] text-ink-100">{topic.title}</h2>
-        <div className="flex flex-wrap items-center gap-2">
-          <KindChip kind={topic.kind} />
-          <StatusChip status={topic.status} />
-          <span className="pl-1 text-[12.5px] text-ink-400" title={new Date(topic.updatedAt).toLocaleString()}>
-            Updated {relativeAge(topic.updatedAt, now)} ago
-          </span>
-          {topic.aliases.length > 0 && <span className="truncate text-[12.5px] text-ink-500">· Also {topic.aliases.join(', ')}</span>}
-        </div>
-        {refs.length > 0 && (
-          <div className="flex flex-wrap gap-2" aria-label="Refs">
-            {refs.map((ref) => (
-              <RefChip key={`${ref.kind}\n${ref.id}`} repo={repo} ref={ref} listed={listed !== undefined} onOpenGithub={onOpenGithub} />
-            ))}
-          </div>
-        )}
-      </header>
-      {topic.sections.overview.trim() !== '' && <MarkdownText text={topic.sections.overview} className={`${prose} text-[15px]`} />}
-      <ArtifactStrip topic={topic.id} onOpen={onOpenArtifact} />
-      {topic.sections.state.trim() !== '' && (
-        <Section title="Where it stands">
-          <MarkdownText text={topic.sections.state} className={prose} />
-        </Section>
-      )}
-      <Decisions topic={topic} now={now} />
-      {topic.sections.pitfalls.trim() !== '' && (
-        <Section title="Pitfalls">
-          <MarkdownText text={topic.sections.pitfalls} className={prose} />
-        </Section>
-      )}
-      {topic.sections.open.trim() !== '' && (
-        <Section title="Open">
-          <MarkdownText text={topic.sections.open} className={prose} />
-        </Section>
-      )}
-      <KeyMessages topic={topic} now={now} onOpenChat={onOpenChat} />
-      {cards.length > 0 && (
-        <Section title="Chats" aside={<span className="text-[12px] text-ink-500 tabular-nums">{topic.chatRecords.length}</span>}>
-          <ul className="grid gap-3 sm:grid-cols-2">
-            {cards.map((card) => (
-              <ChatCard key={card.chat.id} chat={card.chat} workers={card.workers} now={now} onOpen={(chat) => onOpenChat(chat.id)} />
-            ))}
-          </ul>
-        </Section>
-      )}
-      {files.length > 0 && (
-        <Section title="Files">
-          <div className="flex flex-wrap gap-1.5">
-            {files.map((file) => (
-              <span key={file.id} title={file.id} className="inline-flex h-6 max-w-full items-center truncate rounded-[8px] bg-white/[0.04] px-2 font-mono text-[11.5px] text-ink-300">
-                {file.id}
-              </span>
-            ))}
-          </div>
-        </Section>
-      )}
-    </div>
-  )
+  return <TopicTabs topic={load.value} {...rest} />
 }
 
 /** The reading column with nothing to read: why, and what to do about it. */
@@ -602,7 +767,6 @@ export function KnowledgePage({
     return <TopicReading key={selectedId} id={selectedId} repo={project.repo} listed={listed.get(project.repo)} now={now} onOpenGithub={onOpenGithub} onOpenChat={(chat) => onView({ repo: project.repo, topic: selectedId, chat, map: false })} onOpenArtifact={onOpenArtifact} />
   }
 
-  const topicTitle = selectedId === null ? null : (topics.find((topic) => topic.id === selectedId)?.title ?? null)
   const crumb =
     project !== null && list !== null ? (
       <ProjectSwitcher current={project} listed={listed.get(project.repo)} projects={list.projects} isOn={projectOn} onPick={pickProjectRepo} />
@@ -620,14 +784,14 @@ export function KnowledgePage({
     <WikiShell
       keys={wikiPanels.knowledge}
       crumb={crumb}
-      title={project === null ? null : pageTitle(view, nameOf(project), topicTitle)}
       tools={
         project !== null && (
           <>
             <BarSearch value={query} onChange={setQuery} label="Search topics" disabled={!on} />
-            <button type="button" onClick={() => onView({ repo: project.repo, topic: view.topic, chat: null, map: !view.map })} disabled={!on} aria-pressed={view.map} title={view.map ? 'Close the map' : 'Map of the project’s topics'} className={`${barToggle(view.map)} px-2.5`}>
+            <button type="button" onClick={() => onView({ repo: project.repo, topic: view.topic, chat: null, map: !view.map })} disabled={!on} aria-pressed={view.map} title={view.map ? 'Close the map' : 'Map of the project’s topics'} className={`${barToggle(view.map)} px-2.5 @max-[420px]/header:px-[6px]`}>
               <KnowledgeIcon />
-              Map
+              {/* A narrow bar keeps the icon alone; its title still names it. */}
+              <span className="@max-[420px]/header:hidden">Map</span>
             </button>
           </>
         )

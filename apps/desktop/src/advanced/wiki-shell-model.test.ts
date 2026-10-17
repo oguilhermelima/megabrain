@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { sidebarLimits, type WidthStorage } from '@/lib/panel-width'
-import { readPanelOpen, wikiPanelLimits, wikiPanels, writePanelOpen } from '@/advanced/wiki-shell-model'
+import { readPanelOpen, wikiPanelLimits, wikiPanels, wikiShellLayout, writePanelOpen } from '@/advanced/wiki-shell-model'
 
 function memory(initial: Record<string, string> = {}): WidthStorage & { values: Record<string, string> } {
   const values = { ...initial }
@@ -67,5 +67,20 @@ describe('writePanelOpen', () => {
 
   test('storage that throws still gives the state asked for', () => {
     expect(writePanelOpen(() => throwing, 'k', false)).toBe(false)
+  })
+})
+
+describe('wikiShellLayout', () => {
+  test('an open panel stands beside the bar, from the top, and holds its own toggle', () => {
+    expect(wikiShellLayout(true, true)).toEqual({ panel: true, barToggle: false })
+  })
+
+  test('a closed panel leaves its toggle in the bar', () => {
+    expect(wikiShellLayout(true, false)).toEqual({ panel: false, barToggle: true })
+  })
+
+  test('a page without a panel has neither', () => {
+    expect(wikiShellLayout(false, true)).toEqual({ panel: false, barToggle: false })
+    expect(wikiShellLayout(false, false)).toEqual({ panel: false, barToggle: false })
   })
 })

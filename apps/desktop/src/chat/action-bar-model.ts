@@ -32,14 +32,17 @@ export function changedFileCount(uncommitted: readonly CodeChange[], branch: Bra
   return new Set([...uncommitted.map((change) => change.path), ...(branch?.changes ?? []).map((change) => change.path)]).size
 }
 
-export interface Segment {
-  view: PaneView
+/** One segment of a segmented control (components/SegmentedTabs), whatever views it switches. */
+export interface SegmentOf<V extends string> {
+  view: V
   label: string
   enabled: boolean
   /** The tooltip: the action, or why it is disabled. */
   title: string
   badge: string | null
 }
+
+export type Segment = SegmentOf<PaneView>
 
 export function segments({ facts, changed, codeAvailable }: { facts: WorktreeFacts; changed: number | null; codeAvailable: boolean }): Segment[] {
   const branch = facts.branch ?? 'this worktree'
@@ -93,7 +96,7 @@ export function paneViewKey(event: Parameters<typeof viewForKey>[0], where: { fo
  * Where Left or Right moves the keyboard in the view tabs: the next enabled tab that way, wrapping
  * past either end; any other key, or no other enabled tab, stays put (null).
  */
-export function tabStep(available: readonly Segment[], from: PaneView, key: string): PaneView | null {
+export function tabStep<V extends string>(available: readonly Pick<SegmentOf<V>, 'view' | 'enabled'>[], from: V, key: string): V | null {
   const step = key === 'ArrowRight' ? 1 : key === 'ArrowLeft' ? -1 : 0
   if (step === 0) return null
   const start = available.findIndex((segment) => segment.view === from)

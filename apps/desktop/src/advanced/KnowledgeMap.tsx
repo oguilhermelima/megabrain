@@ -237,11 +237,14 @@ export function KnowledgeMap({ project, topics, selectedId, onPick }: { project:
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* The page's top bar names the map and closes it; this row says what it shows and filters it. */}
+      {/* The page's top bar closes the map; this header names it, says what it shows and filters it. */}
       <header className="shrink-0 space-y-3 px-6 pt-4 pb-3">
-        <p className="text-[12.5px] text-ink-400">
+        <div className="space-y-1">
+          <h2 className="truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">Map of {project}</h2>
+          <p className="text-[12.5px] text-ink-400">
           {shownCount === topics.length ? plural(topics.length, 'topic') : `${shownCount} of ${plural(topics.length, 'topic')}`} · {plural(layout.links.length, 'link')} through shared {linkTypes.filter((entry) => filter.links.has(entry.type)).map((entry) => entry.label.toLowerCase()).join(', ') || 'nothing'}
-        </p>
+          </p>
+        </div>
         {topics.length > 0 && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <ul className="flex flex-wrap items-center gap-1.5" aria-label="Kinds shown">

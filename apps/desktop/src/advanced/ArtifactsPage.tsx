@@ -20,8 +20,8 @@ import { projectsPolicy } from '@/lib/poll-model'
 import { usePoll } from '@/lib/usePoll'
 
 // The Artifacts page, the diagrams, plans and docs agents filed with `megabrain artifact`, in the
-// Knowledge page's shell (WikiShell): a top bar with the artifact's title and a filter on titles, the
-// projects and their artifacts by kind in a panel on the right, and the picked artifact between them.
+// Knowledge page's shell (WikiShell): the projects and their artifacts by kind in a panel on the right,
+// and beside it a top bar with the page's name and a filter on titles over the picked artifact.
 // Markdown reads in the app's renderer; HTML renders in a sandboxed
 // frame (artifacts-model.ts) that fills the column below the artifact's header.
 
@@ -284,10 +284,9 @@ export function ArtifactsPage({
           <span className="grid size-6 shrink-0 place-items-center">
             <ArtifactsIcon />
           </span>
-          <span className={selected === undefined ? 'text-[14px] leading-5 font-semibold tracking-[-0.01em] text-ink-100' : 'text-[13px] font-semibold tracking-[-0.01em] text-ink-200 @max-[520px]/header:hidden'}>Artifacts</span>
+          <h1 className="text-[14px] leading-5 font-semibold tracking-[-0.01em] text-ink-100">Artifacts</h1>
         </span>
       }
-      title={selected?.title ?? null}
       tools={!none && <BarSearch value={query} onChange={setQuery} label="Filter artifacts" />}
       panelLabel={none ? null : 'Artifacts'}
       panelCount={count}

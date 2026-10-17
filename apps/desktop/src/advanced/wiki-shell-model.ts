@@ -1,8 +1,8 @@
 import { sidebarLimits, type WidthLimits, type WidthStorage } from '@/lib/panel-width'
 
-// The Knowledge and Artifacts pages share one shell (WikiShell.tsx): a top bar across the pane and a
-// navigation panel on the right, shown or hidden and resized like the run panel. Each page remembers
-// its own panel per viewer.
+// The Knowledge and Artifacts pages share one shell (WikiShell.tsx): a top bar over the reading column
+// and a navigation panel on the right, beside the bar, shown or hidden and resized like the run panel.
+// Each page remembers its own panel per viewer.
 
 /** Where each page keeps its panel's width and whether it is open. */
 export const wikiPanels = {
@@ -32,4 +32,12 @@ export function writePanelOpen(storage: () => WidthStorage, key: string, open: b
     // Not remembering it is fine.
   }
   return open
+}
+
+/**
+ * Where the panel and its toggle are: an open panel runs the pane's full height beside the bar and
+ * carries its own toggle in its header; a closed one leaves the toggle in the bar.
+ */
+export function wikiShellLayout(hasPanel: boolean, open: boolean): { panel: boolean; barToggle: boolean } {
+  return { panel: hasPanel && open, barToggle: hasPanel && !open }
 }

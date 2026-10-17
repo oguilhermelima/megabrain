@@ -151,13 +151,6 @@ export interface KnowledgeView {
 
 export const homeView: KnowledgeView = { repo: null, topic: null, chat: null, map: false }
 
-/** The page's title in its top bar: the map's project, else the topic read (a chat opened from it included). */
-export function pageTitle(view: KnowledgeView, project: string | null, topic: string | null): string {
-  if (project === null) return 'Knowledge'
-  if (view.map) return `Map of ${project}`
-  return topic ?? 'Knowledge'
-}
-
 /** The page's id with nothing picked. */
 const home = 'home'
 
