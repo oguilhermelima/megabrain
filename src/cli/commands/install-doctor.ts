@@ -10,6 +10,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { pruneDecision, pruneStates } from "../../core/orchestrate-prune.js";
 import { installSkillSync, skillSyncDoctor } from "../../core/skill.js";
+import { artifactsDiagramReport, installArtifactsDiagram, revertArtifactsDiagram } from "./artifacts-diagram-install.js";
 import { nextBackupPath } from "../../core/tmux.js";
 import { executeTmux } from "./tmux.js";
 import { getTmux } from "../../hosts/tmux.js";
@@ -26,7 +27,7 @@ import { getInstallState, listDispatches, mutateInstallModule, putInstallModule,
 export type Environment = Readonly<Record<string, string | undefined>>;
 type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
 type State = Record<string, Record<string, unknown>>;
-const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "summaries-context", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers"];
+const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "summaries-context", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers", "artifacts-diagram"];
 async function available(process: ProcessAdapter, command: string): Promise<boolean> {
   return (await process.run("which", [command])).kind === "ok";
 }
@@ -432,6 +433,8 @@ async function report(module: string, environment: Environment, process: Process
     }
   } else if (module === "skill-sync") {
     ({ status, reason } = skillSyncDoctor(environment));
+  } else if (module === "artifacts-diagram") {
+    ({ status, reason } = artifactsDiagramReport(environment));
   } else if (module === "terminal-openers") {
     // Native terminals are optional viewers: none installed is still healthy, since
     // --terminal none prints the tmux attach command instead.
@@ -1263,6 +1266,7 @@ async function runInstallStep(module: string, environment: Environment, processA
     case "tv-adb": return installTvAdb(processAdapter);
     case "tmux-runtime": return installTmuxRuntime(environment, processAdapter, options);
     case "skill-sync": installSkillSync(environment); return ok(undefined);
+    case "artifacts-diagram": return installArtifactsDiagram(environment, processAdapter);
     default: return failed(`unknown module: ${module}`, 2);
   }
 }
@@ -1400,6 +1404,7 @@ async function installModuleCommand(
     if (module === "resource-hooks") return revertEntryHooks(environment, resourceEntryHook);
     if (module === "summaries-context") return revertEntryHooks(environment, summariesEntryHook);
     if (module === "simulator-maestro") { writeInstalledState(environment, module, false, "reverted"); return revertMaestro(environment); }
+    if (module === "artifacts-diagram") { writeInstalledState(environment, module, false, "reverted"); return revertArtifactsDiagram(environment); }
     if (module !== "orchestration-hooks") return failed(`module cannot be reverted: ${module}`, 2);
     return revertOrchestrationHooks(environment);
   }

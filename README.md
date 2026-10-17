@@ -349,6 +349,31 @@ system prompt (Claude: `--append-system-prompt`; Codex: `-c developer_instructio
 it through the opt-in `megabrain install summaries-context`, a SessionStart hook for Claude and Codex
 (`--revert` removes only its entries). Grok has `--rules` and Agy no such flag, so neither is wired.
 
+## Artifacts
+
+Agents file the diagrams, plans and docs they make for you with `megabrain artifact`. Each artifact belongs to
+a project (the repository of the working folder, or `--project`) and lives in
+`~/.megabrain/knowledge/<project-id>/artifacts/<id>/` as `artifact.json`, its content (`index.html` or
+`doc.md`) and `revisions.jsonl`, where every update keeps the version it replaced. The project id is the
+repository folder's name plus the first 12 hex digits of the SHA-256 of its real path, so a linked worktree
+files into its main checkout's project.
+
+```sh
+megabrain artifact create --title "Store layout" --kind diagram --file layout.html --topic <topic-id> --json
+megabrain artifact update <id> --stdin --title "Store layout v2" < layout.html
+megabrain artifact list --project ~/code/api --json
+megabrain artifact show <id> --json
+megabrain artifact remove <id>
+```
+
+A diagram must be HTML; a plan or doc is Markdown or HTML (the file extension decides, else whether the text
+opens with an HTML element). Content is capped at 1 MiB. Google Fonts `<link>` tags and `@import` rules are
+stripped on save, so an artifact renders offline with system fonts. The desktop app's Artifacts page lists
+them by project and kind and shows HTML in a sandboxed frame that runs no script and fetches nothing.
+
+`megabrain install artifacts-diagram` (opt-in) installs the diagram-design skill for Claude, Codex, agy and
+Grok, pinned to a tested commit; see the modules table below.
+
 ## Chains: choosing who does the work
 
 A chain is an ordered list of steps. Each step names an agent, a model and an effort, and
@@ -1079,6 +1104,7 @@ drive. Each is a module, so you install only what you use and `doctor` tells you
 | `simulator-native` | iOS and tvOS simulators, via Appium and XCUITest | **macOS only** |
 | `simulator-tv` | the Apple TV simulator on the same toolchain | **macOS only** |
 | `simulator-maestro` | the pinned Maestro CLI in `~/.maestro` (official installer, shell rc files untouched) for UI flows on the iOS simulator; `--revert` removes it | **macOS only** |
+| `artifacts-diagram` | the [diagram-design](https://github.com/cathrynlavery/diagram-design) skill (MIT, LICENSE kept with the copy), pinned to a tested commit, in each configured agent's skills folder, with a note to save diagrams through `megabrain artifact create`; `--revert` removes only its copies | macOS, Linux |
 
 ```sh
 megabrain install simulator-maestro   # then boot a simulator: xcrun simctl boot <udid>

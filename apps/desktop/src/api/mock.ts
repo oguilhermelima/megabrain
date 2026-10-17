@@ -7,6 +7,7 @@ import { explainChains } from '@/api/fixtures/chain-explain'
 import { createMockMaestroApi } from '@/api/fixtures/maestro'
 import { mockUsageStats } from '@/api/fixtures/usage'
 import { mockSummaries, mockSummariesList, mockSummarySearch } from '@/api/fixtures/summaries'
+import { mockArtifact, mockArtifactList } from '@/api/fixtures/artifacts'
 import { createMockReviewApi } from '@/api/fixtures/github-review'
 import { validateRule } from '@/settings/chain-rules'
 
@@ -391,6 +392,15 @@ export function createMockApi(): DesktopApi {
     summary: async (id) => {
       const found = mockSummaries.find((entry) => entry.id === id)
       if (found === undefined) throw new CliError(`no summary ${id}`, 1)
+      return found
+    },
+    artifacts: async (options) => {
+      await wait(200)
+      return mockArtifactList(options)
+    },
+    artifact: async (id) => {
+      const found = mockArtifact(id)
+      if (found === null) throw new CliError(`unknown artifact: ${id}`, 1)
       return found
     },
     setChatMode: async (chatId, mode) => ({

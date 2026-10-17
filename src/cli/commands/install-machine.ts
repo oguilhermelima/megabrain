@@ -34,7 +34,7 @@ export function installAgentSkills(
 }
 
 const agents = ["claude", "codex", "agy", "grok"] as const;
-const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "summaries-context", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime"] as const;
+const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "summaries-context", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime", "artifacts-diagram"] as const;
 type MachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
   readonly skill: SkillMode;

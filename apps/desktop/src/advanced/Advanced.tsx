@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent
 import { api } from '@/api'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import { chatPaneStays, readyToPrune } from '@/advanced/restore-panes'
-import type { Dispatch, HistorySession, NativeChat, Project, ProjectSession, Summary } from '@/api/schema'
+import type { Artifact, Dispatch, HistorySession, NativeChat, Project, ProjectSession, Summary } from '@/api/schema'
 import { joinLabel } from '@/advanced/item-menus'
 import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, stacksOn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
@@ -18,6 +18,7 @@ import type { ProjectPageActions } from '@/advanced/ProjectPage'
 import { ChatView } from '@/chat/ChatView'
 import { SidebarUsage } from '@/advanced/SidebarUsage'
 import { summariesItem, summariesItemIn } from '@/advanced/summaries-model'
+import { artifactsItem, artifactsItemIn } from '@/advanced/artifacts-model'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
 import type { OpenChat, OpenPath } from '@/chat/Conversation'
@@ -79,6 +80,7 @@ const GithubPage = lazy(() => import('@/github/GithubPage').then((module) => ({ 
 const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
 const ProjectPage = lazy(() => import('@/advanced/ProjectPage').then((module) => ({ default: module.ProjectPage })))
 const SummariesPage = lazy(() => import('@/advanced/SummariesPage').then((module) => ({ default: module.SummariesPage })))
+const ArtifactsPage = lazy(() => import('@/advanced/ArtifactsPage').then((module) => ({ default: module.ArtifactsPage })))
 const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
 
 function Loading() {
@@ -550,6 +552,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       // A project's page spans its worktrees, so its group sits with no one worktree.
       case 'project':
       case 'summary':
+      case 'artifact':
         return null
       default: {
         const root = rootOf(item)
@@ -595,6 +598,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       }
       case 'summary':
         return { title: 'Summaries', mark: { kind: 'summary' }, state: 'idle', worktree }
+      case 'artifact':
+        return { title: 'Artifacts', mark: { kind: 'artifact' }, state: 'idle', worktree }
     }
   }
   // A split never runs out of room: its columns scroll (panes/strip), so no layout is refused for size.
@@ -733,6 +738,22 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     })
   })
   const openSummaries = useStableCallback(() => openSummary(null))
+  /** The Artifacts page, one in the layout like the Summaries page: shown where it already is, on `artifact` when given. */
+  const openArtifact = useStableCallback((artifact: Artifact | null) => {
+    setGithubPage(null)
+    setLayout((current) => {
+      const open = artifactsItemIn([current.single, ...current.groups.map((group) => group.panes)].flatMap((panes) => paneList(panes.root).map((leaf) => leaf.item)))
+      const item = artifact === null ? (open ?? artifactsItem(null)) : artifactsItem(artifact.id)
+      if (open === null || open === item) return openLayoutItem(current, item)
+      const swap = (panes: Panes) => {
+        const leaf = paneOfItem(panes, open)
+        return leaf === null ? panes : replaceItem(panes, leaf.id, item)
+      }
+      const group = groupOfItem(current, open)
+      return openLayoutItem(group === null ? { ...current, single: swap(current.single) } : changeGroupPanes(current, group.id, swap), item)
+    })
+  })
+  const openArtifacts = useStableCallback(() => openArtifact(null))
   const openSummarySettings = useStableCallback(() => {
     setSettingsSection('summaries')
     setSettingsOpen(true)
@@ -772,8 +793,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       // The page runs the project's commands in its main checkout.
       case 'project':
         return parsed.id
-      // A summary's worktree may be gone, so its page runs nothing.
+      // A summary's worktree may be gone, so its page runs nothing; nor does the Artifacts page.
       case 'summary':
+      case 'artifact':
         return null
     }
   }
@@ -832,8 +854,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return true
       case 'project':
         return projects.some((project) => project.path === parsed.id)
-      // A summary is kept after its chat and worktree are gone; its page says so if it is not.
+      // A summary is kept after its chat and worktree are gone; its page says so if it is not. An
+      // artifact outlives its chat too, and the page says when one is no longer listed.
       case 'summary':
+      case 'artifact':
         return true
     }
   }
@@ -942,6 +966,15 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           node: (
             <Suspense fallback={<Loading />}>
               <SummariesPage id={parsed.id} projects={projects} chats={nativeChats} onPick={openSummary} onOpenChat={selectNativeChat} onOpenSettings={openSummarySettings} />
+            </Suspense>
+          ),
+        }
+      case 'artifact':
+        return {
+          title: 'Artifacts',
+          node: (
+            <Suspense fallback={<Loading />}>
+              <ArtifactsPage id={parsed.id} projects={projects} chats={nativeChats} onPick={openArtifact} onOpenChat={selectNativeChat} />
             </Suspense>
           ),
         }
@@ -1211,6 +1244,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             onDismissCreation={dismissWorktree}
             summariesSelected={focusedParsed?.kind === 'summary'}
             onOpenSummaries={openSummaries}
+            artifactsSelected={focusedParsed?.kind === 'artifact'}
+            onOpenArtifacts={openArtifacts}
           />
         </SplitRowsContext.Provider>
         <SidebarUsage onOpenSettings={() => setSettingsOpen(true)} />

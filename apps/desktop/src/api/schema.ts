@@ -677,6 +677,26 @@ export const summariesListSchema = z.looseObject({
   projects: z.array(z.looseObject({ repo: z.string(), project: z.string(), branches: z.array(summaryBranchSchema) })),
 })
 export const summarySearchSchema = z.looseObject({ results: z.array(summarySchema.extend({ score: z.number() })) })
+// Artifacts: diagrams, plans and docs agents file per project (`artifact list|show --json`). A diagram
+// is HTML; a plan or doc is HTML or Markdown. `path` is the content file under the state directory.
+export const artifactSchema = z.looseObject({
+  id: z.string(),
+  title: z.string(),
+  kind: z.enum(['diagram', 'plan', 'doc']),
+  format: z.enum(['html', 'markdown']),
+  /** The repository's main checkout path, its folder name, and its knowledge folder. */
+  project: z.string(),
+  projectName: z.string(),
+  projectId: z.string(),
+  topics: z.array(z.string()),
+  chatId: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  revision: z.number(),
+  path: z.string(),
+})
+export const artifactListSchema = z.looseObject({ artifacts: z.array(artifactSchema) })
+export const artifactContentSchema = artifactSchema.extend({ content: z.string() })
 // A pending approval inside a native chat; it arrives as a transcript event of kind "approval".
 export const chatApprovalSchema = z.looseObject({
   id: z.string(),
@@ -919,6 +939,10 @@ export type Summary = z.infer<typeof summarySchema>
 export type SummaryBranch = z.infer<typeof summaryBranchSchema>
 export type SummariesList = z.infer<typeof summariesListSchema>
 export type SummarySearch = z.infer<typeof summarySearchSchema>
+export type Artifact = z.infer<typeof artifactSchema>
+export type ArtifactKind = Artifact['kind']
+export type ArtifactList = z.infer<typeof artifactListSchema>
+export type ArtifactContent = z.infer<typeof artifactContentSchema>
 export type ChatApproval = z.infer<typeof chatApprovalSchema>
 export type ChatEventLine = z.infer<typeof chatEventLineSchema>
 export type ChatEvent = z.infer<typeof chatEventSchema>

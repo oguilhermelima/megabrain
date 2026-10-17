@@ -204,6 +204,11 @@ megabrain summaries list [--repo <name|path>] [--branch <branch>] [--limit <n pe
 megabrain summaries search <text> [--repo <name|path>] [--branch <branch>] [--limit <n>] --json — look up older development work (title and branch hits rank first). Run it when you need to know what was done or decided before, instead of re-deriving it.
 megabrain summaries show <id> --json — one summary in full.
 megabrain summaries context --cwd <path> [--limit <n>] [--json] — the latest summaries of that worktree branch, then of the main branch, as a short Markdown block. Native chats get it in their system prompt when summaries are on; `megabrain install summaries-context` (opt-in) adds a SessionStart hook so Claude and Codex terminal sessions get it too.
+megabrain artifact create --title <title> --kind diagram|plan|doc (--file <path>|--stdin) [--project <repo path>] [--topic <id>]... [--chat <id>] [--json] — save a finished diagram, plan or doc for the project of the working folder (or --project). Diagrams are HTML; plans and docs are Markdown or HTML. Google Fonts links are stripped so the app renders it offline. Save every diagram, plan or doc you produce for the person this way; the desktop app lists them on its Artifacts page.
+megabrain artifact update <id> (--file <path>|--stdin) [--title <title>] [--json] — replace an artifact's content; the old version is kept as a revision.
+megabrain artifact list [--project <repo path>] [--topic <id>] [--json] — artifacts newest change first.
+megabrain artifact show <id> [--json] — one artifact with its content.
+megabrain artifact remove <id> [--json] — delete an artifact and its revisions.
 megabrain settings get|set chat-summaries <json> — switch automatic summaries and titles on, and pick the agent, model, effort and cadence.
 megabrain settings get|set agents <json> — the desktop app's default agent for New chat ({ version: 1, default, disabled }), and the agents turned off for it.
 megabrain resources [--json|--all] | enable|disable|status — recommended when you need to inspect machine and dispatch resource usage or manage opt-in history.
@@ -440,6 +445,8 @@ needing migration; `megabrain install orchestration-hooks` replaces it in place.
 `megabrain proc start`, container work into `megabrain proc run --needs docker` and migrations into
 `megabrain proc run`, keeping the original command byte for byte in `--shell`. A hand-typed
 `orb start|stop` is refused with what to run instead. `--revert` removes only megabrain's entries.
+
+`artifacts-diagram` (opt-in) installs the MIT-licensed diagram-design skill (github.com/cathrynlavery/diagram-design, pinned to a tested commit, its LICENSE kept beside it) into the skills folder of every configured agent: Claude, Codex, agy and Grok. Its copy carries a note telling agents to save each diagram with `megabrain artifact create --kind diagram`. `doctor artifacts-diagram` checks each agent's copy against the pinned commit; `--revert` removes only the copies megabrain installed.
 
 `simulator-maestro` installs the pinned Maestro CLI (needs a JDK 17 or newer; megabrain finds it and sets `JAVA_HOME` for its own calls). `doctor simulator-maestro` checks java, `maestro --version` against the recorded version, and the iOS driver; `install simulator-maestro --revert` removes `bin`, `lib` and the record.
 

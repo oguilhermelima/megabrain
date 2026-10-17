@@ -71,6 +71,16 @@ export function SummariesIcon() {
   )
 }
 
+/** The Artifacts page's mark: a stack of two sheets. */
+export function ArtifactsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4.25" y="1.75" width="9.5" height="10" rx="1.5" />
+      <path d="M2.25 4.75v8a1.5 1.5 0 0 0 1.5 1.5h7" />
+    </svg>
+  )
+}
+
 export function PlusIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
