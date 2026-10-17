@@ -211,14 +211,16 @@ html.native body {
 /* A panel inside the content drawn as the left sidebar (lib/panel-width's sidebarSurface, marked
    data-sidebar-surface) needs the window's vibrancy behind it, not the content's black: while one shows,
    the content area paints no black of its own, and what sits beside the panel's path paints it instead
-   (the page's own column paints it in WikiShell). */
+   (the page's own column paints it in WikiShell). A chat's header paints it too: the Device view's
+   panels sit in the same pane, so the pane itself cannot. */
 [data-window-content]:has([data-sidebar-surface]) {
   background-color: transparent;
 }
 [data-window-content]:has([data-sidebar-surface]) > :not(:has([data-sidebar-surface])),
 [data-window-content]:has([data-sidebar-surface]) [data-group-bar],
 [data-window-content]:has([data-sidebar-surface]) [data-pane-id]:not(:has([data-sidebar-surface])),
-[data-window-content]:has([data-sidebar-surface]) [data-pane-header] {
+[data-window-content]:has([data-sidebar-surface]) [data-pane-header],
+[data-window-content]:has([data-sidebar-surface]) [data-chat-header] {
   background-color: var(--color-ink-950);
 }
 /* A focused pane's header keeps its tint (bg-white/[0.04] over the black). */

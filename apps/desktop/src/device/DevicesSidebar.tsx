@@ -95,7 +95,6 @@ export function DevicesSidebar({
           return (
             <section key={kind} aria-label={kindTitle[kind]}>
               <div className={`${sidePanelGroup} pointer-events-none`}>
-                <span aria-hidden="true" className={sidePanelSlot} />
                 <span aria-hidden="true" className={sidePanelSlot}>
                   {kind === 'tv' ? <TvIcon /> : <PhoneIcon />}
                 </span>

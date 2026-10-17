@@ -15,8 +15,7 @@ import { ResizeHandle } from '@/components/ResizeHandle'
 import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { httpsUrl } from '@/lib/external'
-import { sidebarSurface } from '@/lib/panel-width'
-import { sidePanelBar, sidePanelButton, sidePanelHeaderRow } from '@/lib/side-panel'
+import { sidePanelSlimBar, sidePanelSmallButton } from '@/lib/side-panel'
 import { artifactStamps, chatPanelLimits, readChatPanel, readHiddenChips, writeChatPanel, writeHiddenChips, type ArtifactChip, type ChatPanel, type HiddenChips } from '@/native-chat/chat-artifacts'
 
 // A native chat's artifacts: the row of chips above the composer and the panel that opens one beside
@@ -268,7 +267,7 @@ function Body({ artifact, load, onOpenUrl }: { artifact: ChatArtifact; load: Loa
 }
 
 /**
- * The open artifact beside the chat, or over it on a narrow pane, under a slim bar that holds only
+ * The open artifact beside the chat, or over it on a narrow pane, under a 32px bar that holds only
  * expand and close: the rest of the panel is the artifact's, edge to edge. Expand opens what
  * megabrain filed on the Artifacts page (where its revisions are) and anything else with a link in
  * the browser. Its body reloads in place when the listed version changes: Markdown and text keep
@@ -306,10 +305,10 @@ export function ArtifactPanel({
     <aside
       aria-label={`Artifact: ${artifact.title}`}
       style={{ width }}
-      // Beside the chat it is drawn as the other support panels (lib/panel-width's sidebarSurface); over
-      // the transcript it stays opaque so the chat does not show through.
-      data-sidebar-surface={overlay ? undefined : ''}
-      className={`flex min-h-0 shrink-0 flex-col ${overlay ? 'artifact-overlay absolute top-0 right-0 bottom-0 z-30 border-l border-white/[0.1] bg-ink-900 shadow-[-24px_0_48px_-16px_rgba(0,0,0,0.7)]' : `relative ${sidebarSurface('right')}`}`}
+      // The artifact is content, not navigation: opaque like the chat pane, never the sidebar's glass, which
+      // would turn the content area see-through (styles.css, data-sidebar-surface). Over the transcript it
+      // also casts a shadow so the chat reads as beneath it.
+      className={`flex min-h-0 shrink-0 flex-col bg-ink-900 ${overlay ? 'artifact-overlay absolute top-0 right-0 bottom-0 z-30 border-l border-white/[0.1] shadow-[-24px_0_48px_-16px_rgba(0,0,0,0.7)]' : 'relative border-l border-white/[0.06]'}`}
     >
       <ResizeHandle
         edge="left"
@@ -317,17 +316,15 @@ export function ArtifactPanel({
         grip
         panel={{ width, preview: onResize.preview, commit: onResize.commit, reset: () => onResize.commit(chatPanelLimits.initial) }}
       />
-      <header className={`${sidePanelBar} border-b border-white/[0.06]`}>
-        <div className={`${sidePanelHeaderRow} justify-end`}>
-          {expand !== null && (
-            <button type="button" onClick={expand.open} title={expand.label} aria-label={expand.label} className={sidePanelButton}>
-              {expand.icon}
-            </button>
-          )}
-          <button type="button" onClick={onClose} title="Close" aria-label="Close the artifact" className={sidePanelButton}>
-            <MenuIconGlyph icon="close" />
+      <header className={sidePanelSlimBar}>
+        {expand !== null && (
+          <button type="button" onClick={expand.open} title={expand.label} aria-label={expand.label} className={sidePanelSmallButton}>
+            {expand.icon}
           </button>
-        </div>
+        )}
+        <button type="button" onClick={onClose} title="Close" aria-label="Close the artifact" className={sidePanelSmallButton}>
+          <MenuIconGlyph icon="close" />
+        </button>
       </header>
       <div className={`min-h-0 flex-1 overflow-y-auto ${scrolls ? '' : 'flex flex-col'}`}>
         <Body artifact={artifact} load={load} onOpenUrl={openUrl} />

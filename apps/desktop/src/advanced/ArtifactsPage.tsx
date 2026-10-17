@@ -99,16 +99,16 @@ function NavArtifact({ artifact, selected, now, onPick }: { artifact: Artifact; 
 function NavKind({ kind, artifacts, open, onToggle, selectedId, now, onPick }: { kind: ArtifactKind; artifacts: Artifact[]; open: boolean; onToggle: (kind: ArtifactKind) => void; selectedId: string | null; now: number; onPick: (artifact: Artifact) => void }) {
   return (
     <section>
-      {/* A section header as the Knowledge panel draws one: its chevron, its kind's mark and name, its count at the right. */}
+      {/* A section header as the Knowledge panel draws one: its kind's mark and name, its count and chevron at the right. */}
       <button type="button" onClick={() => onToggle(kind)} aria-expanded={open} className={sidePanelGroup}>
-        <span className={sidePanelSlot}>
-          <Chevron open={open} />
-        </span>
         <span className={sidePanelSlot}>
           <ArtifactKindIcon kind={kind} />
         </span>
         <span className="min-w-0 flex-1 truncate">{artifactKinds.find((entry) => entry.kind === kind)?.title ?? kind}</span>
         <span className="shrink-0 text-[11px] font-medium tabular-nums">{artifacts.length}</span>
+        <span className={sidePanelSlot}>
+          <Chevron open={open} />
+        </span>
       </button>
       <Collapse open={open}>
         <div className="space-y-0.5 pt-0.5 pb-2">

@@ -193,7 +193,6 @@ function FlowsTab({ root, flows, chosen, locked, onChoose, onCreated }: { root: 
       {groups.map((group) => (
         <section key={group.folder} aria-label={group.folder}>
           <div className={`${sidePanelGroup} pointer-events-none`}>
-            <span aria-hidden="true" className={sidePanelSlot} />
             <span aria-hidden="true" className={sidePanelSlot}>
               <FolderIcon />
             </span>

@@ -83,7 +83,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
   // Under a split's shared bar (panes/group-bar) the pane keeps only what is its own: no view tabs, no Run, one short row.
   if (chrome?.slim === true) {
     return (
-      <header ref={header} data-slim-header="" onPointerDown={grab} className="group/pane flex h-9 shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-2 pl-3 select-none active:cursor-grabbing">
+      <header ref={header} data-chat-header="" data-slim-header="" onPointerDown={grab} className="group/pane flex h-9 shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] pr-2 pl-3 select-none active:cursor-grabbing">
         {agent !== null && <AgentIcon agent={agent} activity={activity} size={16} className="shrink-0 text-ink-300" />}
         <h1 className="min-w-0 flex-1 truncate text-[13px] leading-5 font-medium text-ink-100">
           {text}
@@ -105,7 +105,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
 
   if (pane === null || available === null) {
     return (
-      <header ref={header} {...region} onPointerDown={grab} style={slide} className={`@container/header group/pane flex shrink-0 items-center gap-2 border-b border-white/[0.06] ${side} ${band} ${inset === null ? 'pb-2.5' : 'pb-1'}`}>
+      <header ref={header} data-chat-header="" {...region} onPointerDown={grab} style={slide} className={`@container/header group/pane flex shrink-0 items-center gap-2 border-b border-white/[0.06] ${side} ${band} ${inset === null ? 'pb-2.5' : 'pb-1'}`}>
         {identity}
         {controls(actions)}
       </header>
@@ -119,7 +119,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
   // Both rows share one left edge, the bar's padding: the tabs' track starts under the mark. The view's controls belong to Agent and show only there.
   return (
     <>
-      <header ref={header} {...region} onPointerDown={grab} style={slide} className={`@container/header group/pane shrink-0 border-b border-white/[0.06] ${side} ${band}`}>
+      <header ref={header} data-chat-header="" {...region} onPointerDown={grab} style={slide} className={`@container/header group/pane shrink-0 border-b border-white/[0.06] ${side} ${band}`}>
         <div {...region} className="flex min-w-0 items-center gap-2">
           {identity}
           {controls(shown === 'agent' && actions)}

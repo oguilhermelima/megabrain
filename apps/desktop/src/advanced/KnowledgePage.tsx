@@ -133,16 +133,16 @@ function NavTopic({ topic, selected, now, onPick }: { topic: KnowledgeTopicSumma
 function NavKind({ label, kind, topics, open, onToggle, selectedId, now, onPick }: { label: string; kind: KnowledgeKind; topics: KnowledgeTopicSummary[]; open: boolean; onToggle: (kind: KnowledgeKind) => void; selectedId: string | null; now: number; onPick: (topic: KnowledgeTopicSummary) => void }) {
   return (
     <section>
-      {/* A section header as the left sidebar draws one: its chevron, its name, its count at the right. */}
+      {/* A section header: its mark and name, its count and chevron at the right. */}
       <button type="button" onClick={() => onToggle(kind)} aria-expanded={open} className={sidePanelGroup}>
-        <span className={sidePanelSlot}>
-          <Chevron open={open} />
-        </span>
         <span className={sidePanelSlot}>
           <span style={{ backgroundColor: kindColors[kind] }} aria-hidden="true" className="size-2 rounded-[3px]" />
         </span>
         <span className="min-w-0 flex-1 truncate">{label}</span>
         <span className="shrink-0 text-[11px] font-medium tabular-nums">{topics.length}</span>
+        <span className={sidePanelSlot}>
+          <Chevron open={open} />
+        </span>
       </button>
       <Collapse open={open}>
         <div className="space-y-0.5 pt-0.5 pb-2">
