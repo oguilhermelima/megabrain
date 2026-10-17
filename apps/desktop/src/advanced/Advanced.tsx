@@ -67,6 +67,7 @@ import { useCodeLifecycle } from '@/advanced/useCodeLifecycle'
 import { focusPaneInput, usePaneShortcuts, worktreeChoices } from '@/advanced/usePaneShortcuts'
 import { useSplitInteractions } from '@/advanced/useSplitInteractions'
 import { pageX } from '@/lib/page'
+import { GoneNote } from '@/advanced/GoneNote'
 
 // Code, the GitHub pages and settings load the first time they open,
 // so starting the app parses only the sidebar and chats.
@@ -941,13 +942,4 @@ const paneViewKinds: ReadonlySet<ItemKind> = new Set<ItemKind>(['dispatch', 'ses
 function hasActionBar(item: string): boolean {
   const kind = parseItem(item)?.kind
   return kind !== undefined && paneViewKinds.has(kind)
-}
-
-/** A pane whose item is no longer listed: a dispatch that was pruned, a chat that ended elsewhere. */
-function GoneNote() {
-  return (
-    <div className={`flex min-h-0 flex-1 items-center justify-center ${pageX} text-center text-[13.5px] text-ink-400`}>
-      This is no longer listed. Pick something in the sidebar or close the pane.
-    </div>
-  )
 }
