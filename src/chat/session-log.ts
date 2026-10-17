@@ -21,6 +21,24 @@ function records(content: string): Record<string, unknown>[] {
 }
 function blocks(value: unknown): Record<string, unknown>[] { return Array.isArray(value) ? value.map(object) : []; }
 function flatten(value: unknown): string { return Array.isArray(value) ? value.map((part) => text(object(part).text)).join("") : text(value); }
+
+/** The last real Claude request's input context, excluding local command messages and sidechains. */
+export function latestClaudeContextTokens(content: string): number | null {
+  let latest: number | null = null;
+  for (const row of records(content)) {
+    if (row.type !== "assistant" || row.isSidechain === true) continue;
+    const message = object(row.message);
+    if (message.model === "<synthetic>") continue;
+    const usage = object(message.usage);
+    const fields = [usage.input_tokens, usage.cache_creation_input_tokens, usage.cache_read_input_tokens];
+    if (!fields.some((value) => value !== undefined)) continue;
+    if (fields.some((value) => value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0))) continue;
+    const total = fields.reduce<number>((sum, value) => sum + (typeof value === "number" ? value : 0), 0);
+    if (Number.isSafeInteger(total)) latest = total;
+  }
+  return latest;
+}
+
 /** An entry's own id when it yields one event, else the id with the event's position. */
 function identify(id: string, turns: Omit<LoggedTurn, "sourceId" | "at">[], at: string): LoggedTurn[] {
   return turns.map((turn, index) => ({ ...turn, sourceId: turns.length === 1 ? id : `${id}:${index}`, at }));

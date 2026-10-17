@@ -130,7 +130,7 @@ export async function handleClaude(daemon: ChatDaemon, id: string, child: ChildP
     }
     if (item.type === "assistant") {
       const message = object(item.message);
-      daemon.updateContext(chat, object(message.usage));
+      if (message.model !== "<synthetic>") daemon.updateContext(chat, object(message.usage));
       await daemon.save(chat);
       const blocks = Array.isArray(message.content) ? message.content.map(object) : [];
       const textValue = blocks.filter((block) => block.type === "text").map((block) => text(block.text)).join("");

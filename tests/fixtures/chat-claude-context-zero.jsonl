@@ -1,0 +1,2 @@
+{"type":"assistant","uuid":"redacted-real","timestamp":"2026-10-17T15:52:46.209Z","message":{"model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":2101,"cache_read_input_tokens":247971},"content":[{"type":"text","text":"[redacted]"}]}}
+{"type":"assistant","uuid":"redacted-synthetic","timestamp":"2026-10-17T18:27:13.071Z","message":{"model":"<synthetic>","usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0},"content":[{"type":"text","text":"[redacted local command output]"}]}}

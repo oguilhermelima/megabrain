@@ -15,6 +15,7 @@ afterEach(async () => {
 
 const ID = "7c1f0c52-8f5e-4d1e-9a55-0d3f2b6a1e22";
 const CLAUDE_LOG = readFileSync(join(import.meta.dir, "../fixtures/chat-session/claude-session.jsonl"), "utf8");
+const CONTEXT_LOG = readFileSync(join(import.meta.dir, "../fixtures/chat-claude-context-zero.jsonl"), "utf8");
 const CODEX_LOG = readFileSync(join(import.meta.dir, "../fixtures/chat-session/codex-rollout.jsonl"), "utf8");
 const SWITCHED_AT = "2026-10-16T10:05:00.000Z";
 
@@ -142,6 +143,28 @@ describe("the Codex rollout", () => {
 });
 
 describe("switching back to chat imports what the terminal did", () => {
+  test("restores missing context from the latest real Claude request, ignoring synthetic usage", async () => {
+    const env = sandbox();
+    fakeAgent(env.bin, "claude", FAKE_CLAUDE);
+    writeClaudeLog(env, CONTEXT_LOG);
+    await new ChatStore(env.state).put(record(env, { contextTokens: 0, contextWindow: 1000000, terminalSince: "2026-10-17T15:52:00.000Z" }));
+    const daemon = await daemonFor(env);
+    await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
+    const resumed = await waitState(daemon, "idle");
+    expect(resumed).toMatchObject({ contextTokens: 250074, contextWindow: 1000000 });
+  });
+
+  test("restores missing context when resuming a chat from its session log", async () => {
+    const env = sandbox();
+    fakeAgent(env.bin, "claude", FAKE_CLAUDE);
+    writeClaudeLog(env, CONTEXT_LOG);
+    await new ChatStore(env.state).put(record(env, { mode: "chat", state: "suspended", terminalSince: undefined, contextTokens: 0, contextWindow: 1000000 }));
+    const daemon = await daemonFor(env);
+    await daemon.handle({ operation: "resume", id: ID });
+    const resumed = await waitState(daemon, "idle");
+    expect(resumed).toMatchObject({ contextTokens: 250074, contextWindow: 1000000 });
+  });
+
   test("Claude: every terminal turn lands in the chat, in order, and nothing from before the switch is repeated", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", FAKE_CLAUDE);

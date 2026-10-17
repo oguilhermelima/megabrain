@@ -49,11 +49,16 @@ rl.on("line", (line) => {
     await daemon.listen();
     try {
       const chat = await daemon.handle({ operation: "start", agent: "claude", cwd }) as Chat;
+      chat.contextTokens = 250074;
+      chat.contextWindow = 1000000;
+      await daemon.store.put(chat);
       const said = async () => ((await daemon.handle({ operation: "events", id: chat.id, since: 0 })) as ChatLine[])
         .flatMap((line) => line.event !== undefined && line.event.kind === "assistant" ? [line.event] : []);
       for (const [index, text] of ["/cost", "/review src/app.ts", "hello"].entries()) {
         await daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text }] });
         await until(async () => (await said()).length === index + 1, `answer to ${text}`);
+        if (text === "/cost") expect((await daemon.store.get(chat.id))?.contextTokens).toBe(250074);
+        if (text === "/review src/app.ts") expect((await daemon.store.get(chat.id))?.contextTokens).toBe(10);
       }
       const replies = (await said()).map((event: ChatEvent) => ({ text: event.text, command: (event as ChatEvent & { command?: string }).command }));
       expect(replies).toEqual([

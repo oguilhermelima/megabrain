@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from ".././store.js";
 import { chatProtocolAdapters, type MessagePart } from ".././protocol.js";
-import { discoverSessionId, readSessionTurns, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
+import { discoverSessionId, latestClaudeContextTokens, readSessionTurns, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from ".././subagents.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { KnowledgePipeline } from "../../knowledge/pipeline.js";
@@ -30,8 +30,17 @@ export function trackCallback(daemon: ChatDaemon, task: Promise<unknown>): void 
     void task.then(() => daemon.callbacks.delete(task), () => daemon.callbacks.delete(task));
   }
 
-export function runAgent(daemon: ChatDaemon, chat: Chat, checked = false): Promise<void> {
+export async function runAgent(daemon: ChatDaemon, chat: Chat, checked = false): Promise<void> {
     if (daemon.closed) return Promise.resolve();
+    if (chat.agent === "claude" && (!Number.isSafeInteger(chat.contextTokens) || (chat.contextTokens ?? 0) <= 0) && chat.agentSessionId !== null) {
+      const path = await sessionLogPath(chat, daemon.environment.HOME ?? homedir());
+      if (path !== null) {
+        try {
+          const tokens = latestClaudeContextTokens(await readFile(path, "utf8"));
+          if (tokens !== null && tokens > 0) { chat.contextTokens = tokens; await daemon.save(chat); }
+        } catch { /* a missing or mid-write session log does not prevent resume */ }
+      }
+    }
     const run = daemon.runAgentInternal(chat, checked);
     daemon.agentRuns.add(run);
     void run.then(() => daemon.agentRuns.delete(run), () => daemon.agentRuns.delete(run));
