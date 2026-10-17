@@ -1,11 +1,8 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type PointerEvent } from 'react'
 import { api } from '@/api'
-import { sessionsOfOrigin } from '@/api/projects-origin'
-import { chatPaneStays, readyToPrune } from '@/advanced/restore-panes'
 import type { Artifact, Dispatch, HistorySession, NativeChat, Project, ProjectSession } from '@/api/schema'
-import { joinLabel } from '@/advanced/item-menus'
 import { arrivedCreations, creationFailed, creationSucceeded, dismissCreation, retryCreation, startCreation, stacksOn, type PendingWorktree } from '@/advanced/new-worktree-model'
-import { neighbourSession, sidebarSessionOrder } from '@/advanced/projects-model'
+import { sidebarSessionOrder } from '@/advanced/projects-model'
 import { Sidebar, readFilters, writeFilters, type SidebarDrag } from '@/advanced/Sidebar'
 import { filterProjects, partitionHidden, type SidebarFilters } from '@/advanced/sidebar-model'
 import { applyOrder } from '@/advanced/project-order'
@@ -21,14 +18,12 @@ import { homeView, knowledgeItem, knowledgeItemIn, knowledgeView, type Knowledge
 import { artifactsItem, artifactsItemIn } from '@/advanced/artifacts-model'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
-import type { OpenChat, OpenPath } from '@/chat/Conversation'
+import type { OpenPath } from '@/chat/Conversation'
 import { DispatchesContext } from '@/chat/NoticeCard'
 import { SessionView } from '@/chat/SessionView'
-import type { CodeGoto } from '@/code/CodeFrame'
 import { CodePane } from '@/code/CodePane'
 import { CodeSlot } from '@/code/CodeSlot'
-import { codeTargetForRoot, expiredServers, frameHolders, idleServers, serverGraceMs, type CodeShown, type CodeTarget } from '@/code/code-pane-model'
-import { createCodeSlots } from '@/code/code-slots'
+import { codeTargetForRoot, type CodeShown, type CodeTarget } from '@/code/code-pane-model'
 import type { GithubKind } from '@/github/useGithubCounts'
 import { githubItemId, parseGithubItemId } from '@/github/review-model'
 import { ImportProject } from '@/import/ImportProject'
@@ -43,35 +38,34 @@ import { RunContext, type RunControls } from '@/run-panel/run-context'
 import { panelFor } from '@/run-panel/run-model'
 import { RunPanel } from '@/run-panel/RunPanel'
 import { useRunPanels } from '@/run-panel/useRunPanels'
-import { initialLoad, settleLoad, type LatestLoad } from '@/lib/latest-load'
-import { projectsPolicy } from '@/lib/poll-model'
-import { reuse } from '@/lib/reuse'
 import { announceAction } from '@/lib/app-events'
-import { usePoll } from '@/lib/usePoll'
 import { useStableCallback } from '@/lib/useStableCallback'
 import { useStatus } from '@/lib/useStatus'
 import { chatsByWorktree, rowStatus } from '@/native-chat/chat-model'
 import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
-import { addTerminal, closeCall, closeNeedsConfirm, keepsPane, mountsInBackground, removeTerminal, renameTerminal, restoreAppTerminals, terminalExited, terminalSessionIds, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
-import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, singlePane, spanItem, type Direction, type ItemKind, type Panes } from '@/panes/pane-model'
-import { activeGroup, addToGroup, arrangeGroup, arrangeMember, changeGroupPanes, changeGroupStrip, changeShown, closeGroup, focusGroup, groupOfItem, joinItems, layoutOf, leaveGroup, openLayoutItem, parseLayout, presetsFor, pruneLayout, removeLayoutItem, renameGroup, serialiseLayout, shiftMember, shownPanes, splitBeside, splitItems, unsplitGroup, type Layout, type Preset } from '@/panes/split-groups'
-import { matchShortcut, type ShortcutId } from '@/lib/shortcuts'
-import { recordingShortcut, useShortcutBindings } from '@/lib/shortcut-store'
-import { groupRows, groupsByPlace, type GroupRow, type MemberInfo } from '@/advanced/split-rows'
-import { SplitRowsContext, type SplitDrop, type SplitRowsValue } from '@/advanced/SplitRows'
-import type { JoinTarget } from '@/advanced/useRowDrag'
-import type { MenuItem } from '@/components/ContextMenu'
+import { addTerminal, closeCall, closeNeedsConfirm, mountsInBackground, removeTerminal, renameTerminal, terminalExited, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
+import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, spanItem, type ItemKind, type Panes } from '@/panes/pane-model'
+import { activeGroup, changeGroupPanes, changeShown, groupOfItem, openLayoutItem, removeLayoutItem, shownPanes, type Preset } from '@/panes/split-groups'
+import { groupRows, groupsByPlace, type MemberInfo } from '@/advanced/split-rows'
+import { SplitRowsContext, type SplitRowsValue } from '@/advanced/SplitRows'
 import type { MenuIcon } from '@/components/menu-icons'
 import { arrangePane } from '@/panes/arrange'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
 import { SplitFrame } from '@/panes/GroupBar'
 import { groupIdentity, sharedWorktree, splitCodeItem, splitCodeShown, type SplitMember } from '@/panes/group-bar'
-import { emptyStrip, navigate, type Strip } from '@/panes/strip'
+import { emptyStrip } from '@/panes/strip'
 import { windowRowJoin } from '@/panes/window-row'
 import { usePaneDrag } from '@/panes/usePaneDrag'
 import { alreadyOpen } from '@/launcher/resume-model'
+import { useProjects } from '@/advanced/useProjects'
+import { newGroupId, newLauncher, newPaneId, usePaneState } from '@/advanced/usePaneState'
+import { useSessionNavigation } from '@/advanced/useSessionNavigation'
+import { usePanePersistence } from '@/advanced/usePanePersistence'
+import { useCodeLifecycle } from '@/advanced/useCodeLifecycle'
+import { focusPaneInput, usePaneShortcuts, worktreeChoices } from '@/advanced/usePaneShortcuts'
+import { useSplitInteractions } from '@/advanced/useSplitInteractions'
 
 // Code, the GitHub pages and settings load the first time they open,
 // so starting the app parses only the sidebar and chats.
@@ -87,85 +81,12 @@ function Loading() {
   return <PaneSkeleton />
 }
 
-function useProjects(): { projects: Project[]; chats: NativeChat[]; loaded: boolean; chatsLoaded: boolean; error: unknown; retry: () => void; dropChat: (id: string) => void } {
-  const [load, setLoad] = useState<LatestLoad<Project[]>>(initialLoad)
-  const [chats, setChats] = useState<NativeChat[]>([])
-  const [chatsLoaded, setChatsLoaded] = useState(false)
-  const seq = useRef(0)
-  const retry = usePoll(
-    projectsPolicy,
-    async (current) => {
-      const at = ++seq.current
-      try {
-        // Native chats ride the projects poll; a CLI without them leaves the list empty.
-        const [next, nextChats] = await Promise.all([api.projects('megabrain'), api.chats().catch(() => null)])
-        if (!current()) return
-        // Only sessions megabrain started; one opened in Orca or a plain terminal belongs there.
-        const mine = sessionsOfOrigin(next, 'megabrain')
-        setLoad((previous) => settleLoad(previous, { seq: at, ok: true, value: reuse(previous.value ?? [], mine) }))
-        if (nextChats !== null) {
-          setChats((previous) => reuse(previous, nextChats))
-          setChatsLoaded(true)
-        }
-      } catch (error) {
-        // The last good list stays; usePoll tries again sooner.
-        if (current()) setLoad((previous) => settleLoad(previous, { seq: at, ok: false, error }))
-        throw error
-      }
-    },
-    [],
-  )
-  // A removed chat leaves the list at once instead of at the next poll.
-  const dropChat = useStableCallback((id: string) => setChats((previous) => previous.filter((chat) => chat.id !== id)))
-  return { projects: load.value ?? noProjects, chats, loaded: load.value !== null, chatsLoaded, error: load.error, retry, dropChat }
-}
-
-const noProjects: Project[] = []
-
-const panesKey = 'megabrain.panes'
-
-const newPaneId = () => `pane-${crypto.randomUUID()}`
-const newGroupId = () => `group-${crypto.randomUUID()}`
-const newLauncher = () => itemKey('launcher', crypto.randomUUID())
-
-/** The layout and split groups this viewer left, or one pane with the launcher. Items that are gone are dropped once the lists load. */
-function storedLayout(): Layout {
-  try {
-    const stored = parseLayout(localStorage.getItem(panesKey), newGroupId())
-    if (stored !== null) return stored
-  } catch {
-    // A remembered layout is a convenience; one pane is fine.
-  }
-  return layoutOf(singlePane(newLauncher(), newPaneId()), newGroupId())
-}
-
-const terminalIdsKey = 'megabrain.terminals.ids'
-
-/** The item id each restorable tmux terminal had, so a restored layout finds it after a restart. */
-function storedTerminalIds(): Record<string, string> {
-  try {
-    const value = JSON.parse(localStorage.getItem(terminalIdsKey) ?? '{}') as unknown
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
-    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-  } catch {
-    return {}
-  }
-}
-
 function storedSidebarCollapsed(): boolean {
   try {
     return localStorage.getItem('megabrain.sidebar.hidden') === '1'
   } catch {
     return false
   }
-}
-
-/**
- * The keyboard into a pane's terminal, composer or first field, on the next frame. Without scrolling:
- * the strip reveals the focused pane itself, and the browser's own scroll would yank it mid-scroll.
- */
-function focusPaneInput(paneId: string) {
-  requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-pane-id="${CSS.escape(paneId)}"]`)?.querySelector<HTMLElement>('textarea, [contenteditable="true"], input')?.focus({ preventScroll: true }))
 }
 
 // The advanced window: chats in a sidebar (projects > worktrees > chats), the selected chat followed
@@ -179,25 +100,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const projects = useMemo(() => applyOrder(listed, flattenLayout(layout)), [listed, layout])
   // The split groups and the single pane; the main area shows one of them, each pane one item, and
   // the sidebar follows the focused one.
-  const [paneLayout, setLayout] = useState<Layout>(storedLayout)
+  const { paneLayout, setLayout, pruned, setPruned, paneViews, setPaneViews, splitViews, setSplitViews, githubPage, setGithubPage, codeTargets, setCodeTargets, idleCode, setIdleCode, codeHolders, codeSlots, gotos, setGotos } = usePaneState()
   const panes = shownPanes(paneLayout)
   /** A pane operation on what is shown; it may make a split group or dissolve one (see changeShown). */
   const setPanes = (change: (current: Panes) => Panes) => setLayout((current) => changeShown(current, change, newGroupId()))
-  const [pruned, setPruned] = useState(false)
-  // The view each item's pane shows (see the action bar); an item not listed shows its initialView.
-  const [paneViews, setPaneViews] = useState<Record<string, PaneView>>({})
-  // The view each split on one worktree shows from its shared bar, by group (see panes/group-bar).
-  const [splitViews, setSplitViews] = useState<Record<string, PaneView>>({})
-  // A project's pull request or issue page, shown in the main area over chats and the launcher.
-  const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubKind; focus: number | null } | null>(null)
-  // The roots whose Code runs, in opening order: one frame each, kept mounted until its server stops.
-  const [codeTargets, setCodeTargets] = useState<CodeTarget[]>([])
-  // When each running root stopped being used by any pane (see idleServers).
-  const [idleCode, setIdleCode] = useState<Readonly<Record<string, number>>>({})
-  const codeHolders = useRef<Readonly<Record<string, string>>>({})
-  const [codeSlots] = useState(createCodeSlots)
-  // The file each open root was last asked to show from a chat.
-  const [gotos, setGotos] = useState<Record<string, CodeGoto>>({})
   const [importing, setImporting] = useState(false)
   // Each launcher's worktree: the one whose + opened it (absent: ⌘N, home or a restored layout), and
   // the one it starts in now, where its top bar runs commands. A new + is a new launcher item.
@@ -242,70 +148,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     })
   }
 
-  const findSession = (sessionId: string) => {
-    for (const project of projects) {
-      for (const worktree of project.worktrees) {
-        const session = worktree.sessions.find((item) => item.sessionId === sessionId)
-        if (session !== undefined) return { session, worktreePath: worktree.path }
-      }
-    }
-    return extraSessions[sessionId] ?? null
-  }
-
-  /** A chat megabrain dispatched opens as that dispatch; any other session as itself. */
-  const sessionItem = (session: ProjectSession) => {
-    const dispatchId = session.dispatchId
-    const known = dispatchId !== null && (status?.dispatches.some((item) => item.dispatchId === dispatchId) ?? false)
-    return known && dispatchId !== null ? itemKey('dispatch', dispatchId) : itemKey('session', session.sessionId)
-  }
-
-  /** Shows an item: the pane that has it gets focus, else the focused pane shows it. */
-  const showItem = (item: string) => {
-    setGithubPage(null)
-    setLayout((current) => openLayoutItem(current, item))
-  }
-
-  const openSession = (session: ProjectSession, worktreePath: string) => {
-    if (findSession(session.sessionId) === null) setExtraSessions((current) => ({ ...current, [session.sessionId]: { session, worktreePath } }))
-    showItem(sessionItem(session))
-  }
-
-  const openRelatedChat: OpenChat = useStableCallback((target) => {
-    setGithubPage(null)
-    if ('dispatchId' in target) {
-      const dispatch = status?.dispatches.find((item) => item.dispatchId === target.dispatchId)
-      if (dispatch !== undefined) {
-        showItem(itemKey('dispatch', dispatch.dispatchId))
-        return
-      }
-      const session = projects
-        .flatMap((project) => project.worktrees)
-        .flatMap((worktree) => worktree.sessions.map((item) => ({ session: item, worktreePath: worktree.path })))
-        .find((item) => item.session.dispatchId === target.dispatchId)
-      if (session !== undefined) {
-        openSession(session.session, session.worktreePath)
-      }
-      return
-    }
-
-    const found = findSession(target.sessionId)
-    if (found !== null) {
-      openSession(found.session, found.worktreePath)
-      return
-    }
-
-    const [agent] = target.sessionId.split(':', 1)
-    if (agent !== 'claude' && agent !== 'codex' && agent !== 'grok' && agent !== 'agy') return
-    openSession({
-      agent,
-      sessionId: target.sessionId,
-      title: target.sessionId,
-      status: 'idle',
-      startedAt: null,
-      lastActivityAt: null,
-      dispatchId: null,
-    }, '')
-  })
+  const { findSession, sessionItem, showItem, openSession, openRelatedChat } = useSessionNavigation({ projects, status, extraSessions, setExtraSessions, setGithubPage, setLayout })
 
   // The sidebar follows the focused pane. A chat opened as a dispatch is still a session row there;
   // highlight and walk from it.
@@ -601,106 +444,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return { title: 'Artifacts', mark: { kind: 'artifact' }, state: 'idle', worktree }
     }
   }
-  // A split never runs out of room: its columns scroll (panes/strip), so no layout is refused for size.
-  const arrange = (row: GroupRow, preset: Preset) => setLayout((current) => focusGroup(arrangeGroup(current, row.id, preset), row.id))
-  // The shown group's column widths and scroll, kept with the group; the group is bound now, so a
-  // scroll saved after another group shows still lands on its own.
-  const shownGroupId = paneLayout.active
-  const changeStrip = useMemo(() => (shownGroupId === null ? null : (change: (strip: Strip) => Strip) => setLayout((current) => changeGroupStrip(current, shownGroupId, change))), [shownGroupId])
-  const [stripScrolls, setStripScrolls] = useState(false)
-  const focusSplit = useStableCallback((groupId: string) => {
-    setGithubPage(null)
-    setLayout((current) => focusGroup(current, groupId))
-  })
-  const focusSplitMember = useStableCallback((groupId: string, item: string) => {
-    setGithubPage(null)
-    setLayout((current) => focusGroup(current, groupId, item))
-  })
-  const renameSplit = useStableCallback((groupId: string, name: string) => setLayout((current) => renameGroup(current, groupId, name)))
-  const splitGroupMenu = useStableCallback((row: GroupRow, startRename: () => void): MenuItem[] => [
-    ...presetsFor(row.members.length).map((preset): MenuItem => ({ label: presetNames[preset], icon: presetIcons[preset], group: 'open', onSelect: () => arrange(row, preset) })),
-    { label: 'Rename group', icon: 'rename', group: 'organise', onSelect: startRename },
-    { label: 'Unsplit', icon: 'unsplit', group: 'organise', onSelect: () => setLayout((current) => unsplitGroup(current, row.id)) },
-    { label: 'Close group', icon: 'close', group: 'danger', onSelect: () => setLayout((current) => closeGroup(current, row.id, { id: newPaneId(), item: newLauncher() })) },
-  ])
-  const splitItemOf = useStableCallback((row: SidebarDrag): string | null => {
-    if (row.kind === 'native') return itemKey('native', row.chat.id)
-    if (row.kind === 'terminal') return itemKey('terminal', row.terminal.id)
-    return sessionItem(row.session)
-  })
-  // Split right or down from a row: the row's item opens beside the focused pane (a launcher when it
-  // is the focused pane's own item). ⌘D and ⌘⇧D do the same with a launcher.
-  const splitWith = (item: string | null, edge: 'right' | 'bottom') => {
-    const launcher = newLauncher()
-    const next = splitBeside(paneLayout, item ?? launcher, edge, launcher, { pane: newPaneId(), group: newGroupId() })
-    if (next === null) return
-    setGithubPage(null)
-    setLayout(next)
-    const focused = shownPanes(next).focused
-    focusPaneInput(focused)
-  }
-  // Rows picked with ⌘-click open together as one split, as Zen joins multi-selected tabs.
-  const [picks, setPicks] = useState<string[]>([])
-  const openInSplit = (items: string[]) => {
-    const unique = [...new Set(items)]
-    const ids = unique.map(() => newPaneId())
-    const preset: Preset = unique.length === 2 ? 'row' : 'grid'
-    setGithubPage(null)
-    setPicks([])
-    setLayout((current) => splitItems(current, unique, newGroupId(), ids, preset))
-  }
-  const splitRowMenu = useStableCallback((item: string): MenuItem[] => {
-    const together = [...new Set([...picks, item])]
-    return [
-      ...(picks.length > 0 && together.length >= 2 ? [{ label: `Open ${together.length} in split`, icon: 'splitGrid', group: 'open', onSelect: () => openInSplit(together) } satisfies MenuItem] : []),
-      { label: 'Split right', icon: 'splitRight', group: 'open', onSelect: () => splitWith(item, 'right') },
-      { label: 'Split down', icon: 'splitDown', group: 'open', onSelect: () => splitWith(item, 'bottom') },
-      ...joinChoices(item),
-    ]
-  })
-  const joinItem = (title: string) => {
-    const { label, full } = joinLabel({ name: null, members: [{ title }] })
-    return { label, title: full }
-  }
-  // Join with…, the keyboard's way to drop a row on another: every group the row is not in, and the
-  // item shown alone, when it is another one.
-  const joinChoices = (item: string): MenuItem[] => {
-    const own = groupOfItem(paneLayout, item)?.id ?? null
-    const alone = paneLayout.active === null ? (paneList(paneLayout.single.root)[0]?.item ?? null) : null
-    const groups = splitRowsValue.filter((row) => row.id !== own)
-    return [
-      ...groups.map((row): MenuItem => {
-        const { label, full } = joinLabel(row)
-        return { label, title: full, icon: 'splitGrid', group: 'open', onSelect: () => dropSplit({ kind: 'join', source: { kind: 'item', item }, target: { kind: 'group', groupId: row.id } }) }
-      }),
-      ...(alone === null || alone === item || groupOfItem(paneLayout, alone) !== null
-        ? []
-        : [{ ...joinItem(describeItem(alone).title), icon: 'splitRight', group: 'open', onSelect: () => dropSplit({ kind: 'join', source: { kind: 'item', item }, target: { kind: 'item', item: alone } }) } satisfies MenuItem]),
-    ]
-  }
-  /** What a join from the sidebar makes of the layout: a row joins a row or a group, a group takes in a row. */
-  const joined = (current: Layout, source: JoinTarget, target: JoinTarget): Layout => {
-    if (source.kind === 'item' && target.kind === 'item') return joinItems(current, source.item, target.item, { pane: newPaneId(), group: newGroupId() })
-    if (source.kind === 'item' && target.kind === 'group') return addToGroup(current, target.groupId, source.item, newPaneId())
-    if (source.kind === 'group' && target.kind === 'item') return addToGroup(current, source.groupId, target.item, newPaneId())
-    return current
-  }
-  // A row dropped on another row's middle joins them; a member dragged out of its group leaves it; a
-  // group is arranged and resized on its hover's map (see useRowDrag and SplitRows).
-  const dropSplit = useStableCallback((drop: SplitDrop) => {
-    if (drop.kind === 'arrange') setLayout((current) => arrangeMember(current, drop.groupId, drop.item, drop.target))
-    else if (drop.kind === 'shift') setLayout((current) => shiftMember(current, drop.groupId, drop.item, drop.direction))
-    else if (drop.kind === 'resize') setLayout((current) => changeGroupPanes(current, drop.groupId, () => drop.panes))
-    else if (drop.kind === 'leave') setLayout((current) => leaveGroup(current, drop.item))
-    else {
-      const next = joined(paneLayout, drop.source, drop.target)
-      if (next === paneLayout) return
-      setGithubPage(null)
-      setPicks([])
-      setLayout(next)
-    }
-  })
-  const pickSplitRow = useStableCallback((item: string, add: boolean) => setPicks((current) => (!add ? [] : current.includes(item) ? current.filter((entry) => entry !== item) : [...current, item])))
+  const splitRowsValue = groupRows(paneLayout, describeItem)
+  const { shownGroupId, changeStrip, stripScrolls, setStripScrolls, focusSplit, focusSplitMember, renameSplit, splitGroupMenu, splitItemOf, splitWith, picks, splitRowMenu, dropSplit, pickSplitRow } = useSplitInteractions({ paneLayout, setLayout, setGithubPage, newPaneId, newGroupId, newLauncher, focusPaneInput, sessionItem, splitRowsValue, describeItem, presetNames, presetIcons })
+
   // A sidebar item dropped on a pane splits it or replaces its item; a pane dragged by its header
   // splits beside the pane or swaps with it. Either one dropped on an edge of the split spans that side.
   const drag = usePaneDrag((source, target) => {
@@ -809,77 +555,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   })
   const sharedRoot = sharedWorktree(splitMembers)
 
-  // The tmux terminals a past run left come back once, at launch; a failed list restores none.
-  useEffect(() => {
-    let current = true
-    api
-      .listAppTerminals()
-      .then((listings) => {
-        if (current) setTerminals((list) => restoreAppTerminals(list, listings, storedTerminalIds()))
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (current) setTerminalsRestored(true)
-      })
-    return () => {
-      current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!terminalsRestored) return
-    try {
-      localStorage.setItem(terminalIdsKey, JSON.stringify(terminalSessionIds(terminals)))
-    } catch {
-      // Without the ids a restored terminal still lists; only its place in the layout is lost.
-    }
-  }, [terminals, terminalsRestored])
-
-  const listsLoaded = readyToPrune({ status: status !== null, projects: projectsLoaded, terminals: terminalsRestored, chats: chatsLoaded })
-  /** Whether an item still exists; a launcher always does. */
-  const itemExists = (item: string): boolean => {
-    const parsed = parseItem(item)
-    if (parsed === null) return false
-    switch (parsed.kind) {
-      case 'dispatch':
-        return status?.dispatches.some((entry) => entry.dispatchId === parsed.id) ?? false
-      case 'session':
-        return findSession(parsed.id) !== null
-      case 'native':
-        return chatPaneStays(nativeChats, parsed.id) || startedChat?.id === parsed.id
-      case 'terminal':
-        return keepsPane(terminals, parsed.id)
-      case 'launcher':
-        return true
-      case 'github':
-        return parseGithubItemId(parsed.id) !== null
-      case 'code':
-        return true
-      case 'project':
-        return projects.some((project) => project.path === parsed.id)
-      // The page says so itself when its project or topic is gone. An artifact outlives its chat
-      // too, and the page says when one is no longer listed.
-      case 'knowledge':
-      case 'artifact':
-        return true
-    }
-  }
-
-  // Once the lists load, a restored layout drops the items that are gone (a terminal whose tmux
-  // session ended with the last run among them); later an item that disappears shows a note in its pane instead.
-  useEffect(() => {
-    if (pruned || !listsLoaded) return
-    setPruned(true)
-    setLayout((current) => pruneLayout(current, itemExists, { id: newPaneId(), item: newLauncher() }))
-  }, [pruned, listsLoaded])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(panesKey, serialiseLayout(paneLayout))
-    } catch {
-      // A remembered layout is a convenience; the next launch starts with one pane.
-    }
-  }, [paneLayout])
+  const { listsLoaded } = usePanePersistence({ status, projectsLoaded, chatsLoaded, projects, nativeChats, startedChat, terminals, terminalsRestored, setTerminals, setTerminalsRestored, findSession, paneLayout, pruned, setPruned, setLayout })
 
   const render = (item: string): PaneContent => {
     const parsed = parseItem(item)
@@ -1019,29 +695,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         })),
     ...(splitCode === null ? [] : [splitCode]),
   ]
-  codeHolders.current = frameHolders(codeHolders.current, codeShown)
-  const holders = codeHolders.current
-  const shownRoots = codeShown.map((entry) => entry.root).join('\n')
   const usedRoots = [...new Set(leaves.map((leaf) => rootOf(leaf.item)).filter((root): root is string => root !== null && root !== ''))].sort().join('\n')
-  useEffect(() => {
-    const missing = codeShown.filter((entry, index) => codeShown.findIndex((other) => other.root === entry.root) === index && !codeTargets.some((target) => target.root === entry.root))
-    if (missing.length > 0) setCodeTargets((current) => [...current, ...missing.map((entry) => codeTargetForRoot(projects, entry.root))])
-  }, [shownRoots, codeTargets])
-  useEffect(() => {
-    setIdleCode((current) => idleServers(current, codeTargets.map((target) => target.root), new Set(usedRoots.split('\n')), Date.now()))
-  }, [usedRoots, codeTargets])
-  useEffect(() => {
-    const since = Object.values(idleCode)
-    if (since.length === 0) return
-    const timer = setTimeout(() => {
-      const expired = expiredServers(idleCode, Date.now())
-      if (expired.length === 0) return
-      setCodeTargets((current) => current.filter((target) => !expired.includes(target.root)))
-      setGotos((current) => Object.fromEntries(Object.entries(current).filter(([root]) => !expired.includes(root))))
-      for (const root of expired) void api.stopCodeServer(root).catch(() => {})
-    }, Math.max(0, Math.min(...since) + serverGraceMs - Date.now()))
-    return () => clearTimeout(timer)
-  }, [idleCode])
+  const { holders } = useCodeLifecycle({ codeShown, codeHolders, codeTargets, setCodeTargets, idleCode, setIdleCode, setGotos, projects, usedRoots })
   const focusCodeRoot = useStableCallback((root: string) => {
     const holder = codeHolders.current[root]
     if (holder !== undefined) focusItem(holder)
@@ -1084,73 +739,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const runControls = controlsFor(runRoot)
   // The window's shortcuts, by the keys Settings > Shortcuts gives them (lib/shortcuts.ts). Escape is
   // never handled here, so Code keeps it; nothing is, while Settings records a combination.
-  const shortcutKeys = useShortcutBindings()
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (recordingShortcut()) return
-      const id = matchShortcut(event, shortcutKeys)
-      if (id === 'settings.open') setSettingsOpen(true)
-      else if (id === 'chat.new') openNewChat(null)
-      else if (id === 'sidebar.toggle') toggleSidebarCollapsed()
-      else if (id === 'sidebar.focus') focusSidebar()
-      else if (id === 'item.next' || id === 'item.previous') {
-        const next = neighbourSession(sessionRows, selectedSessionId, id === 'item.next' ? 1 : -1)
-        if (next !== null) openSession(next.session, next.worktreePath)
-      } else return
-      event.preventDefault()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [sessionRows, selectedSessionId, shortcutKeys, sidebarCollapsed])
-
-  // The pane keys and ⌘T listen in the capture phase, so a terminal or an editor in a pane does not keep them.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (recordingShortcut()) return
-      const id = matchShortcut(event, shortcutKeys)
-      if (id === null) return
-      const direction = paneDirections[id]
-      if (id === 'terminal.new') {
-        const cwd = runRoot ?? worktreeChoices(projects)[0]?.path ?? null
-        if (cwd !== null && cwd !== '') openTerminal(cwd, null)
-      } else if (settingsOpen) return
-      else if (id === 'pane.close') {
-        // In a split it closes the focused pane and its item stays in the sidebar; alone it closes the item.
-        if (paneList(panes.root).length > 1) closePaneById(panes.focused)
-        else closeFocused().catch(() => {})
-      } else if (id === 'pane.splitRight' || id === 'pane.splitDown') splitWith(null, id === 'pane.splitRight' ? 'right' : 'bottom')
-      else if (id === 'pane.next' || id === 'pane.previous') {
-        const leaves = paneList(panes.root)
-        const at = leaves.findIndex((leaf) => leaf.id === panes.focused)
-        const target = leaves[(at + (id === 'pane.next' ? 1 : -1) + leaves.length) % leaves.length]?.id ?? null
-        if (target === null || leaves.length < 2) return
-        focusPaneById(target)
-      } else if (direction !== undefined) {
-        // Left and right go between columns, up and down within one; the strip scrolls to the pane.
-        const target = navigate(panes.root, panes.focused, direction)
-        if (target === null) return
-        focusPaneById(target)
-      } else return
-      event.preventDefault()
-      event.stopPropagation()
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [runRoot, projects, panes, paneLayout, settingsOpen, shortcutKeys])
-  // The keyboard goes with the focus: into the pane's terminal, composer or first field.
-  const focusPaneById = (paneId: string) => {
-    setPanes((current) => ({ ...current, focused: paneId }))
-    focusPaneInput(paneId)
-  }
-  // Focus the sidebar on its selected row, or its first one; a collapsed sidebar opens first.
-  const focusSidebar = () => {
-    if (sidebarCollapsed) toggleSidebarCollapsed()
-    requestAnimationFrame(() => {
-      const nav = document.querySelector<HTMLElement>('nav[aria-label="Projects"]')
-      ;(nav?.querySelector<HTMLElement>('[aria-current="true"]') ?? nav?.querySelector<HTMLElement>('button'))?.focus()
-    })
-  }
-
+  usePaneShortcuts({ sessionRows, selectedSessionId, openSession, sidebarCollapsed, toggleSidebarCollapsed, openNewChat, runRoot, projects, panes, paneLayout, settingsOpen, setSettingsOpen, setPanes, openTerminal, closePaneById, closeFocused, splitWith })
   const runPanelRoots = Object.keys(runs.panels).filter((root) => runs.panels[root]?.tabs.length !== 0)
   const runPanelShown = runControls !== null && runControls.panel.open
   const githubProject = githubPage === null ? null : (projects.find((project) => project.path === githubPage.path) ?? null)
@@ -1168,7 +757,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     ) : null
 
   // Built here, after everything describing an item (rootOf) is declared.
-  const splitRowsValue = groupRows(paneLayout, describeItem)
   const splitRowsSignature = JSON.stringify(splitRowsValue)
   const splitRows = useMemo<SplitRowsValue>(() => {
     const placed = groupsByPlace(splitRowsValue)
@@ -1354,19 +942,11 @@ function hasActionBar(item: string): boolean {
   return kind !== undefined && paneViewKinds.has(kind)
 }
 
-const paneDirections: Partial<Record<ShortcutId, Direction>> = { 'pane.focusLeft': 'left', 'pane.focusRight': 'right', 'pane.focusUp': 'up', 'pane.focusDown': 'down' }
-
 /** A pane whose item is no longer listed: a dispatch that was pruned, a chat that ended elsewhere. */
 function GoneNote() {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center px-8 text-center text-[13.5px] text-ink-400">
       This is no longer listed. Pick something in the sidebar or close the pane.
     </div>
-  )
-}
-
-function worktreeChoices(projects: Project[]) {
-  return partitionHidden(projects).visible.flatMap((project) =>
-    project.missing ? [] : project.worktrees.map((worktree) => ({ path: worktree.path, label: `${project.name} · ${worktree.branch ?? worktree.path.split('/').at(-1) ?? worktree.path}` })),
   )
 }
