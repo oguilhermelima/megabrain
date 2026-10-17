@@ -1,0 +1,2 @@
+No MCP servers are configured. Add one with `claude mcp add`.
+Usage: /mcp [reconnect|enable|disable [<server>|all]]. With no server name, applies to all.

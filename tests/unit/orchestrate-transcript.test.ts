@@ -75,7 +75,7 @@ describe("orchestrate transcript", () => {
       { kind: "system", text: "Message from Mina: Can you review this?" },
       { kind: "system", text: "Message from megabrain: ✅ child finished\ndetails: megabrain orchestrate watch deadbeef" },
       { kind: "system", text: "/review src/app.ts" },
-      { kind: "tool-result", text: "Review complete." },
+      { kind: "assistant", text: "Review complete." },
     ]);
     expect(parsed?.events.every(({ text }) => !text.includes("/private/tmp/") && !text.includes("task-fake") && !text.includes("toolu_fake") && !text.includes("task-failed") && !text.includes("toolu_failed"))).toBe(true);
     const dispatchEvents = tagTranscriptOrigins(parsed?.events ?? [], null, [{ dispatchId: "dispatch-deadbeef", chatName: "Worker" }]);

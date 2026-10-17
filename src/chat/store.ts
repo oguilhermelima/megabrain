@@ -39,7 +39,9 @@ export type ChatEvent = { id: string; at: string; kind: "user" | "assistant" | "
   parentId?: string;
   /** On the tool call that starts a subagent (no status) and on the tool result that ends it (status set, text its result). */
   subagent?: { id: string; type?: string; description?: string; status?: "completed" | "failed" | "stopped" };
-  progress?: ChatProgress };
+  progress?: ChatProgress;
+  /** On an assistant event that is a local command's output (Claude's /usage, /cost): the command it answers, slash included. */
+  command?: string };
 /** A message sent while a turn ran, waiting to go out as a later turn; its parts keep text and images in order. */
 export type QueuedChatMessage = { id: string; parts: ({ type: "text"; text: string } | { type: "image"; path: string })[]; createdAt: string; updatedAt: string };
 /** `queue` is the chat's whole queue, on the first line of every read and live after each change. */

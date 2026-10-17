@@ -1,5 +1,10 @@
 import type { ChatQueueChange } from '@/api/adapter'
 import type { ChatApproval, ChatEventLine, ChatQueueItem, MessagePart, NativeChat, TranscriptEvent } from '@/api/schema'
+// Real outputs of Claude's local commands (see command-output.test.ts).
+import contextOutput from '@/api/fixtures/captured/command-output/claude-context.txt?raw'
+import costOutput from '@/api/fixtures/captured/command-output/claude-cost.txt?raw'
+import mcpOutput from '@/api/fixtures/captured/command-output/claude-mcp.txt?raw'
+import usageOutput from '@/api/fixtures/captured/command-output/claude-usage.txt?raw'
 
 const now = Date.now()
 const at = (seconds: number) => new Date(now - seconds * 1000).toISOString()
@@ -22,7 +27,19 @@ export const mockChatLines: ChatEventLine[] = [
   { cursor: '2', event: { id: 'e2', at: at(55), kind: 'assistant', text: 'Looking at the steps first.' } },
   { cursor: '3', event: { id: 'e3', at: at(50), kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: 'ls apps/web/src/app/onboarding' } } },
   { cursor: '4', event: { id: 'e4', at: at(49), kind: 'tool-result', text: '_components\n_hooks\n_steps\nlayout.tsx\npage.tsx', tool: { name: 'Bash', status: 'ok' } } },
+  ...commandLines(5, ['/usage', usageOutput], ['/cost', costOutput], ['/context', contextOutput], ['/mcp', mcpOutput]),
 ]
+
+/** A slash command and its output, as chatd stores a local command's: the user line, then the result naming it. */
+function commandLines(first: number, ...commands: [string, string][]): ChatEventLine[] {
+  return commands.flatMap(([command, text], index) => {
+    const cursor = first + index * 2
+    return [
+      { cursor: String(cursor), event: { id: `e${cursor}`, at: at(48 - index), kind: 'user', text: command } },
+      { cursor: String(cursor + 1), event: { id: `e${cursor + 1}`, at: at(48 - index), kind: 'assistant', text, command } },
+    ]
+  })
+}
 
 // A stand-in for megabrain chatd: each chat keeps its stored lines and its followers, and a turn plays
 // state changes, streamed chunks and complete events with the timing of a real agent.

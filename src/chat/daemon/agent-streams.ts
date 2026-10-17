@@ -25,6 +25,7 @@ import type { ChatDaemon } from "../daemon.js";
 import { setContextTokens } from "./artifacts-summaries.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
+import { answeredCommand } from "./local-command.js";
 
 export async function handleClaudeStream(daemon: ChatDaemon, id: string, streamEvent: Record<string, unknown>): Promise<void> {
     const kind = text(streamEvent.type);
@@ -136,7 +137,9 @@ export async function handleClaude(daemon: ChatDaemon, id: string, child: ChildP
       const thinking = blocks.filter((block) => block.type === "thinking").map((block) => text(block.thinking)).join("");
       const identity = withMessage(text(message.id));
       if (thinking) await daemon.publish(chat, event("thinking", thinking, undefined, identity));
-      if (textValue) await daemon.publish(chat, event("assistant", textValue, undefined, identity));
+      // A local command's output (/usage, /cost) comes as a message from the <synthetic> model.
+      const command = textValue && message.model === "<synthetic>" ? await answeredCommand(daemon.store, id) : undefined;
+      if (textValue) await daemon.publish(chat, event("assistant", textValue, undefined, command === undefined ? identity : { ...identity, command }));
       for (const block of blocks.filter((candidate) => candidate.type === "tool_use")) {
         const input = JSON.stringify(block.input ?? {});
         if (isClaudeSubagentTool(text(block.name))) await daemon.startSubagent(chat, claudeSubagent(text(block.id), block.input), text(block.name), input);

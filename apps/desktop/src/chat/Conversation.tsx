@@ -14,6 +14,7 @@ import { groupToolRuns, toolDetail, toolGroupSummary, toolName, type DisplayItem
 import { subagentGroupSummary, subagentSummary, visibleSteps, type SubagentItem, type SubagentState } from '@/chat/subagent-model'
 import { formatElapsed } from '@/native-chat/chat-model'
 import { MarkdownText } from '@/chat/markdown'
+import { CommandOutput } from '@/chat/CommandOutput'
 import { chatMenu, quoteText, toolCommand, type ChatAction } from '@/chat/chat-menu-model'
 import { markMenu, markedParts, toSections, type ComposeChannel } from '@/chat/chat-menu'
 import { imageBytes, pngBytes, saveName } from '@/lib/image-bytes'
@@ -48,6 +49,14 @@ function AssistantMessage({ event }: { event: TranscriptEvent }) {
   return (
     <li onContextMenu={markMessage(event.text)} className="max-w-[80%] text-ink-200">
       <MarkdownText text={event.text} />
+    </li>
+  )
+}
+
+function CommandMessage({ event, command }: { event: TranscriptEvent; command: string }) {
+  return (
+    <li onContextMenu={markMessage(event.text)} className="max-w-[85%]">
+      <CommandOutput command={command} text={event.text} />
     </li>
   )
 }
@@ -334,6 +343,7 @@ const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem |
   const event = item.event
   if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />
   if (event.kind === 'user') return <UserMessage event={event} pending={item.pending} />
+  if (event.kind === 'assistant' && event.command !== undefined) return <CommandMessage event={event} command={event.command} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} />
   if (event.kind === 'thinking') return <ThinkingMessage event={event} thoughtMs={item.thoughtMs} />
   if (event.kind === 'approval') return <ApprovalMessage event={event} />

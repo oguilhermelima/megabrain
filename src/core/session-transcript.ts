@@ -16,7 +16,8 @@ export type TranscriptNotice = Readonly<{
   summary: string;
 }>;
 export type TranscriptImage = Readonly<{ path: string }> | Readonly<{ dataUrl: string }>;
-export type TranscriptEvent = Readonly<{ id: string; at: string | null; kind: TranscriptKind; text: string; tool?: TranscriptTool; origin?: TranscriptOrigin; notice?: TranscriptNotice; images?: readonly TranscriptImage[] }>;
+// command: on an assistant event that is a local command's output, the command it answers ("" when the log does not say).
+export type TranscriptEvent = Readonly<{ id: string; at: string | null; kind: TranscriptKind; text: string; tool?: TranscriptTool; origin?: TranscriptOrigin; notice?: TranscriptNotice; images?: readonly TranscriptImage[]; command?: string }>;
 export type SessionTranscript = Readonly<{
   dispatchId: string | null;
   sessionId: string | null;
@@ -232,17 +233,28 @@ function claudeUserText(text: string, at: unknown): Omit<TranscriptEvent, "id">[
   const stdout = tagValue(remaining, "local-command-stdout");
   if (command !== undefined) {
     events.push(event(at, "system", `${command}${args === undefined ? "" : ` ${args}`}`));
-    if (stdout !== undefined && stdout !== "") events.push(event(at, "tool-result", stdout, { name: "local command", status: "ok" }));
-    remaining = remaining.replace(/<command-name>[\s\S]*?<\/command-name>|<command-args>[\s\S]*?<\/command-args>|<local-command-stdout>[\s\S]*?<\/local-command-stdout>/gi, "");
+    if (stdout !== undefined && stdout !== "") events.push(commandOutput(at, stdout, command));
+    remaining = remaining.replace(/<(command-name|command-message|command-args|local-command-stdout)>[\s\S]*?<\/\1>/gi, "");
   }
   const userText = remaining.replace(/<[^>]+>/g, "").trim();
   if (userText !== "") events.unshift(event(at, "user", userText));
   return events;
 }
 
+function commandOutput(at: unknown, text: string, command: string): Omit<TranscriptEvent, "id"> {
+  return { ...event(at, "assistant", text), command };
+}
+
 function claudeLine(value: JsonRecord): Omit<TranscriptEvent, "id">[] {
   const type = string(value.type) ?? "";
   if (type !== "user" && type !== "assistant" && type !== "system") return [];
+  // A local command and its output may each be a system line; the output names no command, parseSessionLog finds it.
+  if (type === "system" && value.subtype === "local_command") {
+    const content = string(value.content) ?? "";
+    const stdout = tagValue(content, "local-command-stdout");
+    if (stdout === undefined) return claudeUserText(content, value.timestamp);
+    return stdout === "" ? [] : [commandOutput(value.timestamp, stdout, "")];
+  }
   const message = record(value.message);
   const role = string(message?.role) ?? type;
   if (role === "user") {
@@ -350,6 +362,8 @@ export function parseSessionLog(agent: TranscriptAgent, source: string, contents
   if (after === undefined) return undefined;
   const bytes = Buffer.from(contents, "utf8");
   const events: LineEvent[] = [];
+  // The command a following local command output answers, while nothing else came between them.
+  let command: string | undefined;
   let start = 0;
   while (start < bytes.length) {
     const newline = bytes.indexOf(10, start);
@@ -359,7 +373,12 @@ export function parseSessionLog(agent: TranscriptAgent, source: string, contents
     try {
       const parsed = record(JSON.parse(line) as unknown);
       if (parsed !== undefined) {
-        const values = parseLine(agent, parsed);
+        const values = parseLine(agent, parsed).map((value) => {
+          const answered = value.command === "" && command !== undefined ? { ...value, command } : value;
+          if (value.kind === "system" && value.text.startsWith("/")) command = value.text.split(" ", 1)[0];
+          else if (value.kind === "user" || value.kind === "assistant") command = undefined;
+          return answered;
+        });
         values.forEach((value, index) => {
           events.push({ event: { ...value, id: `${source}:${start}:${index}` }, offset: start });
         });

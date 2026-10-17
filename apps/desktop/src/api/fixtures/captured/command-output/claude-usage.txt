@@ -1,0 +1,24 @@
+You are currently using your subscription to power your Claude Code usage
+
+Current session: 23% used · resets Oct 17 at 4pm (America/Sao_Paulo)
+Current week (all models): 46% used · resets Oct 22 at 1pm (America/Sao_Paulo)
+Current week (Fable): 0% used · resets Oct 22 at 1pm (America/Sao_Paulo)
+
+What's contributing to your limits usage?
+Approximate, based on local sessions on this machine — does not include other devices or claude.ai. Behaviors are independent characteristics, not a breakdown.
+
+Last 24h · 5543 requests · 84 sessions
+  75% of your usage was at >150k context
+  56% of your usage was while 4+ sessions ran in parallel
+  40% of your usage went to always-on context over 40k tokens
+  18% of your usage came from sessions active for 8+ hours
+  Top skills: /claude-api 4%, /dataviz 2%, /docs 1%
+
+Last 7d · 40231 requests · 417 sessions
+  78% of your usage was at >150k context
+  63% of your usage came from sessions active for 8+ hours
+  52% of your usage was while 4+ sessions ran in parallel
+  43% of your usage came from subagent-heavy sessions
+  27% of your usage went to always-on context over 40k tokens
+  Top skills: /mobile-qa 1%, /claude-api 1%
+  Top subagents: general-purpose 12%

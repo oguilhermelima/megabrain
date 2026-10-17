@@ -136,6 +136,8 @@ export const transcriptEventSchema = z.looseObject({
   text: z.string(),
   /** On a native chat's assistant or thinking event: the message its streamed chunks belonged to. */
   messageId: z.string().optional(),
+  /** On an assistant event that is a local command's output (/usage, /cost): the command it answers, slash included; "" when the log does not say. */
+  command: z.string().optional(),
   tool: z.looseObject({ name: z.string(), input: z.string().optional(), status: z.enum(['ok', 'error']).optional() }).optional(),
   /** On a native chat's event that a subagent produced (its thinking, text, tool calls and results): that subagent's id. */
   parentId: z.string().optional(),
