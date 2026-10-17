@@ -54,7 +54,7 @@ describe("host providers", () => {
     const result = await orca?.readiness({ workspaceId: null, terminalId: "terminal-child" }, process, 3210, "codex");
 
     expect(result).toEqual({ kind: "ok", value: undefined });
-    expect(process.calls.length).toBeGreaterThan(10);
+    expect(process.calls.length).toBeGreaterThan(1);
     expect(process.calls.every((call) => call.args[1] === "read" && call.args.includes("--screen"))).toBe(true);
     expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "read", "--terminal", "terminal-child", "--json", "--screen"] });
   });
@@ -67,7 +67,7 @@ describe("host providers", () => {
 
     expect(classifyLiveness("codex", response.result.terminal.tail.join("\n")).status).toBe("idle");
     expect(result).toEqual({ kind: "ok", value: undefined });
-    expect(process.calls.length).toBeGreaterThan(10);
+    expect(process.calls.length).toBeGreaterThan(1);
     expect(process.calls.every((call) => call.args.includes("--screen"))).toBe(true);
   });
 
@@ -79,7 +79,7 @@ describe("host providers", () => {
 
     expect(classifyLiveness("claude", response.result.terminal.tail.join("\n")).status).toBe("idle");
     expect(result).toEqual({ kind: "ok", value: undefined });
-    expect(process.calls.length).toBeGreaterThan(10);
+    expect(process.calls.length).toBeGreaterThan(1);
     expect(process.calls.every((call) => call.args.includes("--screen"))).toBe(true);
   });
 

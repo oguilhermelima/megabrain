@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -28,7 +29,7 @@ function sandbox() {
   mkdirSync(state, { recursive: true, mode: 0o700 });
   mkdirSync(cwd);
   mkdirSync(bin);
-  return { root, state, cwd, bin };
+  return { root, state, cwd, bin, sessionId: `recorded-${randomUUID()}` };
 }
 type Env = ReturnType<typeof sandbox>;
 
@@ -64,14 +65,14 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 function record(env: Env, overrides: Partial<Chat> = {}): Chat {
   return {
     id: ID, agent: "claude", model: null, cwd: env.cwd, title: "remember", state: "idle", mode: "terminal",
-    agentSessionId: "recorded-session", createdAt: "2026-10-16T09:00:00.000Z", lastActivityAt: SWITCHED_AT, terminalSince: SWITCHED_AT, ...overrides,
+    agentSessionId: env.sessionId, createdAt: "2026-10-16T09:00:00.000Z", lastActivityAt: SWITCHED_AT, terminalSince: SWITCHED_AT, ...overrides,
   };
 }
 
 function writeClaudeLog(env: Env, content = CLAUDE_LOG) {
-  const path = claudeLogPath(env.root, env.cwd, "recorded-session");
+  const path = claudeLogPath(env.root, env.cwd, env.sessionId);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, content);
+  writeFileSync(path, content.replaceAll("recorded-session", env.sessionId));
 }
 function writeCodexLog(env: Env) {
   const dir = join(env.root, ".codex", "sessions", "2026", "10", "16");
@@ -211,7 +212,7 @@ describe("switching back to chat imports what the terminal did", () => {
     await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
     await waitState(daemon, "idle");
     await daemon.handle({ operation: "mode", id: ID, mode: "terminal" });
-    const later = `${JSON.stringify({ parentUuid: null, isSidechain: false, type: "user", uuid: "u9", timestamp: new Date(Date.now() + 1000).toISOString(), sessionId: "recorded-session", message: { role: "user", content: "third visit" } })}\n`;
+    const later = `${JSON.stringify({ parentUuid: null, isSidechain: false, type: "user", uuid: "u9", timestamp: new Date(Date.now() + 1000).toISOString(), sessionId: env.sessionId, message: { role: "user", content: "third visit" } })}\n`;
     writeClaudeLog(env, CLAUDE_LOG + later);
     await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
     await waitState(daemon, "idle");
@@ -303,7 +304,7 @@ describe("switching to the terminal", () => {
     await new ChatStore(env.state).put(record(env, { mode: "chat", terminalSince: undefined }));
     const result = await daemon.handle({ operation: "mode", id: ID, mode: "terminal" }) as { command: string[] | null };
     expect(result.command).toEqual(await daemon.handle({ operation: "terminal-command", id: ID }) as string[]);
-    expect(result.command?.slice(0, 3)).toEqual(["claude", "--resume", "recorded-session"]);
+    expect(result.command?.slice(0, 3)).toEqual(["claude", "--resume", env.sessionId]);
   });
 
   test("a chat with no agent session yet opens a fresh TUI", async () => {

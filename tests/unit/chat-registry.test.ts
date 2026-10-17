@@ -56,6 +56,16 @@ if (process.argv.includes("list-panes")) process.stdout.write(${JSON.stringify(S
   return log;
 }
 
+function fakeProcessInspection(env: Env, pid: number) {
+  const parentPid = process.pid;
+  script(env.bin, "ps", `
+if (process.argv[2] === "-axo") process.stdout.write(${JSON.stringify(`${parentPid} 1 megabrain-desktop\n${pid} ${parentPid} claude\n`)});
+`);
+  script(env.bin, "lsof", `
+if (process.argv.includes("-d") && process.argv.includes("cwd")) process.stdout.write(${JSON.stringify(`p${pid}\nn${env.cwd}\n`)});
+`);
+}
+
 async function daemonFor(env: Env): Promise<ChatDaemon> {
   const environment = { HOME: env.root, PATH: `${env.bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}` };
   const daemon = new ChatDaemon(env.state, environment);
@@ -183,6 +193,7 @@ describe("returning from terminal mode", () => {
     const sleeper = Bun.spawn(["sleep", "60"]);
     sleepers.push(sleeper);
     fakeTmux(env, process.pid);
+    fakeProcessInspection(env, sleeper.pid);
     claudeRegistryEntry(env, sleeper.pid, "the-tui-session");
     seedRegistry(env, "megabrain-app:mb-app-ccbf5391");
     await new ChatStore(env.state).put(terminalChat(env));

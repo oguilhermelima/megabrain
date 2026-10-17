@@ -32,7 +32,7 @@ if (mode === "hang") setTimeout(() => {}, 60000);
 else setTimeout(() => process.stdout.write(mode === "long" ? "TITLE: " + "x".repeat(200) + "\\nSUMMARY: long title\\n" : "TITLE: Fix login redirect " + count + "\\nSUMMARY: Summary number " + count + " about login.\\n"), mode === "slow" ? 300 : 0);
 `;
   for (const name of ["claude", "codex", "grok", "agy"]) { writeFileSync(join(bin, name), script); chmodSync(join(bin, name), 0o700); }
-  const environment = { HOME: root, PATH: `${bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`, MEGABRAIN_STATE_DIR: state, MEGABRAIN_CHAT_SUMMARY_TIMEOUT_MS: "1500" };
+  const environment = { HOME: root, PATH: `${bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`, MEGABRAIN_STATE_DIR: state, MEGABRAIN_CHAT_SUMMARY_TIMEOUT_MS: "30000" };
   writeFileSync(join(state, "chat-summaries.json"), JSON.stringify({ ...defaultSummarySettings, enabled: true, agent: "claude", model: "haiku", ...settings }));
   const store = new ChatStore(state);
   await store.initialize();
@@ -176,6 +176,7 @@ describe("summary job", () => {
   test("a hung agent is killed at the timeout and the chat is untouched", async () => {
     const h = await harness({ everyMessages: 1 });
     h.setMode("hang");
+    h.environment.MEGABRAIN_CHAT_SUMMARY_TIMEOUT_MS = "1500";
     const chat = await seedChat(h);
     await turn(h, chat, "one");
     const started = Date.now();

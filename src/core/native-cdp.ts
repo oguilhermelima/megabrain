@@ -61,10 +61,14 @@ function openSocket(clock: Clock, url: string, origin: string, timeoutMs: number
       if (settled) return;
       settled = true;
       clock.clearTimeout(timer);
+      socket.off("open", onOpen);
+      socket.off("error", onError);
       resolve(result);
     };
-    socket.once("open", () => finish(ok(socket)));
-    socket.once("error", () => finish(failed("Metro inspector socket could not open")));
+    const onOpen = () => finish(ok(socket));
+    const onError = () => finish(failed("Metro inspector socket could not open"));
+    socket.once("open", onOpen);
+    socket.once("error", onError);
   });
 }
 
@@ -110,7 +114,10 @@ function inspectorFor(clock: Clock, socket: WebSocket): MetroInspector {
     closed = true;
     rejectPending("Metro inspector socket closed before Runtime.evaluate answered");
   });
-  socket.once("error", () => rejectPending("Metro inspector socket failed during Runtime.evaluate"));
+  socket.on("error", () => {
+    closed = true;
+    rejectPending("Metro inspector socket failed during Runtime.evaluate");
+  });
 
   return {
     async evaluate(expression, timeoutMs = 1000) {

@@ -1,6 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import {
   mkdirSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -61,13 +62,16 @@ test("a followed chat stream ends by itself when the process that started it goe
   await daemon.start();
   await daemon.listen();
   await store.put(chat);
+  await store.append(chat.id, { id: "initial", at: new Date().toISOString(), kind: "system", text: "ready" });
   try {
     const pidFile = join(root, "follower.pid");
+    const outputFile = join(root, "follower.jsonl");
+    const releaseFile = join(root, "release-parent");
     const script = join(root, "parent.sh");
-    // The parent starts the follow in the background, records its pid, stays 1.5 s, then exits without stopping it.
+    // The parent stays alive until the follower receives historical output and proves its stream is open.
     writeFileSync(
       script,
-      `#!/bin/sh\n"${process.execPath}" "${join(process.cwd(), "src/cli/index.ts")}" chat events 0a1b2c3d-0000-4000-8000-00000000f011 --follow --json >/dev/null 2>&1 &\necho $! > "${pidFile}"\nsleep 1.5\n`,
+      `#!/bin/sh\n"${process.execPath}" "${join(process.cwd(), "src/cli/index.ts")}" chat events 0a1b2c3d-0000-4000-8000-00000000f011 --follow --json > "${outputFile}" 2>&1 &\necho $! > "${pidFile}"\nwhile [ ! -f "${releaseFile}" ]; do sleep 0.02; done\n`,
       { mode: 0o700 },
     );
     const environment = {
@@ -80,16 +84,20 @@ test("a followed chat stream ends by itself when the process that started it goe
       stdout: "ignore",
       stderr: "ignore",
     });
-    await sleep(1000);
+    const startDeadline = Date.now() + 10_000;
+    while ((!existsSync(pidFile) || !existsSync(outputFile) || readFileSync(outputFile, "utf8") === "") && Date.now() < startDeadline) await sleep(20);
+    expect(existsSync(pidFile)).toBe(true);
+    expect(readFileSync(outputFile, "utf8")).toContain('"text":"ready"');
     const follower = Number(readFileSync(pidFile, "utf8").trim());
     followers.push(follower);
-    // Control: while the parent lives the follower runs, so a dead follower later is not an early failure.
+    // Control: the follower has connected and received history while its parent is still alive.
     expect(alive(follower)).toBe(true);
+    writeFileSync(releaseFile, "exit");
     await parent.exited;
-    const deadline = Date.now() + 6000;
-    while (alive(follower) && Date.now() < deadline) await sleep(100);
+    const exitDeadline = Date.now() + 10_000;
+    while (alive(follower) && Date.now() < exitDeadline) await sleep(50);
     expect(alive(follower)).toBe(false);
   } finally {
     await daemon.close();
   }
-}, 20000);
+}, 25000);

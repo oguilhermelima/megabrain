@@ -48,12 +48,23 @@ function call(args: readonly string[], env: ReturnType<typeof sandbox>) {
 }
 
 async function waitForChat(id: string, state: string, env: ReturnType<typeof sandbox>) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
     const result = await call(["chat", "list", "--json"], env);
     if (result.kind === "ok" && (JSON.parse(result.value) as Array<{ id: string; state: string }>).some((chat) => chat.id === id && chat.state === state)) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error(`chat ${id} did not reach ${state}`);
+}
+
+async function waitForCapture(env: ReturnType<typeof sandbox>, predicate: (content: string) => boolean, description: string): Promise<string> {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const content = existsSync(env.capture) ? readFileSync(env.capture, "utf8") : "";
+    if (predicate(content)) return content;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`agent did not ${description}`);
 }
 
 // The daemon marks a chat working before it writes the turn request, so the state alone does not
@@ -394,8 +405,8 @@ rl.on("line", (line) => {
       expect(approval).toMatchObject({ tool: "command execution" });
       if (!approval) return;
       expect((await call(["chat", "approve", chat.id, approval.id, "--decision", "allow"], env)).kind).toBe("ok");
-      for (let attempt = 0; attempt < 50 && !readFileSync(env.capture, "utf8").includes('"decision":"accept"'); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(readFileSync(env.capture, "utf8")).toContain('"decision":"accept"');
+      const capture = await waitForCapture(env, (content) => content.includes('"decision":"accept"'), "accept the command approval");
+      expect(capture).toContain('"decision":"accept"');
     } finally { await daemon.close(); }
   });
 

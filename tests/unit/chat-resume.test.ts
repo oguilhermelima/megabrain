@@ -100,6 +100,26 @@ async function waitState(daemon: ChatDaemon, state: string): Promise<Chat> {
   throw new Error(`chat did not reach ${state}: ${JSON.stringify(await daemon.store.get(ID))}`);
 }
 
+async function waitForCapturedMethod(env: Env, method: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    if (captured(env).some((row) => row.method === method)) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Codex did not receive ${method}`);
+}
+
+async function waitForCompletedTurn(daemon: ChatDaemon): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const states = (await eventTexts(daemon)).filter((value) => value.startsWith("state:"));
+    const started = states.indexOf("state:working");
+    if (started !== -1 && states.slice(started + 1).includes("state:idle")) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("Codex turn did not return to idle after starting");
+}
+
 function captured(env: Env): Array<Record<string, unknown>> {
   return existsSync(env.capture) ? readFileSync(env.capture, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>) : [];
 }
@@ -154,7 +174,8 @@ describe("chats survive a daemon restart", () => {
     await new ChatStore(env.state).put(record(env, { agent: "codex", state: "idle", agentSessionId: "thread-9" }));
     const daemon = await daemonFor(env);
     await send(daemon, "continue");
-    await waitState(daemon, "idle");
+    await waitForCapturedMethod(env, "turn/start");
+    await waitForCompletedTurn(daemon);
     const methods = captured(env).map((row) => row.method);
     expect(methods).toContain("thread/resume");
     expect(methods).not.toContain("thread/start");
