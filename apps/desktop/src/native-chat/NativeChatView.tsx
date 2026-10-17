@@ -299,6 +299,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
             root={chat.cwd}
             onOpenPath={onOpenPath}
             channel={compose}
+            navigator
           />
         )}
       </ApprovalRendererContext.Provider>

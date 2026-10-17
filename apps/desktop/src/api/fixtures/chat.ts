@@ -30,6 +30,29 @@ export const mockChatLines: ChatEventLine[] = [
   ...commandLines(5, ['/usage', usageOutput], ['/cost', costOutput], ['/context', contextOutput], ['/mcp', mcpOutput]),
 ]
 
+/** A long conversation: 100 turns, for the navigator rail beside the transcript. */
+export const mockLongChat: NativeChat = {
+  ...mockNativeChat,
+  id: 'chat-0002',
+  title: 'Plan the release notes',
+  state: 'idle',
+  agentSessionId: '0b1c2d3e-0000-4000-8000-0000000000ab',
+  createdAt: at(7200),
+  lastActivityAt: at(60),
+}
+
+const longTopics = ['the changelog headings', 'the breaking changes', 'the migration guide', 'the contributor list', 'the upgrade steps']
+
+export const mockLongChatLines: ChatEventLine[] = Array.from({ length: 100 }, (_, turn): ChatEventLine[] => {
+  const topic = longTopics[turn % longTopics.length] ?? ''
+  const seconds = 7200 - turn * 70
+  const answer = turn % 3 === 0 ? `Done with ${topic}.\n\n- Moved the entries under one heading\n- Linked each one to its pull request\n- Left the wording as written` : `Updated ${topic} for turn ${turn + 1}.`
+  return [
+    { cursor: String(turn * 2 + 1), event: { id: `long-u${turn + 1}`, at: at(seconds), kind: 'user', text: `Turn ${turn + 1}: review ${topic}${turn % 4 === 0 ? ' and keep the tone plain, with no marketing words, so the notes read like a log of what changed' : ''}` } },
+    { cursor: String(turn * 2 + 2), event: { id: `long-a${turn + 1}`, at: at(seconds - 30), kind: 'assistant', text: answer } },
+  ]
+}).flat()
+
 /** A slash command and its output, as chatd stores a local command's: the user line, then the result naming it. */
 function commandLines(first: number, ...commands: [string, string][]): ChatEventLine[] {
   return commands.flatMap(([command, text], index) => {
@@ -70,9 +93,12 @@ function mockChat(chatId: string): MockChat {
   let chat = chats.get(chatId)
   if (chat !== undefined) return chat
   const original = chatId === mockNativeChat.id
-  chat = { lines: original ? mockChatLines.slice() : [], followers: new Set(), state: original ? 'idle' : 'starting', turnStartedAt: original ? null : new Date().toISOString(), cancel: null, queue: [], held: false }
+  const long = chatId === mockLongChat.id
+  const lines = original ? mockChatLines.slice() : long ? mockLongChatLines.slice() : []
+  chat = { lines, followers: new Set(), state: original || long ? 'idle' : 'starting', turnStartedAt: original || long ? null : new Date().toISOString(), cancel: null, queue: [], held: false }
   chats.set(chatId, chat)
   if (original) play(chatId, openingTurn)
+  else if (long) return chat
   else play(chatId, [{ type: 'pause', ms: 2600 }, { type: 'state', state: 'idle' }])
   return chat
 }
@@ -225,13 +251,15 @@ export function followMockChat(chatId: string, since: string | null, onLine: (li
   const after = since === null ? 0 : Number(since)
   const replay = chat.lines.filter((line) => Number(line.cursor) > after)
   let open = true
-  const timers = replay.map((line, index) => setTimeout(() => open && onLine(line), 60 * index))
+  // Lines trickle in the way a follow's history does, but a long one does not take minutes.
+  const delay = (index: number) => 60 * Math.min(index, 40)
+  const timers = replay.map((line, index) => setTimeout(() => open && onLine(line), delay(index)))
   const start = setTimeout(() => {
     if (!open) return
     onLine({ cursor: cursorOf(chat), queue: chat.queue.slice() })
     onLine({ cursor: cursorOf(chat), ...stateLine(chat) })
     chat.followers.add(onLine)
-  }, 60 * replay.length)
+  }, delay(replay.length))
   return () => {
     open = false
     timers.forEach(clearTimeout)

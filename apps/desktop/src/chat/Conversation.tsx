@@ -26,6 +26,9 @@ import { firstPath } from '@/code/chat-paths'
 import { reuse } from '@/lib/reuse'
 import { isMissingLog } from '@/chat/session-open-model'
 import { pageMx } from '@/lib/page'
+import { chatTurns, railShown, turnLanding } from '@/native-chat/navigator-rail'
+import { NavigatorRail, railMargin } from '@/native-chat/NavigatorRail'
+import { usePaneWidth } from '@/native-chat/usePaneWidth'
 
 const noLive: LiveRow[] = []
 
@@ -442,6 +445,7 @@ export function ConversationList({
   live = noLive,
   footer = null,
   channel,
+  navigator = false,
 }: {
   events: TranscriptEvent[]
   onOpenChat?: OpenChat
@@ -453,6 +457,8 @@ export function ConversationList({
   footer?: ReactNode
   /** The chat's composer, which quotes and code blocks from the right-click menu go into. */
   channel?: ComposeChannel
+  /** A rail of the person's messages on the right edge, to jump between turns. */
+  navigator?: boolean
 }) {
   const [pinned, setPinned] = useState(true)
   const list = useRef<HTMLDivElement>(null)
@@ -476,6 +482,9 @@ export function ConversationList({
     [settled, live],
   )
   const hasFooter = footer !== null
+  const turns = useMemo(() => (navigator ? chatTurns(items) : []), [navigator, items])
+  const width = usePaneWidth()
+  const rail = railShown(turns.length, width.width)
   const count = items.length + (hasFooter ? 1 : 0)
 
   // Only the rows near the viewport are in the DOM; each is measured as it renders.
@@ -487,6 +496,8 @@ export function ConversationList({
     gap: rowGap,
     paddingStart: listPadding,
     paddingEnd: listPadding,
+    // A jump to a turn (align start) lands it where the rail reads the turn in view.
+    scrollPaddingStart: navigator ? turnLanding(list.current?.clientHeight ?? 0) : 0,
     overscan: 6,
   })
 
@@ -606,16 +617,18 @@ export function ConversationList({
   return (
     <PathLinksContext.Provider value={links}>
       {/* It fades in where the suggestions or the loading rows were, as the first message arrives. */}
-      <div className="motion-fade relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div ref={width.ref} className="motion-fade relative flex min-h-0 flex-1 flex-col overflow-hidden">
         <div
           ref={list}
+          // Focusable by a click, so the rail's Alt+Up and Alt+Down reach it; never a tab stop.
+          tabIndex={-1}
           onScroll={onScroll}
           onContextMenu={onContextMenu}
           // A right click keeps the selection it lands on, where WebKit would select the word under it.
           onMouseDown={(event) => {
             if (event.button === 2) event.preventDefault()
           }}
-          className={`${pageMx} min-h-0 flex-1 overflow-y-auto select-text`}
+          className={`${rail ? railMargin : pageMx} min-h-0 flex-1 overflow-y-auto outline-none select-text`}
         >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((row) => {
@@ -637,6 +650,7 @@ export function ConversationList({
             })}
           </div>
         </div>
+        {rail && <NavigatorRail turns={turns} virtualizer={virtualizer} scroller={list} />}
         {!pinned && (
           <button
             type="button"
