@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createConnection } from "node:net";
@@ -17,9 +18,25 @@ type Item = { id: string; parts: Part[]; createdAt: string; updatedAt: string };
 
 const directories: string[] = [];
 const daemons: ChatDaemon[] = [];
+/** Pids of live processes whose command line mentions the directory (the fake agents run from it). */
+function processesIn(directory: string): number[] {
+  const found = spawnSync("pgrep", ["-f", directory], { encoding: "utf8" });
+  return found.stdout.split("\n").filter(Boolean).map(Number).filter((pid) => pid !== process.pid);
+}
+
 afterEach(async () => {
   for (const daemon of daemons.splice(0)) await daemon.close();
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  const leaked: string[] = [];
+  for (const directory of directories.splice(0)) {
+    let pids = processesIn(directory);
+    for (let attempt = 0; attempt < 50 && pids.length > 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      pids = processesIn(directory);
+    }
+    for (const pid of pids) { leaked.push(`${pid} in ${directory}`); try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+    rmSync(directory, { recursive: true, force: true });
+  }
+  expect(leaked).toEqual([]);
 });
 
 const processAdapter: ProcessAdapter = {

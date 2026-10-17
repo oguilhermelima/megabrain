@@ -1067,6 +1067,9 @@ export class ChatDaemon {
     this.idleTimer && clearTimeout(this.idleTimer);
     this.server?.close();
     this.server = undefined;
+    // An agent left running here would outlive the daemon, reparented to init with nobody to stop it.
+    for (const child of this.children.values()) child.kill("SIGTERM");
+    this.children.clear();
     // The caller of a handover still has its answer in flight; everything else is dropped shortly after so the process can leave.
     const open = [...this.sockets];
     setTimeout(() => { for (const socket of open) socket.destroy(); }, 100).unref?.();
