@@ -7,8 +7,8 @@ import { applyMegabrainTheme } from "../../knowledge/artifact-theme.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 /** Where a relative path or a missing --project points, and how stdin is read; tests replace both. */
-export type ArtifactIo = { cwd?: string; stdin?: () => Promise<string> };
-type Flags = { positional: string[]; values: Record<string, string>; topics: string[]; stdin: boolean; json: boolean; newArtifact: boolean };
+export type ArtifactIo = { cwd?: string; stdin?: () => Promise<string>; stderr?: (text: string) => void };
+type Flags = { positional: string[]; values: Record<string, string>; topics: string[]; stdin: boolean; json: boolean };
 
 const VALUE_FLAGS = ["--title", "--kind", "--file", "--project", "--chat", "--theme", "--revision"];
 const VERBS: Readonly<Record<string, UsageKey>> = { guide: "artifact-guide", new: "artifact-new", create: "artifact-create", update: "artifact-update", list: "artifact-list", show: "artifact-show", remove: "artifact-remove" };
@@ -20,7 +20,7 @@ const ARTIFACT_GUIDE = {
     plan: { when: "Steps that need owners, risks, and checkpoints.", structure: ["Goal and scope", "Steps with owner and status", "Risks and mitigations", "Checkpoints and exit criteria"] },
     doc: { when: "A reference or report worth keeping.", structure: ["Summary", "Context and evidence", "Findings or instructions", "References and next steps"] },
   },
-  writing: ["Put the subject first; use short sections.", "Link issues, PRs, and branches by number and title.", "Keep one artifact per subject: update it instead of creating another; create is matched by project, chat, and normalized title. Use --new only for a separate artifact."],
+  writing: ["Put the subject first; use short sections.", "Link issues, PRs, and branches by number and title.", "Keep one artifact per subject: keep the id from create and use artifact update <id>; find it with artifact list --chat <chat-id>."],
   theme: "HTML can use --theme megabrain for the local dark palette and light-mode variant. diagram-design supports style profiles: edit references/style-guide.md or save and load a profile using references/profiles.md with paper #000000, ink #f5f5f7, accent #8e9cff, system fonts, and 24px/32px radii.",
   workflow: "Use megabrain artifact new to write a starter, fill the printed path, then create it; for a later version use update. --theme megabrain also themes existing HTML on create or update.",
 } as const;
@@ -44,12 +44,11 @@ async function readStdin(): Promise<string> {
 }
 
 function parse(args: readonly string[]): Flags | null {
-  const flags: Flags = { positional: [], values: {}, topics: [], stdin: false, json: false, newArtifact: false };
+  const flags: Flags = { positional: [], values: {}, topics: [], stdin: false, json: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
     if (arg === "--json") flags.json = true;
     else if (arg === "--stdin") flags.stdin = true;
-    else if (arg === "--new") flags.newArtifact = true;
     else if (arg === "--topic" || VALUE_FLAGS.includes(arg)) {
       const value = args[index + 1];
       if (value === undefined || value.startsWith("--")) return null;
@@ -120,13 +119,13 @@ export async function executeArtifact(args: readonly string[], environment: Envi
   const cwd = io.cwd ?? process.cwd();
   const project = flags.values["--project"] === undefined ? undefined : resolve(cwd, flags.values["--project"]);
   if (verb === "guide") {
-    if (flags.positional.length || flags.stdin || flags.topics.length || flags.newArtifact || Object.keys(flags.values).some((name) => name !== "--kind")) return usage;
+    if (flags.positional.length || flags.stdin || flags.topics.length || Object.keys(flags.values).some((name) => name !== "--kind")) return usage;
     return guide(flags);
   }
   if (verb === "new") {
     const [title] = flags.positional;
     const kind = flags.values["--kind"];
-    if (title === undefined || title.trim() === "" || flags.positional.length !== 1 || kind === undefined || !isArtifactKind(kind) || flags.stdin || flags.topics.length || flags.newArtifact || flags.values["--file"] !== undefined || flags.values["--title"] !== undefined || flags.values["--theme"] !== undefined) return usage;
+    if (title === undefined || title.trim() === "" || flags.positional.length !== 1 || kind === undefined || !isArtifactKind(kind) || flags.stdin || flags.topics.length || flags.values["--file"] !== undefined || flags.values["--title"] !== undefined || flags.values["--theme"] !== undefined) return usage;
     const chatId = flags.values["--chat"] ?? environment.MEGABRAIN_CHAT_ID ?? null;
     const path = writeStarter(cwd, title.trim(), kind);
     if (path.kind !== "ok") return path;
@@ -142,14 +141,15 @@ export async function executeArtifact(args: readonly string[], environment: Envi
     if (flags.values["--theme"] !== undefined && flags.values["--theme"] !== "megabrain") return failed("--theme must be megabrain", 2);
     if (flags.values["--theme"] !== undefined && input.value.format !== "html") return failed("--theme megabrain requires HTML content", 2);
     const content = flags.values["--theme"] === "megabrain" ? applyMegabrainTheme(input.value.content) : input.value.content;
-    const created = await createArtifact(dir, { title, kind: kind as ArtifactKind, ...input.value, content, project: project ?? cwd, topics: flags.topics, chatId: flags.values["--chat"] ?? environment.MEGABRAIN_CHAT_ID ?? null, newArtifact: flags.newArtifact });
+    const created = await createArtifact(dir, { title, kind: kind as ArtifactKind, ...input.value, content, project: project ?? cwd, topics: flags.topics, chatId: flags.values["--chat"] ?? environment.MEGABRAIN_CHAT_ID ?? null });
     if (created.kind !== "ok") return created;
-    const reused = created.value.revision > 1;
-    return flags.json ? print({ ...created.value, action: reused ? "updated" : "created" }) : ok(`${reused ? "updated" : "created"} ${created.value.id}${reused ? ` revision ${created.value.revision}` : ""} ${created.value.path}\n`);
+    const { similar, ...artifact } = created.value;
+    if (similar !== undefined) (io.stderr ?? ((text) => globalThis.process.stderr.write(text)))(`An artifact with this title already exists in this chat. Use megabrain artifact update ${similar[0]!.id} for a new revision of the same artifact.\n`);
+    return flags.json ? print({ ...artifact, action: "created", ...(similar === undefined ? {} : { similar }) }) : ok(`created artifact ${artifact.id} ${artifact.path}\n`);
   }
   if (verb === "update") {
     const [id] = flags.positional;
-    if (id === undefined || flags.positional.length > 1 || flags.values["--kind"] !== undefined || flags.values["--project"] !== undefined || flags.values["--chat"] !== undefined || flags.values["--revision"] !== undefined || flags.topics.length > 0 || flags.newArtifact) return usage;
+    if (id === undefined || flags.positional.length > 1 || flags.values["--kind"] !== undefined || flags.values["--project"] !== undefined || flags.values["--chat"] !== undefined || flags.values["--revision"] !== undefined || flags.topics.length > 0) return usage;
     const input = await contentOf(flags, io);
     if (input === null) return usage;
     if (input.kind !== "ok") return input;
@@ -161,14 +161,14 @@ export async function executeArtifact(args: readonly string[], environment: Envi
     return flags.json ? print(updated.value) : ok(`${updated.value.id} revision ${updated.value.revision}\n`);
   }
   if (verb === "list") {
-    if (flags.positional.length > 0 || flags.stdin || flags.newArtifact || Object.keys(flags.values).some((name) => name !== "--project") || flags.topics.length > 1) return usage;
-    const artifacts = await listArtifacts(dir, { ...(project === undefined ? {} : { project }), ...(flags.topics[0] === undefined ? {} : { topic: flags.topics[0] }) });
+    if (flags.positional.length > 0 || flags.stdin || Object.keys(flags.values).some((name) => !["--project", "--chat"].includes(name)) || flags.topics.length > 1) return usage;
+    const artifacts = await listArtifacts(dir, { ...(project === undefined ? {} : { project }), ...(flags.topics[0] === undefined ? {} : { topic: flags.topics[0] }), ...(flags.values["--chat"] === undefined ? {} : { chatId: flags.values["--chat"] }) });
     return flags.json ? print({ artifacts }) : ok(artifacts.map((artifact) => `${line(artifact)}\n`).join(""));
   }
   const [id] = flags.positional;
   const revisionText = flags.values["--revision"];
   const revision = revisionText === undefined ? undefined : Number(revisionText);
-  if (id === undefined || flags.positional.length > 1 || flags.stdin || flags.topics.length > 0 || flags.newArtifact || Object.keys(flags.values).some((name) => name !== "--revision") || (verb === "remove" && revisionText !== undefined) || (revisionText !== undefined && (!/^\d+$/.test(revisionText) || !Number.isSafeInteger(revision) || (revision ?? 0) < 1))) return usage;
+  if (id === undefined || flags.positional.length > 1 || flags.stdin || flags.topics.length > 0 || Object.keys(flags.values).some((name) => name !== "--revision") || (verb === "remove" && revisionText !== undefined) || (revisionText !== undefined && (!/^\d+$/.test(revisionText) || !Number.isSafeInteger(revision) || (revision ?? 0) < 1))) return usage;
   if (verb === "show") {
     const artifact = await showArtifact(dir, id, revision);
     if (artifact === null) return failed(revision === undefined ? `unknown artifact: ${id}` : `unknown artifact revision ${revision} for ${id}`, 1);

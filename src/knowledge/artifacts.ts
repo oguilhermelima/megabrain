@@ -36,9 +36,11 @@ export type ArtifactWithContent = Artifact & { content: string };
 /** A replaced version, as revisions.jsonl keeps it. */
 export type ArtifactRevision = Stored & { content: string; replacedAt: string };
 
-export type CreateInput = { title: string; kind: ArtifactKind; content: string; format: ArtifactFormat; project: string; topics: readonly string[]; chatId: string | null; newArtifact?: boolean; now?: string };
+export type CreateInput = { title: string; kind: ArtifactKind; content: string; format: ArtifactFormat; project: string; topics: readonly string[]; chatId: string | null; now?: string };
+export type SimilarArtifact = Pick<Artifact, "id" | "title">;
+export type CreatedArtifact = Artifact & { similar?: SimilarArtifact[] };
 export type UpdateInput = { content: string; format: ArtifactFormat; title?: string; kind?: ArtifactKind; now?: string };
-export type ListFilter = { project?: string; topic?: string };
+export type ListFilter = { project?: string; topic?: string; chatId?: string };
 
 const ID = /^art-[0-9a-z-]+$/;
 const contentFile = (format: ArtifactFormat): string => (format === "html" ? "index.html" : "doc.md");
@@ -137,7 +139,7 @@ function newId(now: string): string {
   return `art-${now.slice(0, 10).replaceAll("-", "")}-${randomBytes(4).toString("hex")}`;
 }
 
-export async function createArtifact(stateDir: string, input: CreateInput): Promise<Result<Artifact>> {
+export async function createArtifact(stateDir: string, input: CreateInput): Promise<Result<CreatedArtifact>> {
   const title = input.title.trim();
   if (title === "") return failed("--title must not be empty", 2);
   const content = input.format === "html" ? stripGoogleFonts(input.content) : input.content;
@@ -146,22 +148,17 @@ export async function createArtifact(stateDir: string, input: CreateInput): Prom
   const project = await resolveProject(input.project);
   const now = input.now ?? new Date().toISOString();
   return withCreateLock(artifactsDir(stateDir, project.id), () => {
-    if (!input.newArtifact) {
-      const root = artifactsDir(stateDir, project.id);
-      const existing = readdirSync(root).map((id) => ({ dir: join(root, id), stored: readStored(join(root, id)) }))
-        .filter((entry): entry is { dir: string; stored: Stored } => entry.stored !== null)
-        .filter(({ stored }) => stored.chatId === input.chatId && foldTitle(stored.title) === foldTitle(title))
-        .sort((left, right) => right.stored.updatedAt.localeCompare(left.stored.updatedAt) || right.stored.createdAt.localeCompare(left.stored.createdAt) || right.stored.id.localeCompare(left.stored.id))[0];
-      if (existing !== undefined) {
-        return updateArtifact(stateDir, existing.stored.id, { title, kind: input.kind, content, format: input.format, now }).then((updated) => updated);
-      }
-    }
+    const root = artifactsDir(stateDir, project.id);
+    const similar = input.chatId === null ? [] : readdirSync(root).map((id) => readStored(join(root, id)))
+      .filter((stored): stored is Stored => stored !== null)
+      .filter((stored) => stored.chatId === input.chatId && foldTitle(stored.title) === foldTitle(title))
+      .map(({ id, title: existingTitle }) => ({ id, title: existingTitle }));
     const stored: Stored = { id: newId(now), title, kind: input.kind, format: input.format, project: project.repo, projectName: project.name, projectId: project.id, topics: [...input.topics], chatId: input.chatId, createdAt: now, updatedAt: now, revision: 1 };
     const dir = join(artifactsDir(stateDir, project.id), stored.id);
     mkdirSync(dir, { recursive: true });
     writeAtomic(join(dir, contentFile(stored.format)), content);
     writeAtomic(join(dir, "artifact.json"), `${JSON.stringify(stored, null, 2)}\n`);
-    return Promise.resolve(ok(withPath(dir, stored)));
+    return Promise.resolve(ok({ ...withPath(dir, stored), ...(similar.length === 0 ? {} : { similar }) }));
   });
 }
 
@@ -196,7 +193,7 @@ export async function listArtifacts(stateDir: string, filter: ListFilter): Promi
     if (!existsSync(root)) continue;
     for (const id of readdirSync(root)) {
       const stored = readStored(join(root, id));
-      if (stored === null || (filter.topic !== undefined && !stored.topics.includes(filter.topic))) continue;
+      if (stored === null || (filter.topic !== undefined && !stored.topics.includes(filter.topic)) || (filter.chatId !== undefined && stored.chatId !== filter.chatId)) continue;
       found.push(withPath(join(root, id), stored));
     }
   }

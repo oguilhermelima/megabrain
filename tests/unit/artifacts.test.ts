@@ -245,17 +245,30 @@ describe("the artifact store", () => {
     expect((await listArtifacts(w.state, {})).map((entry) => entry.id)).toEqual([b.value.id]);
   });
 
-  test("creates of the same folded title in one project and chat become revisions, while --new keeps separate", async () => {
+  test("creates of the same folded title in one chat get distinct ids and suggest updating the existing id", async () => {
     const w = world();
     const first = await executeArtifact(["create", "--title", "  Leva de correções do QA Social ", "--kind", "doc", "--stdin", "--project", w.repo, "--chat", "chat-1", "--json"], w.environment, { stdin: async () => "old" });
     const original = JSON.parse(String(first.value));
-    const second = await executeArtifact(["create", "--title", "leva de correcoes do qa social", "--kind", "plan", "--stdin", "--project", w.repo, "--chat", "chat-1", "--json"], w.environment, { stdin: async () => "new" });
-    const updated = JSON.parse(String(second.value));
-    expect(updated).toMatchObject({ id: original.id, revision: 2, kind: "plan", format: "markdown" });
-    expect((await artifactRevisions(w.state, original.id)).map(({ revision, kind, format, content }) => [revision, kind, format, content])).toEqual([[1, "doc", "markdown", "old"]]);
-    const separate = await executeArtifact(["create", "--title", "Leva de correções do QA Social", "--kind", "doc", "--stdin", "--project", w.repo, "--chat", "chat-1", "--new", "--json"], w.environment, { stdin: async () => "third" });
-    expect(JSON.parse(String(separate.value)).id).not.toBe(original.id);
+    const warnings: string[] = [];
+    const second = await executeArtifact(["create", "--title", "leva de correcoes do qa social", "--kind", "plan", "--stdin", "--project", w.repo, "--chat", "chat-1", "--json"], w.environment, { stdin: async () => "new", stderr: (text) => warnings.push(text) });
+    const created = JSON.parse(String(second.value));
+    expect(created.id).not.toBe(original.id);
+    expect(created).toMatchObject({ revision: 1, kind: "plan", format: "markdown", similar: [{ id: original.id, title: original.title }] });
+    expect(warnings).toEqual([expect.stringContaining(`megabrain artifact update ${original.id}`)]);
+    expect((await artifactRevisions(w.state, original.id))).toEqual([]);
+    const updated = await executeArtifact(["update", original.id, "--stdin", "--json"], w.environment, { stdin: async () => "third" });
+    expect(JSON.parse(String(updated.value))).toMatchObject({ id: original.id, revision: 2 });
     expect((await listArtifacts(w.state, { project: w.repo })).length).toBe(2);
+  });
+
+  test("artifact list filters by chat id", async () => {
+    const w = world();
+    const first = await executeArtifact(["create", "--title", "A", "--kind", "doc", "--stdin", "--project", w.repo, "--chat", "chat-a", "--json"], w.environment, { stdin: async () => "a" });
+    const second = await executeArtifact(["create", "--title", "B", "--kind", "doc", "--stdin", "--project", w.repo, "--chat", "chat-b", "--json"], w.environment, { stdin: async () => "b" });
+    const a = JSON.parse(String(first.value)), b = JSON.parse(String(second.value));
+    const listed = await executeArtifact(["list", "--chat", "chat-a", "--json"], w.environment);
+    expect(JSON.parse(String(listed.value)).artifacts.map((item: { id: string }) => item.id)).toEqual([a.id]);
+    expect(JSON.parse(String(listed.value)).artifacts.map((item: { id: string }) => item.id)).not.toContain(b.id);
   });
 });
 
@@ -318,6 +331,8 @@ describe("megabrain artifact", () => {
       const structured = json(await executeArtifact(["guide", "--kind", kind, "--json"], w.environment));
       expect(JSON.stringify(structured).toLowerCase()).toContain(kind);
       expect(JSON.stringify(structured)).toContain("update");
+      expect(JSON.stringify(structured)).toContain("artifact list --chat <chat-id>");
+      expect(JSON.stringify(structured)).toContain("artifact update <id>");
     }
     const html = json(await executeArtifact(["new", "Flow", "--kind", "diagram", "--project", w.repo, "--chat", "chat-1", "--json"], w.environment, { cwd: w.root }));
     expect(html).toMatchObject({ title: "Flow", kind: "diagram", chatId: "chat-1" });

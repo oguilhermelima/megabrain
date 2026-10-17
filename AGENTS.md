@@ -112,9 +112,9 @@
 - Run megabrain artifact guide|new|create|update|list|show|remove .... — recommended when you need to make or manage a diagram, plan or doc for a project.
 - Run megabrain artifact guide [--kind diagram|plan|doc] [--json]. — recommended when you need to choose a kind and follow its structure and writing rules.
 - Run megabrain artifact new <title> --kind diagram|plan|doc [--project <repo path>] [--chat <id>] [--json]. — recommended when you need a themed HTML starter or a Markdown skeleton.
-- Run megabrain artifact create --title <title> --kind diagram|plan|doc (--file <path>|--stdin) [--project <repo path>] [--topic <id>]... [--chat <id>] [--theme megabrain] [--new] [--json]. — recommended when you need to file an artifact; matching titles in the same project and chat update the existing artifact unless --new is set.
+- Run megabrain artifact create --title <title> --kind diagram|plan|doc (--file <path>|--stdin) [--project <repo path>] [--topic <id>]... [--chat <id>] [--theme megabrain] [--json]. — recommended when you need to file a new artifact; it prints its id. Use artifact update <id> for a new revision, and artifact list --chat <chat-id> to find chat artifacts.
 - Run megabrain artifact update <id> (--file <path>|--stdin) [--title <title>] [--theme megabrain] [--json]. — recommended when you need to replace an artifact's content; the replaced version is kept as a revision.
-- Run megabrain artifact list [--project <repo path>] [--topic <id>] [--json]. — recommended when you need the artifacts of a project or a topic, newest change first.
+- Run megabrain artifact list [--project <repo path>] [--topic <id>] [--chat <id>] [--json]. — recommended when you need the artifacts of a project, topic, or chat, newest change first.
 - Run megabrain artifact show <id> [--revision <n>] [--json]. — recommended when you need the current or an earlier artifact revision.
 - Run megabrain artifact remove <id> [--json]. — recommended when you need to delete an artifact and its revisions.
 - Run megabrain chat artifacts <chat-id> --json. — recommended when you need to list a chat's local and Claude artifacts, newest first.
