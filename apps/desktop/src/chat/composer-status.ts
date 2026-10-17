@@ -95,7 +95,7 @@ const fastWords = new Set(['mini', 'nano', 'flash', 'fast', 'spark'])
  * is the family split into a standard and a fast tier (flash, mini, fast...), since a fast tier
  * ships on its own clock. Such a model is main when it is the newest of its line and its line's
  * generation, the major version, is the newest of its class; one marked retired, or with no version
- * to rank, is older. Both groups keep registry order.
+ * to rank, is older. Both groups come in the curated order (sortModels).
  */
 export function groupModels(models: Models): { current: Models; older: Models } {
   const ranked = models.flatMap((model) => {
@@ -114,7 +114,42 @@ export function groupModels(models: Models): { current: Models; older: Models } 
   }
   const main = new Set(ranked.filter((item) => compareVersions(item.version, newestInLine.get(item.line) ?? []) === 0 && item.version[0] === newestGeneration.get(item.kind)).map((item) => item.model))
   const isCurrent = (model: Models[number]) => model.status === 'current' || main.has(model)
-  return { current: models.filter(isCurrent), older: models.filter((model) => !isCurrent(model)) }
+  const sorted = sortModels(models)
+  return { current: sorted.filter(isCurrent), older: sorted.filter((model) => !isCurrent(model)) }
+}
+
+// Each agent's tiers, most capable first; a tier is a family (opus) or the word after a version (sol).
+const tierRanks: Record<string, number> = { fable: 4, opus: 3, sonnet: 2, haiku: 1, astra: 4, sol: 3, terra: 2, luna: 1 }
+const claudeFamilies = new Set(['fable', 'opus', 'sonnet', 'haiku', 'mythos'])
+
+function tierOf({ family, words }: ModelParts): string | undefined {
+  return [family, ...words].find((word) => tierRanks[word] !== undefined)
+}
+
+/**
+ * The models in the order a person choosing reads them: newest generation first, and within one the
+ * most capable tier first, a fast variant (flash, mini, fast...) after its standard one. The
+ * generation is the registry's, else the version in the id. An agent offering several makers' models
+ * (agy) keeps each maker together, in the order the registry first names them; a model with no
+ * version comes last of its maker.
+ */
+export function sortModels(models: Models): Models {
+  const makers: string[] = []
+  const keyed = models.map((model, index) => {
+    const parts = modelParts(model.model)
+    const maker = claudeFamilies.has(parts.family) ? 'claude' : parts.family
+    if (!makers.includes(maker)) makers.push(maker)
+    const generation = typeof model.generation === 'string' && versionPart.test(model.generation) ? model.generation.split('.').map(Number) : parts.version
+    const tier = tierOf(parts)
+    const rank = (tier === undefined ? 0 : (tierRanks[tier] ?? 0)) - (parts.words.some((word) => fastWords.has(word)) ? 1 : 0)
+    return { model, index, maker, generation, rank }
+  })
+  keyed.sort((left, right) => {
+    if (left.maker !== right.maker) return makers.indexOf(left.maker) - makers.indexOf(right.maker)
+    if (left.generation.length === 0 || right.generation.length === 0) return right.generation.length - left.generation.length || left.index - right.index
+    return compareVersions(right.generation, left.generation) || right.rank - left.rank || left.index - right.index
+  })
+  return keyed.map((item) => item.model)
 }
 
 export function agentModels(models: Models, agent: string | null): Models {
@@ -195,33 +230,38 @@ export function menuGroups(models: Models, id: string | null): { current: Models
   return { current: groups.current.filter((model) => model !== selected), selected, older: groups.older.filter((model) => model !== selected) }
 }
 
-const familyHints: Record<string, string> = { haiku: 'Fastest', sonnet: 'Balanced', opus: 'Most capable' }
-// Codex's tiers, as Codex's own model list describes them.
-const tierHints: Record<string, string> = { luna: 'Fast and affordable', sol: 'Everyday workhorse', astra: 'Frontier intelligence' }
+// One line per tier on what it is for, the same for every generation of it, so the list reads evenly.
+const tierHints: Record<string, string> = {
+  fable: 'The hardest problems, when quality matters most',
+  opus: 'Most capable, for long and hard work',
+  sonnet: 'Everyday coding, fast and capable',
+  haiku: 'Quick edits and simple questions',
+  astra: 'The hardest problems and architecture',
+  sol: 'Everyday coding and long tasks',
+  terra: 'Plain work, balanced and cheaper',
+  luna: 'Quick edits and simple tasks',
+}
 
-/** One line on what a model is for, by tier or family; null for one it does not know. */
+/** One line on what a model's tier is for; null for one it does not know. */
 export function modelHint(id: string): string | null {
-  const { family, words } = modelParts(id)
-  if (words.some((word) => fastWords.has(word))) return 'Fastest'
-  const tier = words.find((word) => tierHints[word] !== undefined)
-  return tier === undefined ? (familyHints[family] ?? null) : (tierHints[tier] ?? null)
+  const tier = tierOf(modelParts(id))
+  return tier === undefined ? null : (tierHints[tier] ?? null)
+}
+
+/** The one line under a model's name: its tier's line, else the registry's own description; null when neither says. */
+export function modelDescriptor(entry: Models[number]): string | null {
+  return modelHint(entry.model) ?? (typeof entry.description === 'string' && entry.description !== '' ? entry.description : null)
 }
 
 /**
- * The one line under a model's name: the registry's own description, else what its tier or family is
- * for, else what it offers, its largest window or its range of effort; null when nothing says.
+ * The effort a chat runs at: the one it set, else the agent's configured default when the model takes
+ * that level (any level for a model the registry does not know), else the model's own default.
  */
-export function modelDescriptor(entry: Models[number], agent: string | null): string | null {
-  if (typeof entry.description === 'string' && entry.description !== '') return entry.description
-  const hint = modelHint(entry.model)
-  if (hint !== null) return hint
-  const windows = modelWindows(entry, agent)
-  const largest = Math.max(...windows)
-  if (windows.length > 1) return `Up to ${formatTokens(largest)} context`
-  if (windows.length === 1) return `${formatTokens(largest)} context`
-  const levels = entry.reasoning.levels
-  const [first, last] = [levels[0], levels.at(-1)]
-  return levels.length > 1 && first !== undefined && last !== undefined ? `${effortName(first)} to ${effortName(last)} effort` : null
+export function effortInUse(chosen: string | undefined, entry: Models[number] | undefined, configured: string | null): string | undefined {
+  if (chosen !== undefined) return chosen
+  if (entry === undefined) return configured ?? undefined
+  if (configured !== null && entry.reasoning.levels.includes(configured)) return configured
+  return entry.reasoning.default ?? undefined
 }
 
 /** What the model picker shows: name, window and effort, each only when known. */

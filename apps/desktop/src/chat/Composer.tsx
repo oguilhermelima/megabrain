@@ -15,9 +15,9 @@ import { commandSections } from '@/chat/command-menu'
 import { createCommandSource, menuNotice, mergeInitCommands, type CommandList } from '@/chat/slash-commands'
 import { CommandMenu, handleMenuKey, useRecentCommands } from '@/chat/CommandMenu'
 import { deleteRange, draftLength, draftText, insertText, insertToken, messagePartsFromText, moveToken, tokenAfter, tokenBefore, tokenIds, tokenOffset, toMessageParts, type Draft } from '@/chat/composer-parts'
-import { pickerLabel, sessionCommand, withContextWindow } from '@/chat/composer-status'
+import { sessionCommand, withContextWindow } from '@/chat/composer-status'
 import { ComposerStatus, type ModelPick } from '@/chat/ComposerStatus'
-import { composerBanner, sendState, type Banner, type Notice } from '@/chat/composer-look'
+import { composerBanner, sendState, switchNotice, type Banner, type Notice } from '@/chat/composer-look'
 import { Lightbox, type LightboxImage } from '@/chat/Lightbox'
 import { SkillMenu } from '@/chat/SkillMenu'
 import { caretRect, offsetAtPoint, readDraft, relabel, renderDraft, selectionOffsets, setCaret, tokenAt, type TokenView } from '@/chat/rich-input'
@@ -313,7 +313,7 @@ function draftSlashQuery(draft: Draft): string | null {
 }
 
 /**
- * The message box both chat views share: rounded, pinned to the bottom of the window, growing with
+ * The message box both chat views share: docked across the pane's bottom edge, growing with
  * its text up to about 40% of the height. Images and PDFs sit inside the text as labelled chips where
  * they were pasted, dropped or picked; hovering an image's chip shows it, and a chip can be dragged to
  * another place. Enter sends, Shift+Enter
@@ -840,14 +840,10 @@ export function Composer({
   // The session's own window belongs to the model it reported, not to one switched to since.
   const shownContext = overridden ? { tokens: context?.tokens, window: null } : context
 
-  const pickModel = ({ model: picked, window, effort, name }: ModelPick) => {
-    const label = pickerLabel(name, window, effort)
+  const pickModel = ({ model: picked, window, effort }: ModelPick) => {
     if (onModelChange !== undefined) {
       onModelChange(picked, effort).then(
-        () => {
-          setChosen({ model: picked, effort, base: model, byCommand: false })
-          show({ tone: 'ok', text: `Switched to ${label}.` })
-        },
+        () => setChosen({ model: picked, effort, base: model, byCommand: false }),
         (error: unknown) => show({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }),
       )
       return
@@ -860,7 +856,7 @@ export function Composer({
       (result) => {
         const ok = result === null || result.tone === 'ok'
         if (ok) setChosen({ model: picked, effort, base: model, byCommand: picked !== model })
-        show(ok ? { tone: 'ok', text: `Switching to ${label}: sent ${command}.` } : result)
+        show(switchNotice(result))
         setSentCount((count) => count + 1)
       },
       (error: unknown) => show({ tone: 'bad', text: error instanceof Error ? error.message : String(error) }),
@@ -991,12 +987,15 @@ export function Composer({
 
   return (
     // A container, so the controls fit the pane's width rather than the window's.
-    <footer className="@container/composer shrink-0 px-6 pt-2 pb-3">
+    <footer className="@container/composer shrink-0 pt-2">
       {preview !== null && <Lightbox images={preview.images} start={preview.start} onClose={closePreview} />}
       {hover !== null && <ChipPreview attachment={attachments.current.get(hover.id)} left={hover.left} top={hover.top} />}
-      {dispatchId !== undefined && <QueuePills state={dispatchQueue} empty={!sendable} />}
-      {above}
-      {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => editQueued(item.id)} />}
+      {/* The rows above the box start where its text does. */}
+      <div className="px-3">
+        {dispatchId !== undefined && <QueuePills state={dispatchQueue} empty={!sendable} />}
+        {above}
+        {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => editQueued(item.id)} />}
+      </div>
       <div className="relative">
         {slashMenu.shown !== null && (
           <CommandMenu
@@ -1015,10 +1014,8 @@ export function Composer({
           />
         )}
         {banner !== null && <NoticeBanner banner={banner} onRetry={send} onDismiss={() => show(null)} />}
-        <div
-          ref={box}
-          className="rounded-[20px] border border-white/[0.1] bg-ink-900 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.7)] transition-[border-color,box-shadow] duration-150 focus-within:border-white/[0.18] focus-within:ring-2 focus-within:ring-accent/20 motion-reduce:transition-none"
-        >
+        {/* Docked: the pane's full width, set apart by a hairline on top. */}
+        <div ref={box} className="border-t border-white/[0.06] bg-ink-900">
           <div ref={frame} className="relative min-w-0 px-4 pt-3">
             {draft.length === 0 && <span className="pointer-events-none absolute top-3 right-4 left-4 truncate text-[14.5px] leading-6 text-ink-400">{placeholder}</span>}
             <div

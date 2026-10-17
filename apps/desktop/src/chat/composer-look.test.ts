@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { composerBanner, promptKey, ringOffset, sendState, trapFocus } from '@/chat/composer-look'
+import { composerBanner, promptKey, ringOffset, sendState, switchNotice, trapFocus } from '@/chat/composer-look'
 
 describe('sendState', () => {
   test('is ready only with something to send, nothing sending and the box enabled', () => {
@@ -64,6 +64,17 @@ describe('composerBanner', () => {
 
   test('an ok notice never offers Retry, even after a failure flag lingers', () => {
     expect(composerBanner({ tone: 'ok', text: 'Switched to Opus 5.5.' }, { failedSend: true, sendable: true })?.action).toBeNull()
+  })
+})
+
+describe('switchNotice', () => {
+  test('a model switch that went through shows nothing above the composer', () => {
+    expect(switchNotice(null)).toBeNull()
+    expect(switchNotice({ tone: 'ok', text: 'Delivered.' })).toBeNull()
+  })
+
+  test('a switch that failed still says why', () => {
+    expect(switchNotice({ tone: 'bad', text: 'Not delivered (tmux).' })).toEqual({ tone: 'bad', text: 'Not delivered (tmux).' })
   })
 })
 

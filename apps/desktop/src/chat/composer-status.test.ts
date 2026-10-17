@@ -16,6 +16,7 @@ import {
   displayName,
   effortCommand,
   effortHint,
+  effortInUse,
   effortLevels,
   effortName,
   effortStep,
@@ -34,6 +35,7 @@ import {
   parseResetsAt,
   pickerLabel,
   resetText,
+  sortModels,
   sessionCommand,
   switchNeedsConfirm,
   switchTarget,
@@ -133,19 +135,19 @@ describe('pickerLabel', () => {
 })
 
 describe('groupModels', () => {
-  test('the newest version of each family is current, the rest older, both in registry order', () => {
+  test('the newest version of each family is current, the rest older, both newest first and most capable first', () => {
     const claude = registry(
       'claude',
       ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-opus-5', 'claude-fable-5-1', 'claude-opus-4-5-20251101', 'claude-haiku-4-5-20251001', 'claude-3-haiku-20240307', 'claude-opus-5-5', 'claude-sonnet-5-5'],
     )
     const grouped = groupModels(claude)
-    expect(grouped.current.map((model) => model.model)).toEqual(['claude-fable-5-1', 'claude-haiku-4-5-20251001', 'claude-opus-5-5', 'claude-sonnet-5-5'])
-    expect(grouped.older.map((model) => model.model)).toEqual(['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-opus-5', 'claude-opus-4-5-20251101', 'claude-3-haiku-20240307'])
+    expect(grouped.current.map((model) => model.model)).toEqual(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-haiku-4-5-20251001'])
+    expect(grouped.older.map((model) => model.model)).toEqual(['claude-opus-5', 'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-opus-4-5-20251101', 'claude-3-haiku-20240307'])
   })
 
   test('every model of the newest generation stays current', () => {
     const codex = registry('codex', ['gpt-5.6-luna', 'gpt-6-astra', 'gpt-5.5', 'gpt-6-luna', 'gpt-6-sol'])
-    expect(groupModels(codex).current.map((model) => model.model)).toEqual(['gpt-6-astra', 'gpt-6-luna', 'gpt-6-sol'])
+    expect(groupModels(codex).current.map((model) => model.model)).toEqual(['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'])
   })
 
   test('a model the registry marks retired or deprecated is older even when it is the only one of its family', () => {
@@ -155,7 +157,7 @@ describe('groupModels', () => {
     })
     const grouped = groupModels(claude)
     expect(grouped.current.map((model) => model.model)).toEqual(['claude-opus-5-5'])
-    expect(grouped.older.map((model) => model.model)).toEqual(['claude-mythos-preview', 'claude-haiku-4-5-20251001'])
+    expect(grouped.older.map((model) => model.model)).toEqual(['claude-haiku-4-5-20251001', 'claude-mythos-preview'])
   })
 })
 
@@ -192,6 +194,104 @@ describe('current and older come from the registry when it says', () => {
     const codex = registry('codex', ['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.6-terra'])
     expect(groupModels(codex).current.map((model) => model.model)).toEqual(['gpt-6.1-sol', 'gpt-6-astra', 'gpt-6-luna'])
     expect(groupModels(registry('agy', ['gpt-oss-120b', 'gemini-4-argon'])).older.map((model) => model.model)).toEqual(['gpt-oss-120b'])
+  })
+})
+
+describe('the curated order: newest generation first, most capable first within it', () => {
+  const names = (list: Models) => list.map((model) => displayName(model.model, [model]))
+  const own = (agent: string) => agentModels(measuredModels, agent)
+  const allOn = (agent: string) => own(agent).map((model) => ({ ...model, enabled: true }))
+
+  test('Claude: Fable, Opus, Sonnet, Haiku of 5.5, then each older generation the same way', () => {
+    expect(names(sortModels(own('claude')))).toEqual([
+      'Fable 5.5', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5',
+      'Fable 5.1',
+      'Fable 5', 'Opus 5', 'Sonnet 5',
+      'Opus 4.8', 'Opus 4.7',
+      'Opus 4.6', 'Sonnet 4.6',
+      'Opus 4.5', 'Sonnet 4.5', 'Haiku 4.5',
+      'Opus 4.1',
+      'Opus 4', 'Sonnet 4',
+      'Sonnet 3.7', 'Haiku 3.5', 'Haiku 3',
+      'Mythos Preview',
+    ])
+  })
+
+  test('Codex: Astra, Sol, Terra, Luna within a generation, a fast variant after its model', () => {
+    expect(names(sortModels(own('codex')))).toEqual([
+      'GPT-6.1 Sol',
+      'GPT-6 Astra', 'GPT-6 Sol', 'GPT-6 Luna',
+      'GPT-5.6 Sol', 'GPT-5.6 Terra', 'GPT-5.6 Luna',
+      'GPT-5.5',
+      'GPT-5.4', 'GPT-5.4 Mini',
+      'GPT-5.3 Codex', 'GPT-5.3 Codex Spark',
+      'GPT-5.2',
+    ])
+  })
+
+  test('Grok: the newest first, the fast build after the standard one', () => {
+    expect(names(sortModels(own('grok')))).toEqual(['Grok 4.7', 'Grok 4.7 Fast', 'Grok 4.6', 'Grok 4.5'])
+  })
+
+  test("agy: each maker's models together, in the order agy lists the makers, newest and most capable first", () => {
+    expect(names(sortModels(own('agy')))).toEqual(['Gemini 4 Argon', 'Gemini 3.8 Flash', 'Claude Opus 5.5', 'Claude Sonnet 5.5', 'GPT-OSS 120B'])
+  })
+
+  test('the order comes from the ids when the registry gives no generation', () => {
+    const bare = registry('claude', ['claude-haiku-5-5', 'claude-sonnet-4-6', 'claude-opus-5-5', 'claude-fable-5-5', 'claude-sonnet-5-5'])
+    expect(sortModels(bare).map((model) => model.model)).toEqual(['claude-fable-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-sonnet-4-6'])
+  })
+
+  test('the main set from Settings > Models comes first, the older ones apart, both in the curated order', () => {
+    const groups = menuGroups(allOn('claude'), 'claude-opus-5-5')
+    expect(names(groups.current)).toEqual(['Fable 5.5', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
+    expect(groups.selected).toBeNull()
+    expect(names(groups.older).slice(0, 4)).toEqual(['Fable 5.1', 'Fable 5', 'Opus 5', 'Sonnet 5'])
+    expect(groups.older).toHaveLength(18)
+  })
+
+  test('older models turned off in Settings > Models are not offered at all', () => {
+    const groups = menuGroups(own('claude'), 'claude-opus-5-5')
+    expect(names(groups.current)).toEqual(['Fable 5.5', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
+    expect(groups.older).toEqual([])
+  })
+
+  test('Codex main set first, in the curated order', () => {
+    expect(names(menuGroups(own('codex'), 'gpt-6-luna').current)).toEqual(['GPT-6.1 Sol', 'GPT-6 Astra', 'GPT-6 Luna'])
+  })
+})
+
+describe('the effort in use', () => {
+  const opus = findModel(measuredModels, 'claude-opus-5-5')
+  const luna = findModel(measuredModels, 'gpt-6-luna')
+
+  test('the effort the chat set wins', () => {
+    expect(effortInUse('high', opus, 'low')).toBe('high')
+  })
+
+  test("without one, the agent's configured default when the model takes it", () => {
+    expect(effortInUse(undefined, opus, 'xhigh')).toBe('xhigh')
+    expect(effortInUse(undefined, luna, 'medium')).toBe('medium')
+  })
+
+  test("else the model's own default from the registry", () => {
+    expect(effortInUse(undefined, opus, null)).toBe('medium')
+    expect(effortInUse(undefined, opus, 'ultra')).toBe('medium')
+    expect(effortInUse(undefined, findModel(measuredModels, 'claude-fable-5-5'), null)).toBe('high')
+  })
+
+  test('a model the registry does not know runs at the configured default', () => {
+    expect(effortInUse(undefined, undefined, 'medium')).toBe('medium')
+  })
+
+  test('nothing known is no effort', () => {
+    expect(effortInUse(undefined, undefined, null)).toBeUndefined()
+    expect(effortInUse(undefined, { agent: 'claude', model: 'x', reasoning: { levels: ['low'], default: null } }, null)).toBeUndefined()
+  })
+
+  test('the chip shows the effort in use before any is picked', () => {
+    expect(pickerLabel('Opus 5.5', 1_000_000, effortInUse(undefined, opus, null))).toBe('Opus 5.5 · Medium · 1M')
+    expect(pickerLabel('GPT-6 Luna', 272_000, effortInUse(undefined, luna, 'medium'))).toBe('GPT-6 Luna · Medium · 272k')
   })
 })
 
@@ -440,19 +540,31 @@ describe('registry names, windows and the current flag', () => {
 })
 
 describe('modelDescriptor', () => {
-  test("the registry's own description, else the family's hint, else what the model offers", () => {
-    expect(modelDescriptor({ agent: 'grok', model: 'grok-4.7', reasoning: { levels: ['low', 'high'] }, description: "SpaceXAI's latest frontier model" }, 'grok')).toBe("SpaceXAI's latest frontier model")
-    expect(modelDescriptor({ agent: 'claude', model: 'claude-opus-5-5', reasoning: { levels: [] } }, 'claude')).toBe('Most capable')
-    expect(modelDescriptor({ agent: 'agy', model: 'gemini-3.8-flash', reasoning: { levels: ['low', 'medium', 'high'] } }, 'agy')).toBe('Fastest')
-    expect(modelDescriptor({ agent: 'claude', model: 'claude-fable-5-5', reasoning: { levels: ['low'] }, contextWindows: [200_000, 1_000_000] }, 'claude')).toBe('Up to 1M context')
-    expect(modelDescriptor({ agent: 'agy', model: 'gemini-4-argon', reasoning: { levels: ['low', 'medium', 'high'] } }, 'agy')).toBe('Low to High effort')
-    expect(modelDescriptor({ agent: 'agy', model: 'gpt-oss-120b', reasoning: { levels: ['medium'] } }, 'agy')).toBeNull()
+  test("one line per tier, the same for every generation of it; the registry's own line for a model with no known tier", () => {
+    const line = (agent: string, model: string, description?: string) => modelDescriptor({ agent, model, reasoning: { levels: ['low', 'high'] }, ...(description === undefined ? {} : { description }) })
+    expect(line('claude', 'claude-fable-5-5', 'The hardest problems, when quality matters most')).toBe('The hardest problems, when quality matters most')
+    expect(line('claude', 'claude-fable-5-1', 'Earlier Fable; Fable 5.5 replaces it')).toBe('The hardest problems, when quality matters most')
+    expect(line('claude', 'claude-opus-5-5')).toBe('Most capable, for long and hard work')
+    expect(line('claude', 'claude-opus-4-5-20251101', 'Legacy Opus, kept for old chats')).toBe('Most capable, for long and hard work')
+    expect(line('claude', 'claude-sonnet-4-6')).toBe('Everyday coding, fast and capable')
+    expect(line('claude', 'claude-3-5-haiku-20241022')).toBe('Quick edits and simple questions')
+    expect(line('agy', 'claude-opus-5-5', 'Hard, long tasks and architecture')).toBe('Most capable, for long and hard work')
+    expect(line('grok', 'grok-4.7', "Hard coding and reasoning, Grok's best")).toBe("Hard coding and reasoning, Grok's best")
+    expect(line('agy', 'gemini-3.8-flash', 'Quick edits and simple questions')).toBe('Quick edits and simple questions')
   })
 
-  test('Codex tiers say what each is for, as Codex itself describes them', () => {
-    expect(modelDescriptor({ agent: 'codex', model: 'gpt-6-luna', reasoning: { levels: [] } }, 'codex')).toBe('Fast and affordable')
-    expect(modelDescriptor({ agent: 'codex', model: 'gpt-6-sol', reasoning: { levels: [] } }, 'codex')).toBe('Everyday workhorse')
-    expect(modelDescriptor({ agent: 'codex', model: 'gpt-6-astra', reasoning: { levels: [] } }, 'codex')).toBe('Frontier intelligence')
+  test('never a context window or an effort range in place of what the model is for', () => {
+    expect(modelDescriptor({ agent: 'agy', model: 'gemini-4-argon', reasoning: { levels: ['low', 'medium', 'high'] }, contextWindows: [200_000, 1_000_000] })).toBeNull()
+    expect(modelDescriptor({ agent: 'agy', model: 'gpt-oss-120b', reasoning: { levels: ['medium'] } })).toBeNull()
+  })
+
+  test('Codex tiers, one line each', () => {
+    const line = (model: string) => modelDescriptor({ agent: 'codex', model, reasoning: { levels: [] } })
+    expect(line('gpt-6-astra')).toBe('The hardest problems and architecture')
+    expect(line('gpt-6.1-sol')).toBe('Everyday coding and long tasks')
+    expect(line('gpt-5.6-sol')).toBe('Everyday coding and long tasks')
+    expect(line('gpt-5.6-terra')).toBe('Plain work, balanced and cheaper')
+    expect(line('gpt-6-luna')).toBe('Quick edits and simple tasks')
   })
 })
 
@@ -501,11 +613,11 @@ describe('the effort slider', () => {
 })
 
 describe('modelHint', () => {
-  test('one line on what each family is for, nothing for one it does not know', () => {
-    expect(modelHint('claude-haiku-4-5-20251001')).toBe('Fastest')
-    expect(modelHint('claude-sonnet-5-5')).toBe('Balanced')
-    expect(modelHint('claude-opus-5-5[1m]')).toBe('Most capable')
-    expect(modelHint('gpt-5.4-mini')).toBe('Fastest')
+  test('one line on what each tier is for, nothing for one it does not know', () => {
+    expect(modelHint('claude-haiku-4-5-20251001')).toBe('Quick edits and simple questions')
+    expect(modelHint('claude-sonnet-5-5')).toBe('Everyday coding, fast and capable')
+    expect(modelHint('claude-opus-5-5[1m]')).toBe('Most capable, for long and hard work')
+    expect(modelHint('gpt-5.4-mini')).toBeNull()
     expect(modelHint('grok-4.7')).toBeNull()
   })
 })

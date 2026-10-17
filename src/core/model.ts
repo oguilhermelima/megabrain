@@ -95,6 +95,21 @@ export function addModel(
   return { kind: "ok", value: { ...registry, models: [...registry.models, entry] } };
 }
 
+// The table's fields a curated row may lack; a field the row sets is the person's and stays.
+const curatedFillable = ["name", "family", "generation", "status", "description", "contextWindow", "contextWindows"] as const;
+
+/** A curated row with every field it lacks taken from the table, its own fields and levels kept. */
+function fillCurated(row: Model, templateModel: Model): Model {
+  const missing = curatedFillable.filter((key) => row[key] === undefined && templateModel[key] !== undefined);
+  const reasoningDefault = row.reasoning.default === undefined && templateModel.reasoning.default !== undefined;
+  if (missing.length === 0 && !reasoningDefault) return row;
+  return {
+    ...row,
+    ...Object.fromEntries(missing.map((key) => [key, templateModel[key]])),
+    reasoning: reasoningDefault ? { ...row.reasoning, default: templateModel.reasoning.default } : row.reasoning,
+  };
+}
+
 // The shipped models.json is the single metadata table. Context-window values come from the
 // installed Claude model listing and ~/.codex/models_cache.json; unknown windows stay empty.
 export function upgradeRegistry(registry: ModelRegistry, template: ModelRegistry): ModelRegistry {
@@ -102,7 +117,8 @@ export function upgradeRegistry(registry: ModelRegistry, template: ModelRegistry
   for (const templateModel of template.models) {
     const index = models.findIndex((entry) => entry.agent === templateModel.agent && entry.model === templateModel.model);
     if (index < 0) models.push(templateModel);
-    else if (models[index].provenance.kind !== "curated") models[index] = {
+    else if (models[index].provenance.kind === "curated") models[index] = fillCurated(models[index], templateModel);
+    else models[index] = {
       ...models[index], reasoning: templateModel.reasoning, status: templateModel.status,
       contextWindow: templateModel.contextWindow, name: templateModel.name,
       contextWindows: templateModel.contextWindows, description: templateModel.description,

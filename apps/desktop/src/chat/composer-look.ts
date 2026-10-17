@@ -17,8 +17,13 @@ export function ringOffset(fraction: number, circumference: number): number {
   return circumference * (1 - shown)
 }
 
-/** What the composer reports after an action: a send's outcome, a model switch, a refused file. */
+/** What the composer reports after an action: a send's outcome, a failed model switch, a refused file. */
 export type Notice = { tone: 'ok' | 'bad'; text: string }
+
+/** What a model switch leaves above the composer: nothing when it went through, the reason when it failed. */
+export function switchNotice(result: Notice | null): Notice | null {
+  return result !== null && result.tone === 'bad' ? result : null
+}
 
 /** A notice as the banner on the composer's top edge shows it. */
 export interface Banner {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type Ke
 import type { Settings } from '@/api/schema'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { Popover } from '@/components/Popover'
+import { useAgentDefaults } from '@/lib/useAgentDefaults'
 import { usePresence } from '@/lib/usePresence'
 import {
   agentModels,
@@ -11,6 +12,7 @@ import {
   displayName,
   effortLevels,
   effortHint,
+  effortInUse,
   effortName,
   effortStep,
   findModel,
@@ -64,11 +66,8 @@ export interface ModelPick {
   model: string
   window: number | null
   effort: string | undefined
-  /** How people say the model, from the registry when it names it. */
-  name: string
 }
 
-type MenuPick = Omit<ModelPick, 'name'>
 /** keepOpen leaves the menu up, for the effort slider moving under the pointer or the arrows. */
 type MenuPickOptions = { keepOpen?: boolean }
 
@@ -98,11 +97,12 @@ function Segmented<T extends string | number>({ label, options, value, onPick }:
 }
 
 /**
- * The effort as a slider: one stop per level the model supports, its full name under it, the chosen
- * one raised on a filled track. A click or an arrow moves it at once and sends the level a moment
- * after the last move, so stepping across does not send every level on the way; Home and End jump.
+ * The effort as a slider: one stop per level the model supports, its full name under it, the level
+ * in use raised on a filled track, the chat's own or else the one the agent runs at. A click or an
+ * arrow moves it at once and sends the level a moment after the last move, so stepping across does
+ * not send every level on the way; Home and End jump.
  */
-function EffortSlider({ levels, value, fallback, onPick }: { levels: string[]; value: string | undefined; fallback: string | null; onPick: (level: string) => void }) {
+function EffortSlider({ levels, value, onPick }: { levels: string[]; value: string | undefined; onPick: (level: string) => void }) {
   const [shown, setShown] = useState(value)
   const pending = useRef<{ level: string; timer: ReturnType<typeof setTimeout> } | null>(null)
   const send = useRef(onPick)
@@ -169,17 +169,17 @@ function EffortSlider({ levels, value, fallback, onPick }: { levels: string[]; v
           ))}
         </div>
       </div>
-      {/* What the level in use means, or the level the model runs at when none is set. */}
+      {/* What the level in use means; nothing is in use only when neither the chat, the agent nor the model says. */}
       <p aria-live="polite" className={`mt-1.5 px-1 text-[12px] leading-4 ${pickerText.effortHint}`}>
-        {shown !== undefined ? effortHint(shown) : fallback !== null ? `Model default: ${effortName(fallback)}. ${effortHint(fallback)}` : 'The agent picks the effort'}
+        {shown !== undefined ? effortHint(shown) : 'The agent picks the effort'}
       </p>
     </div>
   )
 }
 
-function ModelRow({ item, agent, checked, onPick }: { item: Models[number]; agent: string | null; checked: boolean; onPick: () => void }) {
+function ModelRow({ item, checked, onPick }: { item: Models[number]; checked: boolean; onPick: () => void }) {
   const name = displayName(item.model, [item])
-  const hint = modelDescriptor(item, agent)
+  const hint = modelDescriptor(item)
   return (
     <button
       type="button"
@@ -219,6 +219,7 @@ function ModelMenu({
   current,
   window: currentWindow,
   effort,
+  configuredEffort,
   native,
   contextTokens,
   onPick,
@@ -233,10 +234,12 @@ function ModelMenu({
   current: string | null
   window: number | null
   effort: string | undefined
+  /** The effort the agent's own config sets, which the chat runs at when it set none. */
+  configuredEffort: string | null
   /** True for a native chat, which sets effort itself; a session takes it by command when its agent has one. */
   native: boolean
   contextTokens: number | null | undefined
-  onPick: (pick: MenuPick, options?: MenuPickOptions) => void
+  onPick: (pick: ModelPick, options?: MenuPickOptions) => void
   /** A switch that needs a yes first: the picker closes and the app's confirm dialog asks. */
   onAsk: (confirm: PendingConfirm) => void
   leaving: boolean
@@ -249,7 +252,7 @@ function ModelMenu({
   const windows = current === null || current === '' ? [] : modelWindows(entry, agent)
   const levels = effortLevels(entry, agent, native)
 
-  const choose = (pick: MenuPick) => {
+  const choose = (pick: ModelPick) => {
     if (!switchNeedsConfirm(current, pick.model, contextTokens)) {
       onPick(pick)
       return
@@ -269,7 +272,7 @@ function ModelMenu({
     // Effort carries over to a model that has the same level.
     choose({ ...target, effort: effort !== undefined && item.reasoning.levels.includes(effort) ? effort : undefined })
   }
-  const row = (item: Models[number]) => <ModelRow key={item.model} item={item} agent={agent} checked={item === entry} onPick={() => pickModel(item)} />
+  const row = (item: Models[number]) => <ModelRow key={item.model} item={item} checked={item === entry} onPick={() => pickModel(item)} />
   // Up and down walk the models and the Older toggle, wrapping; Home and End jump. The effort slider keeps its own arrows.
   const walk = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement
@@ -318,7 +321,7 @@ function ModelMenu({
             />
           )}
           {levels.length > 0 && current !== null && (
-            <EffortSlider levels={levels} value={effort} fallback={entry?.reasoning.default ?? null} onPick={(level) => onPick({ model: current, window: currentWindow, effort: level }, { keepOpen: true })} />
+            <EffortSlider levels={levels} value={effortInUse(effort, entry, configuredEffort)} onPick={(level) => onPick({ model: current, window: currentWindow, effort: level }, { keepOpen: true })} />
           )}
         </>
       </div>
@@ -439,6 +442,7 @@ export function ComposerStatus({
   onPickModel: (pick: ModelPick) => void
 }) {
   const { settings } = useSettings()
+  const defaults = useAgentDefaults()
   const [open, setOpen] = useState<Open>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const [asking, setAsking] = useState<PendingConfirm | null>(null)
@@ -449,7 +453,9 @@ export function ComposerStatus({
   const close = useRef(() => setOpen(null)).current
   const menu = usePresence(open)
   const known = model !== null && model !== ''
-  const label = pickerLabel(known ? displayName(model, models) : null, known ? (size?.tokens ?? null) : null, effort)
+  const configuredEffort = defaults?.agents.find((entry) => entry.agent === agent)?.effort ?? null
+  // Unset, the chip shows the effort the agent will run at, not none.
+  const label = pickerLabel(known ? displayName(model, models) : null, known ? (size?.tokens ?? null) : null, effortInUse(effort, findModel(models, model), configuredEffort))
   // Before the first reading, from the cache or the CLI, the picker holds its place.
   const loading = settings === null && agent !== null
   // The context shows whenever the chat runs an agent, as a dash until it reports one.
@@ -468,11 +474,12 @@ export function ComposerStatus({
           current={known ? model : null}
           window={known ? (size?.tokens ?? null) : null}
           effort={effort}
+          configuredEffort={configuredEffort}
           native={canSetEffort}
           contextTokens={context?.tokens}
           onPick={(pick, options) => {
             if (options?.keepOpen !== true) setOpen(null)
-            onPickModel({ ...pick, name: displayName(pick.model, models) })
+            onPickModel(pick)
           }}
           onAsk={(confirm) => {
             setOpen(null)

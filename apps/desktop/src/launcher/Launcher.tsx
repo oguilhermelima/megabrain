@@ -1,6 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
 import { api } from '@/api'
-import type { AgentDefaults, HistorySession, MessagePart, NativeChat } from '@/api/schema'
+import type { HistorySession, MessagePart, NativeChat } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { Composer, type Notice } from '@/chat/Composer'
 import { AgentIcon } from '@/components/agent-icons'
@@ -11,6 +11,7 @@ import { moveInColumn } from '@/launcher/launcher-keys'
 import { resumeLaunch } from '@/launcher/resume-model'
 import { ResumeList } from '@/launcher/ResumeList'
 import { beginStart, bindStart, endStart, startStep } from '@/native-chat/start-trace'
+import { useAgentDefaults } from '@/lib/useAgentDefaults'
 import { usePendingActions } from '@/lib/usePendingActions'
 import { defaultAgentSettings, parseAgentSettings, type AgentSettings } from '@/settings/agents-model'
 import { defaultModelSettings, parseModelSettings, startPick, type ModelSettings } from '@/settings/models-model'
@@ -94,24 +95,6 @@ function useModelSettings() {
     }
   }, [])
   return settings
-}
-
-// Each agent's configured default and the login shell, read once per app run; without them the rows say "Default model" and "Login shell".
-let agentDefaults: Promise<AgentDefaults | null> | null = null
-
-function useAgentDefaults() {
-  const [defaults, setDefaults] = useState<AgentDefaults | null>(null)
-  useEffect(() => {
-    let stopped = false
-    agentDefaults ??= api.agentDefaults().catch(() => null)
-    void agentDefaults.then((report) => {
-      if (!stopped) setDefaults(report)
-    })
-    return () => {
-      stopped = true
-    }
-  }, [])
-  return defaults
 }
 
 /** A new id for a terminal: unique across app runs, so a layout saved by an earlier run never names it. */

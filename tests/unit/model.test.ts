@@ -69,7 +69,7 @@ describe("registry operations", () => {
     expect(upgraded.models[1].agent).toBe("claude");
   });
 
-  test("carries the template's status into a non-curated row and leaves a curated row alone", () => {
+  test("carries the template's status into a non-curated row and only what a curated row lacks into it", () => {
     const template: ModelRegistry = {
       version: 1,
       models: [
@@ -80,9 +80,57 @@ describe("registry operations", () => {
     const upgraded = upgradeRegistry(sourcedState, template);
     expect(upgraded.models[0].status).toBe("retired");
 
-    const curatedState: ModelRegistry = { ...registry, models: [{ ...registry.models[0], provenance: { kind: "curated", obtainedAt: "old" } }] };
-    const untouched = upgradeRegistry(curatedState, template);
-    expect(untouched.models[0].status).toBeUndefined();
+    const curatedState: ModelRegistry = { ...registry, models: [{ ...registry.models[0], provenance: { kind: "curated", obtainedAt: "old" }, status: "current" }] };
+    const kept = upgradeRegistry(curatedState, template);
+    expect(kept.models[0].status).toBe("current");
+  });
+
+  test("fills every field a curated row lacks from the template, keeping its own levels and fields", () => {
+    const template: ModelRegistry = {
+      version: 1,
+      models: [
+        {
+          agent: "claude",
+          model: "claude-opus-5-5",
+          name: "Opus 5.5",
+          family: "opus",
+          generation: "5.5",
+          status: "current",
+          description: "Hard, long tasks and architecture",
+          contextWindows: [200000, 1000000],
+          reasoning: { separateAxis: true, levels: ["low", "medium", "high", "xhigh", "max"], default: "medium" },
+          provenance: { kind: "sourced" },
+        },
+        { agent: "claude", model: "claude-sonnet-4-6", name: "Sonnet 4.6", family: "sonnet", generation: "4.6", status: "older", reasoning: { separateAxis: true, levels: ["low", "medium", "high"], default: "high" }, provenance: { kind: "sourced" } },
+      ],
+    };
+    const curated = { kind: "curated", method: "manual curation", obtainedAt: "2026-09-07T19:27:29Z" };
+    const state: ModelRegistry = {
+      version: 1,
+      models: [
+        { agent: "claude", model: "claude-opus-5-5", reasoning: { separateAxis: true, levels: ["low", "medium", "high", "xhigh", "max"] }, provenance: curated },
+        { agent: "claude", model: "claude-sonnet-4-6", name: "My Sonnet", reasoning: { separateAxis: true, levels: ["low", "medium"] }, provenance: curated },
+      ],
+    };
+    const [opus, sonnet] = upgradeRegistry(state, template).models;
+    expect(opus).toEqual({
+      agent: "claude",
+      model: "claude-opus-5-5",
+      name: "Opus 5.5",
+      family: "opus",
+      generation: "5.5",
+      status: "current",
+      description: "Hard, long tasks and architecture",
+      contextWindows: [200000, 1000000],
+      reasoning: { separateAxis: true, levels: ["low", "medium", "high", "xhigh", "max"], default: "medium" },
+      provenance: curated,
+    });
+    // The row's own name, levels and provenance stay; only what it lacked arrives.
+    expect(sonnet?.name).toBe("My Sonnet");
+    expect(sonnet?.reasoning.levels).toEqual(["low", "medium"]);
+    expect(sonnet?.reasoning.default).toBe("high");
+    expect(sonnet?.status).toBe("older");
+    expect(sonnet?.provenance).toEqual(curated);
   });
 
   test("folds agy's listing into one model per base id with its reasoning levels", () => {
@@ -178,12 +226,12 @@ describe("context window", () => {
     expect(contextWindowOf(windowed, "codex", "with-window")).toBeUndefined();
   });
 
-  test("a non-curated row takes the template window and a curated row keeps its own", () => {
+  test("a non-curated row takes the template window and a curated row without one gains it", () => {
     const state: ModelRegistry = { version: 1, models: [{ ...windowed.models[1], provenance: { kind: "sourced" } }] };
     const template: ModelRegistry = { version: 1, models: [{ ...windowed.models[1], contextWindow: 1000000 }] };
     expect(contextWindowOf(upgradeRegistry(state, template), "claude", "without-window")).toBe(1000000);
     const curated: ModelRegistry = { version: 1, models: [{ ...windowed.models[1], provenance: { kind: "curated", obtainedAt: "old" } }] };
-    expect(contextWindowOf(upgradeRegistry(curated, template), "claude", "without-window")).toBeUndefined();
+    expect(contextWindowOf(upgradeRegistry(curated, template), "claude", "without-window")).toBe(1000000);
   });
 
   test("the shipped registry sets the measured 1M window for the Claude models megabrain launches", () => {
