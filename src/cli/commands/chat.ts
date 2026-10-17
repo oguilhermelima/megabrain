@@ -26,6 +26,12 @@ function partsJson(value: string | undefined): unknown {
   if (value === undefined) return undefined;
   try { return JSON.parse(value) as unknown; } catch { throw new Error("--parts must contain valid JSON"); }
 }
+/** Exits the process once the one that started it is gone (reparented), and returns the stop function. */
+function endWithParent(): () => void {
+  const parent = process.ppid;
+  const timer = setInterval(() => { if (process.ppid !== parent) process.exit(0); }, 500);
+  return () => clearInterval(timer);
+}
 function argsJson(value: unknown): string { return `${JSON.stringify(value, null, 2)}\n`; }
 
 const QUEUE_USAGE = "Usage: megabrain chat queue list|clear <id> --json | add <id> --parts <json> --json | edit <id> <item> --parts <json> --json | move <id> <item> --to <index> --json | remove|send-now|steer <id> <item> --json";
@@ -155,10 +161,12 @@ export async function executeChat(args: readonly string[], environment: Environm
       if (flags.length !== 1 || flags[0] !== "--json") throw new Error("Usage: megabrain chat events <id> [--since <cursor>] [--follow] --json");
       if (since.value !== undefined && !/^\d+$/.test(since.value)) throw new Error("--since must be a non-negative cursor");
       const lines: ChatLine[] = [];
+      // A follow outlives nothing: the desktop app that started it may be killed without a chance to stop it.
+      const watch = follow ? endWithParent() : undefined;
       value = await callChatd(dir, { operation: "events", id, since: Number(since.value ?? 0), follow }, environment, processAdapter, (line) => {
         if (follow) process.stdout.write(`${JSON.stringify(line)}\n`); else lines.push(line);
       });
-      if (follow) return ok("");
+      if (follow) { watch?.(); return ok(""); }
       const events = Array.isArray(value) ? value as ChatLine[] : lines;
       return ok(events.map((line) => JSON.stringify(line)).join("\n") + (events.length ? "\n" : ""));
     }

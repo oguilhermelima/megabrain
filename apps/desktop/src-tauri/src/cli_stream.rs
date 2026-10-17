@@ -33,15 +33,7 @@ impl CliStreams {
             .stderr
             .take()
             .ok_or_else(|| "CLI stderr was not piped".to_string())?;
-        let id = Uuid::new_v4().to_string();
-        let stream = Arc::new(Stream {
-            child: Mutex::new(child),
-            stopped: AtomicBool::new(false),
-        });
-        self.streams
-            .lock()
-            .map_err(|error| error.to_string())?
-            .insert(id.clone(), stream.clone());
+        let (id, stream) = self.register(child)?;
 
         let streams = self.streams.clone();
         let worker_id = id.clone();
@@ -76,6 +68,24 @@ impl CliStreams {
         Ok(id)
     }
 
+    /// Tracks a running child so stopping or dropping the streams ends it.
+    pub fn adopt(&self, child: Child) -> String {
+        self.register(child).map(|(id, _)| id).unwrap_or_default()
+    }
+
+    fn register(&self, child: Child) -> Result<(String, Arc<Stream>), String> {
+        let id = Uuid::new_v4().to_string();
+        let stream = Arc::new(Stream {
+            child: Mutex::new(child),
+            stopped: AtomicBool::new(false),
+        });
+        self.streams
+            .lock()
+            .map_err(|error| error.to_string())?
+            .insert(id.clone(), stream.clone());
+        Ok((id, stream))
+    }
+
     pub fn stop(&self, id: &str) {
         let stream = self
             .streams
@@ -99,6 +109,12 @@ impl CliStreams {
         for id in ids {
             self.stop(&id);
         }
+    }
+}
+
+impl Drop for CliStreams {
+    fn drop(&mut self) {
+        self.stop_all();
     }
 }
 

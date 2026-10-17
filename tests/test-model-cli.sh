@@ -50,10 +50,17 @@ mkdir -p "$home"
 list_output="$(run_binary model list --json)"
 MEGABRAIN_STATE_DIR="$state" "$root/.build/megabrain" db show --models --json | jq -e '.version == 1' >/dev/null || fail 'model list did not initialize the database registry'
 assert_equal "$(printf '%s' "$list_output" | jq '.version')" 1
-assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "codex")] | length')" 12
-assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "claude")] | length')" 22
-assert_equal "$(printf '%s' "$list_output" | jq '[.models[] | select(.agent == "agy")] | length')" 14
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "agy" and .model == "gemini-3.8-flash-high") | .provenance.kind')" live
+# Counts come from the shipped table, so adding or removing a model there does not break this test.
+# Each agent must list at least one model, or an empty table would satisfy the equalities trivially.
+for agent in codex claude agy; do
+  shipped="$(jq --arg agent "$agent" '[.models[] | select(.agent == $agent)] | length' "$root/.megabrain/models.json")"
+  [ "$shipped" -gt 0 ] || fail "shipped table has no $agent models"
+  assert_equal "$(printf '%s' "$list_output" | jq --arg agent "$agent" '[.models[] | select(.agent == $agent)] | length')" "$shipped"
+done
+agy_model="$(jq -r '[.models[] | select(.agent == "agy")][0].model' "$root/.megabrain/models.json")"
+agy_kind="$(jq -r --arg model "$agy_model" '.models[] | select(.agent == "agy" and .model == $model) | .provenance.kind' "$root/.megabrain/models.json")"
+[ -n "$agy_kind" ] && [ "$agy_kind" != null ] || fail "shipped $agy_model has no provenance kind"
+assert_equal "$(printf '%s' "$list_output" | jq -r --arg model "$agy_model" '.models[] | select(.agent == "agy" and .model == $model) | .provenance.kind')" "$agy_kind"
 printf 'registry-json: binary lists the fixture registry and provenance\n'
 
 # Scenario: an unset state directory uses HOME, without creating a checkout-relative state path.

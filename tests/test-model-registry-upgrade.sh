@@ -47,6 +47,24 @@ assert_failure_contains() {
   assert_contains "$output" "$expected"
 }
 
+# Evidence is compared with the shipped table by rule, not by literal: a model keeps whatever
+# provenance the table gives it. An absent kind in the table would let any output pass, so refuse it.
+assert_matches_template() {
+  local output="$1" agent="$2" model="$3" path="$4" expected
+  expected="$(jq -c --arg agent "$agent" --arg model "$model" ".models[] | select(.agent == \$agent and .model == \$model) | $path" "$template")"
+  [ -n "$expected" ] || fail "shipped table has no $agent $model"
+  assert_equal "$(printf '%s' "$output" | jq -c --arg agent "$agent" --arg model "$model" ".models[] | select(.agent == \$agent and .model == \$model) | $path")" "$expected"
+}
+assert_template_kind_present() {
+  [ "$(jq -r --arg agent "$1" --arg model "$2" '.models[] | select(.agent == $agent and .model == $model) | .provenance.kind // empty' "$template")" != "" ] || fail "shipped $1 $2 has no provenance kind"
+}
+assert_count_matches_template() {
+  local output="$1" agent="$2" shipped
+  shipped="$(jq --arg agent "$agent" '[.models[] | select(.agent == $agent)] | length' "$template")"
+  [ "$shipped" -gt 0 ] || fail "shipped table has no $agent models"
+  assert_equal "$(printf '%s' "$output" | jq --arg agent "$agent" '[.models[] | select(.agent == $agent)] | length')" "$shipped"
+}
+
 reset_state() {
   rm -rf "$MEGABRAIN_STATE_DIR"
   mkdir -p "$MEGABRAIN_STATE_DIR"
@@ -77,14 +95,13 @@ write_old_registry() {
 # 1. A fresh registry accepts every Claude level in the template and refuses an unknown one.
 reset_state
 list_output="$($root/.build/megabrain model list --json)"
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .provenance.kind')" sourced
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.provenance.kind')" verified
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.provenance.command')" /Users/gui/.local/bin/codex
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.provenance.method')" 'embedded model_reasoning_effort enum'
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.provenance.obtainedAt')" 2026-09-08
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude" and .model == "claude-sonnet-5") | .provenance.kind')" sourced
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude" and .model == "claude-sonnet-5") | .reasoning.provenance.kind')" verified
-assert_equal "$(printf '%s' "$list_output" | jq -r '.models[] | select(.agent == "claude" and .model == "claude-sonnet-5") | .reasoning.provenance.command')" 'claude --help'
+assert_template_kind_present codex gpt-6-astra
+assert_template_kind_present claude claude-sonnet-5
+for pair in "codex gpt-6-astra" "claude claude-sonnet-5"; do
+  set -- $pair
+  assert_matches_template "$list_output" "$1" "$2" '.provenance'
+  assert_matches_template "$list_output" "$1" "$2" '.reasoning.provenance'
+done
 printf 'fresh registry: model documentation and reasoning evidence stay distinct\n'
 claude_model="$(jq -r '.models[] | select(.agent == "claude") | .model' "$template" | head -n 1)"
 claude_levels="$(jq -r --arg model "$claude_model" '.models[] | select(.agent == "claude" and .model == $model) | .reasoning.levels[]' "$template" | sort -u)"
@@ -103,15 +120,14 @@ reset_state
 "$root/.build/megabrain" model list --json >/dev/null
 write_old_registry
 upgraded="$("$root/.build/megabrain" model list --json)"
-assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "agy")] | length')" 14
-assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "codex")] | length')" 12
-assert_equal "$(printf '%s' "$upgraded" | jq '[.models[] | select(.agent == "claude")] | length')" 22
+for agent in agy codex claude; do assert_count_matches_template "$upgraded" "$agent"; done
 assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.levels | join(",")')" 'low,medium,high,xhigh,max,ultra'
 assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "claude" and .model == "claude-sonnet-5") | .reasoning.levels | join(",")')" 'low,medium,high,xhigh,max'
-assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .provenance.kind')" sourced
-assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "codex" and .model == "gpt-6-astra") | .reasoning.provenance.kind')" verified
-assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "claude" and .model == "claude-sonnet-5") | .provenance.kind')" sourced
-assert_equal "$(printf '%s' "$upgraded" | jq -r '.models[] | select(.agent == "claude" and .model == "claude-sonnet-5") | .reasoning.provenance.kind')" verified
+for pair in "codex gpt-6-astra" "claude claude-sonnet-5"; do
+  set -- $pair
+  assert_matches_template "$upgraded" "$1" "$2" '.provenance'
+  assert_matches_template "$upgraded" "$1" "$2" '.reasoning.provenance'
+done
 printf 'registry upgrade: missing entries added and corrected levels applied\n'
 
 # 3. A model added with model add is curated and wins over the template during upgrade.
