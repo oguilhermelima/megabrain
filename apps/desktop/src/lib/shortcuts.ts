@@ -28,6 +28,7 @@ export type ShortcutId =
   | 'view.code'
   | 'view.pr'
   | 'view.diff'
+  | 'view.device'
 
 export interface ShortcutDef {
   id: ShortcutId
@@ -62,6 +63,7 @@ export const shortcuts: readonly ShortcutDef[] = [
   { id: 'view.code', label: 'Code view', group: 'Pane views', keys: ['mod+2'], orca: null, fixed: true },
   { id: 'view.pr', label: 'Pull request view', group: 'Pane views', keys: ['mod+3'], orca: null, fixed: true },
   { id: 'view.diff', label: 'Diff view', group: 'Pane views', keys: ['mod+4'], orca: null, fixed: true },
+  { id: 'view.device', label: 'Device view', group: 'Pane views', keys: ['mod+5'], orca: null, fixed: true },
 ]
 
 const byId = new Map<string, ShortcutDef>(shortcuts.map((shortcut) => [shortcut.id, shortcut]))

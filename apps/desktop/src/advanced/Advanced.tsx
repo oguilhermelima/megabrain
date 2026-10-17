@@ -991,10 +991,11 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     return {
       facts: worktreeFacts(projects, root),
       view: viewOf(item),
-      // Settings and a GitHub page keep ⌘1 to ⌘4 from the panes under them.
+      // Settings and a GitHub page keep ⌘1 to ⌘5 from the panes under them.
       focused: item === focusedItem && !settingsOpen && githubPage === null,
       setView: (view) => chooseItemView(item, view),
       code: <CodeSlot item={item} holder={holder} slots={codeSlots} onShowHolder={() => holder !== null && focusItem(holder)} />,
+      openFile: (path) => openPath(root, path, null),
     }
   }
   // The focused pane's worktree: its run panel shows, and ⌘T opens a terminal there.
@@ -1121,6 +1122,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           setView: (view: PaneView) => setSplitViews((current) => ({ ...current, [shownGroupId]: view })),
           focused: !settingsOpen && githubPage === null,
           code: <CodeSlot item={splitCodeItem(shownGroupId)} holder={sharedHolder} slots={codeSlots} onShowHolder={() => sharedHolder !== null && focusItem(sharedHolder)} />,
+          openFile: (path: string) => openPath(sharedRoot, path, null),
         }
 
   return (

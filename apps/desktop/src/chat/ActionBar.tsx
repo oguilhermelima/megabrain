@@ -11,6 +11,7 @@ import { usePoll } from '@/lib/usePoll'
 
 const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) => ({ default: module.GithubItemView })))
 const ChangesDiff = lazy(() => import('@/code/ChangesDiff').then((module) => ({ default: module.ChangesDiff })))
+const DeviceView = lazy(() => import('@/device/DeviceView').then((module) => ({ default: module.DeviceView })))
 
 function DiffIcon() {
   return (
@@ -52,7 +53,7 @@ export function useWorktreeChanges(facts: WorktreeFacts | null): WorktreeChanges
 }
 
 /**
- * Agent, Code, PR and Diff as a strip of tabs, the row under a pane's title, each its icon and name.
+ * Agent, Code, PR, Diff and Device as a strip of tabs, the row under a pane's title, each its icon and name.
  * The strip starts at the bar's content edge: a tab's 8px padding hangs left of it, so the first icon
  * lines up with the agent's mark above. A tab is a 28px pill (lit on hover) over a 4px gap; under the
  * shown one a 2px rounded line, the width of its icon and name, sits on the bar's hairline and slides
@@ -69,6 +70,7 @@ export function ActionBar({ segments, shown, onSelect }: { segments: readonly Se
     code: <CodeIcon size={16} />,
     pr: <PullRequestIcon size={16} />,
     diff: <DiffIcon />,
+    device: <PhoneIcon />,
   }
   // The line follows the shown tab's pill, measured again whenever the strip or a tab changes size (a badge appearing, the pane resizing).
   useLayoutEffect(() => {
@@ -138,6 +140,15 @@ export function ActionBar({ segments, shown, onSelect }: { segments: readonly Se
   )
 }
 
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="1.5" width="8" height="13" rx="2" />
+      <path d="M7 12.25h2" />
+    </svg>
+  )
+}
+
 function ChatGlyph() {
   return (
     <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
@@ -147,11 +158,11 @@ function ChatGlyph() {
 }
 
 /**
- * The Code, PR or Diff view, laid over the pane below its top bar so the bar stays and the Agent
+ * The Code, PR, Diff or Device view, laid over the pane below its top bar so the bar stays and the Agent
  * view under it keeps its draft, scroll and terminal. The pane's content box is the positioned
  * ancestor; the top follows the header's height.
  */
-export function PaneViewBody({ view, facts, changes, code, header }: { view: Exclude<PaneView, 'agent'>; facts: WorktreeFacts; changes: WorktreeChanges; code: ReactNode; header: RefObject<HTMLElement | null> }) {
+export function PaneViewBody({ view, facts, changes, code, openFile, header }: { view: Exclude<PaneView, 'agent'>; facts: WorktreeFacts; changes: WorktreeChanges; code: ReactNode; openFile?: (path: string) => void; header: RefObject<HTMLElement | null> }) {
   const [top, setTop] = useState<number | null>(null)
   useLayoutEffect(() => {
     const element = header.current
@@ -164,17 +175,19 @@ export function PaneViewBody({ view, facts, changes, code, header }: { view: Exc
   }, [header])
   return (
     <div style={{ top: top ?? 0 }} className={`absolute inset-x-0 bottom-0 z-30 flex min-h-0 flex-col bg-ink-950 ${top === null ? 'invisible' : ''}`}>
-      <WorktreeView view={view} facts={facts} changes={changes} code={code} />
+      <WorktreeView view={view} facts={facts} changes={changes} code={code} openFile={openFile} />
     </div>
   )
 }
 
-/** The Code, PR or Diff view itself, filling its box: a pane's under its top bar, or a whole split's under the shared bar. */
-export function WorktreeView({ view, facts, changes, code }: { view: Exclude<PaneView, 'agent'>; facts: WorktreeFacts; changes: WorktreeChanges; code: ReactNode }) {
+/** The Code, PR, Diff or Device view itself, filling its box: a pane's under its top bar, or a whole split's under the shared bar. `openFile` shows a worktree file in Code. */
+export function WorktreeView({ view, facts, changes, code, openFile }: { view: Exclude<PaneView, 'agent'>; facts: WorktreeFacts; changes: WorktreeChanges; code: ReactNode; openFile?: (path: string) => void }) {
   return (
     <Suspense fallback={<PaneSkeleton />}>
       {view === 'code' ? (
         code
+      ) : view === 'device' ? (
+        <DeviceView key={facts.root} root={facts.root} onOpenFile={openFile} />
       ) : view === 'pr' && facts.pullRequest !== null ? (
         <GithubItemView key={facts.pullRequest} root={facts.repo} kind="pr" number={facts.pullRequest} />
       ) : (

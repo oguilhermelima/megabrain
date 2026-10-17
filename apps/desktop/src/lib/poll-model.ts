@@ -15,6 +15,8 @@ export const projectsPolicy: PollPolicy = { visibleMs: 30_000, hiddenMs: null, r
 // The action bar's Diff badge: git status and a merge-base diff, both native and cheap.
 export const changesPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 export const quickViewPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
+// A simulator screenshot while a Maestro run goes on: one simctl capture, the screen's refresh rate in the Device tab.
+export const screenPolicy: PollPolicy = { visibleMs: 2_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
 // The CLI caches each GitHub answer for 60 s; the badges can wait twice that.
 export const githubCountsPolicy: PollPolicy = { visibleMs: 120_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
 

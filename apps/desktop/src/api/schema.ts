@@ -956,3 +956,44 @@ export const portFreeSchema = z.object({ port: z.number().int() })
 
 /** `megabrain port kill <port> --json`. */
 export const portKillSchema = z.object({ port: z.number().int(), top: z.number().int(), stopped: z.array(z.number().int()), freed: z.boolean() })
+
+/** `megabrain maestro flows --json`: the worktree's flows under .maestro and maestro, path relative to the worktree. */
+export const maestroFlowSchema = z.looseObject({ path: z.string(), name: z.string(), appId: z.string().nullable() })
+export type MaestroFlow = z.infer<typeof maestroFlowSchema>
+
+const maestroStateSchema = z.enum(['running', 'passed', 'failed', 'stopped'])
+
+/** `megabrain maestro runs --json`: every run of the worktree, newest first; durationMs is null while it runs. */
+export const maestroRunSchema = z.looseObject({
+  runId: z.string(),
+  flow: z.string(),
+  device: z.string(),
+  state: maestroStateSchema,
+  startedAt: z.string(),
+  finishedAt: z.string().optional(),
+  durationMs: z.number().nullable(),
+  artifacts: z.string(),
+})
+export type MaestroRun = z.infer<typeof maestroRunSchema>
+
+/** One line of `megabrain maestro run --json`: the run starting, a finished step, the verdict. */
+export const maestroEventSchema = z.discriminatedUnion('type', [
+  z.looseObject({ type: z.literal('start'), runId: z.string(), flow: z.string(), device: z.string(), artifacts: z.string() }),
+  z.looseObject({
+    type: z.literal('step'),
+    index: z.number().int(),
+    command: z.string(),
+    status: z.enum(['passed', 'failed', 'skipped']),
+    durationMs: z.number(),
+    screenshot: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+  z.looseObject({ type: z.literal('run'), state: maestroStateSchema, runId: z.string(), exitCode: z.number(), durationMs: z.number(), artifacts: z.string() }),
+])
+export type MaestroEvent = z.infer<typeof maestroEventSchema>
+
+export const simulatorSchema = z.looseObject({ udid: z.string(), name: z.string(), state: z.string() })
+export type Simulator = z.infer<typeof simulatorSchema>
+
+/** `megabrain native sim list phone --json`: the available iOS simulators. */
+export const simulatorListSchema = z.looseObject({ devices: z.array(simulatorSchema) })

@@ -55,8 +55,11 @@ describe('segments', () => {
   test('Diff stays disabled until the changes are read', () => {
     expect(byView(segments({ facts: facts(null), changed: null, codeAvailable: true })).diff?.enabled).toBe(false)
   })
-  test('they are always Agent, Code, PR, Diff in that order', () => {
-    expect(segments({ facts: facts(1), changed: 1, codeAvailable: true }).map((segment) => segment.label)).toEqual(['Agent', 'Code', 'PR', 'Diff'])
+  test('they are always Agent, Code, PR, Diff, Device in that order', () => {
+    expect(segments({ facts: facts(1), changed: 1, codeAvailable: true }).map((segment) => segment.label)).toEqual(['Agent', 'Code', 'PR', 'Diff', 'Device'])
+  })
+  test('Device is always open, for any worktree', () => {
+    expect(byView(segments({ facts: facts(null), changed: 0, codeAvailable: false })).device).toMatchObject({ enabled: true, title: 'Device (⌘5)', badge: null })
   })
 })
 
@@ -103,11 +106,11 @@ describe('views per item', () => {
 
 describe('view keys', () => {
   const key = (value: string, extra: Partial<{ metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean }> = {}) => ({ key: value, metaKey: true, shiftKey: false, altKey: false, ctrlKey: false, ...extra })
-  test('⌘1 to ⌘4 pick Agent, Code, PR and Diff', () => {
-    expect(['1', '2', '3', '4'].map((value) => viewForKey(key(value)))).toEqual(['agent', 'code', 'pr', 'diff'])
+  test('⌘1 to ⌘5 pick Agent, Code, PR, Diff and Device', () => {
+    expect(['1', '2', '3', '4', '5'].map((value) => viewForKey(key(value)))).toEqual(['agent', 'code', 'pr', 'diff', 'device'])
   })
   test('other digits, a missing ⌘ or an extra modifier are not the bar’s', () => {
-    expect(viewForKey(key('5'))).toBeNull()
+    expect(viewForKey(key('6'))).toBeNull()
     expect(viewForKey(key('1', { metaKey: false }))).toBeNull()
     expect(viewForKey(key('1', { shiftKey: true }))).toBeNull()
     expect(viewForKey(key('1', { altKey: true }))).toBeNull()
@@ -135,18 +138,19 @@ describe('tab focus', () => {
   })
 
   test('they wrap past either end', () => {
-    expect(tabStep(all, 'diff', 'ArrowRight')).toBe('agent')
-    expect(tabStep(all, 'agent', 'ArrowLeft')).toBe('diff')
+    expect(tabStep(all, 'diff', 'ArrowRight')).toBe('device')
+    expect(tabStep(all, 'device', 'ArrowRight')).toBe('agent')
+    expect(tabStep(all, 'agent', 'ArrowLeft')).toBe('device')
   })
 
   test('a disabled tab is skipped', () => {
-    expect(tabStep(some, 'code', 'ArrowRight')).toBe('agent')
-    expect(tabStep(some, 'agent', 'ArrowLeft')).toBe('code')
+    expect(tabStep(some, 'code', 'ArrowRight')).toBe('device')
+    expect(tabStep(some, 'device', 'ArrowLeft')).toBe('code')
   })
 
   test('any other key, or no other enabled tab, stays put', () => {
     expect(tabStep(all, 'code', 'Enter')).toBeNull()
     expect(tabStep(all, 'code', 'ArrowDown')).toBeNull()
-    expect(tabStep(segments({ facts: facts(null), changed: 0, codeAvailable: false }), 'agent', 'ArrowRight')).toBeNull()
+    expect(tabStep(segments({ facts: facts(null), changed: 0, codeAvailable: false }).filter((segment) => segment.view !== 'device'), 'agent', 'ArrowRight')).toBeNull()
   })
 })

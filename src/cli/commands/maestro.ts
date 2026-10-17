@@ -93,6 +93,17 @@ function latestRun(environment: Environment, worktree: string): { directory: str
   return { directory, record: record.state === "running" && !alive(record.pid) ? { ...record, state: "failed" } : record };
 }
 
+function allRuns(environment: Environment, worktree: string): Array<{ directory: string; record: RunRecord }> {
+  const root = worktreeRoot(environment, worktree);
+  if (!existsSync(root)) return [];
+  return readdirSync(root).sort().reverse().flatMap((name) => {
+    const directory = join(root, name);
+    const record = readRecord(directory);
+    if (record === undefined) return [];
+    return [{ directory, record: record.state === "running" && !alive(record.pid) ? { ...record, state: "failed" as const } : record }];
+  });
+}
+
 function findFiles(directory: string, pattern: RegExp): string[] {
   if (!existsSync(directory)) return [];
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -230,6 +241,44 @@ async function statusVerb(args: readonly string[], environment: Environment, pro
   return ok(parsed.value.json ? `${JSON.stringify(body, null, 2)}\n` : latest === undefined ? "no maestro runs for this worktree\n" : `${latest.record.state} ${latest.record.flow} on ${latest.record.device} (run ${latest.record.runId})\n`);
 }
 
+async function runsVerb(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
+  const parsed = parseOptions(args, ["--worktree"]);
+  if (parsed.kind !== "ok") return parsed;
+  const worktree = await resolveWorktree(parsed.value.values["--worktree"], process);
+  const runs = allRuns(environment, worktree).map(({ directory, record }) => ({
+    ...record,
+    durationMs: record.finishedAt === undefined ? null : Date.parse(record.finishedAt) - Date.parse(record.startedAt),
+    artifacts: directory,
+  }));
+  if (parsed.value.json) return ok(`${JSON.stringify(runs, null, 2)}\n`);
+  return ok(runs.length === 0 ? "no maestro runs for this worktree\n" : `${runs.map((run) => `${run.state}\t${run.flow}\t${run.startedAt}\t${run.runId}`).join("\n")}\n`);
+}
+
+const FLOW_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const flowTemplate = (name: string): string => `# A Maestro flow: https://docs.maestro.dev
+appId: com.example.app # the bundle id of the app under test
+name: ${name}
+---
+- launchApp
+- takeScreenshot: ${name}
+`;
+
+async function newVerb(args: readonly string[], process: ProcessAdapter): Promise<Result<string>> {
+  const parsed = parseOptions(args, ["--worktree"]);
+  if (parsed.kind !== "ok") return parsed;
+  const { values, json, positional } = parsed.value;
+  if (positional.length !== 1) return failed(usageText("maestro-new"), 2);
+  const name = (positional[0] ?? "").replace(/\.ya?ml$/, "");
+  if (!FLOW_NAME.test(name)) return failed(`a flow name is letters, digits, - and _, starting with a letter or digit: ${positional[0]}`, 2);
+  const worktree = await resolveWorktree(values["--worktree"], process);
+  const path = join(".maestro", `${name}.yaml`);
+  const file = join(worktree, path);
+  if (existsSync(file)) return failed(`a flow already exists at ${path}`);
+  mkdirSync(join(worktree, ".maestro"), { recursive: true });
+  writeFileSync(file, flowTemplate(name), { flag: "wx" });
+  return ok(json ? `${JSON.stringify({ path })}\n` : `created ${path}\n`);
+}
+
 async function stopVerb(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   const parsed = parseOptions(args, ["--worktree"]);
   if (parsed.kind !== "ok") return parsed;
@@ -241,14 +290,16 @@ async function stopVerb(args: readonly string[], environment: Environment, proce
   return ok(parsed.value.json ? `${JSON.stringify({ runId: latest.record.runId, state: "stopped" }, null, 2)}\n` : `stopped run ${latest.record.runId}\n`);
 }
 
-/** Maestro flows of a worktree: list them, run one under admission with per-step events, and manage the run. */
+/** Maestro flows of a worktree: list or create them, run one under admission with per-step events, and manage and list the runs. */
 export async function executeMaestro(args: readonly string[], environment: Environment, process: ProcessAdapter, emit?: Emit): Promise<Result<string>> {
   const [verb, ...rest] = args;
   if (verb === undefined || verb === "-h" || verb === "--help") return ok(usageText("maestro"));
-  if (rest.includes("-h") || rest.includes("--help")) return ok(usageText(verb === "flows" ? "maestro-flows" : verb === "run" ? "maestro-run" : verb === "status" ? "maestro-status" : "maestro-stop"));
+  if (rest.includes("-h") || rest.includes("--help")) return ok(usageText(verb === "flows" ? "maestro-flows" : verb === "run" ? "maestro-run" : verb === "status" ? "maestro-status" : verb === "runs" ? "maestro-runs" : verb === "new" ? "maestro-new" : "maestro-stop"));
   if (verb === "flows") return flowsVerb(rest, process);
   if (verb === "run") return runVerb(rest, environment, process, emit);
   if (verb === "status") return statusVerb(rest, environment, process);
   if (verb === "stop") return stopVerb(rest, environment, process);
-  return failed("maestro requires flows|run|status|stop", 2);
+  if (verb === "runs") return runsVerb(rest, environment, process);
+  if (verb === "new") return newVerb(rest, process);
+  return failed("maestro requires flows|run|status|stop|runs|new", 2);
 }

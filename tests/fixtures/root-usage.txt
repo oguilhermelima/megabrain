@@ -72,6 +72,7 @@ Commands:
   native appium start|stop|status      Manage the shared Appium server
   native build <phone|tv> ...          Build, install and launch a native app
   native sim ensure <phone|tv> ...     Boot a requested Apple simulator
+  native sim screenshot <udid> ...     Capture a booted simulator's screen
   native app reload <phone|tv> ...     Terminate and deep-link an app
   native health <phone|tv> ...         Check whether an app is rendering
   tv connect <ip> [--port <port>]      Connect an Android TV over adb

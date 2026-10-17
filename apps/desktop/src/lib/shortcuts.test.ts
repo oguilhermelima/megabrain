@@ -28,7 +28,7 @@ describe('the shortcut registry', () => {
   test('every shortcut the app had keeps a place, with one id each', () => {
     const ids: string[] = shortcuts.map((shortcut) => shortcut.id)
     expect(new Set(ids).size).toBe(ids.length)
-    for (const id of ['settings.open', 'chat.new', 'terminal.new', 'sidebar.toggle', 'sidebar.focus', 'sidebar.search', 'item.next', 'item.previous', 'pane.splitRight', 'pane.splitDown', 'pane.close', 'pane.next', 'pane.previous', 'pane.focusLeft', 'pane.focusRight', 'pane.focusUp', 'pane.focusDown', 'view.agent', 'view.code', 'view.pr', 'view.diff']) {
+    for (const id of ['settings.open', 'chat.new', 'terminal.new', 'sidebar.toggle', 'sidebar.focus', 'sidebar.search', 'item.next', 'item.previous', 'pane.splitRight', 'pane.splitDown', 'pane.close', 'pane.next', 'pane.previous', 'pane.focusLeft', 'pane.focusRight', 'pane.focusUp', 'pane.focusDown', 'view.agent', 'view.code', 'view.pr', 'view.diff', 'view.device']) {
       expect(ids).toContain(id)
     }
     expect(shortcuts.every((shortcut) => shortcut.label !== '' && shortcut.group !== '' && shortcut.keys.length > 0)).toBe(true)
@@ -58,7 +58,7 @@ describe('the shortcut registry', () => {
   })
 
   test('the pane bar views are listed but cannot be changed here', () => {
-    expect(shortcuts.filter((shortcut) => shortcut.fixed === true).map((shortcut) => shortcut.id)).toEqual(['view.agent', 'view.code', 'view.pr', 'view.diff'])
+    expect(shortcuts.filter((shortcut) => shortcut.fixed === true).map((shortcut) => shortcut.id)).toEqual(['view.agent', 'view.code', 'view.pr', 'view.diff', 'view.device'])
     expect(rebindShortcut(noShortcutOverrides, 'view.agent', ['mod+9'])).toEqual(noShortcutOverrides)
   })
 })

@@ -130,3 +130,62 @@ describe("maestro run", () => {
     expect(readdirSync(join(root, "state", "maestro")).length).toBe(1);
   });
 });
+
+describe("maestro runs", () => {
+  test("lists every run of the worktree, newest first, with its verdict and duration", async () => {
+    const { worktree, environment } = sandbox();
+    await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", worktree, "--device", UDID, "--json"], environment, adapter);
+    await executeMaestro(["run", "maestro/home.yml", "--worktree", worktree, "--device", UDID, "--json"], { ...environment, FAKE_MAESTRO_OUTPUT: "run-failed.txt", FAKE_MAESTRO_EXIT: "1" }, adapter);
+    const result = await executeMaestro(["runs", "--worktree", worktree, "--json"], environment, adapter);
+    expect(result.kind).toBe("ok");
+    const runs = JSON.parse(result.kind === "ok" ? result.value : "[]") as Array<Record<string, unknown>>;
+    expect(runs.map((run) => [run.flow, run.state])).toEqual([["maestro/home.yml", "failed"], [".maestro/prefs.yaml", "passed"]]);
+    expect(typeof runs[0]?.durationMs).toBe("number");
+    expect(typeof runs[0]?.startedAt).toBe("string");
+    expect(String(runs[0]?.artifacts)).toContain(String(runs[0]?.runId));
+  });
+
+  test("a worktree that never ran lists none", async () => {
+    const { worktree, environment } = sandbox();
+    const result = await executeMaestro(["runs", "--worktree", worktree, "--json"], environment, adapter);
+    expect(result.kind === "ok" ? JSON.parse(result.value) : null).toEqual([]);
+  });
+});
+
+describe("maestro new", () => {
+  test("writes a flow from the template under .maestro, which flows then lists", async () => {
+    const { worktree, environment } = sandbox();
+    const result = await executeMaestro(["new", "checkout", "--worktree", worktree, "--json"], environment, adapter);
+    expect(result.kind === "ok" ? JSON.parse(result.value) : null).toEqual({ path: ".maestro/checkout.yaml" });
+    const text = readFileSync(join(worktree, ".maestro", "checkout.yaml"), "utf8");
+    expect(text).toContain("appId:");
+    expect(text).toContain("name: checkout");
+    expect(text).toContain("- launchApp");
+    const flows = await executeMaestro(["flows", "--worktree", worktree, "--json"], environment, adapter);
+    expect((JSON.parse(flows.kind === "ok" ? flows.value : "[]") as Array<{ path: string }>).map((flow) => flow.path)).toContain(".maestro/checkout.yaml");
+  });
+
+  test("creates .maestro when the worktree has none and accepts a name ending in .yaml", async () => {
+    const { root, environment } = sandbox();
+    const bare = join(root, "bare");
+    mkdirSync(bare);
+    const result = await executeMaestro(["new", "smoke.yaml", "--worktree", bare, "--json"], environment, adapter);
+    expect(result.kind === "ok" ? JSON.parse(result.value) : null).toEqual({ path: ".maestro/smoke.yaml" });
+    expect(existsSync(join(bare, ".maestro", "smoke.yaml"))).toBe(true);
+  });
+
+  test("refuses to overwrite an existing flow", async () => {
+    const { worktree, environment } = sandbox();
+    const before = readFileSync(join(worktree, ".maestro", "prefs.yaml"), "utf8");
+    const result = await executeMaestro(["new", "prefs", "--worktree", worktree, "--json"], environment, adapter);
+    expect(result.kind).toBe("failed");
+    expect(readFileSync(join(worktree, ".maestro", "prefs.yaml"), "utf8")).toBe(before);
+  });
+
+  test.each(["../escape", "a/b", ".hidden", ""])("refuses the name %p", async (name) => {
+    const { root, worktree, environment } = sandbox();
+    const result = await executeMaestro(["new", name, "--worktree", worktree, "--json"], environment, adapter);
+    expect(result.kind).toBe("failed");
+    expect(existsSync(join(root, "escape.yaml"))).toBe(false);
+  });
+});

@@ -4,6 +4,7 @@ import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
+import { createMockMaestroApi } from '@/api/fixtures/maestro'
 import { mockUsageStats } from '@/api/fixtures/usage'
 import { createMockReviewApi } from '@/api/fixtures/github-review'
 import { validateRule } from '@/settings/chain-rules'
@@ -179,6 +180,7 @@ export function createMockApi(): DesktopApi {
       released.delete(sessionId)
       taken.add(sessionId)
     },
+    ...createMockMaestroApi(),
     openCodeServer: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),
     stopCodeServer: async () => {},
     openInCode: async (root) => ({ root, url: 'about:blank', port: 0, pid: 0 }),

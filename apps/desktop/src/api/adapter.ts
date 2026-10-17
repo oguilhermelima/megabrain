@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats } from '@/api/schema'
+import type { AgentDefaults, NativeChat, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -87,6 +87,22 @@ export interface DesktopApi {
   stopCodeServer(root: string): Promise<void>
   /** Open a file (optionally at a line) in the running Code for that root; starts it when needed. */
   openInCode(root: string, path: string, line?: number): Promise<CodeServer>
+  /** A worktree's Maestro flows (`maestro flows --json`). */
+  maestroFlows(root: string): Promise<MaestroFlow[]>
+  /** Every Maestro run of a worktree, newest first (`maestro runs --json`). */
+  maestroRuns(root: string): Promise<MaestroRun[]>
+  /** Writes .maestro/<name>.yaml from the CLI's template (`maestro new`); resolves to its path in the worktree. */
+  maestroNewFlow(root: string, name: string): Promise<string>
+  /** Runs a flow (`maestro run --json`), each line as it arrives; onEnd gets the CLI's error, if any. The returned function kills the run's stream. */
+  maestroRun(root: string, flow: string, device: string, onEvent: (event: MaestroEvent) => void, onEnd: (error: string | null) => void): Promise<() => void>
+  /** Stops the worktree's running flow (`maestro stop`). */
+  maestroStop(root: string): Promise<void>
+  /** The iOS simulators (`native sim list phone --json`). */
+  simulators(): Promise<Simulator[]>
+  /** Boots a simulator headless and waits for it (`native sim ensure phone --device`). */
+  bootSimulator(udid: string): Promise<void>
+  /** A fresh screenshot of a booted simulator (`native sim screenshot`); resolves to the file's path. */
+  simulatorScreenshot(udid: string): Promise<string>
   /** Everything the Settings window shows. */
   settings(): Promise<Settings>
   /** Only some top-level keys (`settings --json --only`), so one page never waits on another's work. */

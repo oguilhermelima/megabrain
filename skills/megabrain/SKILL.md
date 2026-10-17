@@ -67,6 +67,8 @@ megabrain maestro flows [--worktree <path>] [--json] — recommended when you ne
 megabrain maestro run <flow> [--worktree <path>] [--device <udid|name>] [--admission wait|fail] [--json] — recommended when you need to run one Maestro flow on a booted iOS simulator under the resource policy and read per-step events (JSON lines with --json); artifacts are stored in the state directory per worktree and run.
 megabrain maestro status [--worktree <path>] [--json] — recommended when you need the state of a worktree's latest Maestro run.
 megabrain maestro stop [--worktree <path>] [--json] — recommended when you need to stop a worktree's running Maestro run.
+megabrain maestro runs [--worktree <path>] [--json] — recommended when you need every Maestro run of a worktree, newest first, with state and duration.
+megabrain maestro new <name> [--worktree <path>] [--json] — recommended when you need to create .maestro/<name>.yaml from a starter template.
 megabrain port who <port> [--json] — recommended when you need to see which process listens on a port, where it runs, and whether megabrain started it.
 megabrain port free [--from <port>] [--json] — recommended when you need the next port nothing listens on.
 megabrain port kill <port> [--json] — recommended when you need to stop your own process tree that holds a port; another user's process is refused.
@@ -466,6 +468,7 @@ and `device`; `health` reads `bundleId`, `device`, `metroPort`, and `controlFram
 megabrain native appium start|stop|status — recommended when you need to check, start, or stop the shared Appium server for simulator work.
 megabrain native sim list <phone|tv> [--json] — recommended when you need to find available iOS or tvOS simulators.
 megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json] — recommended when you need to boot and prepare the requested Apple simulator.
+megabrain native sim screenshot <udid> [--json] — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
 megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json] — recommended when you need to check which Apple simulator runtimes are installed or available.
 megabrain native runtime install <ios|tvos> <version> [--json] — recommended when you need to install an Apple simulator runtime needed by a device.
 megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json] — recommended when you need to restart a native app and navigate it to a route.

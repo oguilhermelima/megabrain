@@ -1,0 +1,28 @@
+[
+  {
+    "runId": "20261017T014052704Z-bf8515",
+    "flow": ".maestro/prefs.yaml",
+    "worktree": "/Users/operator/.megabrain-fixture/work",
+    "device": "401F3DA8-E4C1-48B7-9BB9-2C8416115E1A",
+    "pid": 11247,
+    "state": "failed",
+    "startedAt": "2026-10-17T01:40:52.705Z",
+    "exitCode": 1,
+    "finishedAt": "2026-10-17T01:40:52.720Z",
+    "durationMs": 15,
+    "artifacts": "/Users/operator/.megabrain-fixture/state/maestro/d546ed6703ff6745/20261017T014052704Z-bf8515"
+  },
+  {
+    "runId": "20261017T014052646Z-74149d",
+    "flow": ".maestro/prefs.yaml",
+    "worktree": "/Users/operator/.megabrain-fixture/work",
+    "device": "401F3DA8-E4C1-48B7-9BB9-2C8416115E1A",
+    "pid": 11238,
+    "state": "passed",
+    "startedAt": "2026-10-17T01:40:52.647Z",
+    "exitCode": 0,
+    "finishedAt": "2026-10-17T01:40:52.688Z",
+    "durationMs": 41,
+    "artifacts": "/Users/operator/.megabrain-fixture/state/maestro/d546ed6703ff6745/20261017T014052646Z-74149d"
+  }
+]

@@ -5,11 +5,13 @@ import type { PaneView, WorktreeFacts } from '@/chat/action-bar-model'
 export interface PaneViewControls {
   facts: WorktreeFacts
   view: PaneView
-  /** The focused pane takes ⌘1 to ⌘4. */
+  /** The focused pane takes ⌘1 to ⌘5. */
   focused: boolean
   setView: (view: PaneView) => void
   /** What the Code view shows under the bar: the slot Code is laid over. */
   code: ReactNode
+  /** Shows a file of the worktree in Code. */
+  openFile: (path: string) => void
 }
 
 /** Set for every item with a worktree but the launcher; null hides the bar. */

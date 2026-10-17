@@ -11,6 +11,7 @@ import { nativeSessionFor, removeNativeSession, replaceNativeSession, type Nativ
 import { createNativeSessionStore } from "../../adapters/native-session-store.js";
 import { connectMetroInspector, waitForMetroInspectorTarget, type MetroEvaluation } from "../../core/native-cdp.js";
 import { buildNativeCaptureFailureRecord, buildNativeCapturePaths, buildNativeCaptureRecord, decideCaptureOutcome, type NativeCaptureRecord, type NativeCaptureScreenRecord } from "../../core/native-capture.js";
+import { resolveStateDirectory } from "../../core/state.js";
 import { usageText } from "../../core/usage.js";
 
 export type Environment = Readonly<Record<string, string | undefined>>;
@@ -453,6 +454,19 @@ async function nativeList(args: readonly string[], processAdapter: ProcessAdapte
   const kind = parseKind(args); if (kind.kind !== "ok") return kind;
   const candidates = await simCandidates(processAdapter, kind.value); if (candidates.kind !== "ok") return candidates;
   return ok(formatNativeList(kind.value, candidates.value, json));
+}
+const SIMULATOR_UDID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+
+/** A headless screenshot of a booted simulator (simctl io, no window), kept as one file per device. */
+async function nativeScreenshot(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args.includes("-h") || args.includes("--help")) return ok(`${usageText("native-sim-screenshot")}\n`);
+  const udid = args.find((arg) => !arg.startsWith("--")) ?? "";
+  if (!SIMULATOR_UDID.test(udid)) return error(`native sim screenshot needs a simulator udid: ${udid}`, 2);
+  const path = join(resolveStateDirectory(environment), "native", "screens", `${udid}.png`);
+  await mkdir(dirname(path), { recursive: true });
+  const capture = await processAdapter.run("xcrun", ["simctl", "io", udid, "screenshot", path]);
+  if (capture.kind !== "ok") return error(`could not capture simulator ${udid}; is it booted? ${capture.error}`);
+  return args.includes("--json") ? ok(`${JSON.stringify({ device: udid, path })}\n`) : ok(`${path}\n`);
 }
 async function nativeEnsure(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(nativeUsage("ensure"));
@@ -1171,6 +1185,7 @@ export async function executeNative(args: readonly string[], environment: Enviro
   else if (family === "runtime" && operation === "install") result = await nativeRuntimeInstall(rest, processAdapter);
   else if (family === "sim" && operation === "list") result = await nativeList(rest, processAdapter);
   else if (family === "sim" && operation === "ensure") result = await nativeEnsure(rest, environment, processAdapter);
+  else if (family === "sim" && operation === "screenshot") result = await nativeScreenshot(rest, environment, processAdapter);
   else if (family === "health") result = await nativeHealth([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "crashes") result = await nativeCrashes([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);
   else if (family === "eval") result = await nativeEval([operation ?? "", ...rest].filter((value) => value !== ""), environment, processAdapter);

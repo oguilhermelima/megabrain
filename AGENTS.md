@@ -37,11 +37,13 @@
 - Run megabrain repo discover [--roots <paths>] [--json]. — recommended when you need to find git repositories on this machine that are not registered yet.
 - Run megabrain sessions history --cwd <path> [--agent <claude|codex|grok|agy>] [--limit <n>] [--json]. — recommended when you need the past sessions of a folder, newest first, to resume with agent command --resume.
 - Run megabrain usage stats [--days <n>] [--provider <claude|codex|grok|agy>] [--json]. — recommended when you need token usage per day and provider from the agents' own logs, with an estimated cost and megabrain's dispatch and chat counts.
-- Run megabrain maestro flows|run|status|stop .... — recommended when you need to run Maestro UI flows on the iOS simulator.
+- Run megabrain maestro flows|run|status|stop|runs|new .... — recommended when you need to run Maestro UI flows on the iOS simulator.
 - Run megabrain maestro flows [--worktree <path>] [--json]. — recommended when you need to list a worktree's Maestro flows (.maestro and maestro folders) with name and app id.
 - Run megabrain maestro run <flow> [--worktree <path>] [--device <udid|name>] [--admission wait|fail] [--json]. — recommended when you need to run one Maestro flow on a booted iOS simulator under the resource policy and read per-step events (JSON lines with --json); artifacts are stored in the state directory per worktree and run.
 - Run megabrain maestro status [--worktree <path>] [--json]. — recommended when you need the state of a worktree's latest Maestro run.
 - Run megabrain maestro stop [--worktree <path>] [--json]. — recommended when you need to stop a worktree's running Maestro run.
+- Run megabrain maestro runs [--worktree <path>] [--json]. — recommended when you need every Maestro run of a worktree, newest first, with state and duration.
+- Run megabrain maestro new <name> [--worktree <path>] [--json]. — recommended when you need to create .maestro/<name>.yaml from a starter template.
 - Run megabrain port who|free|kill .... — recommended when you need to find what listens on a port, the next free port, or stop a listener.
 - Run megabrain port who <port> [--json]. — recommended when you need to see which process listens on a port, where it runs, and whether megabrain started it.
 - Run megabrain port free [--from <port>] [--json]. — recommended when you need the next port nothing listens on.
@@ -136,6 +138,7 @@
 - Run megabrain native appium stop.
 - Run megabrain native sim list <phone|tv> [--json]. — recommended when you need to find available iOS or tvOS simulators.
 - Run megabrain native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]. — recommended when you need to boot and prepare the requested Apple simulator.
+- Run megabrain native sim screenshot <udid> [--json]. — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
 - Run megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json]. — recommended when you need to check which Apple simulator runtimes are installed or available.
 - Run megabrain native runtime install <ios|tvos> <version> [--json]. — recommended when you need to install an Apple simulator runtime needed by a device.
 - Run megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]. — recommended when you need to verify that the native app is rendering on its simulator.

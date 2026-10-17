@@ -70,6 +70,8 @@
             "$HOME/.megabrain/project-pictures/*.jpeg",
             "$HOME/.megabrain/project-pictures/*.webp",
             "$HOME/.megabrain/project-pictures/*.svg",
+            "$HOME/.megabrain/maestro/**/*.png",
+            "$HOME/.megabrain/native/screens/*.png",
             "$HOME/.megabrain/attachments/*.png",
             "$HOME/.megabrain/attachments/*.jpg",
             "$HOME/.megabrain/attachments/*.jpeg",

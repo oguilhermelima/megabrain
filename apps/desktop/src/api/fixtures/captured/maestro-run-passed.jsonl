@@ -1,0 +1,5 @@
+{"type":"start","state":"running","runId":"20261017T014052646Z-74149d","flow":".maestro/prefs.yaml","device":"401F3DA8-E4C1-48B7-9BB9-2C8416115E1A","artifacts":"/Users/operator/.megabrain-fixture/state/maestro/d546ed6703ff6745/20261017T014052646Z-74149d"}
+{"type":"step","index":1,"command":"Launch app \"com.apple.Preferences\"","durationMs":40,"status":"passed","screenshot":null,"error":null}
+{"type":"step","index":2,"command":"Assert that id: com.apple.settings.sidebar.collectionView is visible","durationMs":0,"status":"passed","screenshot":null,"error":null}
+{"type":"step","index":3,"command":"Take screenshot prefs-home","durationMs":0,"status":"passed","screenshot":"/Users/operator/.megabrain-fixture/state/maestro/d546ed6703ff6745/20261017T014052646Z-74149d/artifacts/2026-10-16_221131/Preferences opens/takeScreenshot/prefs-home.png","error":null}
+{"type":"run","state":"passed","runId":"20261017T014052646Z-74149d","flow":".maestro/prefs.yaml","device":"401F3DA8-E4C1-48B7-9BB9-2C8416115E1A","exitCode":0,"durationMs":41,"artifacts":"/Users/operator/.megabrain-fixture/state/maestro/d546ed6703ff6745/20261017T014052646Z-74149d"}

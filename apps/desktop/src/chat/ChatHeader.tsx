@@ -13,7 +13,7 @@ import { RunButton, RunPanelToggle } from '@/run-panel/RunButton'
 /**
  * The top bar every chat view and the launcher share. Its first row is the agent's mark, live while it works (none on the launcher), and the title on one line (header-model),
  * truncating before the controls on the right: the view's own controls (the chat or terminal switch, shown only in Agent), the Run button and the run panel's toggle once
- * anything ran. An item with a worktree (a launcher once it has one) also gets a second row, the view tabs (Agent, Code, PR and Diff, each shown in the pane under the bar),
+ * anything ran. An item with a worktree (a launcher once it has one) also gets a second row, the view tabs (Agent, Code, PR, Diff and Device, each shown in the pane under the bar),
  * starting at the mark's left edge and scrolling sideways when the pane is too narrow for them; the bar's hairline runs under them. The first row sits about 12px below
  * the window top. When the sidebar is hidden and this bar joins the window row (panes/window-row) that row shrinks to the lights' 44px band, centred on their line, and
  * both rows leave room at their left for the lights and the show-sidebar button. In a split it is also the pane's header (panes/pane-chrome): its empty space drags the
@@ -32,7 +32,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
   const latest = useRef({ available, select })
   latest.current = { available, select }
 
-  // ⌘1 to ⌘4 in the capture phase, so a terminal or an editor in the pane does not keep them; a disabled view ignores its key.
+  // ⌘1 to ⌘5 in the capture phase, so a terminal or an editor in the pane does not keep them; a disabled view ignores its key.
   // Inside Code they never reach this window, and they are left alone should one arrive while it has the keyboard.
   const focused = pane?.focused === true
   useEffect(() => {
@@ -114,7 +114,7 @@ export function ChatHeader({ agent, activity = 'idle', title, actions }: { agent
 
   const shown = shownView(pane.view, available)
 
-  const body = shown !== 'agent' && <PaneViewBody view={shown} facts={pane.facts} changes={changes} code={pane.code} header={header} />
+  const body = shown !== 'agent' && <PaneViewBody view={shown} facts={pane.facts} changes={changes} code={pane.code} openFile={pane.openFile} header={header} />
 
   // Both rows share one left edge, the bar's padding: the first tab's icon sits under the mark. The view's controls belong to Agent and show only there.
   return (

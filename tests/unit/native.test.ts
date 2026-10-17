@@ -507,3 +507,52 @@ describe("native appium lifecycle", () => {
     ]);
   });
 });
+
+describe("native sim screenshot", () => {
+  const UDID = "401F3DA8-E4C1-48B7-9BB9-2C8416115E1A";
+  const recording = (answer: (args: readonly string[]) => ReturnType<ProcessAdapter["run"]>) => {
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push({ command, args: [...args] });
+        return answer(args);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount: () => calls.length,
+    };
+    return { calls, process };
+  };
+
+  test("captures the simulator's screen headlessly into the state directory", async () => {
+    const state = await mkdtemp(join(tmpdir(), "megabrain-native-screenshot-"));
+    const { calls, process } = recording(async () => ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeNative(["sim", "screenshot", UDID, "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(result.kind).toBe("ok");
+      const path = join(state, "native", "screens", `${UDID}.png`);
+      expect(result.kind === "ok" ? JSON.parse(result.value) : null).toEqual({ device: UDID, path, refusal: null });
+      expect(calls).toEqual([{ command: "xcrun", args: ["simctl", "io", UDID, "screenshot", path] }]);
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses anything but a simulator udid without calling simctl", async () => {
+    const { calls, process } = recording(async () => ok({ stdout: "", stderr: "", exitCode: 0 }));
+    const result = await executeNative(["sim", "screenshot", "../../etc"], { MEGABRAIN_STATE_DIR: "/nonexistent" }, process);
+    expect(result.kind).toBe("failed");
+    expect(calls).toEqual([]);
+  });
+
+  test("reports a simulator that is not booted", async () => {
+    const state = await mkdtemp(join(tmpdir(), "megabrain-native-screenshot-"));
+    const { process } = recording(async () => failed("xcrun exited with status 164"));
+    try {
+      const result = await executeNative(["sim", "screenshot", UDID, "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+      const refusal = (result.kind === "ok" ? JSON.parse(result.value) : null) as { refusal: { message: string } | null } | null;
+      expect(refusal?.refusal?.message).toContain(UDID);
+    } finally {
+      await rm(state, { recursive: true, force: true });
+    }
+  });
+});

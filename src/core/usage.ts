@@ -35,11 +35,13 @@ export const USAGE_LINES = {
   "repo-stop": "repo stop <name|path> [--script run|build|install] [--worktree <path>] [--force] [--json]",
   "repo-github": "repo github [--owner <login>] [--orgs] [--json]",
   "repo-discover": "repo discover [--roots <paths>] [--json]",
-  "maestro": "maestro flows|run|status|stop ...",
+  "maestro": "maestro flows|run|status|stop|runs|new ...",
   "maestro-flows": "maestro flows [--worktree <path>] [--json]",
   "maestro-run": "maestro run <flow> [--worktree <path>] [--device <udid|name>] [--admission wait|fail] [--json]",
   "maestro-status": "maestro status [--worktree <path>] [--json]",
   "maestro-stop": "maestro stop [--worktree <path>] [--json]",
+  "maestro-runs": "maestro runs [--worktree <path>] [--json]",
+  "maestro-new": "maestro new <name> [--worktree <path>] [--json]",
   "projects": "projects [--json]",
   "port": "port who|free|kill ...",
   "port-who": "port who <port> [--json]",
@@ -130,6 +132,7 @@ export const USAGE_LINES = {
   "native-runtime-list": "native runtime list [<ios|tvos>] (--installed|--available) [--json]",
   "native-runtime-install": "native runtime install <ios|tvos> <version> [--json]",
   "native-sim-ensure": "native sim ensure <phone|tv> [--device <name-or-udid>] [--timeout <seconds>] [--json]",
+  "native-sim-screenshot": "native sim screenshot <udid> [--json]",
   "native-app-reload": "native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]",
   "native-health": "native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]",
   "native-crashes": "native crashes <phone|tv> [--last N] [--json]",
@@ -273,6 +276,7 @@ Commands:
   native appium start|stop|status      Manage the shared Appium server
   native build <phone|tv> ...          Build, install and launch a native app
   native sim ensure <phone|tv> ...     Boot a requested Apple simulator
+  native sim screenshot <udid> ...     Capture a booted simulator's screen
   native app reload <phone|tv> ...     Terminate and deep-link an app
   native health <phone|tv> ...         Check whether an app is rendering
   tv connect <ip> [--port <port>]      Connect an Android TV over adb

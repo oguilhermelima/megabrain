@@ -11,16 +11,18 @@ export interface SharedBar {
   identity: GroupIdentity
   view: PaneView
   setView: (view: PaneView) => void
-  /** The split takes ⌘1 to ⌘4 (nothing covers it). */
+  /** The split takes ⌘1 to ⌘5 (nothing covers it). */
   focused: boolean
   /** What the Code view shows: the slot the worktree's Code is laid over. */
   code: ReactNode
+  /** Shows a file of the worktree in Code. */
+  openFile: (path: string) => void
 }
 
 /**
  * The split area and what it shows once for all its panes. A split on one worktree gets one bar on
  * top: the project and branch at its left (the pull request's number is on the PR tab), Run and the
- * run panel's toggle at its right, and under them the view tabs, Agent, Code, PR and Diff (Agent is
+ * run panel's toggle at its right, and under them the view tabs, Agent, Code, PR, Diff and Device (Agent is
  * the split itself; the others lie over the whole area, the panes kept mounted beneath). With the
  * sidebar hidden its first row joins the window row, 44px tall, and both rows are inset past the lights. A split across worktrees keeps each pane's own bar. `children` is told whether a view covers them.
  */
@@ -32,7 +34,7 @@ export function SplitFrame({ shared, inset, children }: { shared: SharedBar | nu
   const latest = useRef({ available, setView: shared?.setView })
   latest.current = { available, setView: shared?.setView }
 
-  // ⌘1 to ⌘4 in the capture phase, as a pane's own bar takes them; never while the keyboard is in Code.
+  // ⌘1 to ⌘5 in the capture phase, as a pane's own bar takes them; never while the keyboard is in Code.
   const focused = shared?.focused === true
   useEffect(() => {
     if (!focused) return
@@ -79,7 +81,7 @@ export function SplitFrame({ shared, inset, children }: { shared: SharedBar | nu
         {children(shown !== 'agent')}
         {bar !== null && shown !== 'agent' && (
           <div data-group-view={shown} className="absolute inset-0 z-30 flex min-h-0 flex-col bg-ink-950">
-            <WorktreeView view={shown} facts={bar.facts} changes={changes} code={bar.shared.code} />
+            <WorktreeView view={shown} facts={bar.facts} changes={changes} code={bar.shared.code} openFile={bar.shared.openFile} />
           </div>
         )}
       </div>

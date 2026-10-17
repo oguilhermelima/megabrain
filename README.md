@@ -1057,6 +1057,8 @@ megabrain install simulator-maestro   # then boot a simulator: xcrun simctl boot
 megabrain maestro flows --json
 megabrain maestro run .maestro/smoke.yaml --device <udid> --json   # one JSON line per step
 megabrain maestro status
+megabrain maestro runs --json          # every run of the worktree, newest first
+megabrain maestro new checkout         # .maestro/checkout.yaml from a starter template
 megabrain install simulator-web
 megabrain install tv-adb
 # Or install only one browser: --browser chromium, --browser firefox, or --browser both

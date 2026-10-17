@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { projectsArgs } from '@/api/projects-origin'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink, type PillGeometry } from '@/api/adapter'
-import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema } from '@/api/schema'
+import { usageStatsSchema, agentCommandSchema, agentDefaultsSchema, sessionHistorySchema, chatEventLineSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -43,6 +43,13 @@ async function cliStream(args: string[], onLine: (line: string) => void): Promis
   channel.onmessage = onLine
   const streamId = await invoke<string>('cli_stream', { args, onLine: channel })
   return () => void invoke('cli_stream_stop', { streamId })
+}
+
+// `native` verbs answer --json with a refusal beside the fields, null on success, and exit non-zero when it is set.
+async function nativeJson<T>(args: string[], schema: z.ZodType<T>): Promise<T> {
+  const answer = await cliJson(args, z.looseObject({ refusal: z.looseObject({ message: z.string() }).nullable().optional() }))
+  if (answer.refusal != null) throw new CliError(answer.refusal.message, 1)
+  return schema.parse(answer)
 }
 
 // `github pr-file` answers with the file under `file`, beside the repository and number.
@@ -167,6 +174,28 @@ export function createTauriApi(): DesktopApi {
     ownSession: async (sessionId) => void (await cliText(['session', 'own', sessionId, '--json'])),
     openCodeServer: (root) => cliJson(['code', 'open', root, '--json'], codeServerSchema),
     stopCodeServer: async (root) => void (await cliText(['code', 'stop', root])),
+    maestroFlows: (root) => cliJson(['maestro', 'flows', '--worktree', root, '--json'], z.array(maestroFlowSchema)),
+    maestroRuns: (root) => cliJson(['maestro', 'runs', '--worktree', root, '--json'], z.array(maestroRunSchema)),
+    maestroNewFlow: async (root, name) => (await cliJson(['maestro', 'new', name, '--worktree', root, '--json'], z.looseObject({ path: z.string() }))).path,
+    maestroRun: (root, flow, device, onEvent, onEnd) => {
+      // As with chat events, the stream's last lines may be the CLI's error and an end marker.
+      let error: string | null = null
+      return cliStream(['maestro', 'run', flow, '--worktree', root, '--device', device, '--json'], (text) => {
+        const value: unknown = JSON.parse(text)
+        const marker = streamMarkerSchema.safeParse(value)
+        if (marker.success && marker.data.end === true) return onEnd(error)
+        if (marker.success && marker.data.error !== undefined) {
+          error = marker.data.error
+          return
+        }
+        const event = maestroEventSchema.safeParse(value)
+        if (event.success) onEvent(event.data)
+      })
+    },
+    maestroStop: async (root) => void (await cliText(['maestro', 'stop', '--worktree', root, '--json'])),
+    simulators: async () => (await nativeJson(['native', 'sim', 'list', 'phone', '--json'], simulatorListSchema)).devices,
+    bootSimulator: async (udid) => void (await nativeJson(['native', 'sim', 'ensure', 'phone', '--device', udid, '--json'], z.unknown())),
+    simulatorScreenshot: async (udid) => (await nativeJson(['native', 'sim', 'screenshot', udid, '--json'], z.looseObject({ path: z.string() }))).path,
     openInCode: (root, path, line) =>
       cliJson(['code', 'goto', root, path, ...(line === undefined ? [] : ['--line', String(line)]), '--json'], codeServerSchema),
     settings: () => cliJson(['settings', '--json'], settingsSchema),

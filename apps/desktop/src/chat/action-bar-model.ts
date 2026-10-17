@@ -1,12 +1,13 @@
 import type { BranchChanges, CodeChange, Project, ProjectWorktree } from '@/api/schema'
 import type { ItemKind } from '@/panes/pane-model'
 
-// The view tabs on a pane's top bar, the row under its title: four views of the item's worktree, all shown in the
+// The view tabs on a pane's top bar, the row under its title: five views of the item's worktree, all shown in the
 // pane under the bar. Agent is the chat or session itself, Code the worktree's editor, PR the
-// branch's pull request and Diff its changes. PR and Diff are disabled while there is nothing to show.
+// branch's pull request, Diff its changes and Device its Maestro flows on a simulator. PR and Diff
+// are disabled while there is nothing to show.
 
-export type PaneView = 'agent' | 'code' | 'pr' | 'diff'
-export const paneViews: readonly PaneView[] = ['agent', 'code', 'pr', 'diff']
+export type PaneView = 'agent' | 'code' | 'pr' | 'diff' | 'device'
+export const paneViews: readonly PaneView[] = ['agent', 'code', 'pr', 'diff', 'device']
 
 /** What the bar knows about a worktree: where it is, its branch and repository, and its pull request. */
 export interface WorktreeFacts {
@@ -51,6 +52,7 @@ export function segments({ facts, changed, codeAvailable }: { facts: WorktreeFac
     changed === null || changed === 0
       ? { view: 'diff', label: 'Diff', enabled: false, title: changed === null ? 'Reading changes…' : 'No changes', badge: null }
       : { view: 'diff', label: 'Diff', enabled: true, title: `${changed} changed ${changed === 1 ? 'file' : 'files'} (⌘4)`, badge: String(changed) },
+    { view: 'device', label: 'Device', enabled: true, title: 'Device (⌘5)', badge: null },
   ]
 }
 
@@ -74,14 +76,14 @@ export function chooseView(kind: ItemKind, view: PaneView): { kind: 'view'; view
   return kind === 'code' && view === 'agent' ? { kind: 'launcher' } : { kind: 'view', view }
 }
 
-/** ⌘1 to ⌘4 pick a view; anything else, a modifier besides ⌘ included, is not the bar's. */
+/** ⌘1 to ⌘5 pick a view; anything else, a modifier besides ⌘ included, is not the bar's. */
 export function viewForKey(event: { key: string; metaKey: boolean; shiftKey: boolean; altKey: boolean; ctrlKey: boolean }): PaneView | null {
   if (!event.metaKey || event.shiftKey || event.altKey || event.ctrlKey) return null
-  const index = ['1', '2', '3', '4'].indexOf(event.key)
+  const index = ['1', '2', '3', '4', '5'].indexOf(event.key)
   return index === -1 ? null : (paneViews[index] ?? null)
 }
 
-/** The focused pane's bar takes ⌘1 to ⌘4, but never while the keyboard is in Code, whose own
+/** The focused pane's bar takes ⌘1 to ⌘5, but never while the keyboard is in Code, whose own
  * ⌘1 to ⌘3 focus its editor groups. */
 export function paneViewKey(event: Parameters<typeof viewForKey>[0], where: { focused: boolean; inEditor: boolean }): PaneView | null {
   return where.focused && !where.inEditor ? viewForKey(event) : null
