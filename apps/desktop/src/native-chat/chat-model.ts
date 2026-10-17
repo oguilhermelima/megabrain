@@ -142,6 +142,8 @@ export function applyLine(state: FollowState, line: ChatEventLine): FollowState 
   const event = line.event
   if (event?.kind === 'delta') return applyDelta(state, event)
   if (event?.kind === 'progress') return applyProgress(state, event)
+  // The artifacts row reads its own list; the transcript keeps nothing of it.
+  if (event?.kind === 'artifacts') return state
   const order = state.cursor === null ? 1 : compareCursors(line.cursor, state.cursor)
   if (order < 0) return state
   // A follow resumed at the cursor starts with the chat as chatd holds it now, which the view takes.

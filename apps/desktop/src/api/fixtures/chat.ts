@@ -287,6 +287,11 @@ export function changeMockQueue(chatId: string, change: ChatQueueChange): ChatQu
   return chat.queue.slice()
 }
 
+/** The live-only line that says the chat's artifacts changed. */
+export function publishMockArtifacts(chatId: string) {
+  for (const follower of mockChat(chatId).followers) follower({ cursor: '', event: { kind: 'artifacts', at: new Date().toISOString() } })
+}
+
 export function interruptMockChat(chatId: string) {
   const chat = mockChat(chatId)
   chat.held = true

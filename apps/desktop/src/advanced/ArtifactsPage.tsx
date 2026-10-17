@@ -5,7 +5,8 @@ import type { Artifact, ArtifactContent, NativeChat, Project } from '@/api/schem
 import { ArtifactKindIcon } from '@/advanced/ArtifactStrip'
 import { Chevron } from '@/advanced/chrome'
 import { relativeAge } from '@/advanced/projects-model'
-import { artifactFrameDocument, artifactKindLabel, artifactKinds, artifactOfItem, groupArtifacts, newestArtifact, type ArtifactProject } from '@/advanced/artifacts-model'
+import { ArtifactFrame } from '@/advanced/ArtifactFrame'
+import { artifactKindLabel, artifactKinds, artifactOfItem, groupArtifacts, newestArtifact, type ArtifactProject } from '@/advanced/artifacts-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { projectColor, projectInitials } from '@/advanced/picture-model'
 import { MarkdownText } from '@/chat/markdown'
@@ -145,7 +146,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** A document's headings at reading size; the chat's renderer keeps them small for messages. */
-const documentElements: Components = {
+export const documentElements: Components = {
   h1: (props) => <h1 className="pt-2 text-[22px] leading-tight font-semibold tracking-[-0.015em] text-ink-100" {...props} />,
   h2: (props) => <h2 className="pt-4 text-[17px] font-semibold tracking-[-0.01em] text-ink-100" {...props} />,
   h3: (props) => <h3 className="pt-2 text-[15px] font-semibold text-ink-100" {...props} />,
@@ -215,13 +216,12 @@ function Reading({ id, version, projects, chats, now, onOpenChat }: { id: string
       </div>
     )
   }
-  // The frame scrolls on its own and takes the height the header leaves; an empty sandbox runs no
-  // script and, without same-origin, cannot reach the app; its document's policy blocks every fetch.
+  // The frame scrolls on its own and takes the height the header leaves.
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className={`${column} shrink-0 pt-10 pb-6`}>{header}</div>
       <div className="min-h-0 flex-1 px-6 pb-6">
-        <iframe title={artifact.title} sandbox="" referrerPolicy="no-referrer" srcDoc={artifactFrameDocument(artifact.content)} className="block h-full w-full rounded-[14px] border border-white/[0.07] bg-white" />
+        <ArtifactFrame title={artifact.title} html={artifact.content} className="h-full w-full rounded-[14px] border border-white/[0.07] bg-white" />
       </div>
     </div>
   )

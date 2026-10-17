@@ -1,4 +1,5 @@
-import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockNativeChat, readMockChat, sendMockChat } from '@/api/fixtures/chat'
+import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat } from '@/api/fixtures/chat'
+import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/api/fixtures/chat-artifacts'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { ArchivedWorktree, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
@@ -377,7 +378,12 @@ export function createMockApi(): DesktopApi {
     startChat: async ({ agent, model, cwd }) => ({ ...mockNativeChat, id: `chat-${Date.now()}`, agent, model: model ?? null, cwd, title: null, state: 'starting' }),
     sendChat: async (chatId, parts) => {
       await wait(250)
-      return sendMockChat(chatId, parts)
+      const sent = sendMockChat(chatId, parts)
+      // The agent updates its plan while it answers.
+      setTimeout(() => {
+        if (touchMockChatArtifact(chatId)) publishMockArtifacts(chatId)
+      }, 1800)
+      return sent
     },
     chatQueue: async (chatId, change) => changeMockQueue(chatId, change),
     interruptChat: async (chatId) => interruptMockChat(chatId),
@@ -411,6 +417,16 @@ export function createMockApi(): DesktopApi {
     artifact: async (id) => {
       const found = mockArtifact(id)
       if (found === null) throw new CliError(`unknown artifact: ${id}`, 1)
+      return found
+    },
+    chatArtifacts: async (chatId) => {
+      await wait(120)
+      return mockChatArtifacts(chatId)
+    },
+    chatArtifact: async (chatId, artifactId) => {
+      await wait(120)
+      const found = mockChatArtifact(chatId, artifactId)
+      if (found === null) throw new CliError(`unknown artifact: ${artifactId}`, 1)
       return found
     },
     setChatMode: async (chatId, mode) => ({

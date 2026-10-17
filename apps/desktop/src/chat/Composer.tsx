@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { api } from '@/api'
@@ -335,6 +335,7 @@ export function Composer({
   channel,
   initCommands,
   queue,
+  above,
 }: {
   /** Text to put in the box, replacing the draft; a new object each time, as a suggestion is picked. */
   fill?: { text: string } | null
@@ -361,6 +362,8 @@ export function Composer({
   initCommands?: readonly string[]
   /** Set for native chats: the messages waiting for the turn to end, shown above the box to edit, reorder, remove or send now. */
   queue?: QueueControls
+  /** Shown above the queue and the box, inside the composer's gutter: a native chat's artifacts row. */
+  above?: ReactNode
 }) {
   const [draft, setDraft] = useState<Draft>([])
   const [sending, setSending] = useState(false)
@@ -992,6 +995,7 @@ export function Composer({
       {preview !== null && <Lightbox images={preview.images} start={preview.start} onClose={closePreview} />}
       {hover !== null && <ChipPreview attachment={attachments.current.get(hover.id)} left={hover.left} top={hover.top} />}
       {dispatchId !== undefined && <QueuePills state={dispatchQueue} empty={!sendable} />}
+      {above}
       {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => editQueued(item.id)} />}
       <div className="relative">
         {slashMenu.shown !== null && (

@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import type { ChatQueueChange } from '@/api/adapter'
 import { activityOf } from '@/components/agent-activity'
 import { api } from '@/api'
-import type { MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
+import type { ChatArtifact, MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { ViewSwitch } from '@/chat/ViewSwitch'
 import { Composer } from '@/chat/Composer'
@@ -24,6 +24,10 @@ import { changeChatQueue } from '@/native-chat/chat-sync'
 import { backToChat, chatChanged, requestTerminal, stopAndOpen, TERMINAL_WAIT_NOTICE, type DeferredStep } from '@/native-chat/deferred-switch'
 import { beginSwitch, endSwitch, switchEngine, switchStep } from '@/native-chat/switch-trace'
 import { endKeptSession } from '@/terminal/kept-terminals'
+import { useNow } from '@/github/parts'
+import { ArtifactPanel, ArtifactsRow, useChatArtifacts, useChatPanel } from '@/native-chat/ChatArtifacts'
+import { artifactRow, panelLayout } from '@/native-chat/chat-artifacts'
+import { usePaneWidth } from '@/native-chat/usePaneWidth'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
@@ -36,8 +40,8 @@ const ended = (state: NativeChat['state']) => state === 'error'
 const resumable = (state: NativeChat['state']) => state === 'suspended' || state === 'stopped'
 
 /** A conversation megabrain owns through the agent's protocol, followed live while it is open. */
-export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat: NativeChat; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
-  const { state, reconnecting, update, queue, setQueue } = useFollowChat(listed)
+export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArtifact }: { chat: NativeChat; onOpenChat?: OpenChat; onOpenPath?: OpenPath; onOpenArtifact?: (artifactId: string) => void }) {
+  const { state, reconnecting, update, queue, setQueue, artifactsChanged } = useFollowChat(listed)
   // The followed record is live; the listed one only fills in until the first line arrives.
   const chat = state.chat ?? listed
   const [switching, setSwitching] = useState(false)
@@ -63,6 +67,14 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
   // Nothing said yet: the agent waits for the first message, so suggestions replace any spinner.
   const fresh = !ended(chat.state) && chat.title === null && state.outgoing.length === 0 && !state.events.some((event) => event.kind === 'user')
   const [fill, setFill] = useState<{ text: string } | null>(null)
+  // The chat's artifacts: chips above the composer, the open one beside the chat (or over it on a narrow pane).
+  const now = useNow(30_000)
+  const artifacts = useChatArtifacts(chat.id, artifactsChanged)
+  const panel = useChatPanel(chat.id)
+  const openArtifact = artifacts.artifacts?.find((artifact) => artifact.id === panel.artifactId) ?? null
+  const chips = artifacts.artifacts === null ? null : artifactRow(artifacts.artifacts, artifacts.previous, openArtifact?.id ?? null)
+  const paneWidth = usePaneWidth()
+  const layout = panelLayout(paneWidth.width, panel.width)
 
   const answer = async (approvalId: string, decision: ApprovalDecision) => {
     await api.answerApproval(chat.id, approvalId, decision)
@@ -234,6 +246,20 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
     stop()
   }
 
+  const artifactPanel = (artifact: ChatArtifact, overlay: boolean) => (
+    <ArtifactPanel
+      key={artifact.id}
+      chatId={chat.id}
+      artifact={artifact}
+      width={layout.width}
+      overlay={overlay}
+      now={now}
+      onResize={{ preview: panel.preview, commit: panel.resize }}
+      onClose={() => panel.open(null)}
+      onOpenPage={artifact.source === 'megabrain' && onOpenArtifact !== undefined ? () => onOpenArtifact(artifact.id) : null}
+    />
+  )
+
   const transcript = (
     <div className="flex min-h-0 flex-1 flex-col">
       <ConversationAgent.Provider value={chat.agent}>
@@ -337,28 +363,36 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath }: { chat:
           </Suspense>
         </>
       ) : (
-        <>
-          {transcript}
-          {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
-          <div onKeyDown={onComposerKey} className="contents">
-            <Composer
-              placeholder={ended(chat.state) ? 'This chat has stopped' : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
-              disabled={ended(chat.state)}
-              agent={chat.agent}
-              cwd={chat.cwd}
-              context={composerContext(chat)}
-              model={chat.model}
-              onModelChange={changeModel}
-              onSend={send}
-              running={chat.state === 'working'}
-              onStop={stop}
-              fill={fill}
-              channel={compose}
-              initCommands={chat.slashCommands}
-              queue={queueControls}
-            />
+        <div ref={paneWidth.ref} className="relative flex min-h-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="relative flex min-h-0 flex-1 flex-col">
+              {transcript}
+              {/* On a narrow pane the artifact lies over the transcript; the composer below stays in reach. */}
+              {openArtifact !== null && layout.mode === 'overlay' && artifactPanel(openArtifact, true)}
+            </div>
+            {pending !== null && <p className="mx-8 -mb-1 px-3 text-[12.5px] text-warn">{pending.tool} waits for your approval above.</p>}
+            <div onKeyDown={onComposerKey} className="contents">
+              <Composer
+                placeholder={ended(chat.state) ? 'This chat has stopped' : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
+                disabled={ended(chat.state)}
+                agent={chat.agent}
+                cwd={chat.cwd}
+                context={composerContext(chat)}
+                model={chat.model}
+                onModelChange={changeModel}
+                onSend={send}
+                running={chat.state === 'working'}
+                onStop={stop}
+                fill={fill}
+                channel={compose}
+                initCommands={chat.slashCommands}
+                queue={queueControls}
+                above={chips === null ? undefined : <ArtifactsRow chips={chips} now={now} onOpen={(artifact) => panel.open(artifact.id === openArtifact?.id ? null : artifact.id)} />}
+              />
+            </div>
           </div>
-        </>
+          {openArtifact !== null && layout.mode === 'split' && artifactPanel(openArtifact, false)}
+        </div>
       )}
     </div>
   )

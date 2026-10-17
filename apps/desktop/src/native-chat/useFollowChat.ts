@@ -22,9 +22,12 @@ export function useFollowChat(chat: NativeChat): {
   /** The messages waiting for the turn to end, as chatd last said; a queue call's answer sets it too. */
   queue: ChatQueueItem[]
   setQueue: (items: ChatQueueItem[]) => void
+  /** Counts the artifacts events this follow delivered: each says the chat's artifacts changed. */
+  artifactsChanged: number
 } {
   const [state, setState] = useState<FollowState>(() => seen.get(chat.id) ?? followState(chat))
   const [reconnecting, setReconnecting] = useState<string | null>(null)
+  const [artifactsChanged, setArtifactsChanged] = useState(0)
   const [queue, setQueueState] = useState<ChatQueueItem[]>(() => seenQueue.get(chat.id) ?? [])
   const setQueue = (items: ChatQueueItem[]) => {
     seenQueue.set(chat.id, items)
@@ -52,6 +55,7 @@ export function useFollowChat(chat: NativeChat): {
       onLine: (line) => {
         // The queue rides on its own lines, the whole of it each time; the latest wins.
         if (line.queue !== undefined) setQueue(line.queue)
+        if (line.event?.kind === 'artifacts') return setArtifactsChanged((count) => count + 1)
         update((current) => applyLine(current, line))
         if (line.event?.kind === 'state') switchState(chat.id, line.event.text)
         // A progress report is no output of the agent's start.
@@ -78,5 +82,5 @@ export function useFollowChat(chat: NativeChat): {
   useEffect(() => publishChatState(chat.id, live), [chat.id, live])
   useEffect(() => () => publishChatState(chat.id, null), [chat.id])
 
-  return { state, reconnecting, update, queue, setQueue }
+  return { state, reconnecting, update, queue, setQueue, artifactsChanged }
 }

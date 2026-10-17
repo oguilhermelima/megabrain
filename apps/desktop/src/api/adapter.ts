@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
+import type { AgentDefaults, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -263,6 +263,10 @@ export interface DesktopApi {
   artifacts(options?: { project?: string; topic?: string }): Promise<ArtifactList>
   /** One artifact with its content (`artifact show <id> --json`). */
   artifact(id: string): Promise<ArtifactContent>
+  /** A native chat's artifacts, newest change first (`chat artifacts <chat-id> --json`). */
+  chatArtifacts(chatId: string): Promise<ChatArtifactList>
+  /** One of a chat's artifacts with its content (`chat artifact <chat-id> <artifact-id> --json`). */
+  chatArtifact(chatId: string, artifactId: string): Promise<ChatArtifactContent>
   /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */
   setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null }>
   /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */

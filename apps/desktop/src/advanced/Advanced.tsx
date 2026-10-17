@@ -738,11 +738,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   })
   const openKnowledgeHome = useStableCallback(() => openKnowledge(null))
   /** The Artifacts page, one in the layout like the Knowledge page: shown where it already is, on `artifact` when given. */
-  const openArtifact = useStableCallback((artifact: Artifact | null) => {
+  const openArtifact = useStableCallback((artifact: Artifact | null) => openArtifactId(artifact?.id ?? null))
+  const openArtifactId = useStableCallback((artifactId: string | null) => {
     setGithubPage(null)
     setLayout((current) => {
       const open = artifactsItemIn([current.single, ...current.groups.map((group) => group.panes)].flatMap((panes) => paneList(panes.root).map((leaf) => leaf.item)))
-      const item = artifact === null ? (open ?? artifactsItem(null)) : artifactsItem(artifact.id)
+      const item = artifactId === null ? (open ?? artifactsItem(null)) : artifactsItem(artifactId)
       if (open === null || open === item) return openLayoutItem(current, item)
       const swap = (panes: Panes) => {
         const leaf = paneOfItem(panes, open)
@@ -898,7 +899,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'native': {
         const chat = nativeChats.find((entry) => entry.id === parsed.id) ?? (startedChat?.id === parsed.id ? startedChat : null)
         if (chat === null) return gone('Chat')
-        return { title: chat.title ?? 'New chat', node: <NativeChatView chat={chat} onOpenChat={openRelatedChat} onOpenPath={openPath} /> }
+        return { title: chat.title ?? 'New chat', node: <NativeChatView chat={chat} onOpenChat={openRelatedChat} onOpenPath={openPath} onOpenArtifact={openArtifactId} /> }
       }
       case 'terminal': {
         const terminal = terminals.find((entry) => entry.id === parsed.id)

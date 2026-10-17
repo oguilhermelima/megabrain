@@ -749,6 +749,24 @@ export const artifactSchema = z.looseObject({
 })
 export const artifactListSchema = z.looseObject({ artifacts: z.array(artifactSchema) })
 export const artifactContentSchema = artifactSchema.extend({ content: z.string() })
+// A native chat's artifacts (`chat artifacts <chat-id> --json`): what megabrain filed for it and what
+// its agent made elsewhere (a Claude artifact or Claude Design project, a Codex plan, agy's or Grok's),
+// newest first with stable ids. A url-only artifact has no content to read; `revision` is null when the
+// source keeps none.
+export const chatArtifactSchema = z.looseObject({
+  id: z.string(),
+  source: z.enum(['megabrain', 'claude-artifact', 'claude-design', 'codex-plan', 'agy', 'grok']),
+  title: z.string(),
+  format: z.enum(['html', 'markdown', 'text', 'url']),
+  path: z.string().optional(),
+  url: z.string().optional(),
+  updatedAt: z.string(),
+  revision: z.number().nullable(),
+  editable: z.boolean(),
+})
+export const chatArtifactListSchema = z.looseObject({ artifacts: z.array(chatArtifactSchema) })
+// `chat artifact <chat-id> <artifact-id> --json`: content is null when there is none to read, and `reason` says why.
+export const chatArtifactContentSchema = z.looseObject({ artifact: chatArtifactSchema, content: z.string().nullable(), updatedAt: z.string(), reason: z.string().optional() })
 // A pending approval inside a native chat; it arrives as a transcript event of kind "approval".
 export const chatApprovalSchema = z.looseObject({
   id: z.string(),
@@ -787,7 +805,9 @@ export const chatProgressEventSchema = z.looseObject({
     status: z.string().optional(),
   }),
 })
-export const chatEventSchema = z.union([chatStateEventSchema, chatDeltaEventSchema, chatProgressEventSchema, z.lazy(() => transcriptEventSchema)])
+// The chat's artifacts changed, sent to followers only (cursor ""): the view lists them again.
+export const chatArtifactsEventSchema = z.looseObject({ kind: z.literal('artifacts'), at: z.string().optional() })
+export const chatEventSchema = z.union([chatStateEventSchema, chatDeltaEventSchema, chatProgressEventSchema, chatArtifactsEventSchema, z.lazy(() => transcriptEventSchema)])
 // A message sent while the native chat's turn ran, waiting in its queue (`chat queue ... --json`).
 export const chatQueueItemSchema = z.looseObject({
   id: z.string(),
@@ -1001,6 +1021,10 @@ export type Artifact = z.infer<typeof artifactSchema>
 export type ArtifactKind = Artifact['kind']
 export type ArtifactList = z.infer<typeof artifactListSchema>
 export type ArtifactContent = z.infer<typeof artifactContentSchema>
+export type ChatArtifact = z.infer<typeof chatArtifactSchema>
+export type ChatArtifactSource = ChatArtifact['source']
+export type ChatArtifactList = z.infer<typeof chatArtifactListSchema>
+export type ChatArtifactContent = z.infer<typeof chatArtifactContentSchema>
 export type ChatApproval = z.infer<typeof chatApprovalSchema>
 export type ChatEventLine = z.infer<typeof chatEventLineSchema>
 export type ChatEvent = z.infer<typeof chatEventSchema>

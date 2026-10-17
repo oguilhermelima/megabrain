@@ -476,3 +476,41 @@ html.native body {
     color: var(--color-ink-300);
   }
 }
+
+/* A native chat's artifacts row (native-chat/ChatArtifacts): it scrolls sideways with no bar, and a
+   chip the agent just changed sends out a ring of the accent twice. */
+.artifact-row {
+  scrollbar-width: none;
+  /* The last chip fades into the edge, so a row that runs on reads as one that scrolls. */
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+.artifact-row::-webkit-scrollbar {
+  display: none;
+}
+@keyframes artifact-pulse {
+  from {
+    box-shadow: 0 0 0 0 rgb(142 156 255 / 0.55);
+  }
+  to {
+    box-shadow: 0 0 0 6px rgb(142 156 255 / 0);
+  }
+}
+.artifact-pulse {
+  animation: artifact-pulse 1.1s var(--motion-ease-out) 2;
+}
+/* Over the chat on a narrow pane, the panel slides in from the right edge. */
+@keyframes artifact-overlay-in {
+  from {
+    opacity: 0;
+    translate: 24px 0;
+  }
+}
+.artifact-overlay {
+  animation: artifact-overlay-in var(--motion-panel) var(--motion-ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  .artifact-pulse,
+  .artifact-overlay {
+    animation: none;
+  }
+}
