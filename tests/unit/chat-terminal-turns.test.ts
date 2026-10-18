@@ -311,6 +311,27 @@ describe("switching back to chat imports what the terminal did", () => {
     expect(shown(await events(daemon))).toEqual(TERMINAL_TURNS);
   });
 
+  test("a queued import runs after the previous import fails", async () => {
+    const env = sandbox();
+    writeClaudeLog(env);
+    const chat = record(env);
+    await new ChatStore(env.state).put(chat);
+    const daemon = await daemonFor(env);
+    const publish = daemon.publish.bind(daemon);
+    let calls = 0;
+    daemon.publish = async (...args: Parameters<typeof daemon.publish>) => {
+      calls += 1;
+      if (calls === 1) throw new Error("first import failed");
+      return await publish(...args);
+    };
+
+    const first = daemon.importTerminalTurns(chat, false);
+    const second = daemon.importTerminalTurns(chat, false);
+    await expect(first).rejects.toThrow("first import failed");
+    await expect(second).resolves.toBeUndefined();
+    expect(calls).toBeGreaterThan(1);
+  });
+
   test("a second visit imports only the turns written since the first", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", FAKE_CLAUDE);

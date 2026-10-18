@@ -335,7 +335,7 @@ async takeOver(id: string): Promise<Chat> { return await takeOverImpl(this, id);
   /** Turns typed in the terminal live only in the agent's log; they join the chat, once each, before the agent respawns. */
 async importTerminalTurns(chat: Chat, markInterrupted = true): Promise<void> {
   const previous = this.terminalImportChains.get(chat.id) ?? Promise.resolve();
-  const task = previous.then(() => importTerminalTurnsImpl(this, chat, markInterrupted));
+  const task = previous.catch(() => undefined).then(() => importTerminalTurnsImpl(this, chat, markInterrupted));
   this.terminalImportChains.set(chat.id, task);
   try { await task; } finally { if (this.terminalImportChains.get(chat.id) === task) this.terminalImportChains.delete(chat.id); }
 }
