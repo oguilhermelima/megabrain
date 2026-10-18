@@ -8,8 +8,7 @@ import { record } from './views.js'
 type Environment = Readonly<Record<string, string | undefined>>
 
 export const PROJECT_METADATA_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
-  user(login: $owner) { projectV2(number: $number) { ${PROJECT_FIELDS} } }
-  organization(login: $owner) { projectV2(number: $number) { ${PROJECT_FIELDS} } }
+  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { ${PROJECT_FIELDS} } } }
 }`
 
 export const PROJECT_MOVE_QUERY = `mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
@@ -49,7 +48,7 @@ export async function executeProjectMove(args: readonly string[], environment: E
   const variables = { ...repositoryVariables(resolved.value.nameWithOwner), owner, number: options.number }
   const metadata = await graphqlCall(process, 'gh api graphql', PROJECT_METADATA_QUERY, variables)
   if (metadata.kind !== 'ok') return metadata
-  const rawProject = record(metadata.value.data.user)?.projectV2 ?? record(metadata.value.data.organization)?.projectV2
+  const rawProject = record(metadata.value.data.repositoryOwner)?.projectV2
   const project = normalizeProject(rawProject)
   if (project === null) return failed(`GitHub project ${options.number} was not found for ${owner}`)
   const field = project.statusField

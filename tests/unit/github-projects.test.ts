@@ -63,13 +63,27 @@ describe('github projects', () => {
   })
 
   test('reads issue and pull request items with status and normalizes their fields', async () => {
-    answer = () => stdout({ data: { user: { projectV2: { ...base, items: { nodes: [projectItem('I1'), { ...projectItem('I2'), type: 'PULL_REQUEST', content: { ...projectItem('I2').content, __typename: 'PullRequest', state: 'MERGED' } }], pageInfo: { hasNextPage: false, endCursor: null } } } } } })
+    answer = () => stdout({ data: { repositoryOwner: { projectV2: { ...base, items: { nodes: [projectItem('I1'), { ...projectItem('I2'), type: 'PULL_REQUEST', content: { ...projectItem('I2').content, __typename: 'PullRequest', state: 'MERGED' } }], pageInfo: { hasNextPage: false, endCursor: null } } } } } })
     const result = await parsed<{ items: { type: string; status: string | null; state: string | null }[] }>(['project', root, '7', '--json'])
     expect(result.items.map(({ type, status, state }) => ({ type, status, state }))).toEqual([{ type: 'ISSUE', status: 'todo', state: 'OPEN' }, { type: 'PULL_REQUEST', status: 'todo', state: 'MERGED' }])
   })
 
+  for (const ownerType of ['User', 'Organization'] as const) {
+    test(`reads ${ownerType.toLowerCase()}-owned projects without querying an incompatible owner type`, async () => {
+      answer = (args) => {
+        const gql = query(args)
+        expect(gql).toContain('repositoryOwner(login: $owner)')
+        expect(gql).not.toContain('user(login: $owner)')
+        expect(gql).not.toContain('organization(login: $owner)')
+        return stdout({ data: { repositoryOwner: { projectV2: { ...base, items: { nodes: [projectItem('I1')], pageInfo: { hasNextPage: false, endCursor: null } } } } } })
+      }
+      const result = await parsed<{ items: { id: string }[] }>(['project', root, '7', '--json'])
+      expect(result.items.map(({ id }) => id)).toEqual(['I1'])
+    })
+  }
+
   test('returns null status for a project without a Status field', async () => {
-    answer = () => stdout({ data: { user: { projectV2: { ...base, fields: { nodes: [] }, items: { nodes: [projectItem('I1', null)], pageInfo: { hasNextPage: false, endCursor: null } } } } } })
+    answer = () => stdout({ data: { repositoryOwner: { projectV2: { ...base, fields: { nodes: [] }, items: { nodes: [projectItem('I1', null)], pageInfo: { hasNextPage: false, endCursor: null } } } } } })
     const result = await parsed<{ project: { statusField: unknown }; items: { status: unknown }[] }>(['project', root, '7', '--json'])
     expect(result.project.statusField).toBeNull()
     expect(result.items[0]?.status).toBeNull()
@@ -78,7 +92,7 @@ describe('github projects', () => {
   test('passes an item cursor and returns the next cursor', async () => {
     answer = (args) => {
       expect(variables(args).after).toBe('cursor-one')
-      return stdout({ data: { user: { projectV2: { ...base, items: { nodes: [projectItem('I2')], pageInfo: { hasNextPage: true, endCursor: 'cursor-two' } } } } } })
+      return stdout({ data: { repositoryOwner: { projectV2: { ...base, items: { nodes: [projectItem('I2')], pageInfo: { hasNextPage: true, endCursor: 'cursor-two' } } } } } })
     }
     const result = await parsed<{ next: string }>(['project', root, '7', '--after', 'cursor-one', '--json'])
     expect(result.next).toBe('cursor-two')
@@ -87,7 +101,7 @@ describe('github projects', () => {
   test('moves an item using the selected project field and status option ids', async () => {
     answer = (args) => query(args).includes('updateProjectV2ItemFieldValue')
       ? stdout({ data: { updateProjectV2ItemFieldValue: { projectV2Item: projectItem('I1', { __typename: 'ProjectV2ItemFieldSingleSelectValue', name: 'Done', optionId: 'done' }) } } })
-      : stdout({ data: { user: { projectV2: base } } })
+      : stdout({ data: { repositoryOwner: { projectV2: base } } })
     const result = await parsed<{ item: { id: string; status: string } }>(['project-move', root, '7', 'I1', '--status', 'done', '--json'])
     expect(result.item).toMatchObject({ id: 'I1', status: 'done' })
     expect(calls).toHaveLength(2)
@@ -96,8 +110,23 @@ describe('github projects', () => {
     expect(variables(calls[1] ?? [])).toMatchObject({ itemId: 'I1', fieldId: 'F_status', optionId: 'done' })
   })
 
+  for (const ownerType of ['User', 'Organization'] as const) {
+    test(`moves items in ${ownerType.toLowerCase()}-owned projects`, async () => {
+      answer = (args) => {
+        const gql = query(args)
+        if (gql.includes('updateProjectV2ItemFieldValue')) return stdout({ data: { updateProjectV2ItemFieldValue: { projectV2Item: projectItem('I1', { __typename: 'ProjectV2ItemFieldSingleSelectValue', name: 'Done', optionId: 'done' }) } } })
+        expect(gql).toContain('repositoryOwner(login: $owner)')
+        expect(gql).not.toContain('user(login: $owner)')
+        expect(gql).not.toContain('organization(login: $owner)')
+        return stdout({ data: { repositoryOwner: { projectV2: base } } })
+      }
+      const result = await parsed<{ item: { id: string; status: string } }>(['project-move', root, '7', 'I1', '--status', 'done', '--json'])
+      expect(result.item).toMatchObject({ id: 'I1', status: 'done' })
+    })
+  }
+
   test('rejects an option absent from the project field before mutating', async () => {
-    answer = () => stdout({ data: { user: { projectV2: base } } })
+    answer = () => stdout({ data: { repositoryOwner: { projectV2: base } } })
     expect(await run(['project-move', root, '7', 'I1', '--status', 'unknown', '--json'])).toMatchObject({ kind: 'failed', error: expect.stringContaining('status option') })
     expect(calls).toHaveLength(1)
     expect(query(calls[0] ?? [])).not.toContain('updateProjectV2ItemFieldValue')

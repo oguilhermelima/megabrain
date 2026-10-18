@@ -40,8 +40,7 @@ export const PROJECTS_QUERY = `query($owner: String!, $name: String!) {
 
 export const PROJECT_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) { owner { login } }
-  user(login: $owner) { projectV2(number: $number) { ${PROJECT_FIELDS} ${PROJECT_ITEMS} } }
-  organization(login: $owner) { projectV2(number: $number) { ${PROJECT_FIELDS} ${PROJECT_ITEMS} } }
+  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { ${PROJECT_FIELDS} ${PROJECT_ITEMS} } } }
 }`
 
 function statusField(value: unknown): ProjectStatusField | null {
@@ -128,7 +127,7 @@ async function projectQuery(repositoryName: string, owner: string, number: numbe
   const variables = { ...repositoryVariables(repositoryName), owner, number, ...(after === null ? {} : { after }) }
   const answer = await graphqlCall(process, 'gh api graphql', PROJECT_QUERY, variables)
   if (answer.kind !== 'ok') return answer
-  const ownerValue = record(answer.value.data.user)?.projectV2 ?? record(answer.value.data.organization)?.projectV2
+  const ownerValue = record(answer.value.data.repositoryOwner)?.projectV2
   const projectValue = normalizeProject(ownerValue)
   if (projectValue === null) return failed(`GitHub project ${number} was not found for ${owner}`)
   const items = record(ownerValue)?.items
