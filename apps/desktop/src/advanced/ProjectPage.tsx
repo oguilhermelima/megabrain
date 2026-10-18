@@ -25,9 +25,10 @@ import { useRunControls, type RunControls } from '@/run-panel/run-context'
 import { pageX } from '@/lib/page'
 
 // A project's page in a pane. A hero says who it is (picture, name, and one line with the remote, the
-// main checkout's branch and its path), with New chat as the one primary action beside quiet buttons
-// and a more menu. Below, sections for its worktrees (across the page), its open pull
-// requests and issues, recent chats and commands, two columns from 1200 px. Every list comes from a
+// main checkout's branch and its path) and, on a row of its own under that, its actions: New chat as the
+// one primary beside quiet buttons and a more menu, so they never squeeze the identity. Below, one
+// titled group under another: its worktrees, open pull requests and issues, recent chats and commands,
+// each a card of rows of one height with their facts muted at the end. Every list comes from a
 // call the app already makes; each section shows its skeleton until its call answers.
 
 const shownItems = 5
@@ -81,7 +82,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
   const [menu, setMenu] = useState<OpenMenu | null>(null)
   const worktrees = worktreeSummaries(project, chats)
-  const chatsShown = recentChats(project, chats, 6)
+  const chatsShown = recentChats(project, chats, 30)
   const name = displayName(project)
   const tint = projectTint(project) ?? projectColor(project.name)
   const home = useLoad('home', () => api.homeDir())
@@ -143,19 +144,23 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
       <div className={`mx-auto flex max-w-[1320px] flex-col gap-6 pt-6 pb-14 @min-[720px]:pt-8 ${pageX}`}>
         <header className="relative overflow-hidden rounded-[24px] border border-white/[0.07] bg-ink-900 p-6">
           <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: `radial-gradient(80% 160% at 0% 0%, color-mix(in srgb, ${tint} 14%, transparent), transparent 60%)` }} />
-          <div className="relative flex flex-col gap-5 @min-[900px]:flex-row @min-[900px]:items-center @min-[900px]:gap-8">
-            <div className="flex min-w-0 flex-1 items-center gap-4">
+          <div className="relative flex flex-col gap-5">
+            <div className="flex min-w-0 items-center gap-4">
               <ProjectPicture project={project} size="hero" />
               <div className="min-w-0 flex-1">
                 <h1 className="truncate text-[26px] leading-[1.2] font-semibold tracking-[-0.02em] text-ink-100">{name}</h1>
                 <div className="mt-1 flex min-w-0 items-center gap-1 text-[13px] text-ink-400">
                   {repository !== null ? (
-                    <button type="button" onClick={() => void openOnGithub(repository.url)} className={`-ml-1.5 flex min-w-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 font-medium text-ink-300 hover:text-ink-100 ${hover} ${focusRing}`}>
-                      <span className="truncate">{repository.nameWithOwner}</span>
-                      <span className="shrink-0 text-ink-500">
-                        <MenuIconGlyph icon="external" />
-                      </span>
-                    </button>
+                    <Tooltip text={repository.url}>
+                      {(anchor) => (
+                        <button {...anchor} type="button" onClick={() => void openOnGithub(repository.url)} className={`-ml-1.5 flex min-w-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 font-medium text-ink-300 hover:text-ink-100 ${hover} ${focusRing}`}>
+                          <span className="truncate">{repository.nameWithOwner}</span>
+                          <span className="shrink-0 text-ink-500">
+                            <MenuIconGlyph icon="external" />
+                          </span>
+                        </button>
+                      )}
+                    </Tooltip>
                   ) : (
                     <span className="min-w-0 truncate select-text">{project.remote ?? 'No remote'}</span>
                   )}
@@ -173,7 +178,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
                 </div>
               </div>
             </div>
-            <div role="toolbar" aria-label={`${name} actions`} className="flex shrink-0 flex-wrap items-center gap-1.5">
+            <div role="toolbar" aria-label={`${name} actions`} className="flex flex-wrap items-center gap-1.5 @min-[560px]:pl-20">
               <button type="button" onClick={() => actions.newChat(project.path)} className={`${heroButton} bg-accent text-accent-ink hover:bg-[#a3aeff]`}>
                 <MenuIconGlyph icon="chat" />
                 New chat
@@ -196,34 +201,39 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
           </div>
         </header>
 
-        <div className="grid grid-cols-[minmax(0,1fr)] gap-5 @min-[1200px]:grid-cols-[repeat(2,minmax(0,1fr))]">
-          <Section title="Worktrees" count={worktrees.length} action={{ label: 'New worktree', onClick: () => setNewWorktree(true) }} className="@min-[1200px]:col-span-2">
-            <ul className="grid grid-cols-[minmax(0,1fr)] gap-0.5 @min-[1200px]:grid-cols-[repeat(2,minmax(0,1fr))] @min-[1200px]:gap-x-2">
-              {worktrees.map((worktree) => (
-                <WorktreeRow
-                  key={worktree.path}
-                  worktree={worktree}
-                  counts={changed.state === 'ready' ? (changed.value[worktree.path] ?? null) : undefined}
-                  review={worktree.branch === null ? null : (stacks[worktree.branch]?.reviewDecision ?? null)}
-                  behind={worktree.branch === null ? null : (stacks[worktree.branch]?.behindParent ?? null)}
-                  now={now}
-                  onOpen={() => actions.open(worktree.open, worktree.path)}
-                  onNewChat={() => actions.newChat(worktree.path)}
-                  onCode={() => actions.code(worktree.path)}
-                  onFinish={worktree.primary ? null : () => finish(worktree)}
-                />
-              ))}
-            </ul>
+        <div className="flex flex-col gap-8">
+          <Section title="Worktrees" count={worktrees.length} action={{ label: 'New worktree', onClick: () => setNewWorktree(true) }}>
+            <Expandable items={worktrees} noun="worktrees">
+              {(shown) =>
+                shown.map((worktree) => (
+                  <WorktreeRow
+                    key={worktree.path}
+                    worktree={worktree}
+                    counts={changed.state === 'ready' ? (changed.value[worktree.path] ?? null) : undefined}
+                    review={worktree.branch === null ? null : (stacks[worktree.branch]?.reviewDecision ?? null)}
+                    behind={worktree.branch === null ? null : (stacks[worktree.branch]?.behindParent ?? null)}
+                    now={now}
+                    onOpen={() => actions.open(worktree.open, worktree.path)}
+                    onNewChat={() => actions.newChat(worktree.path)}
+                    onCode={() => actions.code(worktree.path)}
+                    onFinish={worktree.primary ? null : () => finish(worktree)}
+                  />
+                ))
+              }
+            </Expandable>
           </Section>
 
           {repository !== null && (
             <Section title="Pull requests" count={openCount(pulls)} action={{ label: 'All pull requests', onClick: () => actions.github(project, 'prs') }}>
               <GithubList
                 load={pulls}
+                total={openCount(pulls)}
+                noun="pull requests"
+                onShowAll={() => actions.github(project, 'prs')}
                 empty={<EmptyState text="No open pull requests." action={{ label: 'New worktree', onClick: () => setNewWorktree(true) }} />}
                 render={(items: GithubPullRequest[]) =>
                   newestFirst(items, shownItems).map((item) => (
-                    <GithubRow key={item.number} icon={<PullRequestStateIcon item={item} size={15} />} title={item.title} labels={item.labels} meta={`#${item.number} · ${item.author?.login ?? 'unknown'} · ${ago(item.updatedAt, now)}`} comments={item.comments} onClick={() => actions.github(project, 'prs', item.number)}>
+                    <GithubRow key={item.number} icon={<PullRequestStateIcon item={item} size={15} />} title={item.title} labels={item.labels} number={item.number} author={item.author?.login ?? 'unknown'} at={ago(item.updatedAt, now)} comments={item.comments} onClick={() => actions.github(project, 'prs', item.number)}>
                       <PullStatus detail={details.state === 'ready' ? details.value[item.number] : details.state === 'failed' ? null : undefined} />
                     </GithubRow>
                   ))
@@ -235,10 +245,13 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
             <Section title="Issues" count={openCount(issues)} action={{ label: 'All issues', onClick: () => actions.github(project, 'issues') }}>
               <GithubList
                 load={issues}
+                total={openCount(issues)}
+                noun="issues"
+                onShowAll={() => actions.github(project, 'issues')}
                 empty={<EmptyState text="No open issues." action={{ label: 'All issues', onClick: () => actions.github(project, 'issues') }} />}
                 render={(items: GithubIssue[]) =>
                   newestFirst(items, shownItems).map((item) => (
-                    <GithubRow key={item.number} icon={<IssueStateIcon state={item.state} size={15} />} title={item.title} labels={item.labels} meta={`#${item.number} · ${item.author?.login ?? 'unknown'} · ${ago(item.updatedAt, now)}`} comments={item.comments} onClick={() => actions.github(project, 'issues', item.number)} />
+                    <GithubRow key={item.number} icon={<IssueStateIcon state={item.state} size={15} />} title={item.title} labels={item.labels} number={item.number} author={item.author?.login ?? 'unknown'} at={ago(item.updatedAt, now)} comments={item.comments} onClick={() => actions.github(project, 'issues', item.number)} />
                   ))
                 }
               />
@@ -249,24 +262,22 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
             {chatsShown.length === 0 ? (
               <EmptyState text="No chats in this project yet." action={{ label: 'New chat', onClick: () => actions.newChat(project.path) }} />
             ) : (
-              <ul className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
-                {chatsShown.map((chat) => (
-                  <ChatRow key={chat.key} chat={chat} now={now} onClick={() => actions.open(chat.open, chat.path)} />
-                ))}
-              </ul>
+              <Expandable items={chatsShown} noun="recent chats">
+                {(shown) => shown.map((chat) => <ChatRow key={chat.key} chat={chat} now={now} onClick={() => actions.open(chat.open, chat.path)} />)}
+              </Expandable>
             )}
           </Section>
 
           <Section title="Scripts" action={{ label: 'Edit commands', onClick: editCommands }}>
             {scripts.state === 'failed' && (
-              <div className="px-3 pb-2">
+              <div className="px-4 pt-3">
                 <ErrorNote error={scripts.error} />
               </div>
             )}
             {scripts.state === 'ready' && rows.every((row) => row.command === null) ? (
               <EmptyState text="No commands yet. Set what Run, Build and Install do in this project." action={{ label: 'Set up commands', onClick: editCommands }} />
             ) : (
-              <ul className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
+              <ul className={listClass}>
                 {rows.map((row) => (
                   <ScriptLine key={row.action} row={row} loading={scripts.state === 'loading'} state={scriptState(run?.panel ?? null, row.action)} run={run} port={row.action === 'run' ? port : null} onSetUp={editCommands} />
                 ))}
@@ -359,35 +370,68 @@ function RunToolButton({ run, row, loading, port, onSetUp }: { run: RunControls 
   return <ToolButton icon="terminal" label="Run" onClick={() => run.run('run', command, port)} />
 }
 
-function Section({ title, count, action, className = '', children }: { title: string; count?: number | null; action?: { label: string; onClick: () => void }; className?: string; children: ReactNode }) {
+/** A titled group: its name, a quiet count and one action above a card of rows. */
+function Section({ title, count, action, children }: { title: string; count?: number | null; action?: { label: string; onClick: () => void }; children: ReactNode }) {
   return (
-    <section aria-label={title} className={`flex min-w-0 flex-col rounded-[24px] border border-white/[0.07] bg-ink-900/80 ${className}`}>
-      <header className="flex min-h-12 items-center gap-2 px-5 pt-3.5 pb-1.5">
+    <section aria-label={title} className="flex min-w-0 flex-col gap-2.5">
+      <header className="flex h-8 items-center gap-2 px-1">
         <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{title}</h2>
-        {count !== undefined && count !== null && <span className="grid h-5 min-w-5 place-items-center rounded-full bg-white/[0.07] px-1.5 text-[11.5px] font-semibold text-ink-300 tabular-nums">{count}</span>}
+        {count !== undefined && count !== null && <span className="text-[13px] font-medium text-ink-500 tabular-nums">{count}</span>}
         {action !== undefined && (
-          <button type="button" onClick={action.onClick} className={`-mr-2 ml-auto h-7 rounded-full px-2.5 text-[12.5px] font-semibold text-ink-400 hover:bg-white/[0.06] hover:text-ink-100 ${hover} ${focusRing}`}>
+          <button type="button" onClick={action.onClick} className={`-mr-1 ml-auto h-7 rounded-full px-2.5 text-[12.5px] font-semibold text-ink-400 hover:bg-white/[0.06] hover:text-ink-100 ${hover} ${focusRing}`}>
             {action.label}
           </button>
         )}
       </header>
-      <div className="flex-1 px-2 pb-2">{children}</div>
+      <div className="overflow-hidden rounded-[18px] border border-white/[0.07] bg-ink-900/70">{children}</div>
     </section>
+  )
+}
+
+const listClass = 'divide-y divide-white/[0.05]'
+
+/** The last line of a long list: shows the rest, here or on the page that holds them all. */
+function MoreRow({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className={`flex h-10 w-full items-center gap-1.5 border-t border-white/[0.05] px-4 text-left text-[12.5px] font-semibold text-ink-400 hover:bg-row-hover hover:text-ink-100 ${hover} ${insetFocus}`}>
+      {label}
+    </button>
+  )
+}
+
+/** The first few rows, and the rest on asking. */
+function Expandable<T>({ items, noun, children }: { items: readonly T[]; noun: string; children: (shown: readonly T[]) => ReactNode }) {
+  const [all, setAll] = useState(false)
+  const long = items.length > shownItems
+  return (
+    <>
+      <ul className={listClass}>{children(all || !long ? items : items.slice(0, shownItems))}</ul>
+      {long && <MoreRow label={all ? 'Show fewer' : `Show all ${items.length} ${noun}`} onClick={() => setAll(!all)} />}
+    </>
   )
 }
 
 function EmptyState({ text, action }: { text: string; action: { label: string; onClick: () => void } }) {
   return (
-    <div className="flex flex-col items-start gap-3 px-3 pt-1 pb-3">
-      <p className="text-[13px] leading-relaxed text-ink-400">{text}</p>
-      <button type="button" onClick={action.onClick} className={`h-8 rounded-full border border-white/[0.10] bg-white/[0.05] px-3.5 text-[12.5px] font-semibold text-ink-100 hover:bg-white/[0.10] ${hover} ${focusRing}`}>
+    <div className="flex min-h-[52px] flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
+      <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-ink-400">{text}</p>
+      <button type="button" onClick={action.onClick} className={`h-8 shrink-0 rounded-full border border-white/[0.10] bg-white/[0.05] px-3.5 text-[12.5px] font-semibold text-ink-100 hover:bg-white/[0.10] ${hover} ${focusRing}`}>
         {action.label}
       </button>
     </div>
   )
 }
 
-const rowClass = `flex w-full min-w-0 items-center gap-3 rounded-[14px] px-3 py-2.5 text-left hover:bg-row-hover ${hover} ${focusRing}`
+// Rows sit inside a card that clips, so their focus ring is drawn inside them.
+const insetFocus = 'focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent'
+
+const rowClass = `flex h-[52px] w-full min-w-0 items-center gap-3 px-4 text-left hover:bg-row-hover ${hover} ${insetFocus}`
+
+/** The muted facts at a row's end. */
+const rowMeta = 'flex shrink-0 items-center gap-3 text-[12px] text-ink-400 tabular-nums'
+
+/** The time column, as wide in every row so the times line up. */
+const When = ({ at }: { at: string | null }) => <span className="w-14 shrink-0 text-right text-[12px] text-ink-500 tabular-nums">{at ?? ''}</span>
 
 /** The 28 px tile every row starts with. */
 const Tile = ({ children, className = 'text-ink-300' }: { children: ReactNode; className?: string }) => <span className={`grid size-7 shrink-0 place-items-center rounded-[9px] bg-white/[0.05] ${className}`}>{children}</span>
@@ -421,42 +465,39 @@ function WorktreeRow({
   const pullRequest = worktree.pullRequest
   const color = pullRequest?.state === null || pullRequest === null ? null : stateColors[pullRequest.state]
   const reviewDecision = reviewStates.find((state) => state === review?.toLowerCase()) ?? null
-  const meta = [worktree.chatCount === 0 ? 'No chats yet' : `${worktree.chatCount} ${worktree.chatCount === 1 ? 'chat' : 'chats'}`, worktree.lastActivityAt === null ? null : ago(worktree.lastActivityAt, now)].filter((part) => part !== null && part !== '')
+  const chats = worktree.chatCount === 0 ? 'No chats yet' : `${worktree.chatCount} ${worktree.chatCount === 1 ? 'chat' : 'chats'}`
   return (
     <li className="group relative">
-      <button type="button" onClick={onOpen} aria-label={`${worktree.name}: open its latest chat`} className={`${rowClass} pr-[7.5rem]`}>
+      <button type="button" onClick={onOpen} aria-label={`${worktree.name}: open its latest chat`} className={rowClass}>
         <Tile className={worktree.primary ? 'text-accent' : 'text-ink-300'}>
           <MenuIconGlyph icon="branch" />
         </Tile>
-        <span className="min-w-0 flex-1">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate font-mono text-[13px] font-medium text-ink-100">{worktree.name}</span>
-            {worktree.primary && <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-px text-[11px] font-semibold text-ink-300">Main checkout</span>}
-            {pullRequest !== null && (
-              <span className="flex shrink-0 items-center gap-1 rounded-full px-2 py-px text-[11px] font-semibold" style={color === null ? undefined : { color, backgroundColor: `${color}1f` }}>
-                <PullRequestIcon size={11} />#{pullRequest.number}
-                {pullRequest.state !== null && <span className="font-medium opacity-80">{prChipLabel[pullRequest.state]}</span>}
-              </span>
-            )}
-            {reviewDecision !== null && <ReviewChip decision={reviewDecision} />}
-          </span>
-          <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-[12px] text-ink-400">
-            {worktree.working > 0 && (
-              <span className="flex items-center gap-1.5 font-medium text-ok">
-                <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-ok motion-reduce:animate-none" />
-                {worktree.working} working
-              </span>
-            )}
-            <span>{meta.join(' · ')}</span>
-            {behind !== null && behind > 0 && <span className="font-medium text-warn">{behind} behind its parent</span>}
-          </span>
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate font-mono text-[13px] font-medium text-ink-100">{worktree.name}</span>
+          {worktree.primary && <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-px text-[11px] font-semibold text-ink-300">Main checkout</span>}
+          {pullRequest !== null && (
+            <span className="flex shrink-0 items-center gap-1 rounded-full px-2 py-px text-[11px] font-semibold" style={color === null ? undefined : { color, backgroundColor: `${color}1f` }}>
+              <PullRequestIcon size={11} />#{pullRequest.number}
+              {pullRequest.state !== null && <span className="font-medium opacity-80">{prChipLabel[pullRequest.state]}</span>}
+            </span>
+          )}
+          {reviewDecision !== null && <ReviewChip decision={reviewDecision} />}
+        </span>
+        {/* The facts sit where the actions show, so a hover or keyboard focus trades one for the other. */}
+        <span className={`${rowMeta} gap-4 transition-opacity duration-[var(--motion-enter)] group-focus-within:opacity-0 group-hover:opacity-0`}>
+          {worktree.working > 0 && (
+            <span className="flex items-center gap-1.5 font-medium text-ok">
+              <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-ok motion-reduce:animate-none" />
+              {worktree.working} working
+            </span>
+          )}
+          {behind !== null && behind > 0 && <span className="font-medium text-warn">{behind} behind</span>}
+          <span className="hidden @min-[720px]:inline">{chats}</span>
+          <Changes counts={counts} />
+          <When at={worktree.lastActivityAt === null ? null : ago(worktree.lastActivityAt, now)} />
         </span>
       </button>
-      {/* The facts sit where the actions show, so a hover or keyboard focus trades one for the other. */}
-      <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center transition-opacity duration-[var(--motion-enter)] group-focus-within:opacity-0 group-hover:opacity-0">
-        <Changes counts={counts} />
-      </span>
-      <span className="absolute inset-y-0 right-2 flex items-center gap-0.5 opacity-0 transition-opacity duration-[var(--motion-enter)] group-focus-within:opacity-100 group-hover:opacity-100">
+      <span className="absolute inset-y-0 right-3 flex items-center gap-0.5 opacity-0 transition-opacity duration-[var(--motion-enter)] group-focus-within:opacity-100 group-hover:opacity-100">
         <RowAction icon="chat" label={`New chat in ${worktree.name}`} onClick={onNewChat} />
         <RowAction icon="code" label={`Open ${worktree.name} in Code`} onClick={onCode} />
         {onFinish !== null && <RowAction icon="trash" label={`Finish ${worktree.name}`} onClick={onFinish} danger />}
@@ -497,52 +538,49 @@ function Changes({ counts }: { counts: ChangeCounts | null | undefined }) {
   )
 }
 
-function GithubList<T>({ load, empty, render }: { load: Load<{ items: T[] }>; empty: ReactNode; render: (items: T[]) => ReactNode }) {
+function GithubList<T>({ load, total, noun, onShowAll, empty, render }: { load: Load<{ items: T[] }>; total: number | null; noun: string; onShowAll: () => void; empty: ReactNode; render: (items: T[]) => ReactNode }) {
   if (load.state === 'loading')
     return (
-      <ul role="status" aria-busy="true" aria-label="Loading" className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
+      <ul role="status" aria-busy="true" aria-label="Loading" className={listClass}>
         {[0, 1, 2].map((index) => (
-          <li key={index} aria-hidden="true" className="flex items-center gap-3 px-3 py-2.5">
+          <li key={index} aria-hidden="true" className="flex h-[52px] items-center gap-3 px-4">
             <span className="size-7 shrink-0 animate-pulse rounded-[9px] bg-white/[0.05] motion-reduce:animate-none" />
-            <span className="flex min-w-0 flex-1 flex-col gap-2">
-              <Bone width={['w-[68%]', 'w-[52%]', 'w-[60%]'][index] ?? 'w-1/2'} />
-              <Bone width="w-[32%]" className="h-2.5" />
+            <span className="min-w-0 flex-1">
+              <Bone width={['w-[48%]', 'w-[36%]', 'w-[42%]'][index] ?? 'w-1/2'} />
             </span>
+            <Bone width="w-24" className="h-2.5" />
           </li>
         ))}
       </ul>
     )
   if (load.state === 'failed')
     return (
-      <div className="px-3 pb-2">
+      <div className="px-4 py-3">
         <ErrorNote error={load.error} />
       </div>
     )
   if (load.value.items.length === 0) return empty
-  return <ul className="grid grid-cols-[minmax(0,1fr)] gap-0.5">{render(load.value.items)}</ul>
+  const count = total ?? load.value.items.length
+  return (
+    <>
+      <ul className={listClass}>{render(load.value.items)}</ul>
+      {count > shownItems && <MoreRow label={`Show all ${count} ${noun}`} onClick={onShowAll} />}
+    </>
+  )
 }
 
-const shownLabels = 3
+const shownLabels = 2
 
-function GithubRow({ icon, title, labels, meta, comments, onClick, children }: { icon: ReactNode; title: string; labels: GithubIssue['labels']; meta: string; comments: number; onClick: () => void; children?: ReactNode }) {
+function GithubRow({ icon, title, labels, number, author, at, comments, onClick, children }: { icon: ReactNode; title: string; labels: GithubIssue['labels']; number: number; author: string; at: string; comments: number; onClick: () => void; children?: ReactNode }) {
   const extra = labels.length - shownLabels
   return (
     <li>
-      <button type="button" onClick={onClick} className={`${rowClass} items-start`}>
+      <button type="button" onClick={onClick} className={rowClass}>
         <Tile>{icon}</Tile>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13.5px] leading-[1.35] font-medium text-ink-100">{title}</span>
-          <span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-400">
-            <span className="truncate">{meta}</span>
-            {comments > 0 && (
-              <span className="flex items-center gap-1" aria-label={`${comments} comments`}>
-                <CommentIcon size={12} />
-                <span className="tabular-nums">{comments}</span>
-              </span>
-            )}
-          </span>
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-[13.5px] font-medium text-ink-100">{title}</span>
           {labels.length > 0 && (
-            <span className="mt-1.5 flex min-w-0 flex-wrap gap-1">
+            <span className="hidden shrink-0 items-center gap-1 @min-[820px]:flex">
               {labels.slice(0, shownLabels).map((label) => (
                 <LabelChip key={label.name} name={label.name} color={label.color} />
               ))}
@@ -551,6 +589,17 @@ function GithubRow({ icon, title, labels, meta, comments, onClick, children }: {
           )}
         </span>
         {children}
+        <span className={rowMeta}>
+          {comments > 0 && (
+            <span className="flex items-center gap-1" aria-label={`${comments} comments`}>
+              <CommentIcon size={12} />
+              {comments}
+            </span>
+          )}
+          <span className="text-ink-500">#{number}</span>
+          <span className="hidden max-w-[10rem] truncate @min-[640px]:inline">{author}</span>
+          <When at={at} />
+        </span>
       </button>
     </li>
   )
@@ -558,13 +607,13 @@ function GithubRow({ icon, title, labels, meta, comments, onClick, children }: {
 
 /** A pull request's review decision and checks; a pulse while its detail is read, nothing when unknown. */
 function PullStatus({ detail }: { detail: PullDetail | null | undefined }) {
-  if (detail === undefined) return <Bone width="w-20" className="mt-1.5 h-3" />
+  if (detail === undefined) return <Bone width="w-20" className="h-3" />
   if (detail === null) return null
   const summary = checkSummary(detail.checks)
   const review = reviewStates.find((state) => state === detail.review) ?? null
   const tone = summary.state === 'failing' ? 'text-bad' : summary.state === 'pending' ? 'text-warn' : 'text-ok'
   return (
-    <span className="mt-0.5 flex shrink-0 items-center gap-2">
+    <span className="flex shrink-0 items-center gap-2">
       <ReviewChip decision={review} />
       {summary.state !== 'none' && (
         <span aria-label={checkTitle(summary)} className={`flex items-center gap-1 text-[11.5px] font-semibold tabular-nums ${tone}`}>
@@ -589,19 +638,19 @@ function ChatRow({ chat, now, onClick }: { chat: RecentChat; now: number; onClic
         <Tile>
           <AgentIcon agent={chat.agent} size={15} activity={chat.status === 'working' ? 'working' : chat.status === 'waiting' ? 'waiting' : 'idle'} />
         </Tile>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13.5px] font-medium text-ink-100">{chat.title}</span>
-          <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[12px] text-ink-400">
-            {status !== undefined && <span className={`shrink-0 font-medium ${status.className}`}>{status.label}</span>}
-            <span className="flex min-w-0 items-center gap-1">
-              <span className="shrink-0 text-ink-500">
-                <MenuIconGlyph icon="branch" />
-              </span>
-              <span className="truncate font-mono text-[11.5px]">{chat.worktree}</span>
-            </span>
-          </span>
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-[13.5px] font-medium text-ink-100">{chat.title}</span>
+          {status !== undefined && <span className={`shrink-0 text-[12px] font-medium ${status.className}`}>{status.label}</span>}
         </span>
-        {chat.at !== null && <span className="shrink-0 text-[12px] text-ink-500 tabular-nums">{ago(chat.at, now)}</span>}
+        <span className={rowMeta}>
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="shrink-0 text-ink-500">
+              <MenuIconGlyph icon="branch" />
+            </span>
+            <span className="max-w-[14rem] truncate font-mono text-[11.5px]">{chat.worktree}</span>
+          </span>
+          <When at={chat.at === null ? null : ago(chat.at, now)} />
+        </span>
       </button>
     </li>
   )
@@ -622,23 +671,25 @@ function ScriptLine({ row, loading, state, run, port, onSetUp }: { row: ScriptRo
   const live = state.kind === 'running' || state.kind === 'starting'
   const command = row.command
   return (
-    <li className="flex min-w-0 items-center gap-3 rounded-[14px] px-3 py-2.5">
+    <li className="flex h-[52px] min-w-0 items-center gap-3 px-4">
       <Tile className={live ? 'text-ok' : state.kind === 'failed' ? 'text-bad' : 'text-ink-300'}>
         <MenuIconGlyph icon={scriptIcons[row.action]} />
       </Tile>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2">
-          <span className="text-[13.5px] font-medium text-ink-100">{row.label}</span>
-          {chip !== null && (
-            <span className={`flex h-[20px] items-center gap-1.5 rounded-full px-2 text-[11px] font-semibold ${chip.className}`}>
-              {live && <span aria-hidden="true" className={`size-1.5 rounded-full ${state.kind === 'running' ? 'animate-pulse bg-ok motion-reduce:animate-none' : 'bg-accent'}`} />}
-              {state.kind === 'failed' && state.code !== null ? `${chip.label} · exit ${state.code}` : chip.label}
-            </span>
-          )}
-          {row.detected && <span className="text-[11px] text-ink-500">detected</span>}
+      <span className="w-14 shrink-0 text-[13.5px] font-medium text-ink-100">{row.label}</span>
+      {loading ? (
+        <span className="min-w-0 flex-1">
+          <Bone width="w-40" className="h-2.5" />
         </span>
-        {loading ? <Bone width="w-40" className="mt-1.5 h-2.5" /> : <code className={`mt-0.5 block truncate font-mono text-[12px] select-text ${command === null ? 'text-ink-500' : 'text-ink-300'}`}>{command ?? 'Not set'}</code>}
-      </span>
+      ) : (
+        <code className={`min-w-0 flex-1 truncate font-mono text-[12px] select-text ${command === null ? 'text-ink-500' : 'text-ink-300'}`}>{command ?? 'Not set'}</code>
+      )}
+      {chip !== null && (
+        <span className={`flex h-[20px] shrink-0 items-center gap-1.5 rounded-full px-2 text-[11px] font-semibold ${chip.className}`}>
+          {live && <span aria-hidden="true" className={`size-1.5 rounded-full ${state.kind === 'running' ? 'animate-pulse bg-ok motion-reduce:animate-none' : 'bg-accent'}`} />}
+          {state.kind === 'failed' && state.code !== null ? `${chip.label} · exit ${state.code}` : chip.label}
+        </span>
+      )}
+      {row.detected && <span className="shrink-0 text-[12px] text-ink-500">detected</span>}
       {!loading &&
         run !== null &&
         (live ? (
