@@ -461,6 +461,43 @@ export function sendMockChat(chatId: string, parts: MessagePart[]): { queued: Ch
   return { queued: null }
 }
 
+/** megabrain chat fork --at: a new chat holding the source's lines up to the end of the turn of `eventId`. */
+export function forkMockChat(chatId: string, eventId: string): NativeChat {
+  const source = mockChat(chatId)
+  const at = source.lines.findIndex((line) => line.event !== undefined && 'id' in line.event && line.event.id === eventId)
+  if (at === -1) throw new CliError(`no event ${eventId} in chat ${chatId}`, 1)
+  const next = source.lines.findIndex((line, index) => index > at && line.event?.kind === 'user')
+  const lines = source.lines.slice(0, next === -1 ? undefined : next).map((line, index) => ({ ...line, cursor: String(index + 1) }))
+  const id = nextId('chat-branch')
+  const now = new Date().toISOString()
+  const record: NativeChat = { ...source.record, id, title: `${source.record.title ?? 'New chat'} (branch)`, state: 'idle', createdAt: now, lastActivityAt: now }
+  chats.set(id, { lines, followers: new Set(), state: 'idle', turnStartedAt: null, cancel: null, queue: [], held: false, owner: 'chat', record })
+  return record
+}
+
+/** megabrain chat edit-last: a rewind line drops the last message of the person and its answer, then the new parts go in their place. */
+export function editLastMockChat(chatId: string, parts: MessagePart[]): NativeChat {
+  const chat = mockChat(chatId)
+  if (busy(chat)) throw new CliError('chat-busy: the chat is answering; edit when the turn ends', 1)
+  // The shown history after earlier rewinds: the last message of the person still in it.
+  let shown: string[] = []
+  for (const line of chat.lines) {
+    const event = line.event
+    if (event?.kind === 'rewind') {
+      if (event.fromEventId === undefined) continue
+      const index = shown.indexOf(event.fromEventId)
+      if (index !== -1) shown = shown.slice(0, index)
+    } else if (event?.kind === 'user') shown.push(event.id)
+  }
+  const last = shown.at(-1)
+  if (last === undefined) throw new CliError('nothing-to-edit: the chat has no message of yours', 1)
+  store(chat, { event: { kind: 'rewind', fromEventId: last, at: new Date().toISOString() } })
+  chat.held = false
+  play(chatId, replyTurn(textOf(parts)))
+  return recordOf(chat)
+
+}
+
 /** megabrain chat queue: the same rules as chatd, an edit moving the message to the end. */
 export function changeMockQueue(chatId: string, change: ChatQueueChange): ChatQueueItem[] {
   const chat = mockChat(chatId)

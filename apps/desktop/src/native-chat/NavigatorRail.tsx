@@ -10,8 +10,13 @@ const railInset = 48
 
 const clock = (at: string) => new Date(at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
 
-/** Ticks on the transcript's right edge, one per message of the person: hover previews it, a click scrolls to it. */
-export function NavigatorRail({ turns, virtualizer, scroller }: { turns: Turn[]; virtualizer: Virtualizer<HTMLDivElement, Element>; scroller: RefObject<HTMLDivElement | null> }) {
+const noMarks: ReadonlySet<number> = new Set()
+
+/**
+ * Ticks on the transcript's right edge, one per message of the person: hover previews it, a click scrolls to it.
+ * While the chat is searched, the turns holding a match (`marked`, by turn index) show in the accent.
+ */
+export function NavigatorRail({ turns, virtualizer, scroller, marked = noMarks }: { turns: Turn[]; virtualizer: Virtualizer<HTMLDivElement, Element>; scroller: RefObject<HTMLDivElement | null>; marked?: ReadonlySet<number> }) {
   const [hovered, setHovered] = useState<number | null>(null)
   // The list re-renders on every scroll, so the turn in view is worked out here each time.
   const measurements = virtualizer.measurementsCache
@@ -48,12 +53,13 @@ export function NavigatorRail({ turns, virtualizer, scroller }: { turns: Turn[];
         const turn = turns[index]
         if (turn === undefined) return null
         const current = index === active
+        const hit = marked.has(index)
         return (
           // The button is as tall as the tick and its gap, so a 3 px tick is easy to hit.
           <button
             key={turn.key}
             type="button"
-            aria-label={turn.preview === '' ? `Message ${index + 1}` : turn.preview}
+            aria-label={`${turn.preview === '' ? `Message ${index + 1}` : turn.preview}${hit ? ', has matches' : ''}`}
             aria-current={current ? 'location' : undefined}
             onClick={() => go(index)}
             onMouseEnter={() => setHovered(index)}
@@ -63,7 +69,7 @@ export function NavigatorRail({ turns, virtualizer, scroller }: { turns: Turn[];
             style={{ height: tickHeight + layout.gap }}
           >
             <span
-              className={`block rounded-full transition-[width,background-color] duration-150 ${current ? 'w-[30px] bg-ink-300' : 'w-6 bg-ink-500 group-hover:bg-ink-400 group-focus-visible:bg-ink-400'}`}
+              className={`block rounded-full transition-[width,background-color] duration-150 ${current ? 'w-[30px]' : 'w-6'} ${hit ? 'bg-accent' : current ? 'bg-ink-300' : 'bg-ink-500 group-hover:bg-ink-400 group-focus-visible:bg-ink-400'}`}
               style={{ height: tickHeight }}
             />
             {hovered === index && (

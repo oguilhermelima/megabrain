@@ -58,8 +58,8 @@ export function useFollowChat(chat: NativeChat): {
         if (line.event?.kind === 'artifacts') return setArtifactsChanged((count) => count + 1)
         update((current) => applyLine(current, line))
         if (line.event?.kind === 'state') switchState(chat.id, line.event.text)
-        // A progress report is no output of the agent's start.
-        if (line.event !== undefined && line.event.kind !== 'progress') startEvent(chat.id, line.event)
+        // A progress report or a rewind is no output of the agent's start.
+        if (line.event !== undefined && line.event.kind !== 'progress' && line.event.kind !== 'rewind') startEvent(chat.id, line.event)
       },
       onReconnecting: setReconnecting,
       visible: () => document.visibilityState === 'visible',

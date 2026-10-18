@@ -253,6 +253,12 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     announceAction()
     replaceLauncher(launcher, itemKey('native', chat.id))
   }
+  // A branch from a turn opens beside the chat it came from, in the focused pane group, as a started chat does.
+  const chatBranched = (chat: NativeChat) => {
+    setStartedChat(chat)
+    announceAction()
+    showItem(itemKey('native', chat.id))
+  }
   const showTerminal = (launched: TerminalLaunch, launcher: string | null) => {
     setTerminals((current) => addTerminal(current, launched))
     replaceLauncher(launcher, itemKey('terminal', launched.id))
@@ -578,7 +584,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'native': {
         const chat = nativeChats.find((entry) => entry.id === parsed.id) ?? (startedChat?.id === parsed.id ? startedChat : null)
         if (chat === null) return gone('Chat')
-        return { title: chat.title ?? 'New chat', node: <NativeChatView chat={chat} onOpenChat={openRelatedChat} onOpenPath={openPath} onOpenArtifact={openArtifactId} /> }
+        return { title: chat.title ?? 'New chat', node: <NativeChatView chat={chat} onOpenChat={openRelatedChat} onOpenPath={openPath} onOpenArtifact={openArtifactId} onOpenNativeChat={chatBranched} /> }
       }
       case 'terminal': {
         const terminal = terminals.find((entry) => entry.id === parsed.id)

@@ -148,6 +148,9 @@ export async function drainOnce(daemon: ChatDaemon, id: string): Promise<void> {
     await daemon.save(chat);
     const adapter = chatProtocolAdapters[chat.agent];
     const turnId = await adapter.send(chat, child, parts, (method, params) => daemon.codexRequest(child, method, params));
-    if (turnId) daemon.activeTurns.set(id, turnId);
+    if (turnId) {
+      daemon.activeTurns.set(id, turnId);
+      if (chat.agent === "codex") await daemon.store.annotateLastUserTurn(id, turnId);
+    }
     if (chat.agent === "claude" && !daemon.outputSeen.has(id) && !daemon.startTimers.has(id)) daemon.armStartTimer(id, child);
   }

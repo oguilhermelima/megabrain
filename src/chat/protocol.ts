@@ -47,7 +47,8 @@ const claude: ChatProtocolAdapter = {
     if (chat.effort) args.push("--effort", chat.effort);
     if (chat.agentSessionId) args.push("--resume", chat.agentSessionId);
     const context = await launchContext(chat, stateDir);
-    if (context !== "") args.push("--append-system-prompt", context);
+    const promptContext = [context, chat.seedContext].filter((part): part is string => typeof part === "string" && part !== "").join("\n\n");
+    if (promptContext !== "") args.push("--append-system-prompt", promptContext);
     if (chat.approvals !== true) return { command: "claude", args: [...args, "--dangerously-skip-permissions"] };
     // Only an approving chat needs the permission server, so a bypass chat never pays its startup.
     const server = selfInvocation(process.execPath, process.argv, ["chat", "mcp-permission", chat.id]);

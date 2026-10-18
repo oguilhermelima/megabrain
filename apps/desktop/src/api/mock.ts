@@ -1,4 +1,4 @@
-import { answerMockApproval, changeMockQueue, followMockChat, interruptMockChat, mockCodexChat, mockCutChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat, setMockChatMode, takeOverMockChat } from '@/api/fixtures/chat'
+import { answerMockApproval, changeMockQueue, editLastMockChat, followMockChat, forkMockChat, interruptMockChat, mockCodexChat, mockCutChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat, setMockChatMode, takeOverMockChat } from '@/api/fixtures/chat'
 import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/api/fixtures/chat-artifacts'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
@@ -386,6 +386,14 @@ export function createMockApi(): DesktopApi {
         if (touchMockChatArtifact(chatId)) publishMockArtifacts(chatId)
       }, 1800)
       return sent
+    },
+    forkChat: async (chatId, eventId) => {
+      await wait(400)
+      return forkMockChat(chatId, eventId)
+    },
+    editLastMessage: async (chatId, parts) => {
+      await wait(250)
+      return editLastMockChat(chatId, parts)
     },
     resumeChat: async () => {},
     chatQueue: async (chatId, change) => changeMockQueue(chatId, change),

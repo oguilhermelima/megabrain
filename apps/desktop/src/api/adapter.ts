@@ -252,6 +252,10 @@ export interface DesktopApi {
   startChat(options: { agent: string; model?: string; effort?: string; cwd: string; parts?: MessagePart[] }): Promise<NativeChat>
   /** `fresh` starts a new agent session when a suspended chat cannot resume its recorded one. While a turn runs the message waits in the chat's queue and `queued` is it. */
   sendChat(chatId: string, parts: MessagePart[], options?: { fresh?: boolean }): Promise<{ queued: ChatQueueItem | null }>
+  /** A new chat holding this conversation through the turn of eventId (`chat fork --at`). */
+  forkChat(chatId: string, eventId: string): Promise<NativeChat>
+  /** Rewinds the last person message and answer, then sends the replacement (`chat edit-last`). */
+  editLastMessage(chatId: string, parts: MessagePart[]): Promise<NativeChat>
   /** Rechecks a refused session resume and starts the existing session when its holder is gone. */
   resumeChat(chatId: string): Promise<void>
   /** Reads or changes a native chat's queue (`chat queue`); answers with the queue after the change. */

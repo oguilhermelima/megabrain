@@ -23,6 +23,8 @@ import { handleClaudeStream as handleClaudeStreamImpl, publishToolCall as publis
 import { rename as renameImpl, remove as removeImpl, mode as modeImpl, takeOver as takeOverImpl, importTerminalTurns as importTerminalTurnsImpl, logTurnOpen as logTurnOpenImpl, foreignHolders as foreignHoldersImpl, panesOf as panesOfImpl, endAppTerminals as endAppTerminalsImpl, refreshTerminalChats as refreshTerminalChatsImpl, terminalCommand as terminalCommandImpl } from "./daemon/terminal-mode.js";
 import { updateContext as updateContextImpl, setModel as setModelImpl, startArtifactWatch as startArtifactWatchImpl, stopArtifactWatch as stopArtifactWatchImpl, replaceArtifactSnapshot as replaceArtifactSnapshotImpl, refreshClaudeArtifacts as refreshClaudeArtifactsImpl, checkArtifactWatch as checkArtifactWatchImpl } from "./daemon/artifacts-summaries.js";
 import { requireChat as requireChatImpl, normalizeParts as normalizePartsImpl, processes as processesImpl, entryOf as entryOfImpl, track as trackImpl, dropConversation as dropConversationImpl, pruneUnused as pruneUnusedImpl, sessionOfTerminal as sessionOfTerminalImpl, save as saveImpl } from "./daemon/chat-state.js";
+import { fork as forkImpl } from "./daemon/chat-fork.js";
+import { editLast as editLastImpl } from "./daemon/chat-edit-last.js";
 
 type Part = MessagePart;
 type Request = { operation: string; [key: string]: unknown };
@@ -136,6 +138,8 @@ export class ChatDaemon {
   readonly queueHeld = new Set<string>();
   readonly drainChains = new Map<string, Promise<unknown>>();
   readonly activeTurns = new Map<string, string>();
+  /** Prevent overlapping transcript mutations from racing a send or another fork/edit operation. */
+  readonly chatMutations = new Set<string>();
   readonly interrupting = new Set<string>();
   readonly interruptedEvents = new Set<string>();
   readonly turnHasPartial = new Set<string>();
@@ -225,7 +229,10 @@ async daemonStatus(): Promise<{ pid: number; protocol: number; build: number; dr
 async drainDaemon(): Promise<{ drained: true; waitedMs: number; resumes: string[] }> { return await drainDaemonImpl(this); }
 
   /** A send while a turn runs waits in the queue; otherwise it goes out at once. While draining every send waits, for the next daemon. */
-async send(id: string, inputParts: Part[], fresh = false): Promise<{ queued: QueuedChatMessage | null }> { return await sendImpl(this, id, inputParts, fresh); }
+async send(id: string, inputParts: Part[], fresh = false): Promise<{ queued: QueuedChatMessage | null }> {
+  if (this.chatMutations.has(id)) throw new ChatHandoffError("chat-busy", "chat is being edited or forked");
+  return await sendImpl(this, id, inputParts, fresh);
+}
 
   /** Retries a refused resume after the holder is gone, without replaying the message already shown in the transcript. */
 async resume(id: string): Promise<Chat> { return await resumeImpl(this, id); }
@@ -333,6 +340,10 @@ async refreshTerminalChats(): Promise<void> {
 }
 
 async terminalCommand(id: string): Promise<string[]> { return await terminalCommandImpl(this, id); }
+
+async fork(id: string, eventId: string): Promise<Chat> { return await forkImpl(this, id, eventId); }
+
+async editLast(id: string, parts: unknown): Promise<Chat> { return await editLastImpl(this, id, parts); }
 
 updateContext(chat: Chat, usage: Record<string, unknown>): void { return updateContextImpl(this, chat, usage); }
 

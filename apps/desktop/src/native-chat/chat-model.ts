@@ -157,6 +157,7 @@ export function applyLine(state: FollowState, line: ChatEventLine): FollowState 
   if (line.chat !== undefined) next.chat = line.chat
   if (event === undefined) return next
   if (event.kind === 'state') return applyState(next, event)
+  if (event.kind === 'rewind') return event.fromEventId === undefined ? next : rewindEvents(next, event.fromEventId)
   if (state.events.some((known) => known.id === event.id)) return next
   next.events = state.events.concat(event)
   if (line.approval !== undefined) next.approvals = { ...state.approvals, [event.id]: line.approval }
@@ -178,6 +179,12 @@ function finishDrafts(state: FollowState, event: TranscriptEvent): FollowState {
   const keys = own.concat(ended)
   if (keys.length === 0) return state
   return { ...state, drafts: state.drafts.filter((draft) => !keys.includes(draftKey(draft.messageId, draft.stream))), finished: state.finished.concat(keys) }
+}
+
+/** An edit of the last message: every event from `fromEventId` onward leaves the transcript; one not shown changes nothing. */
+export function rewindEvents(state: FollowState, fromEventId: string): FollowState {
+  const index = state.events.findIndex((event) => event.id === fromEventId)
+  return index === -1 ? state : { ...state, events: state.events.slice(0, index) }
 }
 
 /** Shows a message the person just sent, before the chat echoes it. */

@@ -14,6 +14,8 @@ export async function dispatchRequest(daemon: ChatDaemon, request: Request, sock
     case "handover": return await daemon.handover();
     case "start": return await daemon.startChat(request);
     case "send": return await daemon.send(text(request.id), validateParts(request.parts), request.fresh === true);
+    case "fork": return await daemon.fork(text(request.id), text(request.eventId));
+    case "edit-last": return await daemon.editLast(text(request.id), request.parts);
     case "resume": return await daemon.resume(text(request.id));
     case "queue": return await daemon.queueOperation(request);
     case "interrupt": return await daemon.interrupt(text(request.id));

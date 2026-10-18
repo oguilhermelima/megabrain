@@ -156,9 +156,13 @@ export const infoDataSchema = z.looseObject({
 
 export const transcriptEventSchema = z.looseObject({
   id: z.string(),
+  /** Agent turn identifier used by native fork and rewind operations. */
+  turnId: z.string().optional(),
   at: z.string().nullable(),
-  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system', 'approval', 'turn-cut', 'background-task', 'command-output']),
+  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system', 'approval', 'turn-cut', 'background-task', 'command-output', 'rewind']),
   text: z.string(),
+  /** On a rewind event: the first event of the removed turn. */
+  fromEventId: z.string().optional(),
   /** On a native chat's assistant or thinking event: the message its streamed chunks belonged to. */
   messageId: z.string().optional(),
   /** On an assistant event that is a local command's output (/usage, /cost): the command it answers, slash included; "" when the log does not say. Also on a command-output event. */
@@ -307,7 +311,10 @@ export const chatProgressEventSchema = z.looseObject({
 })
 // The chat's artifacts changed, sent to followers only (cursor ""): the view lists them again.
 export const chatArtifactsEventSchema = z.looseObject({ kind: z.literal('artifacts'), at: z.string().optional() })
-export const chatEventSchema = z.union([chatStateEventSchema, chatDeltaEventSchema, chatProgressEventSchema, chatArtifactsEventSchema, z.lazy(() => transcriptEventSchema)])
+// Stored when the last message of the person was edited: every event from fromEventId onward left the
+// conversation, and the edited message follows. Applied on replay too, so every viewer agrees.
+export const chatRewindEventSchema = z.looseObject({ kind: z.literal('rewind'), fromEventId: z.string(), at: z.string().nullable().optional(), id: z.string().optional() })
+export const chatEventSchema = z.union([chatStateEventSchema, chatDeltaEventSchema, chatProgressEventSchema, chatArtifactsEventSchema, chatRewindEventSchema, z.lazy(() => transcriptEventSchema)])
 // A message sent while the native chat's turn ran, waiting in its queue (`chat queue ... --json`).
 export const chatQueueItemSchema = z.looseObject({
   id: z.string(),

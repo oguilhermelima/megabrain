@@ -15,7 +15,7 @@ function stateDir(environment: Environment): string { return environment.MEGABRA
 function errorResult(error: unknown): Result<string> {
   const message = error instanceof Error ? error.message : String(error);
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
-  if (code === "terminal-busy" || code === "chat-busy") return failed(message, 1, `${JSON.stringify({ refusal: { code, message } })}\n`);
+  if (code === "terminal-busy" || code === "chat-busy" || code === "nothing-to-edit") return failed(message, 1, `${JSON.stringify({ refusal: { code, message } })}\n`);
   return failed(message, 2);
 }
 function takeValue(args: readonly string[], name: string): { value?: string; rest: string[] } {
@@ -105,6 +105,22 @@ export async function executeChat(args: readonly string[], environment: Environm
       const json = parsed.rest.includes("--json");
       if (!id || parsed.value === undefined || parsed.rest.some((arg) => arg !== "--fresh" && arg !== "--json")) throw new Error("Usage: megabrain chat send <id> --parts <json> [--fresh] [--json]");
       value = await callChatd(dir, { operation: "send", id, parts: partsJson(parsed.value), ...(fresh ? { fresh } : {}) }, environment, processAdapter);
+      return ok(json ? argsJson(value) : "");
+    }
+    if (verb === "fork") {
+      const [id, ...tail] = rest;
+      const at = takeValue(tail, "--at");
+      const json = at.rest.includes("--json");
+      if (!id || !at.value || at.rest.some((arg) => arg !== "--json")) throw new Error("Usage: megabrain chat fork <id> --at <eventId> [--json]");
+      value = await callChatd(dir, { operation: "fork", id, eventId: at.value }, environment, processAdapter);
+      return ok(json ? argsJson(value) : "");
+    }
+    if (verb === "edit-last") {
+      const [id, ...tail] = rest;
+      const parsed = takeValue(tail, "--parts");
+      const json = parsed.rest.includes("--json");
+      if (!id || parsed.value === undefined || parsed.rest.some((arg) => arg !== "--json")) throw new Error("Usage: megabrain chat edit-last <id> --parts <json> [--json]");
+      value = await callChatd(dir, { operation: "edit-last", id, parts: partsJson(parsed.value) }, environment, processAdapter);
       return ok(json ? argsJson(value) : "");
     }
     if (verb === "resume") {

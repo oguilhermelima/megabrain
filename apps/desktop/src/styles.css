@@ -565,3 +565,13 @@ html.native body {
     animation: none;
   }
 }
+
+/* Search inside a chat (TranscriptSearch.tsx): every match, and the current one stronger. */
+::highlight(chat-search) {
+  background-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  color: var(--color-ink-100);
+}
+::highlight(chat-search-current) {
+  background-color: var(--color-accent);
+  color: var(--color-accent-ink);
+}

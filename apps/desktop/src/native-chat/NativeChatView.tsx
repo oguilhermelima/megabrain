@@ -15,7 +15,7 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
-import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, resumableChatState, shouldInterrupt, thinkingProgress, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
+import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, resumableChatState, rewindEvents, shouldInterrupt, thinkingProgress, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
@@ -33,6 +33,7 @@ import { runningTasks, taskRows } from '@/chat/background-tasks'
 import { BackgroundIndicator } from '@/native-chat/BackgroundTasks'
 import { OwnerStrip } from '@/native-chat/OwnerStrip'
 import { pageMx } from '@/lib/page'
+import { editableParts } from '@/native-chat/message-actions'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
@@ -46,7 +47,20 @@ const shownViews = new Map<string, View>()
 const resumable = resumableChatState
 
 /** A conversation megabrain owns through the agent's protocol, followed live while it is open. */
-export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArtifact }: { chat: NativeChat; onOpenChat?: OpenChat; onOpenPath?: OpenPath; onOpenArtifact?: (artifactId: string) => void }) {
+export function NativeChatView({
+  chat: listed,
+  onOpenChat,
+  onOpenPath,
+  onOpenArtifact,
+  onOpenNativeChat,
+}: {
+  chat: NativeChat
+  onOpenChat?: OpenChat
+  onOpenPath?: OpenPath
+  onOpenArtifact?: (artifactId: string) => void
+  /** Opens another native chat, as a branch from a turn makes one. */
+  onOpenNativeChat?: (chat: NativeChat) => void
+}) {
   const { state, reconnecting, update, queue, setQueue, artifactsChanged } = useFollowChat(listed)
   // The followed record is live; the listed one only fills in until the first line arrives.
   const chat = state.chat ?? listed
@@ -175,6 +189,36 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
     }
     return null
   }
+  // Edit on the latest message of the person (or Up in an empty composer) takes it back to the composer;
+  // sending rewinds it and its answer out of the session and sends the edit in its place.
+  const lastPerson = useMemo(() => state.events.filter((event) => event.kind === 'user').at(-1) ?? null, [state.events])
+  const lastMessage = useMemo(() => (lastPerson === null || busy ? null : { parts: editableParts(lastPerson) }), [lastPerson, busy])
+  const [editRequest, setEditRequest] = useState<{ parts: MessagePart[] } | null>(null)
+  const editLast = async (parts: MessagePart[]): Promise<Notice | null> => {
+    const from = lastPerson
+    // Shown at once, as a send is: the chat's echo of it can arrive before the call returns.
+    const id = crypto.randomUUID()
+    const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
+    const images = parts.flatMap((part) => (part.type === 'image' ? [{ path: part.path }] : []))
+    update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString(), ...(images.length === 0 ? {} : { images, parts }) }))
+    try {
+      await api.editLastMessage(chat.id, parts)
+    } catch (caught) {
+      update((current) => dropOutgoing(current, id))
+      return { tone: 'bad', text: caught instanceof Error ? caught.message : String(caught) }
+    }
+    // The rewind line chatd stores says the same, and comes before the edited message; once it has, this does nothing.
+    if (from !== null) update((current) => rewindEvents(current, from.id))
+    announceAction()
+    return null
+  }
+  // Branch from here: a new chat with the conversation up to that turn, opened beside this one.
+  const branch = (event: TranscriptEvent) =>
+    void act(async () => {
+      const forked = await api.forkChat(chat.id, event.id)
+      onOpenNativeChat?.(forked)
+    })
+
   const keepDraft = (caught: unknown): Notice => {
     const kept = sendFailure(caught)
     if (kept === null) throw caught
@@ -344,9 +388,16 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
   // The background work still running, above the composer; a pick scrolls the transcript to its row.
   const running = useMemo(() => runningTasks(taskRows(state.events).latest), [state.events])
   const jumpToTask = useRef<((taskId: string) => void) | null>(null)
+  const openSearch = useRef<(() => void) | null>(null)
+  // Cmd+F anywhere in the chat, the composer included, searches its transcript.
+  const onChatKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key.toLowerCase() !== 'f' || !(event.metaKey || event.ctrlKey) || event.shiftKey || event.altKey || openSearch.current === null) return
+    event.preventDefault()
+    openSearch.current()
+  }
 
   const transcript = (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div onKeyDown={onChatKey} className="flex min-h-0 flex-1 flex-col">
       <ConversationAgent.Provider value={chat.agent}>
       <ApprovalRendererContext.Provider value={renderApproval}>
         {/* Until the first line of the follow arrives the history is still being read. */}
@@ -365,6 +416,11 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
             channel={compose}
             navigator
             jumpRef={jumpToTask}
+            searchRef={openSearch}
+            busy={busy}
+            shareTitle={title}
+            onEditLast={(event) => setEditRequest({ parts: editableParts(event) })}
+            onBranch={onOpenNativeChat === undefined ? undefined : branch}
           />
         )}
       </ApprovalRendererContext.Provider>
@@ -464,7 +520,7 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
               {opened !== null && layout.mode === 'overlay' && artifactPanel(opened, true)}
             </div>
             {pending !== null && <p className={`${pageMx} -mb-1 px-3 text-[12.5px] text-warn`}>{pending.tool} waits for your approval above.</p>}
-            <div onKeyDown={onComposerKey} className="contents">
+            <div onKeyDown={(event) => { onChatKey(event); onComposerKey(event) }} className="contents">
               <Composer
                 placeholder={owner === 'terminal' ? `Reply to ${title}… (takes over from the terminal)` : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
                 disabled={false}
@@ -502,6 +558,9 @@ export function NativeChatView({ chat: listed, onOpenChat, onOpenPath, onOpenArt
                   )
                 }
                 sendDraft={sendDraft}
+                lastMessage={lastMessage}
+                editRequest={editRequest}
+                onEditLast={editLast}
               />
             </div>
           </div>

@@ -158,6 +158,7 @@ export async function handleClaude(daemon: ChatDaemon, id: string, child: ChildP
     }
     if (item.type === "system" && item.subtype === "init") {
       if (typeof item.session_id === "string") chat.agentSessionId = item.session_id;
+      if (chat.seedContext !== undefined) chat.seedContext = undefined;
       if (Array.isArray(item.slash_commands)) chat.slashCommands = item.slash_commands.filter((name): name is string => typeof name === "string");
       if (chat.state === "starting") chat.state = "idle";
       await daemon.save(chat);
@@ -291,6 +292,7 @@ export async function handleCodex(daemon: ChatDaemon, id: string, child: ChildPr
     } else if (method === "turn/started") {
       const turn = text(params.turnId);
       daemon.activeTurns.set(id, turn);
+      if (turn !== "") await daemon.store.annotateLastUserTurn(id, turn);
       chat.state = "working";
       await daemon.save(chat);
     } else if (method === "turn/completed") {

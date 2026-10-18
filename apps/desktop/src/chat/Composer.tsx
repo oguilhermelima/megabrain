@@ -24,8 +24,30 @@ import { useComposerKeyboard } from '@/chat/ComposerKeyboard'
 import { useComposerAttachmentDrop } from '@/chat/ComposerAttachmentDrop'
 import { useComposerQueueEditing } from '@/chat/ComposerQueueEditing'
 import { useComposerDictation } from '@/chat/ComposerDictation'
+import { pageMx } from '@/lib/page'
 
 export type { Notice } from '@/chat/composer-look'
+
+/** On the box's top edge while it holds the last message for editing: what sending does, and the way out. */
+function EditLastStrip({ onCancel }: { onCancel: () => void }) {
+  return (
+    <div className={`${pageMx} flex min-w-0 items-center gap-2 rounded-t-[14px] border border-b-0 border-accent/30 bg-accent/[0.06] py-1 pr-1 pl-3 text-[12.5px] text-ink-200`}>
+      <svg viewBox="0 0 16 16" width={13} height={13} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-accent">
+        <path d="M10.5 2.5 13.5 5.5 6 13H3v-3ZM9 4l3 3" />
+      </svg>
+      <span role="status" className="min-w-0 truncate py-1">
+        Editing your last message <span className="text-ink-400">· sending replaces it and its answer</span>
+      </span>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="h-6 shrink-0 rounded-full border border-white/[0.12] px-2.5 text-[12px] font-semibold text-ink-100 transition-colors duration-100 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
+      >
+        Cancel
+      </button>
+    </div>
+  )
+}
 
 /**
  * The message box both chat views share: docked across the pane's bottom edge, growing with
@@ -53,6 +75,9 @@ export function Composer({
   above,
   edge,
   sendDraft,
+  lastMessage = null,
+  editRequest = null,
+  onEditLast,
 }: {
   /** Text to put in the box, replacing the draft; a new object each time, as a suggestion is picked. */
   fill?: { text: string } | null
@@ -85,6 +110,12 @@ export function Composer({
   edge?: ReactNode
   /** Filled with the box's send while it is mounted, so the view can send the draft that waits in it. */
   sendDraft?: MutableRefObject<(() => void) | null>
+  /** The last message of the person, which Up in an empty box takes back to edit; null when none can be (a turn runs). */
+  lastMessage?: { parts: MessagePart[] } | null
+  /** Edit picked on the transcript's last message: a new object each time, its parts go in the box to edit. */
+  editRequest?: { parts: MessagePart[] } | null
+  /** Sends the edited last message in place of the old one. */
+  onEditLast?: (parts: MessagePart[]) => Promise<Notice | null>
 }) {
   const [draft, setDraft] = useState<Draft>([])
   const [sending, setSending] = useState(false)
@@ -153,6 +184,24 @@ export function Composer({
     apply,
     show,
   })
+
+  // The box holds the last message of the person: sending replaces it, Esc or Cancel leaves it as it was.
+  const [editingLast, setEditingLast] = useState(false)
+  const startEditLast = (parts: readonly MessagePart[]) => {
+    if (editing !== null) cancelEdit()
+    clear()
+    setEditingLast(true)
+    load(parts)
+  }
+  const cancelEditLast = () => {
+    setEditingLast(false)
+    clear()
+  }
+  useEffect(() => {
+    if (editRequest !== null) startEditLast(editRequest.parts)
+    // Only a new request starts an edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editRequest])
 
   const selection = (): [number, number] => (editor.current === null ? null : selectionOffsets(editor.current)) ?? caret.current
 
@@ -304,7 +353,12 @@ export function Composer({
     setEditing,
     queue,
     onSend,
-    clear,
+    editingLast,
+    onEditLast,
+    clear: () => {
+      setEditingLast(false)
+      clear()
+    },
     onSent: () => setSentCount((count) => count + 1),
   })
 
@@ -342,6 +396,7 @@ export function Composer({
     setEditing,
     load,
     cancelEdit,
+    editLast: { editing: editingLast, available: lastMessage !== null && onEditLast !== undefined, start: () => lastMessage !== null && startEditLast(lastMessage.parts), cancel: cancelEditLast },
     dispatchId,
     queueDispatch,
   })
@@ -359,7 +414,7 @@ export function Composer({
         dispatchQueue={dispatchQueue}
         sendable={sendable}
         above={above}
-        edge={edge}
+        edge={editingLast ? <EditLastStrip onCancel={cancelEditLast} /> : edge}
         queue={queue}
         editing={editing}
         onEdit={editQueued}

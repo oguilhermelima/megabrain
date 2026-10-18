@@ -54,6 +54,8 @@ export function Tooltip({ text, children }: { text: string; children: (anchor: T
     onPointerEnter: (event) => {
       const element = event.currentTarget
       clearTimeout(timer.current)
+      // A press before the tip shows cancels it: the window's listener below only runs once it shows.
+      element.addEventListener('pointerdown', hide, { once: true })
       timer.current = setTimeout(() => setAnchor(element), delayMs)
     },
     onPointerLeave: hide,

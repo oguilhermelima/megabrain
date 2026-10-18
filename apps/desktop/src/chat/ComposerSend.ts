@@ -8,7 +8,7 @@ import { keepsDraft, type Notice } from '@/chat/composer-look'
 // What a queued message's edit answers when chatd had already sent the message.
 const TAKEN = Symbol('taken')
 
-export function useComposerSend({ current, attachments, sending, setSending, disabled, show, editing, setEditing, queue, onSend, clear, onSent }: {
+export function useComposerSend({ current, attachments, sending, setSending, disabled, show, editing, setEditing, queue, onSend, editingLast, onEditLast, clear, onSent }: {
   current: () => Draft
   attachments: MutableRefObject<Map<string, Attachment>>
   sending: boolean
@@ -19,6 +19,9 @@ export function useComposerSend({ current, attachments, sending, setSending, dis
   setEditing: Dispatch<SetStateAction<string | null>>
   queue?: QueueControls
   onSend: (parts: MessagePart[]) => Promise<Notice | null>
+  /** The box holds the last message of the person for editing: sending replaces it through onEditLast. */
+  editingLast: boolean
+  onEditLast?: (parts: MessagePart[]) => Promise<Notice | null>
   clear: () => void
   onSent: () => void
 }) {
@@ -45,6 +48,7 @@ export function useComposerSend({ current, attachments, sending, setSending, dis
         // An edited queued message is saved in place of being sent; the queue moves it to its end.
         const edited = editing === null ? undefined : queue?.items.find((item) => item.id === editing)
         if (edited !== undefined && queue !== undefined) return queue.edit(edited.id, parts).then((outcome) => (outcome === 'taken' ? TAKEN : null))
+        if (editingLast && onEditLast !== undefined) return onEditLast(parts)
         return onSend(parts)
       })
       .then(

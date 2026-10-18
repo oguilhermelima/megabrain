@@ -33,6 +33,12 @@ import { pageMx } from '@/lib/page'
 import { chatTurns, railShown, turnLanding } from '@/native-chat/navigator-rail'
 import { NavigatorRail, railMargin } from '@/native-chat/NavigatorRail'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
+import { SearchBar, useSearchHighlights, useTranscriptSearch } from '@/native-chat/TranscriptSearch'
+import { matchedTurns } from '@/native-chat/transcript-search'
+import { MessageActions, MessageActionsContext, SelectionBar, SelectTarget, type MessageActionsValue } from '@/native-chat/MessageActions'
+import { messageCopyText, messageRoles, selectionCopyText, shareFileName } from '@/native-chat/message-actions'
+import { emptySelection, selectableIds, selectedInOrder, toggleMessage, type MessageSelection } from '@/native-chat/message-selection'
+import { renderPng } from '@/native-chat/share-image'
 import { cutLine, taskDurationMs, taskRows, taskStateLabel, taskTool, type BackgroundTask } from '@/chat/background-tasks'
 
 const noLive: LiveRow[] = []
@@ -46,18 +52,22 @@ const markMessage = (text: string) => (event: ReactMouseEvent<HTMLElement>) => m
 
 function UserMessage({ event, pending = false }: { event: TranscriptEvent; pending?: boolean }) {
   return (
-    <li className="flex justify-end">
+    <li className="group/message relative flex justify-end">
+      {!pending && <SelectTarget event={event} />}
       <div onContextMenu={markMessage(event.text)} title={pending ? 'Sending…' : undefined} className={`min-w-0 max-w-[75%] rounded-[20px] bg-accent/15 px-4 py-2.5 text-ink-100 transition-opacity ${pending ? 'opacity-70' : ''}`}>
         <UserMessageBody text={event.text} images={event.images} parts={event.parts} />
       </div>
+      {!pending && <MessageActions event={event} side="right" />}
     </li>
   )
 }
 
-function AssistantMessage({ event }: { event: TranscriptEvent }) {
+function AssistantMessage({ event, streaming = false }: { event: TranscriptEvent; streaming?: boolean }) {
   return (
-    <li onContextMenu={markMessage(event.text)} className="max-w-[80%] text-ink-200">
+    <li onContextMenu={markMessage(event.text)} className="group/message relative max-w-[80%] text-ink-200">
+      {!streaming && <SelectTarget event={event} />}
       <MarkdownText text={event.text} />
+      {!streaming && <MessageActions event={event} side="left" />}
     </li>
   )
 }
@@ -66,6 +76,35 @@ function AssistantMessage({ event }: { event: TranscriptEvent }) {
 const LatestCommandContext = createContext<string | null>(null)
 
 /** An info command's result: an agent's local command output, or one megabrain answered itself with data. */
+
+/**
+ * Messages as an image to share: as the transcript shows them, on the app's background, with the chat's
+ * agent and title under them when `title` is set.
+ */
+function ShareCard({ events, agent, title, width }: { events: readonly TranscriptEvent[]; agent: string | null; title: string | null; width: number }) {
+  return (
+    <div style={{ width }} className="bg-ink-950 px-8 pt-8 pb-6 font-sans text-[15px] text-ink-200 antialiased">
+      <ol className="space-y-3">{events.map((event) => (event.kind === 'user' ? <UserMessage key={event.id} event={event} /> : <AssistantMessage key={event.id} event={event} />))}</ol>
+      {title !== null && (
+        <p className="mt-6 flex items-center gap-2 border-t border-white/[0.06] pt-4 text-[12.5px] text-ink-400">
+          {agent !== null && <AgentIcon agent={agent} size={14} activity="idle" />}
+          <span className="min-w-0 truncate">{title}</span>
+        </p>
+      )}
+    </div>
+  )
+}
+
+const footerKey = 'megabrain.share.footer'
+function readShareFooter(): boolean {
+  try {
+    return localStorage.getItem(footerKey) !== '0'
+  } catch {
+    return true
+  }
+}
+
+
 function CommandMessage({ event, command }: { event: TranscriptEvent; command: string }) {
   const latest = useContext(LatestCommandContext)
   return (
@@ -373,7 +412,7 @@ const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem |
   if (event.kind === 'user') return <UserMessage event={event} pending={item.pending} />
   if (event.kind === 'command-output') return <CommandMessage event={event} command={event.command ?? ''} />
   if (event.kind === 'assistant' && event.command !== undefined) return <CommandMessage event={event} command={event.command} />
-  if (event.kind === 'assistant') return <AssistantMessage event={event} />
+  if (event.kind === 'assistant') return <AssistantMessage event={event} streaming={item.streaming === true} />
   if (event.kind === 'thinking') return <ThinkingMessage event={event} thoughtMs={item.thoughtMs} />
   if (event.kind === 'approval') return <ApprovalMessage event={event} />
   if (event.kind === 'turn-cut') return <CutTurnLine event={event} />
@@ -389,7 +428,7 @@ const itemKey = (item: NoticeDisplayItem | undefined) => {
   const messageId = item.event.messageId
   return messageId === undefined ? item.event.id : `${item.event.kind}:${messageId}`
 }
-const footerKey = 'footer'
+const footerRow = 'footer'
 // Rows are measured once shown; the estimate only places rows not yet seen.
 const estimatedRowHeight = 48
 const rowGap = 12
@@ -474,6 +513,11 @@ export function ConversationList({
   channel,
   navigator = false,
   jumpRef,
+  searchRef,
+  busy = false,
+  onEditLast,
+  onBranch,
+  shareTitle = null,
 }: {
   events: TranscriptEvent[]
   onOpenChat?: OpenChat
@@ -489,6 +533,16 @@ export function ConversationList({
   navigator?: boolean
   /** Set while the list shows: scrolls to a background task's row by the task's id. */
   jumpRef?: { current: ((taskId: string) => void) | null }
+  /** Set while the list shows: opens the search bar at the transcript's top (Cmd+F in the chat). */
+  searchRef?: { current: (() => void) | null }
+  /** A turn runs: the latest message cannot be edited and the running turn cannot be branched from. */
+  busy?: boolean
+  /** Edit on the latest message of the person: its text and images go back to the composer. */
+  onEditLast?: (event: TranscriptEvent) => void
+  /** Branch from here on the last answer of a turn. */
+  onBranch?: (event: TranscriptEvent) => void
+  /** The chat's title, under a shared image. */
+  shareTitle?: string | null
 }) {
   const [pinned, setPinned] = useState(true)
   const list = useRef<HTMLDivElement>(null)
@@ -535,7 +589,7 @@ export function ConversationList({
     count,
     getScrollElement: () => list.current,
     estimateSize: () => estimatedRowHeight,
-    getItemKey: (index) => (index === items.length ? footerKey : itemKey(items[index])),
+    getItemKey: (index) => (index === items.length ? footerRow : itemKey(items[index])),
     gap: rowGap,
     paddingStart: listPadding,
     paddingEnd: listPadding,
@@ -543,6 +597,25 @@ export function ConversationList({
     scrollPaddingStart: navigator ? turnLanding(list.current?.clientHeight ?? 0) : 0,
     overscan: 6,
   })
+
+  // A new query starts at the row in view: the first one whose bottom is below the view's top.
+  const search = useTranscriptSearch(items, () => {
+    const offset = virtualizer.scrollOffset ?? 0
+    return virtualizer.getVirtualItems().find((row) => row.end > offset)?.index ?? 0
+  })
+  useSearchHighlights(search, list, virtualizer, () => setPinned(false))
+  useEffect(() => {
+    if (searchRef === undefined) return
+    searchRef.current = search.show
+    return () => {
+      searchRef.current = null
+    }
+  })
+  const marked = useMemo(() => new Set(matchedTurns(turns.map((turn) => turn.row), search.matches)), [turns, search.matches])
+  const closeSearch = () => {
+    search.close()
+    list.current?.focus({ preventScroll: true })
+  }
 
   const scrollToLatest = () => {
     if (count > 0) virtualizer.scrollToIndex(count - 1, { align: 'end' })
@@ -582,13 +655,83 @@ export function ConversationList({
   }
 
   const contextMenu = useContextMenu()
-  // What a menu action could not do (a clipboard or a save refused), shown for a few seconds.
-  const [menuError, setMenuError] = useState<string | null>(null)
+  // What an action did (an image copied) or could not do (a clipboard or a save refused), shown for a few seconds.
+  const [flash, setFlash] = useState<{ text: string; bad: boolean } | null>(null)
   useEffect(() => {
-    if (menuError === null) return
-    const timer = setTimeout(() => setMenuError(null), 4_000)
+    if (flash === null) return
+    const timer = setTimeout(() => setFlash(null), 4_000)
     return () => clearTimeout(timer)
-  }, [menuError])
+  }, [flash])
+  const setMenuError = (text: string) => setFlash({ text, bad: true })
+  const failed = (caught: unknown) => setMenuError(caught instanceof Error ? caught.message : String(caught))
+
+  // The message actions: copy, share as an image, select several, edit the latest, branch from a turn.
+  const agent = useContext(ConversationAgent)
+  const [selecting, setSelecting] = useState(false)
+  const [selection, setSelection] = useState<MessageSelection>(emptySelection)
+  const [shareFooter, setShareFooter] = useState(readShareFooter)
+  const order = useMemo(() => selectableIds(items), [items])
+  const byId = useMemo(() => new Map(items.flatMap((item) => (item.type === 'message' ? [[item.event.id, item.event] as const] : []))), [items])
+  const roles = useMemo(() => ({ latest: messageRoles(items, false).lastPerson, turnEnds: messageRoles(items, busy).turnEnds }), [items, busy])
+  // As wide as the transcript shows it, within what reads well as a picture.
+  const cardWidth = () => Math.min(880, Math.max(520, list.current?.clientWidth ?? 720))
+  const shareImage = (events: TranscriptEvent[], how: 'copy' | 'save') =>
+    renderPng(<ShareCard events={events} agent={agent} title={shareFooter ? (shareTitle ?? null) : null} width={cardWidth()} />)
+      .then(async (png) => {
+        if (how === 'copy') {
+          await api.copyImage(png)
+          setFlash({ text: events.length === 1 ? 'Image copied' : `Image of ${events.length} messages copied`, bad: false })
+        } else if (await api.saveImageAs(png, shareFileName(shareTitle, events.length))) setFlash({ text: 'Image saved', bad: false })
+      })
+      .catch(failed)
+  const stopSelecting = () => {
+    setSelecting(false)
+    setSelection(emptySelection)
+  }
+  const chosen = () => selectedInOrder(selection, order).flatMap((id) => byId.get(id) ?? [])
+  const actions = useMemo<MessageActionsValue>(
+    () => ({
+      copy: (event) => api.copyText(messageCopyText(event)).catch((caught: unknown) => {
+        failed(caught)
+        throw caught
+      }),
+      share: (event, trigger) =>
+        contextMenu.open(trigger, [
+          [
+            { label: 'Copy image', icon: 'copy', onSelect: () => void shareImage([event], 'copy') },
+            { label: 'Download PNG', icon: 'save', onSelect: () => void shareImage([event], 'save') },
+          ],
+          [
+            {
+              label: shareFooter ? 'Leave out the chat title' : 'Show the chat title',
+              icon: 'chat',
+              onSelect: () => {
+                setShareFooter(!shareFooter)
+                try {
+                  localStorage.setItem(footerKey, shareFooter ? '0' : '1')
+                } catch {
+                  // Not kept: the next app run shows the title again.
+                }
+              },
+            },
+          ],
+        ]),
+      select: (event) => {
+        setSelecting(true)
+        setSelection(toggleMessage(emptySelection, event.id, order, false))
+      },
+      selecting,
+      selected: new Set(selection.ids),
+      toggle: (id, range) => setSelection((current) => toggleMessage(current, id, order, range)),
+      lastPerson: roles.latest,
+      editDisabled: busy,
+      edit: onEditLast ?? null,
+      turnEnds: roles.turnEnds,
+      branch: onBranch ?? null,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selecting, selection, order, roles, busy, onEditLast, onBranch, shareFooter, agent, shareTitle],
+  )
 
   const onContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     const marked = markedParts(event)
@@ -602,7 +745,6 @@ export function ConversationList({
     const message = marked.message ?? null
     const tool = marked.tool ?? null
     const insert = channel?.current ?? null
-    const failed = (caught: unknown) => setMenuError(caught instanceof Error ? caught.message : String(caught))
     const copy = (text: string) => void api.copyText(text).catch(failed)
     const run = (action: ChatAction) => {
       switch (action) {
@@ -682,8 +824,18 @@ export function ConversationList({
   return (
     <PathLinksContext.Provider value={links}>
       <BackgroundTasksContext.Provider value={taskContext}>
+      <MessageActionsContext.Provider value={actions}>
       {/* It fades in where the suggestions or the loading rows were, as the first message arrives. */}
-      <div ref={width.ref} className="motion-fade relative flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div
+        ref={width.ref}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && selecting) {
+            event.preventDefault()
+            stopSelecting()
+          }
+        }}
+        className="motion-fade relative flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
         <div
           ref={list}
           // Focusable by a click, so the rail's Alt+Up and Alt+Down reach it; never a tab stop.
@@ -694,7 +846,7 @@ export function ConversationList({
           onMouseDown={(event) => {
             if (event.button === 2) event.preventDefault()
           }}
-          className={`${rail ? `${railMargin} rail-scroll` : pageMx} min-h-0 flex-1 overflow-y-auto outline-none select-text`}
+          className={`${rail ? `${railMargin} rail-scroll` : pageMx} ${selecting ? 'pl-8' : ''} min-h-0 flex-1 overflow-y-auto outline-none select-text`}
         >
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((row) => {
@@ -707,9 +859,10 @@ export function ConversationList({
                 )
               }
               if (item === undefined) return null
-              // Each row is a one-item list, so the message components keep rendering an <li>.
+              // Each row is a one-item list, so the message components keep rendering an <li>. A hovered row
+              // rises above the next, so the actions under its message stay on top.
               return (
-                <ol key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${row.start}px)` }}>
+                <ol key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="absolute top-0 left-0 w-full focus-within:z-10 hover:z-10" style={{ transform: `translateY(${row.start}px)` }}>
                   <WriteBasesContext.Provider value={bases}>
                     <LatestCommandContext.Provider value={latestCommand}>
                       <Item item={item} onOpenChat={onOpenChat} />
@@ -720,8 +873,18 @@ export function ConversationList({
             })}
           </div>
         </div>
-        {rail && <NavigatorRail turns={turns} virtualizer={virtualizer} scroller={list} />}
-        {!pinned && (
+        {rail && <NavigatorRail turns={turns} virtualizer={virtualizer} scroller={list} marked={marked} />}
+        {search.open && <SearchBar search={search} onClose={closeSearch} />}
+        {selecting && (
+          <SelectionBar
+            count={selection.ids.length}
+            onCopyImage={() => void shareImage(chosen(), 'copy')}
+            onDownload={() => void shareImage(chosen(), 'save')}
+            onCopyText={() => void api.copyText(selectionCopyText(chosen())).then(() => setFlash({ text: 'Text copied', bad: false }), failed)}
+            onCancel={stopSelecting}
+          />
+        )}
+        {!pinned && !selecting && (
           <button
             type="button"
             onClick={() => {
@@ -733,13 +896,14 @@ export function ConversationList({
             Jump to latest
           </button>
         )}
-        {menuError !== null && (
-          <p role="status" className="absolute bottom-14 left-1/2 max-w-[80%] -translate-x-1/2 truncate rounded-full border border-bad/30 bg-ink-900/95 px-4 py-1.5 text-[12.5px] text-bad shadow-lg">
-            {menuError}
+        {flash !== null && (
+          <p role="status" className={`absolute bottom-14 left-1/2 z-20 max-w-[80%] -translate-x-1/2 truncate rounded-full border bg-ink-900/95 px-4 py-1.5 text-[12.5px] shadow-lg ${flash.bad ? 'border-bad/30 text-bad' : 'border-white/15 text-ink-100'}`}>
+            {flash.text}
           </p>
         )}
         <ContextMenu menu={contextMenu.menu} onClose={contextMenu.close} />
       </div>
+      </MessageActionsContext.Provider>
       </BackgroundTasksContext.Provider>
     </PathLinksContext.Provider>
   )
