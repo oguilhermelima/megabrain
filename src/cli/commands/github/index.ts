@@ -26,6 +26,7 @@ export type Clock = () => number;
 export type Verb = "prs" | "issues" | "pr" | "issue";
 export type ReviewVerb = "review" | "comment" | "issue-state" | "pr-state";
 export type FlowVerb = "pr-files" | "pr-file" | "threads" | "thread-reply" | "thread-resolve" | "reviewers" | "request-review" | "pr-ready" | "auto-merge" | "rerun-checks" | "file-viewed" | "assignable" | "image";
+export type ActionVerb = "runs" | "run" | "run-log" | "run-action" | "workflow-dispatch";
 
 export type Person = Readonly<{ login: string; name: string | null; isBot: boolean }>;
 export type Label = Readonly<{ name: string; color: string; description: string }>;
@@ -44,6 +45,9 @@ export const USAGE: Readonly<Record<Verb | ReviewVerb | FlowVerb, UsageKey>> = {
   "reviewers": "github-reviewers", "request-review": "github-request-review", "pr-ready": "github-pr-ready", "auto-merge": "github-auto-merge",
   "rerun-checks": "github-rerun-checks", "file-viewed": "github-file-viewed", "assignable": "github-assignable", "image": "github-image", "review": "github-review", "comment": "github-comment", "issue-state": "github-issue-state", "pr-state": "github-pr-state",
 };
+import { executeActions } from "./actions.js";
+
+const ACTION_VERBS: readonly ActionVerb[] = ["runs", "run", "run-log", "run-action", "workflow-dispatch"];
 import { REVIEW_VERBS, REVIEW_EVENTS, ISSUE_REASONS, MERGE_METHODS, ReviewOptions, parseComments, parseReviewOptions, executeReview } from "./review-command.js";
 export { REVIEW_VERBS, REVIEW_EVENTS, ISSUE_REASONS, MERGE_METHODS, parseComments, parseReviewOptions, executeReview } from "./review-command.js";
 export type { ReviewOptions } from "./review-command.js";
@@ -66,6 +70,10 @@ export type { Options } from "./views.js";
 
 export async function executeGithub(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter(), now: Clock = Date.now): Promise<Result<string>> {
   const [verbArgument, ...rest] = args;
+  if (verbArgument !== undefined && ACTION_VERBS.includes(verbArgument as ActionVerb)) {
+    if (rest.includes("-h") || rest.includes("--help")) return ok(usageText(`github-${verbArgument}` as UsageKey));
+    return executeActions(verbArgument, rest, environment, process);
+  }
   if (verbArgument !== undefined && REVIEW_VERBS.includes(verbArgument)) {
     const reviewVerb = verbArgument as ReviewVerb;
     if (rest.includes("-h") || rest.includes("--help")) return ok(usageText(USAGE[reviewVerb]));

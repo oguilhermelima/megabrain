@@ -91,6 +91,29 @@ const githubListing = <T extends z.ZodType>(item: T) =>
 export const githubPullRequestListSchema = githubListing(githubPullRequestSchema)
 export const githubIssueListSchema = githubListing(githubIssueSchema)
 
+// `megabrain github runs|run --json`: workflow runs and their jobs/steps.
+export const githubActionRunSchema = z.looseObject({
+  id: z.number(), name: z.string(), title: z.string(), event: z.string(), branch: z.string(), sha: z.string(),
+  status: z.enum(['queued', 'in_progress', 'completed', 'waiting', 'requested', 'pending']),
+  conclusion: z.enum(['success', 'failure', 'cancelled', 'skipped', 'timed_out', 'action_required', 'neutral', 'stale']).nullable(),
+  number: z.number(), attempt: z.number(), actor: z.string(), createdAt: z.string(), updatedAt: z.string(), startedAt: z.string().nullable(), url: z.string(), prNumber: z.number().nullable(),
+})
+export const githubActionWorkflowInputSchema = z.looseObject({
+  name: z.string(), description: z.string().nullable(), required: z.boolean(), type: z.enum(['string', 'boolean', 'choice', 'number', 'environment']),
+  default: z.union([z.string(), z.boolean(), z.number()]).nullable(), options: z.array(z.string()).optional(),
+})
+/** dispatchable when the workflow's on: includes workflow_dispatch; inputs are its dispatch inputs. */
+export const githubActionWorkflowSchema = z.looseObject({ id: z.number(), name: z.string(), path: z.string(), state: z.string(), dispatchable: z.boolean(), inputs: z.array(githubActionWorkflowInputSchema) })
+export const githubActionRunsSchema = z.looseObject({ runs: z.array(githubActionRunSchema), workflows: z.array(githubActionWorkflowSchema), next: z.string().nullable() })
+export const githubActionStepSchema = z.looseObject({ number: z.number(), name: z.string(), status: z.string(), conclusion: z.string().nullable(), startedAt: z.string().nullable(), completedAt: z.string().nullable() })
+export const githubActionJobSchema = z.looseObject({ id: z.number(), name: z.string(), status: z.string(), conclusion: z.string().nullable(), startedAt: z.string().nullable(), completedAt: z.string().nullable(), url: z.string(), steps: z.array(githubActionStepSchema) })
+export const githubActionRunDetailSchema = githubActionRunSchema.extend({ jobs: z.array(githubActionJobSchema) })
+export const githubActionLogSchema = z.looseObject({ log: z.string(), truncated: z.boolean() })
+export type GithubActionRun = z.infer<typeof githubActionRunSchema>
+export type GithubActionRunDetail = z.infer<typeof githubActionRunDetailSchema>
+export type GithubActionRuns = z.infer<typeof githubActionRunsSchema>
+export type GithubActionLog = z.infer<typeof githubActionLogSchema>
+
 // `megabrain github pr|issue <repo> <number> --json`: the body (markdown) and the comments, and for a
 // pull request its review decision, checks and line counts.
 export const githubDetailSchema = z.looseObject({

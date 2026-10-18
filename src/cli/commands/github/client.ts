@@ -128,6 +128,27 @@ export async function gh(process: ProcessAdapter, args: readonly string[], { nam
   return answer.kind === "ok" ? ok(answer.value) : failed(answer.error);
 }
 
+/** A raw text response such as a job log, with the same authentication, retry and error messages as gh JSON calls. */
+export async function ghText(process: ProcessAdapter, args: readonly string[], { name = `gh ${args[0] ?? ""} ${args[1] ?? ""}`, retry = true }: { name?: string; retry?: boolean } = {}): Promise<Result<string>> {
+  const call = () => process.run("gh", args, { timeoutMs: GH_TIMEOUT });
+  let result = await call();
+  if (result.kind === "ok") return ok(result.value.stdout);
+  if (result.error.includes("executable not found")) return failed("GitHub CLI (gh) is required; install it and sign in with gh auth login");
+  if (result.exitCode === 4 || /gh auth login|not logged in/i.test(result.error)) return failed("GitHub CLI is not signed in; run gh auth login");
+  const line = result.error.trim().split("\n")[0] ?? "";
+  const known = TRANSIENT.find(([pattern]) => pattern.test(line));
+  if (retry && known !== undefined) {
+    result = await call();
+    if (result.kind === "ok") return ok(result.value.stdout);
+    if (result.error.includes("executable not found")) return failed("GitHub CLI (gh) is required; install it and sign in with gh auth login");
+    if (result.exitCode === 4 || /gh auth login|not logged in/i.test(result.error)) return failed("GitHub CLI is not signed in; run gh auth login");
+    const secondLine = result.error.trim().split("\n")[0] ?? "";
+    const secondKnown = TRANSIENT.find(([pattern]) => pattern.test(secondLine));
+    return failed(secondKnown === undefined ? `${name} failed: ${secondLine}` : `${name} failed: ${secondKnown[1]} (${secondLine})`);
+  }
+  return failed(known === undefined ? `${name} failed: ${line}` : `${name} failed: ${known[1]} (${line})`);
+}
+
 export type GraphqlAnswer = Readonly<{ data: Record<string, unknown>; error: string | undefined }>;
 
 export function repositoryVariables(nameWithOwner: string): { owner: string; name: string } {

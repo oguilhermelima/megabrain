@@ -48,7 +48,12 @@ export const USAGE_LINES = {
   "port-who": "port who <port> [--json]",
   "port-free": "port free [--from <port>] [--json]",
   "port-kill": "port kill <port> [--json]",
-  "github": "github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
+  "github": "github prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
+  "github-runs": "github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json]",
+  "github-run": "github run <repo name|path> <run id> [--json]",
+  "github-run-log": "github run-log <repo name|path> <run id> --job <job id> [--json]",
+  "github-run-action": "github run-action <repo name|path> <run id> rerun|rerun-failed|cancel [--json]",
+  "github-workflow-dispatch": "github workflow-dispatch <repo name|path> <workflow> --ref <ref> [--inputs <json>] [--json]",
   "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]",
   "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]",
   "github-pr": "github pr <repo name|path> <number> [--json]",
@@ -240,7 +245,7 @@ Commands:
   projects [--json]                     List projects, worktrees, and agent sessions
   usage stats [--days <n>] [--provider <id>] [--json] Token usage per day and provider from the agents' logs
   port who|free|kill ...                Find, free and stop port listeners
-  github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read, review and manage GitHub pull requests and issues
+  github prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read, review and manage GitHub pull requests, issues and Actions
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

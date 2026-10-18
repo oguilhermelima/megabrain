@@ -21,6 +21,9 @@ export const quickViewPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, 
 export const screenPolicy: PollPolicy = { visibleMs: 2_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
 // The CLI caches each GitHub answer for 60 s; the badges can wait twice that.
 export const githubCountsPolicy: PollPolicy = { visibleMs: 120_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
+// Workflow runs: every 10 s while one shown is queued or running, else once a minute; paused while hidden.
+export const actionsLivePolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
+export const actionsPolicy: PollPolicy = { visibleMs: 60_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
 
 /** How long to wait after `failures` failed reads in a row: 1 s, doubling, never past the interval. */
 export function retryDelay(failures: number, interval: number | null): number | null {

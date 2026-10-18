@@ -11,6 +11,7 @@ import { mockUsageStats } from '@/api/fixtures/usage'
 import { mockKnowledgeList, mockKnowledgeSearch, mockKnowledgeTopics, mockKnowledgeTranscript } from '@/api/fixtures/knowledge'
 import { mockArtifact, mockArtifactList } from '@/api/fixtures/artifacts'
 import { createMockReviewApi } from '@/api/fixtures/github-review'
+import { createMockActionsApi } from '@/api/fixtures/github-actions'
 import { validateRule } from '@/settings/chain-rules'
 import { effectiveToggles, inEffect, parseKnowledgeSettings } from '@/settings/knowledge-model'
 
@@ -334,6 +335,7 @@ export function createMockApi(): DesktopApi {
       return githubEdited('issue', mockGithubDetail('issue', number))
     },
     ...reviewApi,
+    ...createMockActionsApi(),
     submitReview: async (_root, number, review) => {
       await wait(500)
       if (number === 109) throw new CliError('gh: Can not approve your own pull request (HTTP 422)', 1)

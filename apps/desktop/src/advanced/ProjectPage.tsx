@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { api } from '@/api'
-import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest, NativeChat, Project, ProjectScripts } from '@/api/schema'
+import type { GithubActionRun, GithubCheck, GithubDetail, GithubIssue, GithubPullRequest, NativeChat, Project, ProjectScripts } from '@/api/schema'
 import { displayName, projectTint } from '@/advanced/appearance-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
@@ -15,6 +15,10 @@ import { Bone } from '@/components/Skeleton'
 import { Tooltip } from '@/components/Tooltip'
 import { ErrorNote } from '@/components/ui'
 import { checkSummary, githubRepository, stateColors } from '@/github/github-model'
+import { formatDuration, isLive, latestRunsByBranch, runDuration, runLabels, runVisual } from '@/github/actions-model'
+import { noRunFilters } from '@/github/actions-requests'
+import { BranchChip, RunStatusIcon, eventName } from '@/github/actions-parts'
+import { useRuns } from '@/github/useRuns'
 import { issuePage, pullRequestPage } from '@/github/github-requests'
 import { CommentIcon, PullRequestIcon } from '@/github/icons'
 import { CheckGlyph, IssueStateIcon, LabelChip, PullRequestStateIcon, ReviewChip, ago, checkTitle, openOnGithub, useNow } from '@/github/parts'
@@ -94,6 +98,10 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
 
   const pulls = useLoad(repository === null ? null : project.path, () => pullRequestPage(project.path, 'open', null))
   const issues = useLoad(repository === null ? null : project.path, () => issuePage(project.path, 'open', null))
+  // The latest runs, read again every 10 s while one runs; the worktree rows show their branch's newest.
+  const runs = useRuns(repository === null ? null : project.path, noRunFilters, 30)
+  const runsLoad: Load<{ items: GithubActionRun[] }> = runs.page !== null ? { state: 'ready', value: { items: runs.page.runs } } : runs.error !== null ? { state: 'failed', error: runs.error } : { state: 'loading' }
+  const latestRuns = runs.page === null ? null : latestRunsByBranch(runs.page.runs)
   const topPulls = pulls.state === 'ready' ? newestFirst(pulls.value.items, shownItems) : []
   // Checks and the review decision come with one pull request's detail only, so just the few shown are read.
   const details = useLoad(topPulls.length === 0 ? null : `${project.path}\n${topPulls.map((item) => item.number).join(',')}`, async () =>
@@ -212,6 +220,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
                     counts={changed.state === 'ready' ? (changed.value[worktree.path] ?? null) : undefined}
                     review={worktree.branch === null ? null : (stacks[worktree.branch]?.reviewDecision ?? null)}
                     behind={worktree.branch === null ? null : (stacks[worktree.branch]?.behindParent ?? null)}
+                    run={worktree.branch === null ? null : (latestRuns?.get(worktree.branch) ?? null)}
                     now={now}
                     onOpen={() => actions.open(worktree.open, worktree.path)}
                     onNewChat={() => actions.newChat(worktree.path)}
@@ -254,6 +263,19 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
                     <GithubRow key={item.number} icon={<IssueStateIcon state={item.state} size={15} />} title={item.title} labels={item.labels} number={item.number} author={item.author?.login ?? 'unknown'} at={ago(item.updatedAt, now)} comments={item.comments} onClick={() => actions.github(project, 'issues', item.number)} />
                   ))
                 }
+              />
+            </Section>
+          )}
+
+          {repository !== null && (
+            <Section title="Actions" action={{ label: 'All runs', onClick: () => actions.github(project, 'actions') }}>
+              <GithubList
+                load={runsLoad}
+                total={runs.page !== null && runs.page.next !== null ? null : runs.page?.runs.length ?? null}
+                noun="runs"
+                onShowAll={() => actions.github(project, 'actions')}
+                empty={<EmptyState text="No workflow runs yet." action={{ label: 'All runs', onClick: () => actions.github(project, 'actions') }} />}
+                render={(items: GithubActionRun[]) => items.slice(0, shownItems).map((run) => <RunRow key={run.id} run={run} now={now} onClick={() => actions.github(project, 'actions', run.id)} />)}
               />
             </Section>
           )}
@@ -445,6 +467,7 @@ function WorktreeRow({
   counts,
   review,
   behind,
+  run,
   now,
   onOpen,
   onNewChat,
@@ -456,6 +479,8 @@ function WorktreeRow({
   counts: ChangeCounts | null | undefined
   review: string | null
   behind: number | null
+  /** The newest workflow run of its branch; null when there is none or it is not known yet. */
+  run: GithubActionRun | null
   now: number
   onOpen: () => void
   onNewChat: () => void
@@ -482,6 +507,7 @@ function WorktreeRow({
             </span>
           )}
           {reviewDecision !== null && <ReviewChip decision={reviewDecision} />}
+          {run !== null && <RunStatusIcon item={run} size={13} tip label={`${run.name} #${run.number}: ${runLabels[runVisual(run)].toLowerCase()}`} />}
         </span>
         {/* The facts sit where the actions show, so a hover or keyboard focus trades one for the other. */}
         <span className={`${rowMeta} gap-4 transition-opacity duration-[var(--motion-enter)] group-focus-within:opacity-0 group-hover:opacity-0`}>
@@ -564,7 +590,7 @@ function GithubList<T>({ load, total, noun, onShowAll, empty, render }: { load: 
   return (
     <>
       <ul className={listClass}>{render(load.value.items)}</ul>
-      {count > shownItems && <MoreRow label={`Show all ${count} ${noun}`} onClick={onShowAll} />}
+      {(total === null || count > shownItems) && <MoreRow label={total === null ? `Show all ${noun}` : `Show all ${count} ${noun}`} onClick={onShowAll} />}
     </>
   )
 }
@@ -622,6 +648,30 @@ function PullStatus({ detail }: { detail: PullDetail | null | undefined }) {
         </span>
       )}
     </span>
+  )
+}
+
+/** A workflow run in the project's list: its state, title, workflow, branch, trigger, duration and age. */
+function RunRow({ run, now, onClick }: { run: GithubActionRun; now: number; onClick: () => void }) {
+  return (
+    <li>
+      <button type="button" onClick={onClick} className={rowClass}>
+        <Tile>
+          <RunStatusIcon item={run} size={15} />
+        </Tile>
+        <span className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-[13.5px] font-medium text-ink-100">{run.title}</span>
+          <span className="hidden shrink-0 text-[12px] font-semibold text-ink-400 @min-[720px]:inline">{run.name}</span>
+        </span>
+        <span className={rowMeta}>
+          <BranchChip branch={run.branch} className="hidden max-w-[12rem] @min-[820px]:inline-flex" />
+          <span className="hidden @min-[640px]:inline">{eventName(run.event)}</span>
+          <span className="text-ink-500">#{run.number}</span>
+          <span className={`w-14 text-right ${isLive(run) ? 'text-warn' : ''}`}>{formatDuration(runDuration(run, now))}</span>
+          <When at={ago(run.createdAt, now)} />
+        </span>
+      </button>
+    </li>
   )
 }
 

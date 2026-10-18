@@ -84,6 +84,16 @@ export function ClosedIssueIcon(props: IconProps) {
   )
 }
 
+/** GitHub Actions: a play mark in a circle. */
+export function ActionsIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M6.75 5.6v4.8L10.4 8 6.75 5.6Z" />
+    </Svg>
+  )
+}
+
 export function CommentIcon(props: IconProps) {
   return (
     <Svg {...props}>

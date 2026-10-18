@@ -1,0 +1,17 @@
+name: CI
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Test target
+        required: true
+        type: choice
+        default: unit
+        options:
+          - unit
+          - integration
+      dry-run:
+        description: Print actions without applying them
+        required: false
+        type: boolean
+        default: false

@@ -475,7 +475,12 @@ describe("github cache", () => {
 
 describe("github routing and usage", () => {
   const usage = {
-    "github": "github prs|issues|pr|issue|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
+    "github": "github prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
+    "github-runs": "github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json]",
+    "github-run": "github run <repo name|path> <run id> [--json]",
+    "github-run-log": "github run-log <repo name|path> <run id> --job <job id> [--json]",
+    "github-run-action": "github run-action <repo name|path> <run id> rerun|rerun-failed|cancel [--json]",
+    "github-workflow-dispatch": "github workflow-dispatch <repo name|path> <workflow> --ref <ref> [--inputs <json>] [--json]",
     "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]",
     "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]",
     "github-pr": "github pr <repo name|path> <number> [--json]",
@@ -483,7 +488,7 @@ describe("github routing and usage", () => {
   };
 
   test.each(Object.entries(usage))("%s --help prints its pinned usage", async (key, line) => {
-    const args = key.split("-");
+    const args = key.startsWith("github-") ? ["github", key.slice("github-".length)] : key.split("-");
     expect(await route([...args, "--help"], { environment: env, processAdapter: fakeGh })).toEqual({ kind: "ok", value: `Usage: megabrain ${line}\n` });
   });
 
@@ -1269,6 +1274,69 @@ describe("github rerun-checks", () => {
     answer = (args) => args.some((arg) => arg.endsWith("/runs/11/rerun")) ? failed("gh: This workflow is already running (HTTP 403)", 1) : rerunGh(args);
     const result = await github(["rerun-checks", path, "7"]);
     expect(result.kind === "failed" ? result.error : "").toContain("already running");
+  });
+});
+
+describe("github Actions", () => {
+  test("lists normalized runs and workflows using the Actions API", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = (args) => args[1]?.includes("actions/runs") ? stdout(fixture("actions-runs.json"))
+      : args[1]?.includes("actions/workflows") ? stdout(fixture("actions-workflows.json"))
+        : args[1]?.includes("contents/.github/workflows/ci.yml") ? stdout(JSON.stringify({ encoding: "base64", content: Buffer.from(fixture("actions-workflow-content.yml")).toString("base64") }))
+        : failed(`unexpected gh ${args.join(" ")}`);
+    const result = parsed<{ runs: Record<string, unknown>[]; workflows: unknown[]; next: string | null }>(await github(["runs", path, "--workflow", "CI", "--limit", "5", "--json"]));
+    expect(result).toMatchObject({ runs: [{ id: 19, name: "CI", title: "Fix build", status: "completed", conclusion: "success", number: 8, attempt: 2, actor: "fake-user", prNumber: 7 }], workflows: [{ id: 3, name: "CI", state: "active" }], next: null });
+    expect(calls.map((call) => call[1])).toEqual(["repos/operator/sample/actions/workflows?per_page=100", "repos/operator/sample/contents/.github/workflows/ci.yml", "repos/operator/sample/actions/runs?per_page=5&page=1&workflow_id=3"]);
+  });
+
+  test("returns a run with jobs and steps and cleans ANSI from logs", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = (args) => args[1]?.endsWith("/jobs?per_page=100") ? stdout(fixture("actions-jobs.json"))
+      : args[1]?.endsWith("/logs") ? stdout("\u001b[31mfailed\u001b[0m\n")
+        : args[1]?.includes("actions/runs/19") ? stdout(fixture("actions-run.json"))
+          : failed(`unexpected gh ${args.join(" ")}`);
+    const detail = parsed<{ jobs: { steps: unknown[] }[] }>(await github(["run", path, "19", "--json"]));
+    expect(detail.jobs[0]?.steps).toHaveLength(1);
+    expect(parsed<{ log: string; truncated: boolean }>(await github(["run-log", path, "19", "--job", "22", "--json"]))).toEqual({ log: "failed\n", truncated: false });
+  });
+
+  test("validates numeric run identifiers and workflow dispatch refs", async () => {
+    expect(await github(["run", "repo", "0", "--json"])).toMatchObject({ kind: "failed", exitCode: 2 });
+    expect(await github(["workflow-dispatch", "repo", "ci.yml", "--json"])).toMatchObject({ kind: "failed", exitCode: 2 });
+    expect(await github(["workflow-dispatch", "repo", "ci.yml", "--ref", "main", "--inputs", "[]", "--json"])).toMatchObject({ kind: "failed", exitCode: 2 });
+  });
+
+  test("writes are single-attempt gh api calls with validated inputs", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = (args) => args.includes("-X") && args.includes("POST") ? stdout("") : failed(`unexpected gh ${args.join(" ")}`);
+    expect((await github(["run-action", path, "19", "rerun-failed", "--json"])).kind).toBe("ok");
+    expect(calls[0]).toContain("repos/operator/sample/actions/runs/19/rerun-failed-jobs");
+    await github(["workflow-dispatch", path, "ci.yml", "--ref", "main", "--inputs", "{\"target\":\"test\"}", "--json"]);
+    expect(calls[1]).toContain("repos/operator/sample/actions/workflows/ci.yml/dispatches");
+    expect(fields(calls[1] ?? [])).toMatchObject({ ref: "main", "inputs[target]": "test" });
+  });
+
+  test("describes workflow_dispatch support and declared inputs from the default-branch workflow file", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = (args) => args[1]?.includes("actions/workflows?") ? stdout(fixture("actions-workflows.json"))
+      : args[1]?.includes("contents/.github/workflows/ci.yml") ? stdout(JSON.stringify({ encoding: "base64", content: Buffer.from(fixture("actions-workflow-content.yml")).toString("base64") }))
+        : args[1]?.includes("actions/runs?") ? stdout(fixture("actions-runs.json"))
+          : failed(`unexpected gh ${args.join(" ")}`);
+    const result = parsed<{ workflows: { dispatchable: boolean; inputs: { name: string; description: string; required: boolean; type: string; default: string | boolean | number | null; options?: string[] }[] }[] }>(await github(["runs", path, "--json"]));
+    expect(result.workflows[0]).toMatchObject({ dispatchable: true, inputs: [
+      { name: "target", description: "Test target", required: true, type: "choice", default: "unit", options: ["unit", "integration"] },
+      { name: "dry-run", description: "Print actions without applying them", required: false, type: "boolean", default: false },
+    ] });
+  });
+
+  test("falls back to a workflow_dispatch text match and no inputs when workflow YAML is malformed", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    answer = (args) => args[1]?.includes("actions/workflows?") ? stdout(fixture("actions-workflows.json"))
+      : args[1]?.includes("contents/.github/workflows/ci.yml") ? stdout(JSON.stringify({ encoding: "base64", content: Buffer.from("on: [workflow_dispatch\n").toString("base64") }))
+        : args[1]?.includes("actions/runs?") ? stdout(fixture("actions-runs.json"))
+          : failed(`unexpected gh ${args.join(" ")}`);
+    const result = parsed<{ workflows: { dispatchable: boolean; inputs: unknown[] }[] }>(await github(["runs", path, "--json"]));
+    expect(result.workflows[0]).toMatchObject({ dispatchable: true, inputs: [] });
   });
 });
 

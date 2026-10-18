@@ -195,13 +195,20 @@ export function issueStateActions(state: string): IssueStateAction[] {
   ]
 }
 
-/** The pane item id of a maximised pull request or issue: its kind, number and repository root. */
-export function githubItemId(kind: 'pr' | 'issue', number: number, root: string): string {
+export type GithubItemKind = 'pr' | 'issue' | 'run'
+
+/** The pane item id of a maximised pull request, issue or workflow run: its kind, number (a run's id) and repository root. */
+export function githubItemId(kind: GithubItemKind, number: number, root: string): string {
   return `${kind}:${number}:${root}`
 }
 
-export function parseGithubItemId(id: string): { kind: 'pr' | 'issue'; number: number; root: string } | null {
-  const match = /^(pr|issue):(\d+):(.+)$/.exec(id)
+export function parseGithubItemId(id: string): { kind: GithubItemKind; number: number; root: string } | null {
+  const match = /^(pr|issue|run):(\d+):(.+)$/.exec(id)
   if (match === null) return null
-  return { kind: match[1] === 'pr' ? 'pr' : 'issue', number: Number(match[2]), root: match[3] ?? '' }
+  return { kind: match[1] === 'pr' ? 'pr' : match[1] === 'run' ? 'run' : 'issue', number: Number(match[2]), root: match[3] ?? '' }
+}
+
+/** A maximised item's tab title. */
+export function githubItemTitle(target: { kind: GithubItemKind; number: number }): string {
+  return target.kind === 'run' ? 'Workflow run' : `${target.kind === 'pr' ? 'Pull request' : 'Issue'} #${target.number}`
 }

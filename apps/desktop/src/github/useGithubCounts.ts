@@ -6,7 +6,7 @@ import { githubCountsPolicy, mapLimited } from '@/lib/poll-model'
 import { reuse } from '@/lib/reuse'
 import { usePoll } from '@/lib/usePoll'
 
-export type GithubKind = 'prs' | 'issues'
+export type GithubKind = 'prs' | 'issues' | 'actions'
 
 /** Open pull requests and issues per project path; null until known or when gh could not answer. */
 export type GithubCounts = Record<string, { prs: number | null; issues: number | null }>

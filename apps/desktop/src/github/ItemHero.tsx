@@ -29,7 +29,7 @@ const buttonTone: Record<HeroButton['tone'], string> = {
   quiet: 'border border-white/[0.10] bg-white/[0.05] text-ink-100 hover:bg-white/[0.10]',
 }
 
-function ActionButton({ button }: { button: HeroButton }) {
+export function ActionButton({ button }: { button: HeroButton }) {
   return (
     <button type="button" onClick={button.onClick} disabled={button.disabled === true || button.running === true} title={button.title} className={`${buttonBase} ${buttonTone[button.tone]}`}>
       {button.running === true ? <Spinner /> : button.icon}

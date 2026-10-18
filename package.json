@@ -32,5 +32,8 @@
     "typescript": "7.0.2",
     "ws": "^8.21.3",
     "@clack/prompts": "1.8.1"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   }
 }

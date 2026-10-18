@@ -17,7 +17,9 @@ import { mergeBox, type PrimaryAction, type SecondaryAction, type Tone } from '@
 import { ThreadsList, type ThreadActions, type ThreadFocus } from '@/github/ReviewThread'
 import { useReviewers, useReviewThreads } from '@/github/usePullRequestReview'
 import { usePullRequestFiles } from '@/github/usePullRequestFiles'
-import { addPending, editPending, issueStateActions, removePending, reviewPayload, unresolvedCount, type IssueStateAction, type PendingComment } from '@/github/review-model'
+import { addPending, editPending, issueStateActions, removePending, reviewPayload, unresolvedCount, type GithubItemKind, type IssueStateAction, type PendingComment } from '@/github/review-model'
+import { LatestRunPill } from '@/github/actions-parts'
+import { RunPage } from '@/github/RunDetail'
 import { pageX } from '@/lib/page'
 
 // One pull request or issue maximised as a pane item: a hero with its state, title, author, branches,
@@ -222,7 +224,12 @@ function CommentBox({ onComment, actions }: { onComment: (body: string) => Promi
   )
 }
 
-export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr' | 'issue'; number: number }) {
+/** A maximised pull request, issue or workflow run (number is then the run's id). */
+export function GithubItemView({ root, kind, number }: { root: string; kind: GithubItemKind; number: number }) {
+  return kind === 'run' ? <RunPage root={root} runId={number} /> : <ItemView root={root} kind={kind} number={number} />
+}
+
+function ItemView({ root, kind, number }: { root: string; kind: 'pr' | 'issue'; number: number }) {
   const now = useNow(60_000)
   const [tab, setTab] = useState<Tab>('conversation')
   const { detail: read, error, loading, reload } = useDetail(root, kind, number)
@@ -433,6 +440,7 @@ export function GithubItemView({ root, kind, number }: { root: string; kind: 'pr
           <CheckGlyph state={summary.state} size={13} />
           {checkTitle(summary)}
         </StatPill>
+        {detail.headRefName !== undefined && <LatestRunPill root={root} branch={detail.headRefName} />}
         {detail.reviewDecision !== undefined && detail.reviewDecision !== null && (
           <StatPill tone={reviewTone[detail.reviewDecision]}>
             <ReviewIcon size={13} />

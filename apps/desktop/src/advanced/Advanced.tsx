@@ -26,7 +26,7 @@ import { CodePane } from '@/code/CodePane'
 import { CodeSlot } from '@/code/CodeSlot'
 import { codeTargetForRoot, type CodeShown, type CodeTarget } from '@/code/code-pane-model'
 import type { GithubKind } from '@/github/useGithubCounts'
-import { githubItemId, parseGithubItemId } from '@/github/review-model'
+import { githubItemId, githubItemTitle, parseGithubItemId, type GithubItemKind } from '@/github/review-model'
 import { ImportProject } from '@/import/ImportProject'
 import { PaneSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
@@ -428,7 +428,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return { title: 'New chat', mark: { kind: 'launcher' }, state: 'idle', worktree: null }
       case 'github': {
         const target = parseGithubItemId(parsed.id)
-        return { title: target === null ? 'GitHub' : `${target.kind === 'pr' ? 'Pull request' : 'Issue'} #${target.number}`, mark: { kind: 'github' }, state: 'idle', worktree }
+        return { title: target === null ? 'GitHub' : githubItemTitle(target), mark: { kind: 'github' }, state: 'idle', worktree }
       }
       case 'code':
         return { title: codeTargetForRoot(projects, parsed.id).title, mark: { kind: 'code' }, state: 'idle', worktree }
@@ -512,7 +512,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     else openSession(open.session, path)
   }
   // A pull request or issue maximised from its page takes the focused pane, like any other item.
-  const maximiseGithub = (root: string, kind: 'pr' | 'issue', number: number) => showItem(itemKey('github', githubItemId(kind, number, root)))
+  const maximiseGithub = (root: string, kind: GithubItemKind, number: number) => showItem(itemKey('github', githubItemId(kind, number, root)))
 
   const startedLauncherRoot = (launcher: string) => (cwd: string | null) => setLauncherRoots((current) => (current[launcher] === cwd ? current : { ...current, [launcher]: cwd }))
 
@@ -612,7 +612,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         const target = parseGithubItemId(parsed.id)
         if (target === null) return gone('GitHub')
         return {
-          title: `${target.kind === 'pr' ? 'Pull request' : 'Issue'} #${target.number}`,
+          title: githubItemTitle(target),
           node: (
             <Suspense fallback={<Loading />}>
               <GithubItemView root={target.root} kind={target.kind} number={target.number} />
