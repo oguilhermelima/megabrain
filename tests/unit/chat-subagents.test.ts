@@ -89,6 +89,14 @@ async function until(check: () => boolean, label: string) {
   throw new Error(`timed out: ${label}`);
 }
 
+async function untilTurnIsIdleAfterWorking(events: () => ChatEvent[]) {
+  await until(() => {
+    const states = events().filter((event) => event.kind === "state").map((event) => event.text);
+    const working = states.lastIndexOf("working");
+    return working !== -1 && states.slice(working + 1).includes("idle");
+  }, "turn returned to idle");
+}
+
 /** Runs one turn and returns everything the chat stored, deltas excluded, plus what followers saw live. */
 async function turn(agent: "claude" | "codex", script: string, done: (events: ChatEvent[]) => boolean) {
   const h = await harness(agent, script);
@@ -100,7 +108,8 @@ async function turn(agent: "claude" | "codex", script: string, done: (events: Ch
     if (agent === "codex") await until(() => watcher.events().filter((e) => e.kind === "state").at(-1)?.text === "idle", "codex thread ready");
     await h.daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "go" }] });
     await until(() => done(watcher.events()), "turn finished");
-    await until(() => watcher.events().filter((e) => e.kind === "state").at(-1)?.text === "idle", "idle");
+    await untilTurnIsIdleAfterWorking(watcher.events);
+    await until(() => ends(watcher.events()).length === starts(watcher.events()).length, "subagents ended");
     const stored = (await h.daemon.store.events(chat.id)).flatMap((line) => line.event ? [line.event] : []);
     return { stored, live: watcher.events() };
   } finally { watcher.close(); await h.daemon.close(); }

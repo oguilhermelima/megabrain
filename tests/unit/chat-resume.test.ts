@@ -120,6 +120,18 @@ async function waitForCompletedTurn(daemon: ChatDaemon): Promise<void> {
   throw new Error("Codex turn did not return to idle after starting");
 }
 
+async function waitForClaudeTurn(daemon: ChatDaemon, text: string): Promise<void> {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    const events = (await daemon.store.events(ID)).flatMap((line) => line.event === undefined ? [] : [line.event]);
+    const user = events.findIndex((event) => event.kind === "user" && event.text === text);
+    const answer = events.findIndex((event, index) => index > user && event.kind === "assistant" && event.text === `answer:${text}`);
+    const working = events.findIndex((event, index) => index > user && event.kind === "state" && event.text === "working");
+    if (user !== -1 && answer > user && working > user && events.slice(working + 1).some((event) => event.kind === "state" && event.text === "idle")) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Claude did not complete the turn for ${text}`);
+}
+
 function captured(env: Env): Array<Record<string, unknown>> {
   return existsSync(env.capture) ? readFileSync(env.capture, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>) : [];
 }
@@ -200,11 +212,11 @@ describe("chats survive a daemon restart", () => {
     await new ChatStore(env.state).put(record(env));
     const daemon = await daemonFor(env);
     await send(daemon, "one");
-    await waitState(daemon, "idle");
+    await waitForClaudeTurn(daemon, "one");
     await daemon.handle({ operation: "stop", id: ID });
     expect(await daemon.store.get(ID)).toMatchObject({ state: "suspended", agentSessionId: "recorded-session" });
     await send(daemon, "two");
-    await waitState(daemon, "idle");
+    await waitForClaudeTurn(daemon, "two");
     expect(captured(env)).toContainEqual({ user: "two" });
   });
 

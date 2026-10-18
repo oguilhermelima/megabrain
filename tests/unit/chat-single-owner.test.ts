@@ -343,10 +343,29 @@ describe("one live agent process per chat", () => {
     expect(spawned(env)).toHaveLength(0);
     writeFileSync(path, `${JSON.stringify({ type: "assistant", uuid: "a1", timestamp: new Date().toISOString(), message: { id: "m1", stop_reason: "end_turn", content: [{ type: "text", text: "done" }] } })}\n`);
     await stateOf(daemon, chat.id, "idle");
+    await until(async () => spawned(env), (children) => children.length === 1, "resumed agent to spawn");
 
     expect(hasSession(env, "mb-app-working")).toBe(false);
     expect(spawned(env)).toHaveLength(1);
     expect(spawned(env)[0]?.argv).toContain(chat.agentSessionId);
+  });
+
+  test("a concurrent terminal refresh keeps the chat working while its queued handoff is in progress", async () => {
+    const env = sandbox();
+    const chat = record(env, { state: "working", owner: "terminal" });
+    const path = claudeLogPath(env.root, env.cwd, chat.agentSessionId ?? "");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify({ type: "user", uuid: "u1", timestamp: new Date().toISOString(), message: { role: "user", content: "still working" } })}\n${JSON.stringify({ type: "assistant", uuid: "a1", timestamp: new Date().toISOString(), message: { id: "m1", stop_reason: "end_turn", content: [{ type: "text", text: "done" }] } })}\n`);
+    const daemon = await daemonFor(env);
+    await daemon.store.put(chat);
+    daemon.foreignHolders = async () => [{ pid: process.pid, tmuxSession: "mb-app-handoff", cwd: env.cwd }];
+    await daemon.enqueue(chat, [{ type: "text", text: "continue" }]);
+    daemon.terminalHandoffs.add(chat.id);
+
+    await daemon.refreshTerminalChats();
+
+    expect((await daemon.store.get(chat.id))?.state).toBe("working");
+    expect(spawned(env)).toHaveLength(0);
   });
 
   test("switching to the chat view records a non-empty TUI composer line and keeps its terminal", async () => {

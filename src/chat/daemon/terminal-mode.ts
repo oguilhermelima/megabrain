@@ -43,11 +43,11 @@ export async function remove(daemon: ChatDaemon, id: string): Promise<{ removed:
     daemon.children.delete(id);
     daemon.clearStartTimer(id);
     if (child) child.kill("SIGTERM");
-    await Promise.allSettled([daemon.eventChains.get(id), daemon.appendChains.get(id), daemon.queueWrites.get(id)]);
+    await Promise.allSettled([daemon.eventChains.get(id), daemon.appendChains.get(id), daemon.queueWrites.get(id), daemon.terminalImportChains.get(id)]);
     daemon.stopArtifactWatch(id);
     daemon.terminalFileWatches.get(id)?.close();
     daemon.terminalFileWatches.delete(id);
-    for (const map of [daemon.queues, daemon.queued, daemon.queueWrites, daemon.drainChains, daemon.activeTurns, daemon.eventChains, daemon.appendChains, daemon.publishedState, daemon.turnStarted, daemon.currentMessage, daemon.claudeTokens, daemon.codexTokenBase, daemon.grokMessages, daemon.toolNames, daemon.backgroundTaskIds, daemon.backgroundTasks, daemon.subagents, daemon.subscribers]) map.delete(id);
+    for (const map of [daemon.queues, daemon.queued, daemon.queueWrites, daemon.drainChains, daemon.activeTurns, daemon.eventChains, daemon.appendChains, daemon.terminalImportChains, daemon.publishedState, daemon.turnStarted, daemon.currentMessage, daemon.claudeTokens, daemon.codexTokenBase, daemon.grokMessages, daemon.toolNames, daemon.backgroundTaskIds, daemon.backgroundTasks, daemon.subagents, daemon.subscribers]) map.delete(id);
     daemon.queueHeld.delete(id);
     daemon.interrupting.delete(id);
     daemon.interruptedEvents.delete(id);
@@ -338,7 +338,8 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
       const chat = await daemon.store.get(listed.id);
       if (daemon.closed) return;
       if (!chat || chat.terminalSince !== listed.terminalSince || chat.mode !== listed.mode || chat.owner !== listed.owner) continue;
-      if (!working && owner === "terminal" && (await daemon.loadQueue(chat.id)).length > 0 && !daemon.terminalHandoffs.has(chat.id)) {
+      if (!working && owner === "terminal" && (await daemon.loadQueue(chat.id)).length > 0) {
+        if (daemon.terminalHandoffs.has(chat.id)) continue;
         daemon.terminalHandoffs.add(chat.id);
         try { await daemon.takeOver(chat.id); }
         catch (error) { await daemon.fail(chat.id, error); }

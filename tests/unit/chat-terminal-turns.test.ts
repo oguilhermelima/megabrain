@@ -108,6 +108,15 @@ async function untilEvent(daemon: ChatDaemon, predicate: (event: ChatEvent) => b
   }
   throw new Error(`terminal log did not follow ${what}`);
 }
+async function untilCursor(daemon: ChatDaemon, path: string, messageId: string): Promise<void> {
+  const byteOffset = readFileSync(path).byteLength;
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    const cursor = (await daemon.store.get(ID) as (Chat & { terminalLogCursor?: { byteOffset: number; lastMessageId: string | null } }) | null)?.terminalLogCursor;
+    if (cursor?.byteOffset === byteOffset && cursor.lastMessageId === messageId) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`terminal log cursor did not advance to ${messageId}`);
+}
 const shown = (list: ChatEvent[]) => list.filter((item) => item.kind !== "state" && item.kind !== "system").map((item) => `${item.kind}:${item.text}`);
 const TERMINAL_TURNS = [
   "user:typed in terminal",
@@ -190,6 +199,7 @@ describe("switching back to chat imports what the terminal did", () => {
     ];
     appendFileSync(path, `${firstRows.map((row) => JSON.stringify(row)).join("\n")}\n`);
     await untilEvent(daemon, (item) => item.text === "first answer", "the first terminal turn");
+    await untilCursor(daemon, path, "cursor-message-1");
 
     const cursor = (await store.get(ID) as (Chat & { terminalLogCursor?: { byteOffset: number; lastMessageId: string | null } }) | null)?.terminalLogCursor;
     expect(cursor).toEqual({ byteOffset: readFileSync(path).byteLength, lastMessageId: "cursor-message-1" });
@@ -202,6 +212,7 @@ describe("switching back to chat imports what the terminal did", () => {
     appendFileSync(path, `${laterRows.map((row) => JSON.stringify(row)).join("\n")}\n`);
     const restarted = await daemonFor(env);
     await untilEvent(restarted, (item) => item.text === "second answer", "the terminal turn written while chatd was stopped");
+    await untilCursor(restarted, path, "cursor-message-2");
 
     expect(shown(await events(restarted))).toEqual(["user:first terminal turn", "assistant:first answer", "user:second terminal turn", "assistant:second answer"]);
     const updated = (await store.get(ID) as (Chat & { terminalLogCursor?: { byteOffset: number; lastMessageId: string | null } }) | null)?.terminalLogCursor;
@@ -283,6 +294,20 @@ describe("switching back to chat imports what the terminal did", () => {
     await store.put({ ...(await store.get(ID) as Chat), mode: "terminal", state: "idle" });
     await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
     await waitState(daemon, "idle");
+    expect(shown(await events(daemon))).toEqual(TERMINAL_TURNS);
+  });
+
+  test("concurrent refreshes import each terminal event once", async () => {
+    const env = sandbox();
+    writeClaudeLog(env);
+    const chat = record(env);
+    await new ChatStore(env.state).put(chat);
+    const daemon = await daemonFor(env);
+    await Promise.all([
+      daemon.importTerminalTurns(chat, false),
+      daemon.importTerminalTurns(chat, false),
+    ]);
+
     expect(shown(await events(daemon))).toEqual(TERMINAL_TURNS);
   });
 

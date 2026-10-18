@@ -155,6 +155,8 @@ export class ChatDaemon {
   readonly startTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly outputSeen = new Set<string>();
   readonly appendChains = new Map<string, Promise<unknown>>();
+  /** Terminal log imports read then advance one cursor, so they must run one at a time per chat. */
+  readonly terminalImportChains = new Map<string, Promise<void>>();
   readonly publishedState = new Map<string, Chat["state"]>();
   readonly turnStarted = new Map<string, string>();
   readonly currentMessage = new Map<string, string>();
@@ -331,7 +333,12 @@ async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; comm
 async takeOver(id: string): Promise<Chat> { return await takeOverImpl(this, id); }
 
   /** Turns typed in the terminal live only in the agent's log; they join the chat, once each, before the agent respawns. */
-async importTerminalTurns(chat: Chat, markInterrupted = true): Promise<void> { return await importTerminalTurnsImpl(this, chat, markInterrupted); }
+async importTerminalTurns(chat: Chat, markInterrupted = true): Promise<void> {
+  const previous = this.terminalImportChains.get(chat.id) ?? Promise.resolve();
+  const task = previous.then(() => importTerminalTurnsImpl(this, chat, markInterrupted));
+  this.terminalImportChains.set(chat.id, task);
+  try { await task; } finally { if (this.terminalImportChains.get(chat.id) === task) this.terminalImportChains.delete(chat.id); }
+}
 
 async logTurnOpen(chat: Chat): Promise<boolean> { return await logTurnOpenImpl(this, chat); }
 

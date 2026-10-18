@@ -86,6 +86,18 @@ async function waitForRequest(method: string, env: ReturnType<typeof sandbox>) {
   throw new Error(`agent never received ${method}: ${existsSync(env.capture) ? readFileSync(env.capture, "utf8") : "no capture"}`);
 }
 
+async function waitForChatContext(id: string, contextTokens: number, contextWindow: number, env: ReturnType<typeof sandbox>) {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    const result = await call(["chat", "list", "--json"], env);
+    if (result.kind === "ok") {
+      const chat = (JSON.parse(result.value) as Array<{ id: string; contextTokens: number; contextWindow: number }>).find((entry) => entry.id === id);
+      if (chat?.contextTokens === contextTokens && chat.contextWindow === contextWindow) return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`chat ${id} did not reach context ${contextTokens}/${contextWindow}`);
+}
+
 async function socketDaemon(env: ReturnType<typeof sandbox>) {
   const daemon = new ChatDaemon(env.state, { HOME: env.root, PATH: `${env.bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`, CHAT_CAPTURE: env.capture, CHAT_USAGE_FIXTURE: join(process.cwd(), "tests/fixtures/chat-codex-usage.jsonl") });
   await daemon.start();
@@ -184,6 +196,7 @@ rl.on("line", (line) => {
     const chat = JSON.parse(started.value) as { id: string };
     await waitForChat(chat.id, "working", env);
     await waitForRequest("turn/start", env);
+    await waitForChatContext(chat.id, 61476, 258400, env);
     const recorded = readFileSync(env.capture, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { method: string; params: { input?: unknown[] } });
     const turn = recorded.find((request) => request.method === "turn/start");
     expect(turn?.params.input).toEqual([
