@@ -41,13 +41,34 @@ export function customPicture(project: Dressed): string | null {
   return picture === null || picture === '' ? null : picture
 }
 
+/** The image files megabrain takes as a project's picture, by extension. */
+export const pictureExtensions = ['png', 'jpg', 'jpeg', 'webp', 'svg']
+
+/** The path to take from files dropped on the picture: one image, else null. */
+export function droppedPicture(paths: readonly string[]): string | null {
+  const [path] = paths
+  if (paths.length !== 1 || path === undefined) return null
+  const extension = /\.([^./]+)$/.exec(path)?.[1]?.toLowerCase()
+  return extension !== undefined && pictureExtensions.includes(extension) ? path : null
+}
+
 /** An <img> source for a stored picture: a file path through the asset protocol, a data or https URL as it is. */
 export function pictureUrl(picture: string, toAsset: ((path: string) => string) | null): string | null {
   if (/^(data:image\/|https:\/\/)/.test(picture)) return picture
   return toAsset === null ? null : toAsset(picture)
 }
 
-/** Alphabetical by display name, ignoring case; the path breaks a tie so the order never flickers. */
+/** Two names in alphabetical order, ignoring case and accents. */
+export function compareNames(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { sensitivity: 'base' })
+}
+
+/** Alphabetical by display name, ignoring case and accents; the path breaks a tie so the order never flickers. */
 export function compareByDisplayName(left: Dressed, right: Dressed): number {
-  return displayName(left).localeCompare(displayName(right), undefined, { sensitivity: 'base' }) || left.path.localeCompare(right.path)
+  return compareNames(displayName(left), displayName(right)) || left.path.localeCompare(right.path)
+}
+
+/** A copy of a picker's entries in display-name order; `dressOf` names each entry as a project. */
+export function byDisplayName<T>(entries: readonly T[], dressOf: (entry: T) => Dressed): T[] {
+  return [...entries].sort((left, right) => compareByDisplayName(dressOf(left), dressOf(right)))
 }

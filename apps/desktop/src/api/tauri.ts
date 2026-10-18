@@ -6,6 +6,7 @@ import { readImage, readText, writeImage, writeText } from '@tauri-apps/plugin-c
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { z } from 'zod'
+import { pictureExtensions } from '@/advanced/appearance-model'
 import { projectsArgs } from '@/api/projects-origin'
 import { chatDaemonRetireSchema } from '@/api/schema'
 import { base64Of, pngFile } from '@/lib/image-bytes'
@@ -273,7 +274,7 @@ export function createTauriApi(): DesktopApi {
       cliJson(['worktree', 'archived', ...(repo === undefined ? [] : ['--repo', repo]), '--json'], z.union([archivedWorktreeSchema.array(), z.looseObject({ archived: archivedWorktreeSchema.array() }).transform((value) => value.archived)])),
     unarchiveWorktree: async (repo, branch) => void (await cliText(['worktree', 'unarchive', branch, '--repo', repo, '--json'])),
     pickImage: async () => {
-      const selected = await open({ directory: false, multiple: false, filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'svg'] }] })
+      const selected = await open({ directory: false, multiple: false, filters: [{ name: 'Image', extensions: pictureExtensions }] })
       return selected ?? null
     },
     projectScripts: (root) => cliJson(['repo', 'scripts', root, '--json'], projectScriptsSchema),

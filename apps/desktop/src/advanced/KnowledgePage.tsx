@@ -721,10 +721,8 @@ export function KnowledgePage({
   const crumb =
     project !== null && list !== null ? (
       <ProjectSwitcher
-        name={nameOf(project)}
-        path={project.repo}
-        listed={listed.get(project.repo)}
-        options={list.projects.map((entry) => ({ label: projectOn(entry) ? entry.project : `${entry.project} (off)`, title: entry.repo, onSelect: () => pickProjectRepo(entry.repo) }))}
+        current={{ name: project.project, path: project.repo, listed: listed.get(project.repo) }}
+        options={list.projects.map((entry) => ({ name: entry.project, path: entry.repo, listed: listed.get(entry.repo), ...(projectOn(entry) ? {} : { note: 'off' }), onSelect: () => pickProjectRepo(entry.repo) }))}
       />
     ) : (
       <span className="flex min-w-0 items-center gap-2 text-ink-300">

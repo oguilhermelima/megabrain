@@ -332,11 +332,6 @@ export function ArtifactsPage({
   const shown = project === null ? null : filterArtifactProject(project, query)
   const searching = query.trim() !== ''
   const none = list !== null && list.length === 0
-  /** A project's name as the sidebar shows it. */
-  const nameOf = (entry: ArtifactProject) => {
-    const known = listed.get(entry.project)
-    return known === undefined ? entry.name : displayName(known)
-  }
   const pickProject = (entry: ArtifactProject) => {
     setQuery('')
     const newest = newestArtifact([entry])
@@ -364,7 +359,7 @@ export function ArtifactsPage({
 
   const switcher =
     project !== null && grouped !== null ? (
-      <ProjectSwitcher name={nameOf(project)} path={project.project} listed={listed.get(project.project)} options={grouped.map((entry) => ({ label: nameOf(entry), title: entry.project, onSelect: () => pickProject(entry) }))} />
+      <ProjectSwitcher current={{ name: project.name, path: project.project, listed: listed.get(project.project) }} options={grouped.map((entry) => ({ name: entry.name, path: entry.project, listed: listed.get(entry.project), onSelect: () => pickProject(entry) }))} />
     ) : (
       <span className="flex min-w-0 items-center gap-2 text-ink-300">
         <span className="grid size-6 shrink-0 place-items-center">

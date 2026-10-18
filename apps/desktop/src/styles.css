@@ -120,8 +120,10 @@ body {
   user-select: none;
 }
 
-/* WebKit inherits -webkit-user-select, so a contenteditable under the body above takes no caret on
-   click; an editable area opts back in. */
+/* WebKit inherits -webkit-user-select, so a text field or a contenteditable under the body above
+   takes no caret on click and selects nothing; an editable area opts back in. */
+input,
+textarea,
 [contenteditable='true'],
 [contenteditable='plaintext-only'] {
   -webkit-user-select: text;

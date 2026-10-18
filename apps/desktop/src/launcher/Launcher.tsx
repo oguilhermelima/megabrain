@@ -1,5 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from 'react'
 import { api } from '@/api'
+import { compareNames } from '@/advanced/appearance-model'
 import type { HistorySession, MessagePart, NativeChat } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { Composer, type Notice } from '@/chat/Composer'
@@ -21,6 +22,8 @@ import { pageMx } from '@/lib/page'
 
 export interface WorktreeChoice {
   path: string
+  /** The project's display name, which the Switch menu sorts by. */
+  project: string
   label: string
 }
 
@@ -228,7 +231,7 @@ export function Launcher({
             <label className="bar-control relative px-3 text-[12px] font-semibold text-ink-300 transition-colors hover:bg-white/[0.08] hover:text-ink-100">
               <span>Switch</span>
               <select aria-label="Worktree" value={cwd ?? ''} onChange={(event) => setChosenPath(event.target.value)} className="absolute inset-0 cursor-pointer opacity-0">
-                {worktrees.map((entry) => (
+                {[...worktrees].sort((left, right) => compareNames(left.project, right.project)).map((entry) => (
                   <option key={entry.path} value={entry.path} title={entry.path}>
                     {entry.label}
                   </option>

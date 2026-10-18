@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { MenuIconGlyph, type MenuIcon } from '@/components/menu-icons'
 import { isMac, menuFocusStep, menuSections, shortcutLabel, type MenuGroup } from '@/components/menu-model'
@@ -10,6 +10,8 @@ export interface MenuRow {
   label: string
   /** Left out in a menu of plain words. */
   icon?: MenuIcon
+  /** Drawn where the icon goes, for a row that shows its own picture (a project's, say). */
+  leading?: ReactNode
   /** Keys as `mod+shift+alt+<key>`; shown right-aligned in the platform's notation (see shortcutLabel). */
   shortcut?: string
   disabled?: boolean
@@ -182,6 +184,7 @@ function MenuCard({ menu, leaving, onClose }: { menu: OpenMenu; leaving: boolean
               }}
               className={`flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40 ${row.danger === true ? 'text-bad hover:bg-bad/10 focus:bg-bad/10' : 'text-ink-200 hover:bg-white/[0.08] focus:bg-white/[0.08]'}`}
             >
+              {row.leading}
               {row.icon !== undefined && (
                 <span className={row.danger === true ? undefined : 'text-ink-400'}>
                   <MenuIconGlyph icon={row.icon} />

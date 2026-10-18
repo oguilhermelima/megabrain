@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { Project, ProjectSession } from '@/api/schema'
+import { displayName } from '@/advanced/appearance-model'
 import { neighbourSession } from '@/advanced/projects-model'
 import { partitionHidden } from '@/advanced/sidebar-model'
 import { recordingShortcut, useShortcutBindings } from '@/lib/shortcut-store'
@@ -16,7 +17,7 @@ export function focusPaneInput(paneId: string) {
 
 export function worktreeChoices(projects: Project[]) {
   return partitionHidden(projects).visible.flatMap((project) =>
-    project.missing ? [] : project.worktrees.map((worktree) => ({ path: worktree.path, label: `${project.name} · ${worktree.branch ?? worktree.path.split('/').at(-1) ?? worktree.path}` })),
+    project.missing ? [] : project.worktrees.map((worktree) => ({ path: worktree.path, project: displayName(project), label: `${displayName(project)} · ${worktree.branch ?? worktree.path.split('/').at(-1) ?? worktree.path}` })),
   )
 }
 

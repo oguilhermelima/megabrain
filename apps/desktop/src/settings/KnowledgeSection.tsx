@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { Project, Settings } from '@/api/schema'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
-import { displayName as projectName } from '@/advanced/appearance-model'
+import { compareByDisplayName, displayName as projectName } from '@/advanced/appearance-model'
 import { displayName } from '@/chat/composer-status'
 import { ErrorNote } from '@/components/ui'
 import { field, quiet, SettingRow, SettingsGroup, Switch } from '@/settings/settings-ui'
@@ -174,7 +174,7 @@ export function KnowledgeSection({ models, chat, projects, focusProject }: { mod
           }
         >
           {[...projects]
-            .sort((left, right) => projectName(left).localeCompare(projectName(right)))
+            .sort(compareByDisplayName)
             .map((project) => {
               const on = inEffect(effectiveToggles(knowledge, project.path), 'summaries')
               return (

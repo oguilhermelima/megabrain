@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { ArchivedWorktree, Project, ProjectScripts } from '@/api/schema'
 import type { ProjectAppearancePatch } from '@/api/adapter'
-import { customPicture, displayName, nameEdit, projectTint, tintSwatches } from '@/advanced/appearance-model'
+import { customPicture, displayName, droppedPicture, nameEdit, projectTint, tintSwatches } from '@/advanced/appearance-model'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { relativeAge } from '@/advanced/projects-model'
 import { RowsSkeleton } from '@/components/Skeleton'
 import { Button, ErrorNote, Spinner } from '@/components/ui'
+import { useWindowDrop } from '@/lib/window-drop'
 import { runActionLabel, runActions, type RunAction } from '@/run-panel/run-model'
 import { field, quiet } from '@/settings/settings-ui'
 
@@ -128,6 +129,61 @@ function Runners({ project }: { project: Project }) {
   )
 }
 
+/**
+ * The project's picture as one block: a 64px preview that picks an image when pressed or takes one
+ * dropped on it, Change under it, and Remove on its corner once the person has chosen a picture (the
+ * detected one cannot be removed, only replaced).
+ */
+function PictureBlock({ project, busy, onSet, onError }: { project: Project; busy: boolean; onSet: (picture: string | null) => void; onError: (error: unknown) => void }) {
+  const block = useRef<HTMLDivElement>(null)
+  const [dragging, setDragging] = useState(false)
+  const chosen = customPicture(project) !== null
+  const name = displayName(project)
+
+  const choose = async () => {
+    try {
+      const path = await api.pickImage()
+      if (path !== null) onSet(path)
+    } catch (caught) {
+      onError(caught)
+    }
+  }
+
+  useWindowDrop(
+    {
+      onDrop: (paths, x, y) => {
+        const target = document.elementFromPoint(x, y)
+        if (busy || target === null || block.current?.contains(target) !== true) return
+        const picture = droppedPicture(paths)
+        if (picture === null) onError(new Error('Drop one image: PNG, JPEG, WebP or SVG.'))
+        else onSet(picture)
+      },
+      onHover: setDragging,
+    },
+    true,
+  )
+
+  return (
+    <div ref={block} className="flex shrink-0 flex-col items-center gap-1">
+      <div className="relative">
+        <button type="button" onClick={() => void choose()} disabled={busy} title="Choose a picture, or drop an image here" aria-label={`Change the picture of ${name}`} className={`block rounded-[20px] transition-[opacity,box-shadow] duration-100 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:opacity-50 motion-reduce:transition-none ${dragging ? 'ring-2 ring-accent/70 ring-offset-2 ring-offset-ink-900' : ''}`}>
+          <ProjectPicture project={project} size="hero" />
+        </button>
+        {chosen && (
+          <button type="button" onClick={() => onSet(null)} disabled={busy} title="Remove the picture" aria-label={`Remove the picture of ${name}`} className="absolute -top-1.5 -right-1.5 grid size-6 place-items-center rounded-full border border-white/[0.14] bg-ink-800 text-ink-300 shadow-sm transition-colors hover:bg-ink-700 hover:text-ink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:opacity-50">
+            <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+              <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+            </svg>
+          </button>
+        )}
+      </div>
+      <button type="button" onClick={() => void choose()} disabled={busy} className="rounded-full px-2 py-0.5 text-[11.5px] font-medium text-ink-400 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 disabled:opacity-50">
+        Change
+      </button>
+    </div>
+  )
+}
+
 const swatch = 'grid size-6 shrink-0 place-items-center rounded-full ring-offset-2 ring-offset-ink-900 transition-shadow duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 motion-reduce:transition-none'
 
 /**
@@ -142,7 +198,6 @@ function Appearance({ project, onChanged }: { project: Project; onChanged: () =>
   // The colour picker reports every step of a drag; only the colour it settles on is saved.
   const [customDraft, setCustomDraft] = useState<string | null>(null)
   const custom = tint !== null && !tintSwatches.includes(tint.toLowerCase())
-  const picture = customPicture(project)
 
   useEffect(() => setName(project.appearance?.name ?? ''), [project.appearance?.name])
 
@@ -165,21 +220,10 @@ function Appearance({ project, onChanged }: { project: Project; onChanged: () =>
     if (next !== nameEdit(project, project.appearance?.name ?? '')) void save({ name: next })
   }
 
-  const choosePicture = async () => {
-    try {
-      const path = await api.pickImage()
-      if (path !== null) await save({ picture: path })
-    } catch (caught) {
-      setError(caught)
-    }
-  }
-
   return (
     <section aria-label="Appearance" className="grid gap-3">
-      <header className="flex items-center gap-3">
-        <button type="button" onClick={() => void choosePicture()} disabled={busy} title="Change the picture" aria-label={`Change the picture of ${displayName(project)}`} className="rounded-[12px] transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40 disabled:opacity-50">
-          <ProjectPicture project={project} size="large" />
-        </button>
+      <header className="flex items-center gap-4">
+        <PictureBlock project={project} busy={busy} onSet={(picture) => void save({ picture })} onError={setError} />
         <div className="min-w-0 flex-1">
           <input
             value={name}
@@ -197,17 +241,12 @@ function Appearance({ project, onChanged }: { project: Project; onChanged: () =>
             title="The name megabrain shows; the repository keeps its own. Clear it to use the folder's name."
             spellCheck={false}
             disabled={busy}
-            className="-mx-1.5 w-full truncate rounded-[8px] border border-transparent bg-transparent px-1.5 text-[17px] font-semibold tracking-[-0.01em] text-ink-100 placeholder:text-ink-100 hover:border-white/[0.08] focus:border-accent/60 focus:outline-none"
+            className="-mx-1.5 w-full rounded-[8px] not-focus:text-ellipsis border border-transparent bg-transparent px-1.5 text-[17px] font-semibold tracking-[-0.01em] text-ink-100 placeholder:text-ink-100 hover:border-white/[0.08] focus:border-accent/60 focus:outline-none"
           />
           <p title={project.path} className="truncate font-mono text-[11.5px] text-ink-500 select-text">
             {project.path}
           </p>
         </div>
-        {picture !== null && (
-          <button type="button" className={quiet} onClick={() => void save({ picture: null })} disabled={busy}>
-            Remove picture
-          </button>
-        )}
       </header>
       <div className="flex flex-wrap items-center gap-2 px-1" role="radiogroup" aria-label="Colour of the agent marks">
         <span className="mr-1 text-[12.5px] text-ink-400">Agent colour</span>

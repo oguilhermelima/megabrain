@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/api";
 import type { Project } from "@/api/schema";
-import { displayName } from "@/advanced/appearance-model";
+import { compareByDisplayName, displayName } from "@/advanced/appearance-model";
 import { ErrorNote } from "@/components/ui";
 import {
   field,
@@ -99,9 +99,9 @@ export function WorktreesSection({
   const overridden = projects.filter(
     (project) => saved.projects[project.path] !== undefined,
   );
-  const free = projects.filter(
-    (project) => saved.projects[project.path] === undefined,
-  );
+  const free = projects
+    .filter((project) => saved.projects[project.path] === undefined)
+    .sort(compareByDisplayName);
 
   return (
     <>

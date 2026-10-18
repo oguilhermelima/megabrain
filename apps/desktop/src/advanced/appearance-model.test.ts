@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { compareByDisplayName, customPicture, displayName, isHexColor, nameEdit, pictureUrl, projectTint, tintSwatches } from '@/advanced/appearance-model'
+import { byDisplayName, compareByDisplayName, compareNames, customPicture, droppedPicture, displayName, isHexColor, nameEdit, pictureUrl, projectTint, tintSwatches } from '@/advanced/appearance-model'
 
 const project = (appearance?: { name?: string; color?: string; picture?: string }) => ({ name: 'canto', path: '/w/canto', ...(appearance === undefined ? {} : { appearance }) })
 
@@ -95,5 +95,54 @@ describe('compareByDisplayName', () => {
       { name: 'Web', path: '/a/web' },
     ]
     expect([...list].sort(compareByDisplayName).map((item) => item.path)).toEqual(['/a/web', '/b/web'])
+  })
+})
+
+describe('compareNames', () => {
+  test('ignores case and accents', () => {
+    expect(compareNames('Éclair', 'eclair')).toBe(0)
+    expect(['fig', 'Éclair', 'delta'].sort(compareNames)).toEqual(['delta', 'Éclair', 'fig'])
+  })
+})
+
+describe('byDisplayName', () => {
+  const entries = [
+    { label: 'stack', project: { name: 'stack', path: '/w/stack' } },
+    { label: 'canto-space', project: { name: 'canto-space', path: '/w/canto-space', appearance: { name: 'inOrb' } } },
+    { label: 'Canto', project: { name: 'Canto', path: '/w/Canto', appearance: { name: '' } } },
+    { label: 'ávila', project: { name: 'ávila', path: '/w/avila' } },
+    { label: 'megabrain', project: { name: 'megabrain', path: '/w/megabrain', appearance: { name: '   ' } } },
+  ]
+
+  test('orders entries by display name, ignoring case and accents', () => {
+    expect(byDisplayName(entries, (entry) => entry.project).map((entry) => displayName(entry.project))).toEqual(['ávila', 'Canto', 'inOrb', 'megabrain', 'stack'])
+  })
+
+  test('an entry without a display name sorts by its folder name', () => {
+    const order = byDisplayName(entries, (entry) => entry.project).map((entry) => entry.label)
+    expect(order.indexOf('Canto')).toBeLessThan(order.indexOf('canto-space'))
+    expect(order.indexOf('megabrain')).toBeGreaterThan(order.indexOf('canto-space'))
+  })
+
+  test('leaves the list it was given as it was', () => {
+    const before = entries.map((entry) => entry.label)
+    byDisplayName(entries, (entry) => entry.project)
+    expect(entries.map((entry) => entry.label)).toEqual(before)
+  })
+})
+
+describe('droppedPicture', () => {
+  test('one image file is the picture, whatever the case of its extension', () => {
+    expect(droppedPicture(['/h/logo.png'])).toBe('/h/logo.png')
+    expect(droppedPicture(['/h/Logo.JPEG'])).toBe('/h/Logo.JPEG')
+    expect(droppedPicture(['/h/mark.svg'])).toBe('/h/mark.svg')
+  })
+
+  test('anything but one image is not', () => {
+    expect(droppedPicture([])).toBeNull()
+    expect(droppedPicture(['/h/a.png', '/h/b.png'])).toBeNull()
+    expect(droppedPicture(['/h/notes.pdf'])).toBeNull()
+    expect(droppedPicture(['/h/folder'])).toBeNull()
+    expect(droppedPicture(['/h/v1.png/readme'])).toBeNull()
   })
 })

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { Project } from '@/api/schema'
 import { column } from '@/advanced/knowledge-parts'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
+import { byDisplayName, displayName } from '@/advanced/appearance-model'
 import { projectColor, projectInitials } from '@/advanced/picture-model'
 import { ContextMenu, useContextMenu } from '@/components/ContextMenu'
 
@@ -18,19 +19,48 @@ export function WikiProjectPicture({ project, name }: { project: Project | undef
   )
 }
 
-/** The bar's first control: the project shown, its picture and name, opening a menu of the others. Its hover fill overhangs the page inset by 3px, so the picture starts on it. */
-export function ProjectSwitcher({ name, path, listed, options }: { name: string; path: string; listed: Project | undefined; options: { label: string; title: string; onSelect: () => void }[] }) {
+/** A project the switcher offers: its folder name and path as the page knows them, and megabrain's record when megabrain lists it. */
+export interface SwitcherProject {
+  name: string
+  path: string
+  listed: Project | undefined
+  /** Said after the name in the menu, as "(off)". */
+  note?: string
+  onSelect: () => void
+}
+
+const dressOf = (option: Pick<SwitcherProject, 'name' | 'path' | 'listed'>) => option.listed ?? { name: option.name, path: option.path }
+
+/** The name the sidebar shows for a project: the one the person chose, else its folder's. */
+export const switcherName = (option: Pick<SwitcherProject, 'name' | 'path' | 'listed'>) => displayName(dressOf(option))
+
+/**
+ * The bar's first control: the project shown, its picture and name, opening a menu of every project
+ * the page has, each with its picture and name, alphabetical by name. Its hover fill overhangs the
+ * page inset by 3px, so the picture starts on it.
+ */
+export function ProjectSwitcher({ current, options }: { current: Pick<SwitcherProject, 'name' | 'path' | 'listed'>; options: SwitcherProject[] }) {
   const { menu, open, close } = useContextMenu()
+  const name = switcherName(current)
+  const rows = byDisplayName(options, dressOf).map((option) => {
+    const label = switcherName(option)
+    return {
+      label: option.note === undefined ? label : `${label} (${option.note})`,
+      title: option.path,
+      leading: <WikiProjectPicture project={option.listed} name={label} />,
+      onSelect: option.onSelect,
+    }
+  })
   return (
     <>
       <button
         type="button"
-        onClick={(event) => open(event, [options])}
+        onClick={(event) => open(event, [rows])}
         aria-haspopup="menu"
-        title={`${name}\n${path}`}
+        title={`${name}\n${current.path}`}
         className="-ml-[3px] flex h-[30px] max-w-[240px] min-w-0 shrink-0 items-center gap-2 rounded-full pr-2 pl-[3px] text-left transition-colors select-none hover:bg-white/[0.08]"
       >
-        <WikiProjectPicture project={listed} name={name} />
+        <WikiProjectPicture project={current.listed} name={name} />
         <span className="min-w-0 truncate text-[13px] font-semibold tracking-[-0.01em] text-ink-200 @max-[520px]/header:hidden">{name}</span>
         <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-ink-400">
           <path d="m5 6.5 3-3 3 3M5 9.5l3 3 3-3" />
