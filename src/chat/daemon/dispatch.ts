@@ -1,5 +1,5 @@
 import type { Socket } from "node:net";
-import type { ChatDaemon } from "../daemon.js";
+import { CHAT_PROTOCOL_MIN_VERSION, type ChatDaemon } from "../daemon.js";
 
 type Request = { operation: string; [key: string]: unknown };
 type Part = import("../protocol.js").MessagePart;
@@ -8,9 +8,19 @@ export async function dispatchRequest(daemon: ChatDaemon, request: Request, sock
     case "list":
       await Promise.all([...daemon.eventChains.values(), ...daemon.appendChains.values()]);
       return await daemon.store.list();
-    case "hello": return { protocol: daemon.protocol, pid: process.pid, build: daemon.build };
+    case "hello": {
+      const offered = object(request.protocol);
+      const clientMin = Number(offered.min ?? 1);
+      const clientMax = Number(offered.max ?? offered.version ?? 1);
+      if (!Number.isSafeInteger(clientMin) || !Number.isSafeInteger(clientMax) || clientMin < 1 || clientMax < clientMin || clientMax < CHAT_PROTOCOL_MIN_VERSION || clientMin > daemon.protocol) {
+        const error = Object.assign(new Error("chatd protocol is incompatible with this client"), { code: "chatd-incompatible", liveChats: await daemon.liveChats() });
+        throw error;
+      }
+      return { protocol: { version: daemon.protocol, min: CHAT_PROTOCOL_MIN_VERSION, max: daemon.protocol }, daemonVersion: daemon.version, liveChats: await daemon.liveChats(), pid: process.pid, build: daemon.build };
+    }
     case "daemon-status": return await daemon.daemonStatus();
     case "drain": return request.wait === false ? (void daemon.drainDaemon().catch(() => undefined), await daemon.daemonStatus()) : await daemon.drainDaemon();
+    case "retire": return await daemon.retireDaemon();
     case "handover": return await daemon.handover();
     case "start": return await daemon.startChat(request);
     case "send": return await daemon.send(text(request.id), validateParts(request.parts), request.fresh === true);

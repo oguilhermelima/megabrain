@@ -3,6 +3,7 @@ import { createMockApi } from '@/api/mock'
 import { createTauriApi } from '@/api/tauri'
 import { mockWorktreeApi, tauriWorktreeApi } from '@/api/worktree-create'
 import { announceAction } from '@/lib/app-events'
+import { isIncompatible, reportIncompatible } from '@/native-chat/chatd-reconnect'
 import { native } from '@/lib/surface'
 
 const webBridge = Boolean(import.meta.env.VITE_MEGABRAIN_BRIDGE)
@@ -23,4 +24,18 @@ function announcingActions(base: AppApi): AppApi {
   return wrapped
 }
 
-export const api: AppApi = announcingActions(native || webBridge ? { ...createTauriApi(), ...tauriWorktreeApi() } : { ...createMockApi(), ...mockWorktreeApi() })
+// A call refused because chatd speaks a protocol this CLI cannot is the reconnect watcher's signal.
+function reportingIncompatible(base: AppApi): AppApi {
+  const wrapped: AppApi = { ...base }
+  for (const [name, value] of Object.entries(base)) {
+    if (typeof value !== 'function') continue
+    ;(wrapped as unknown as Record<string, unknown>)[name] = (...args: unknown[]) => {
+      const result: unknown = (value as (...args: unknown[]) => unknown).apply(base, args)
+      if (result instanceof Promise) result.catch((caught: unknown) => isIncompatible(caught) && reportIncompatible())
+      return result
+    }
+  }
+  return wrapped
+}
+
+export const api: AppApi = reportingIncompatible(announcingActions(native || webBridge ? { ...createTauriApi(), ...tauriWorktreeApi() } : { ...createMockApi(), ...mockWorktreeApi() }))

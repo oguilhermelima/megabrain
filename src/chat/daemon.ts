@@ -5,6 +5,7 @@ import type { ProcessAdapter } from "../adapters/proc.js";
 import type { Conversation } from "../core/conversations.js";
 import type { SessionHolder } from "../core/session-holders.js";
 import { statSync } from "node:fs";
+import packageJson from "../../package.json" with { type: "json" };
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from "./store.js";
 import type { MessagePart } from "./protocol.js";
 import type { ChatArtifact } from "./artifacts.js";
@@ -15,7 +16,7 @@ import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardSta
 import { dispatchRequest } from "./daemon/dispatch.js";
 import { startKnowledge } from "./daemon/knowledge-wiring.js";
 import { events as eventsImpl, permission as permissionImpl, createApproval as createApprovalImpl, approve as approveImpl, resolveApproval as resolveApprovalImpl, stateEvent as stateEventImpl, publishLive as publishLiveImpl, publishProgress as publishProgressImpl, countClaude as countClaudeImpl, broadcast as broadcastImpl, publish as publishImpl, publishInterrupted as publishInterruptedImpl, fail as failImpl } from "./daemon/events.js";
-import { start as startImpl, handle as handleImpl, startChat as startChatImpl, suspendActive as suspendActiveImpl, handover as handoverImpl, busy as busyImpl, daemonStatus as daemonStatusImpl, drainDaemon as drainDaemonImpl, scheduleExit as scheduleExitImpl, close as closeImpl, closeDaemon as closeDaemonImpl, listen as listenImpl } from "./daemon/server.js";
+import { start as startImpl, handle as handleImpl, startChat as startChatImpl, suspendActive as suspendActiveImpl, handover as handoverImpl, busy as busyImpl, liveChats as liveChatsImpl, daemonStatus as daemonStatusImpl, drainDaemon as drainDaemonImpl, retireDaemon as retireDaemonImpl, scheduleExit as scheduleExitImpl, close as closeImpl, closeDaemon as closeDaemonImpl, listen as listenImpl } from "./daemon/server.js";
 import { queueOperation as queueOperationImpl, loadQueue as loadQueueImpl, persistQueue as persistQueueImpl, enqueue as enqueueImpl, drain as drainImpl, drainOnce as drainOnceImpl } from "./daemon/queue.js";
 import { resumeDrained as resumeDrainedImpl, send as sendImpl, resume as resumeImpl, deliver as deliverImpl, resumeFailed as resumeFailedImpl } from "./daemon/resume.js";
 import { trackCallback as trackCallbackImpl, runAgent as runAgentImpl, runAgentInternal as runAgentInternalImpl, clearTerminalHoldersBeforeResume as clearTerminalHoldersBeforeResumeImpl, armStartTimer as armStartTimerImpl, clearStartTimer as clearStartTimerImpl, interrupt as interruptImpl, stop as stopImpl } from "./daemon/agent-process.js";
@@ -28,14 +29,15 @@ import { editLast as editLastImpl } from "./daemon/chat-edit-last.js";
 
 type Part = MessagePart;
 type Request = { operation: string; [key: string]: unknown };
-type Response = { ok: true; value?: unknown } | { ok: false; error: string; code?: string };
+type Response = { ok: true; value?: unknown } | { ok: false; error: string; code?: string; liveChats?: number };
 type Environment = Readonly<Record<string, string | undefined>>;
 const instances = new Map<string, ChatDaemon>();
 
 // macOS limits Unix socket paths to a small fixed buffer; state directories under its long
 // per-user temporary root need a short basename while remaining scoped to the state directory.
-/** Bumped whenever the socket contract changes in a way an older chatd cannot serve; a client that finds another number asks that chatd to hand over. */
-export const CHAT_PROTOCOL_VERSION = 2;
+/** Increment when the socket wire changes; keep the minimum at the oldest protocol this server can serve. */
+export const CHAT_PROTOCOL_VERSION = 3;
+export const CHAT_PROTOCOL_MIN_VERSION = 1;
 const DRAINING = "chatd is draining for an upgrade";
 const DEFAULT_TERMINAL_POLL_MS = 500;
 
@@ -187,6 +189,9 @@ export class ChatDaemon {
   closed = false;
   closing: Promise<void> | undefined;
   readonly sockets = new Set<Socket>();
+  readonly version = packageJson.version;
+  superseded = false;
+  exitReason = "shutdown";
   constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION, readonly build: number = chatBuild()) { this.store = new ChatStore(stateDir); this.knowledge = new KnowledgePipeline({ stateDir, environment }); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, pipeline: this.knowledge, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
 
 async start(): Promise<void> { return await startImpl(this); }
@@ -220,13 +225,17 @@ async handover(): Promise<{ handedOver: true; waitedMs: number; interrupted: str
   /** Whether one of this daemon's agents is in a turn; a terminal's TUI does not depend on chatd. */
 async busy(): Promise<boolean> { return await busyImpl(this); }
 
-async daemonStatus(): Promise<{ pid: number; protocol: number; build: number; draining: boolean; working: string[] }> { return await daemonStatusImpl(this); }
+async liveChats(): Promise<number> { return await liveChatsImpl(this); }
+
+async daemonStatus(): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[] }> { return await daemonStatusImpl(this); }
 
   /**
    * Gets out of the way of a newer chatd without stopping anyone's turn: every running turn finishes (however long
    * it takes), no new turn starts, the queued messages are left for the successor, and then the daemon exits.
    */
 async drainDaemon(): Promise<{ drained: true; waitedMs: number; resumes: string[] }> { return await drainDaemonImpl(this); }
+
+async retireDaemon(): Promise<{ retired: true; waitedMs: number }> { return await retireDaemonImpl(this); }
 
   /** A send while a turn runs waits in the queue; otherwise it goes out at once. While draining every send waits, for the next daemon. */
 async send(id: string, inputParts: Part[], fresh = false): Promise<{ queued: QueuedChatMessage | null }> {
@@ -407,5 +416,5 @@ async closeDaemon(): Promise<void> { return await closeDaemonImpl(this); }
 async listen(): Promise<void> { return await listenImpl(this); }
 }
 
-export { runChatd, callChatd, chatdStatus, drainChatd, callPermissionServer } from "./daemon/client.js";
+export { runChatd, callChatd, chatdStatus, drainChatd, retireChatd, callPermissionServer } from "./daemon/client.js";
 export type { ChatdStatus } from "./daemon/client.js";

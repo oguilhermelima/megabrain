@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame } from '@/api/schema'
+import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -301,6 +301,12 @@ export interface DesktopApi {
   followChat(chatId: string, since: string | null, onLine: (line: ChatEventLine) => void, onEnd?: (error: string | null) => void): Promise<() => void>
   /** The chat as chatd holds it now, without following: its head line (chat and queue) and every stored line after the cursor. */
   chatEvents(chatId: string, since: string | null): Promise<ChatEventLine[]>
+  /** The running chatd as it reports itself (`chat daemon status`); never starts one. */
+  chatDaemonStatus(): Promise<ChatDaemonStatus>
+  /** Asks an older chatd to exit by itself once every chat is idle; it keeps serving until then (`chat daemon retire`). */
+  chatDaemonRetire(): Promise<{ running: false } | { running: true; retired: true; waitedMs: number }>
+  /** Stops chatd once its running turns finish; queued messages wait for the next daemon (`chat daemon drain`). */
+  chatDaemonDrain(): Promise<void>
   /** Appends one chat/terminal switch timing record to <state>/logs/desktop-switch.log. */
   logSwitchTrace(record: object): Promise<void>
   /** Appends one chat start trace line to <state>/logs/desktop-chat-start.log. */

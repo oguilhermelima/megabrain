@@ -16,10 +16,11 @@ import { ChatView } from '@/chat/ChatView'
 import { SidebarUsage } from '@/advanced/SidebarUsage'
 import { homeView, knowledgeItem, knowledgeItemIn, knowledgeView, type KnowledgeView } from '@/advanced/knowledge-model'
 import { artifactsItem, artifactsItemIn } from '@/advanced/artifacts-model'
-import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
+import { chooseView, hasActionBar, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
 import type { OpenPath } from '@/chat/Conversation'
 import { DispatchesContext } from '@/chat/NoticeCard'
+import { ChatdNotice } from '@/native-chat/ChatdNotice'
 import { SessionView } from '@/chat/SessionView'
 import { CodePane } from '@/code/CodePane'
 import { CodeSlot } from '@/code/CodeSlot'
@@ -46,7 +47,7 @@ import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, mountsInBackground, removeTerminal, renameTerminal, terminalExited, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
-import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, spanItem, type ItemKind, type Panes } from '@/panes/pane-model'
+import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, spanItem, type Panes } from '@/panes/pane-model'
 import { activeGroup, changeGroupPanes, changeShown, groupOfItem, openLayoutItem, removeLayoutItem, shownPanes, type Preset } from '@/panes/split-groups'
 import { groupRows, groupsByPlace, type MemberInfo } from '@/advanced/split-rows'
 import { SplitRowsContext, type SplitRowsValue } from '@/advanced/SplitRows'
@@ -838,6 +839,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       </SlidePanel>
       <main data-window-content="" className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ink-950">
         {sidebarCollapsed && <CollapsedChrome onExpand={toggleSidebarCollapsed} onSettings={() => setSettingsOpen(true)} joined={windowRow !== null || sharedJoined} />}
+        <ChatdNotice className={`${pageX} pt-3`} />
         {error !== null && (
           <div className={`${pageX} pt-4`}>
             <ErrorNote error={error} />
@@ -930,9 +932,3 @@ const presetNames: Record<Preset, string> = { row: 'Side by side', column: 'Stac
 const presetIcons: Record<Preset, MenuIcon> = { row: 'splitRight', column: 'splitDown', grid: 'splitGrid', main: 'splitMain', bottom: 'splitBottom', top: 'splitTop' }
 
 /** The items whose top bar carries the action bar, and so can show Code: all but a GitHub item. */
-const paneViewKinds: ReadonlySet<ItemKind> = new Set<ItemKind>(['dispatch', 'session', 'native', 'terminal', 'launcher', 'code'])
-
-function hasActionBar(item: string): boolean {
-  const kind = parseItem(item)?.kind
-  return kind !== undefined && paneViewKinds.has(kind)
-}

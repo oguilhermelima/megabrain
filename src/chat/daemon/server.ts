@@ -22,7 +22,7 @@ import { ChatSummarizer } from ".././summaries.js";
 import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFingerprint, listChatArtifacts, listClaudeChatArtifacts, listMegabrainChatArtifacts, type ChatArtifact } from ".././artifacts.js";
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import { dispatchRequest } from "./dispatch.js";
-import type { ChatDaemon } from "../daemon.js";
+import { CHAT_PROTOCOL_MIN_VERSION, type ChatDaemon } from "../daemon.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
 
@@ -119,6 +119,7 @@ export async function handover(daemon: ChatDaemon): Promise<{ handedOver: true; 
     while (await daemon.busy() && Date.now() - started < bound) await new Promise((resolve) => setTimeout(resolve, 50));
     const interrupted = await daemon.suspendActive();
     await Promise.all([...daemon.eventChains.values(), ...daemon.appendChains.values()]);
+    daemon.exitReason = "protocol-handover";
     await daemon.close();
     return { handedOver: true, waitedMs: Date.now() - started, interrupted };
   }
@@ -127,9 +128,17 @@ export async function busy(daemon: ChatDaemon): Promise<boolean> {
     return (await daemon.store.list()).some((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval"));
   }
 
-export async function daemonStatus(daemon: ChatDaemon): Promise<{ pid: number; protocol: number; build: number; draining: boolean; working: string[] }> {
+export async function liveChats(daemon: ChatDaemon): Promise<number> {
+    let live = 0;
+    for (const chat of await daemon.store.list()) if (chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval" || (await daemon.loadQueue(chat.id)).length > 0)) live += 1;
+    return live;
+  }
+
+export async function daemonStatus(daemon: ChatDaemon): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[] }> {
     const working = (await daemon.store.list()).filter((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval")).map((chat) => chat.id);
-    return { pid: process.pid, protocol: daemon.protocol, build: daemon.build, draining: daemon.draining, working };
+    let liveChats = 0;
+    for (const chat of await daemon.store.list()) if (chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval" || (await daemon.loadQueue(chat.id)).length > 0)) liveChats += 1;
+    return { pid: process.pid, protocol: { version: daemon.protocol, min: CHAT_PROTOCOL_MIN_VERSION, max: daemon.protocol }, daemonVersion: daemon.version, superseded: daemon.superseded, liveChats, build: daemon.build, draining: daemon.draining, working };
   }
 
 export async function drainDaemon(daemon: ChatDaemon): Promise<{ drained: true; waitedMs: number; resumes: string[] }> {
@@ -142,8 +151,21 @@ export async function drainDaemon(daemon: ChatDaemon): Promise<{ drained: true; 
     if (resumes.length > 0) await writeFile(chatResumes(daemon.stateDir), `${JSON.stringify(resumes)}\n`, { mode: 0o600 });
     await daemon.suspendActive();
     await Promise.all([...daemon.eventChains.values(), ...daemon.appendChains.values()]);
+    daemon.exitReason = "drained";
     await daemon.close();
     return { drained: true, waitedMs: Date.now() - started, resumes };
+  }
+
+export async function retireDaemon(daemon: ChatDaemon): Promise<{ retired: true; waitedMs: number }> {
+    daemon.superseded = true;
+    const started = Date.now();
+    while (await liveChats(daemon) > 0) await new Promise((resolve) => setTimeout(resolve, 50));
+    await Promise.all([...daemon.eventChains.values(), ...daemon.appendChains.values(), ...daemon.queueWrites.values()]);
+    await daemon.suspendActive();
+    await Promise.all([...daemon.eventChains.values(), ...daemon.appendChains.values()]);
+    daemon.exitReason = "retired";
+    await daemon.close();
+    return { retired: true, waitedMs: Date.now() - started };
   }
 
 export function scheduleExit(daemon: ChatDaemon): void {
@@ -183,6 +205,7 @@ export async function closeDaemon(daemon: ChatDaemon): Promise<void> {
     await Promise.all(daemon.knowledgeTasks);
     await Promise.all([...daemon.eventChains.values(), ...daemon.appendChains.values(), ...daemon.queueWrites.values()]);
     await Promise.all([...daemon.agentRuns, ...daemon.childExits, ...daemon.callbacks, ...daemon.knowledgeTasks]);
+    await writeFile(join(daemon.stateDir, "chatd", "exit.json"), `${JSON.stringify({ pid: process.pid, daemonVersion: daemon.version, reason: daemon.exitReason, exitedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
     await Promise.all(children.map(async ([id, child]) => {
       const record = chatChildRecord(daemon.stateDir, id);
       await readFile(record, "utf8").then(async (raw) => {
@@ -223,7 +246,8 @@ export async function listen(daemon: ChatDaemon): Promise<void> {
           }).catch((error: unknown) => {
             if (socket.destroyed) return;
             const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
-            socket.end(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error), ...(code === "terminal-busy" || code === "chat-busy" ? { code } : {}) })}\n`);
+            const liveChats = typeof error === "object" && error !== null && "liveChats" in error ? Number((error as { liveChats?: unknown }).liveChats) : undefined;
+            socket.end(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error), ...(typeof code === "string" ? { code } : {}), ...(liveChats === undefined ? {} : { liveChats }) })}\n`);
           });
         });
       });

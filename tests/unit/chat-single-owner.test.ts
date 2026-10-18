@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createProcessAdapter, type ProcessAdapter } from "../../src/adapters/proc.js";
-import { callChatd, ChatDaemon, CHAT_PROTOCOL_VERSION } from "../../src/chat/daemon.js";
+import { callChatd, chatdStatus, ChatDaemon, CHAT_PROTOCOL_VERSION, CHAT_PROTOCOL_MIN_VERSION, retireChatd } from "../../src/chat/daemon.js";
 import { claudeLogPath } from "../../src/chat/session-log.js";
 import { ChatStore, type Chat, type ChatEvent } from "../../src/chat/store.js";
 import { upsertConversation } from "../../src/core/conversations.js";
@@ -440,14 +440,88 @@ describe("draining chatd before an upgrade", () => {
     await until(async () => visible(await eventsOf(next, waiting.id)), (shown) => shown.includes("assistant:answer:after the upgrade"), "queued message delivered by the new daemon");
   });
 
-  test("a newer CLI asks an older chatd to drain instead of handing over", async () => {
+  test("a newer CLI keeps using an older but compatible chatd", async () => {
     const env = sandbox();
     const old = await daemonFor(env, {}, 1);
     const environment = environmentOf(env);
     const adapter = { startDetached: async () => ({ kind: "error", error: "embedded" }) };
     await callChatd(env.state, { operation: "list" }, environment, adapter);
-    await until(async () => existsSync(join(env.state, "chatd", "chatd.pid")), (present) => !present, "older chatd left");
-    expect(old.store).toBeDefined();
+    expect(existsSync(join(env.state, "chatd", "chatd.pid"))).toBe(true);
+    expect((await chatdStatus(env.state)).compatible).toBe(true);
+    expect(old.closed).toBe(false);
+  });
+
+  test("reconnects to a compatible daemon without cutting its live streaming turn", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const daemon = await daemonFor(env);
+    const chat = await daemon.handle({ operation: "start", agent: "claude", cwd: env.cwd, parts: [{ type: "text", text: "slow" }] }) as Chat;
+    await stateOf(daemon, chat.id, "working");
+
+    const listed = await callChatd(env.state, { operation: "list" }, environmentOf(env), adapterOf(env)) as Chat[];
+    await stateOf(daemon, chat.id, "idle");
+    const status = await chatdStatus(env.state);
+
+    expect(listed.some((entry) => entry.id === chat.id)).toBe(true);
+    expect(visible(await eventsOf(daemon, chat.id))).toContain("assistant:answer:slow");
+    expect(status).toMatchObject({ compatible: true, liveChats: 0, protocol: { version: CHAT_PROTOCOL_VERSION, min: CHAT_PROTOCOL_MIN_VERSION, max: CHAT_PROTOCOL_VERSION } });
+  });
+
+  test("a compatible client can die while chatd and its agent keep streaming", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const daemon = await daemonFor(env);
+    const chat = await daemon.handle({ operation: "start", agent: "claude", cwd: env.cwd, parts: [{ type: "text", text: "slow" }] }) as Chat;
+    await stateOf(daemon, chat.id, "working");
+    const agent = await until(async () => spawned(env), (children) => children.length === 1, "agent process to start");
+    const agentPid = agent[0]?.pid;
+    expect(agentPid).toBeDefined();
+    const socketClient = spawn(process.execPath, ["-e", `const net = require("node:net"); const socket = net.createConnection(${JSON.stringify(join(env.state, "chatd", "s"))}); socket.on("connect", () => { socket.write(JSON.stringify({ operation: "events", id: ${JSON.stringify(chat.id)}, since: 0, follow: true }) + "\\n"); process.stdout.write("connected\\n"); }); socket.on("data", () => {}); setInterval(() => {}, 1000);`], { stdio: ["ignore", "pipe", "ignore"] });
+    processes.push(socketClient);
+    await new Promise<void>((resolve, reject) => {
+      let output = "";
+      socketClient.stdout?.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; if (output.includes("connected\n")) resolve(); });
+      socketClient.once("error", reject);
+      socketClient.once("exit", (code) => { if (code !== null && code !== 0) reject(new Error(`socket client exited ${code}`)); });
+    });
+    socketClient.kill("SIGKILL");
+    await new Promise<void>((resolve) => socketClient.once("close", () => resolve()));
+
+    expect(() => process.kill(agentPid ?? 0, 0)).not.toThrow();
+    expect(existsSync(join(env.state, "chatd", "chatd.pid"))).toBe(true);
+    expect(visible(await eventsOf(daemon, chat.id))).not.toContain("system:Interrupted");
+    await stateOf(daemon, chat.id, "idle");
+  });
+
+  test("retire waits for chats to become idle and the next client can start a daemon", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const daemon = await daemonFor(env);
+    const chat = await daemon.handle({ operation: "start", agent: "claude", cwd: env.cwd, parts: [{ type: "text", text: "slow" }] }) as Chat;
+    await stateOf(daemon, chat.id, "working");
+
+    const retiring = retireChatd(env.state);
+    const superseded = await until(async () => await daemon.handle({ operation: "daemon-status" }) as { superseded: boolean }, (status) => status.superseded, "superseded chatd");
+    expect(superseded.superseded).toBe(true);
+    await retiring;
+
+    expect(existsSync(join(env.state, "chatd", "chatd.pid"))).toBe(false);
+    const next = await daemonFor(env);
+    expect(next).not.toBe(daemon);
+    expect((await next.store.get(chat.id))?.state).toBe("suspended");
+    expect(visible(await eventsOf(next, chat.id))).toContain("assistant:answer:slow");
+  });
+
+  test("rejects an incompatible protocol hello with the number of live chats", async () => {
+    const env = sandbox();
+    fakeClaude(env);
+    const daemon = await daemonFor(env);
+    const chat = await daemon.handle({ operation: "start", agent: "claude", cwd: env.cwd, parts: [{ type: "text", text: "slow" }] }) as Chat;
+    await stateOf(daemon, chat.id, "working");
+
+    await expect(callChatd(env.state, { operation: "hello", protocol: { version: 99, min: 99, max: 99 } }, environmentOf(env), adapterOf(env)))
+      .rejects.toMatchObject({ code: "chatd-incompatible", liveChats: 1 });
+    await stateOf(daemon, chat.id, "idle");
   });
 
   test("a holder refusal can be retried after its holder exits, preserving the queued message", async () => {

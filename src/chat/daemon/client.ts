@@ -23,7 +23,7 @@ import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFi
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import { dispatchRequest } from "./dispatch.js";
 import { startKnowledge } from "./knowledge-wiring.js";
-import { ChatDaemon, CHAT_PROTOCOL_VERSION, DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, timeoutMs, object, text, instances, chatBuild } from "../daemon.js";
+import { ChatDaemon, CHAT_PROTOCOL_VERSION, CHAT_PROTOCOL_MIN_VERSION, DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, timeoutMs, object, text, instances } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts } from "../daemon.js";
 
 async function socketRequest(stateDir: string, request: Request, timeouts: Timeouts | { connect: number; request: undefined }, onLine?: (line: ChatLine) => void): Promise<unknown> {
@@ -55,7 +55,7 @@ async function socketRequest(stateDir: string, request: Request, timeouts: Timeo
             responseSeen = true;
             arm(undefined, "");
             if (parsed.ok) resolve(parsed.value);
-            else reject(Object.assign(new Error(parsed.error), { code: parsed.code }));
+            else reject(Object.assign(new Error(parsed.error), { code: parsed.code, ...(parsed.liveChats === undefined ? {} : { liveChats: parsed.liveChats }) }));
             if (!request.follow) socket.end();
           } else onLine?.(parsed);
         } catch (error) { reject(error); socket.destroy(); }
@@ -78,26 +78,24 @@ export async function runChatd(stateDir: string): Promise<void> {
 }
 
 /**
- * A running chatd of another protocol version is asked to hand over: it waits for working chats, suspends the rest and
- * leaves, so the caller's next request finds no socket and starts a current daemon. One that predates the handshake
- * cannot be asked, and is used as it is.
+ * Negotiate before sending an operation. Old daemons which only return a scalar protocol are treated as protocol 1.
  */
 async function ensureProtocol(stateDir: string, timeouts: Timeouts): Promise<void> {
   let hello: Record<string, unknown> = {};
-  try { hello = object(await socketRequest(stateDir, { operation: "hello" }, timeouts)); }
+  try { hello = object(await socketRequest(stateDir, { operation: "hello", protocol: { version: CHAT_PROTOCOL_VERSION, min: CHAT_PROTOCOL_MIN_VERSION, max: CHAT_PROTOCOL_VERSION } }, timeouts)); }
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
+    if (code === "chatd-incompatible") throw error;
     if (code === "ECONNREFUSED" || code === "ENOENT") throw error;
   }
-  const protocol = hello.protocol;
-  // Same protocol, older build: it drains in the background, still answering, and this call goes on with it.
-  if (protocol === CHAT_PROTOCOL_VERSION && typeof hello.build === "number" && chatBuild() > hello.build) {
-    try { await socketRequest(stateDir, { operation: "drain", wait: false }, timeouts); } catch { /* a chatd without drain keeps serving */ }
-    return;
+  const protocol = object(hello.protocol);
+  const version = typeof hello.protocol === "number" ? hello.protocol : protocol.version;
+  if (version === undefined) return;
+  const min = typeof hello.protocol === "number" ? version : protocol.min;
+  const max = typeof hello.protocol === "number" ? version : protocol.max;
+  if (typeof version !== "number" || typeof min !== "number" || typeof max !== "number" || max < CHAT_PROTOCOL_MIN_VERSION || min > CHAT_PROTOCOL_VERSION) {
+    throw Object.assign(new Error("chatd protocol is incompatible with this client"), { code: "chatd-incompatible", liveChats: Number(hello.liveChats ?? 0) });
   }
-  if (protocol === CHAT_PROTOCOL_VERSION || protocol === undefined) return;
-  await socketRequest(stateDir, { operation: "handover" }, { connect: timeouts.connect, request: undefined });
-  for (let attempt = 0; attempt < 100 && await socketAccepts(stateDir, 200); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 25));
 }
 
 type Starter = { startDetached(command: string, args: readonly string[], options?: { cwd?: string; env?: Readonly<Record<string, string>> }): Promise<{ kind: string; error?: string }> };
@@ -123,15 +121,27 @@ async function untilChatdGone(stateDir: string): Promise<void> {
   }
 }
 
-export type ChatdStatus = Readonly<{ running: false } | { running: true; pid: number; protocol: number; build: number; draining: boolean; working: string[] }>;
+export type ChatdStatus = Readonly<{ running: false } | { running: true; compatible: boolean; pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[] }>;
 
 /** The running chatd as it reports itself; never starts one. */
 export async function chatdStatus(stateDir: string): Promise<ChatdStatus> {
   const local = instances.get(stateDir);
-  if (local !== undefined) return { running: true, ...await local.handle({ operation: "daemon-status" }) as Omit<Extract<ChatdStatus, { running: true }>, "running"> };
+  if (local !== undefined) {
+    const status = await local.handle({ operation: "daemon-status" }) as Omit<Extract<ChatdStatus, { running: true }>, "running" | "compatible">;
+    return { running: true, compatible: protocolCompatible(status.protocol), ...status };
+  }
   if (!existsSync(chatSocket(stateDir)) || !await socketAccepts(stateDir, DEFAULT_CONNECT_TIMEOUT_MS)) return { running: false };
   const status = object(await socketRequest(stateDir, { operation: "daemon-status" }, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: DEFAULT_REQUEST_TIMEOUT_MS }));
-  return { running: true, pid: Number(status.pid), protocol: Number(status.protocol), build: Number(status.build), draining: status.draining === true, working: Array.isArray(status.working) ? status.working.filter((id): id is string => typeof id === "string") : [] };
+  const protocol = object(status.protocol);
+  const version = typeof status.protocol === "number" ? status.protocol : Number(protocol.version);
+  const min = typeof status.protocol === "number" ? version : Number(protocol.min);
+  const max = typeof status.protocol === "number" ? version : Number(protocol.max);
+  const range = { version, min, max };
+  return { running: true, compatible: protocolCompatible(range), pid: Number(status.pid), protocol: range, daemonVersion: typeof status.daemonVersion === "string" ? status.daemonVersion : "unknown", superseded: status.superseded === true, liveChats: Number(status.liveChats ?? 0), build: Number(status.build), draining: status.draining === true, working: Array.isArray(status.working) ? status.working.filter((id): id is string => typeof id === "string") : [] };
+}
+
+function protocolCompatible(protocol: { min: number; max: number }): boolean {
+  return protocol.max >= CHAT_PROTOCOL_MIN_VERSION && protocol.min <= CHAT_PROTOCOL_VERSION;
 }
 
 /** Drains the running chatd and waits until it has exited: every turn finished, queued messages left for the next one. */
@@ -143,6 +153,17 @@ export async function drainChatd(stateDir: string): Promise<Readonly<{ running: 
     : await local.handle({ operation: "drain" }));
   await untilChatdGone(stateDir);
   return { running: true, drained: true, waitedMs: Number(result.waitedMs), resumes: Array.isArray(result.resumes) ? result.resumes.filter((id): id is string => typeof id === "string") : [] };
+}
+
+/** Marks a compatible daemon superseded and waits for it to finish active and queued work before exiting. */
+export async function retireChatd(stateDir: string): Promise<Readonly<{ running: false } | { running: true; retired: true; waitedMs: number }>> {
+  const local = instances.get(stateDir);
+  if (local === undefined && (!existsSync(chatSocket(stateDir)) || !await socketAccepts(stateDir, DEFAULT_CONNECT_TIMEOUT_MS))) return { running: false };
+  if (local === undefined) await ensureProtocol(stateDir, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: DEFAULT_REQUEST_TIMEOUT_MS });
+  const result = object(local === undefined
+    ? await socketRequest(stateDir, { operation: "retire" }, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: undefined })
+    : await local.handle({ operation: "retire" }));
+  return { running: true, retired: true, waitedMs: Number(result.waitedMs) };
 }
 
 async function callChatdOnce(stateDir: string, request: Request, environment: Environment, processAdapter: Starter, onLine?: (line: ChatLine) => void): Promise<unknown> {
@@ -158,7 +179,10 @@ async function callChatdOnce(stateDir: string, request: Request, environment: En
   };
   const requestWhenReady = async (): Promise<unknown> => {
     for (let attempt = 0; attempt < 240; attempt += 1) {
-      try { return await socketRequest(stateDir, request, timeouts, onLine); }
+      try {
+        await ensureProtocol(stateDir, timeouts);
+        return await socketRequest(stateDir, request, timeouts, onLine);
+      }
       catch (error) {
         if (!transportFailure(error)) throw error;
         await new Promise((resolve) => setTimeout(resolve, 25));

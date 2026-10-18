@@ -6,6 +6,7 @@ import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, Proj
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockNewFileDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { createMockMaestroApi } from '@/api/fixtures/maestro'
+import { createMockChatd } from '@/api/fixtures/chatd'
 import { mockUsageStats } from '@/api/fixtures/usage'
 import { mockKnowledgeList, mockKnowledgeSearch, mockKnowledgeTopics, mockKnowledgeTranscript } from '@/api/fixtures/knowledge'
 import { mockArtifact, mockArtifactList } from '@/api/fixtures/artifacts'
@@ -29,6 +30,7 @@ export function createMockApi(): DesktopApi {
     resolvesTo: '/Users/operator/Workspaces/megabrain/.build/megabrain',
   }
   let settings = mockSettings
+  const chatd = createMockChatd(mockInstallPlan.version)
   let sidebarFolders: unknown = { version: 1, folders: [], order: [] }
   let sidebarState: unknown = { version: 1, collapsed: [], rows: {} }
   let shortcuts: unknown = { version: 1, bindings: {} }
@@ -470,6 +472,9 @@ export function createMockApi(): DesktopApi {
     },
     followChat: async (chatId, since, onLine) => followMockChat(chatId, since, onLine),
     chatEvents: async (chatId, since) => readMockChat(chatId, since),
+    chatDaemonStatus: () => chatd.status(),
+    chatDaemonRetire: () => chatd.retire(),
+    chatDaemonDrain: () => chatd.drain(),
     logSwitchTrace: async () => {},
     logChatStartTrace: async () => {},
     openTerminal: async ({ engine, cwd, tmuxSession }) => ({ id: `term-${Date.now()}`, engine, cwd, title: 'zsh', tmuxSession: tmuxSession ?? null }),

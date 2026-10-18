@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { route } from "../../src/cli/router.js";
 import { failed } from "../../src/core/result.js";
-import { ChatDaemon, CHAT_PROTOCOL_VERSION } from "../../src/chat/daemon.js";
+import { ChatDaemon, CHAT_PROTOCOL_MIN_VERSION, CHAT_PROTOCOL_VERSION } from "../../src/chat/daemon.js";
 import { ChatStore, type Chat } from "../../src/chat/store.js";
 
 const directories: string[] = [];
@@ -261,7 +261,11 @@ describe("chatd protocol handover", () => {
   test("the handshake reports the protocol version", async () => {
     const env = sandbox();
     const daemon = await daemonFor(env);
-    expect(await daemon.handle({ operation: "hello" })).toMatchObject({ protocol: CHAT_PROTOCOL_VERSION });
+    expect(await daemon.handle({ operation: "hello" })).toMatchObject({
+      protocol: { version: CHAT_PROTOCOL_VERSION, min: CHAT_PROTOCOL_MIN_VERSION, max: CHAT_PROTOCOL_VERSION },
+      daemonVersion: expect.any(String),
+      liveChats: 0,
+    });
     expect(CHAT_PROTOCOL_VERSION).toBeGreaterThan(0);
   });
 
@@ -278,7 +282,7 @@ describe("chatd protocol handover", () => {
     expect(await daemon.store.get(ID)).toMatchObject({ state: "idle" });
   });
 
-  test("a client with a different version asks the older daemon to hand over; its chats become suspended", async () => {
+  test("a newer client keeps using a compatible older daemon without suspending its chats", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", FAKE_CLAUDE);
     await new ChatStore(env.state).put(record(env));
@@ -291,12 +295,9 @@ describe("chatd protocol handover", () => {
     const pid = Number(readFileSync(env.pids, "utf8").trim().split("\n").at(-1));
     const listed = await list(env);
     expect(listed.kind).toBe("ok");
-    if (listed.kind === "ok") expect(JSON.parse(listed.value)).toContainEqual(expect.objectContaining({ id: ID, state: "suspended", agentSessionId: "recorded-session" }));
-    let alive = true;
-    for (let attempt = 0; attempt < 50 && alive; attempt += 1) {
-      try { process.kill(pid, 0); await new Promise((resolve) => setTimeout(resolve, 20)); } catch { alive = false; }
-    }
-    expect(alive).toBe(false);
+    if (listed.kind === "ok") expect(JSON.parse(listed.value)).toContainEqual(expect.objectContaining({ id: ID, state: "idle", agentSessionId: "recorded-session" }));
+    expect(() => process.kill(pid, 0)).not.toThrow();
+    expect(await old.store.get(ID)).toMatchObject({ state: "idle" });
   });
 
   test("handover waits for a working chat and reports it when the bound runs out", async () => {

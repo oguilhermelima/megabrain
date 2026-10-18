@@ -272,6 +272,21 @@ export const nativeChatSchema = z.looseObject({
   /** The slash command names the agent reported when it started (Claude's init), absent before. */
   slashCommands: z.array(z.string()).optional(),
 })
+
+export const chatDaemonStatusSchema = z.discriminatedUnion('running', [
+  z.looseObject({ running: z.literal(false) }),
+  z.looseObject({
+    running: z.literal(true), compatible: z.boolean().optional(), pid: z.number().optional(),
+    protocol: z.looseObject({ version: z.number(), min: z.number(), max: z.number() }).optional().catch(undefined),
+    daemonVersion: z.string().optional(), superseded: z.boolean().optional(), liveChats: z.number().optional(),
+    build: z.number().optional(), draining: z.boolean().optional(), working: z.array(z.string()).optional(),
+  }),
+])
+export type ChatDaemonStatus = z.infer<typeof chatDaemonStatusSchema>
+export const chatDaemonRetireSchema = z.discriminatedUnion('running', [
+  z.looseObject({ running: z.literal(false) }),
+  z.looseObject({ running: z.literal(true), retired: z.literal(true), waitedMs: z.number() }),
+])
 export const chatApprovalSchema = z.looseObject({
   id: z.string(),
   tool: z.string(),

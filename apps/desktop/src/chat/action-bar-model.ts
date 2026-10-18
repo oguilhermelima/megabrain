@@ -1,5 +1,6 @@
 import type { BranchChanges, CodeChange, Project, ProjectWorktree } from '@/api/schema'
 import type { ItemKind } from '@/panes/pane-model'
+import { parseItem } from '@/panes/pane-model'
 
 // The view tabs on a pane's top bar, the row under its title: five views of the item's worktree, all shown in the
 // pane under the bar. Agent is the chat or session itself, Code the worktree's editor, PR the
@@ -8,6 +9,14 @@ import type { ItemKind } from '@/panes/pane-model'
 
 export type PaneView = 'agent' | 'code' | 'pr' | 'diff' | 'device'
 export const paneViews: readonly PaneView[] = ['agent', 'code', 'pr', 'diff', 'device']
+
+const paneViewKinds: ReadonlySet<ItemKind> = new Set<ItemKind>(['dispatch', 'session', 'native', 'terminal', 'launcher', 'code'])
+
+/** Whether an item has an agent or Code view in the action bar. */
+export function hasActionBar(item: string): boolean {
+  const kind = parseItem(item)?.kind
+  return kind !== undefined && paneViewKinds.has(kind)
+}
 
 /** What the bar knows about a worktree: where it is, its branch and repository, and its pull request. */
 export interface WorktreeFacts {

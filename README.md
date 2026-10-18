@@ -316,13 +316,13 @@ composer is recorded as a system notice before the terminal closes. A resume hel
 stays suspended and reports its location, pid and working directory; close it and run
 `megabrain chat resume <id> --json` to retry, or start fresh in the desktop app. If another resume
 fails the chat stays suspended with the error;
-`chat send <id> --parts <json> --fresh` then starts a new agent session in the same folder. A newer
-app asks a running chatd of another protocol version to hand over, so an update never ends a turn
-mid-flight without saying so in the transcript. A newer build of the same protocol asks the running
-chatd to drain instead: running turns finish, messages sent meanwhile wait in their queues, and the
-next call starts the new daemon, which sends them. `chat daemon status [--json]` reports the running
-chatd without starting one, and `chat daemon drain [--json]` drains it and waits until it has exited,
-which is the safe step before replacing the binary. A turn cut by a crash ends with `Interrupted`.
+`chat send <id> --parts <json> --fresh` then starts a new agent session in the same folder. Clients
+negotiate a versioned chatd protocol before reconnecting; compatible clients keep using the daemon
+and its live agent streams. `chat daemon status [--json]` reports its protocol range, version and
+live chats without starting it. After replacing the app bundle, `chat daemon retire [--json]` lets
+the old daemon finish running and queued work, then exits so the next call starts the new daemon.
+Use `chat daemon drain [--json]` only when a client reports `chatd-incompatible`; drain finishes
+running turns and leaves queued messages for the next daemon. A turn cut by a crash ends with `Interrupted`.
 
 Chats run without permission prompts. Add `--approvals` to `chat start` to be asked instead.
 
