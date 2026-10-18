@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { ConversationAgent } from '@/components/agent-icons'
 import { api } from '@/api'
-import type { ChatRead, Dispatch, MessagePart } from '@/api/schema'
+import type { ChatRead, Dispatch, MessagePart, NativeChat } from '@/api/schema'
 import { chatState } from '@/advanced/model'
 import { chatName } from '@/advanced/parts'
 import { ChatHeader } from '@/chat/ChatHeader'
@@ -12,9 +12,10 @@ import { Composer } from '@/chat/Composer'
 import { useComposeChannel } from '@/chat/chat-menu'
 import { messagePartsToText } from '@/chat/composer-parts'
 import { pageMx } from '@/lib/page'
+import { OrchestrationView } from '@/native-chat/orchestration/OrchestrationView'
 
 // Memoised: a status poll that left this chat unchanged keeps the same chat object (see reuse.ts).
-export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }: { chat: Dispatch; onOpenChat?: OpenChat; onOpenPath?: OpenPath }) {
+export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath, onOpenNativeChat }: { chat: Dispatch; onOpenChat?: OpenChat; onOpenPath?: OpenPath; onOpenNativeChat?: (chat: NativeChat) => void }) {
   const [read, setRead] = useState<ChatRead | null>(null)
   const compose = useComposeChannel()
   const [readError, setReadError] = useState<unknown>(null)
@@ -54,7 +55,9 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }:
   }
 
   const finding = chat.supervision.finding
-  const [tab, setTab] = useState<'conversation' | 'terminal'>('conversation')
+  const [tab, setTab] = useState<'conversation' | 'terminal' | 'orchestration'>('conversation')
+  // The orchestration graph is asked by agent session, which megabrain knows once the child started.
+  const session = chat.agentSessionId ?? null
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ChatHeader
@@ -74,7 +77,7 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }:
         </div>
       )}
       <div className={`${pageMx} mt-3 flex gap-1 self-start rounded-full border border-white/10 bg-white/[0.05] p-1`}>
-        {(['conversation', 'terminal'] as const).map((value) => (
+        {(session === null ? (['conversation', 'terminal'] as const) : (['conversation', 'terminal', 'orchestration'] as const)).map((value) => (
           <button
             key={value}
             type="button"
@@ -92,6 +95,7 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }:
           </ConversationAgent.Provider>
         </div>
       )}
+      {tab === 'orchestration' && session !== null && <OrchestrationView target={{ session }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />}
       {tab === 'terminal' && read === null && readError === null && (
         <div className={`${pageMx} my-5 rounded-[24px] border border-white/[0.06] bg-[#050506] px-5 py-4`}>
           <TextSkeleton lines={6} />
@@ -109,16 +113,18 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }:
           <ErrorNote error={readError} />
         </div>
       )}
-      <Composer
-        placeholder={state === 'ended' ? 'This chat has ended' : 'Reply…'}
-        disabled={state === 'ended'}
-        agent={chat.agent ?? null}
-        cwd={chat.worktreePath ?? null}
-        dispatchId={chat.dispatchId}
-        model={chat.model ?? null}
-        onSend={send}
-        channel={compose}
-      />
+      {tab !== 'orchestration' && (
+        <Composer
+          placeholder={state === 'ended' ? 'This chat has ended' : 'Reply…'}
+          disabled={state === 'ended'}
+          agent={chat.agent ?? null}
+          cwd={chat.worktreePath ?? null}
+          dispatchId={chat.dispatchId}
+          model={chat.model ?? null}
+          onSend={send}
+          channel={compose}
+        />
+      )}
     </div>
   )
 })

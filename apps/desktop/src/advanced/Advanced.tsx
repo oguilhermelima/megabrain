@@ -561,13 +561,13 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'dispatch': {
         const chat = status?.dispatches.find((entry) => entry.dispatchId === parsed.id)
         if (chat === undefined) return gone('Chat')
-        return { title: chat.label ?? chat.dispatchId, node: <ChatView chat={chat} onOpenChat={openRelatedChat} onOpenPath={openPath} /> }
+        return { title: chat.label ?? chat.dispatchId, node: <ChatView chat={chat} onOpenChat={openRelatedChat} onOpenPath={openPath} onOpenNativeChat={selectNativeChat} /> }
       }
       case 'session': {
         const found = findSession(parsed.id)
         if (found === null) return gone('Session')
         const runner = terminals.find((terminal) => terminalRuns(terminal, found.session))
-        return { title: found.session.title, node: <SessionView session={found.session} worktreePath={found.worktreePath} onOpenChat={openRelatedChat} onOpenPath={openPath} onShowTerminal={runner === undefined ? undefined : () => selectTerminal(runner)} /> }
+        return { title: found.session.title, node: <SessionView session={found.session} worktreePath={found.worktreePath} onOpenChat={openRelatedChat} onOpenPath={openPath} onOpenNativeChat={selectNativeChat} onShowTerminal={runner === undefined ? undefined : () => selectTerminal(runner)} /> }
       }
       case 'native': {
         const chat = nativeChats.find((entry) => entry.id === parsed.id) ?? (startedChat?.id === parsed.id ? startedChat : null)

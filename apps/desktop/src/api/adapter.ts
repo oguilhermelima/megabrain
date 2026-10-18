@@ -1,6 +1,7 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
 import type { OrchestrationGraph } from '@/api/schema'
 import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame } from '@/api/schema'
+import type { OrchestrationGraph, OrchestrationTarget } from '@/native-chat/orchestration/orchestration-schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -382,8 +383,15 @@ export interface WorktreeApi {
   createWorktree(repo: string, branch: string, base: string, stacked?: boolean): Promise<{ path: string; branch: string }>
 }
 
+/** The orchestration tree a chat or session belongs to (`orchestrate graph`); its adapters live in native-chat/orchestration/orchestration-api.ts. */
+export interface OrchestrationApi {
+  orchestrationGraph(target: OrchestrationTarget): Promise<OrchestrationGraph>
+  /** Calls onGraph with a full snapshot at once and on every change; onEnd gets the CLI's error, if any. The returned function stops the follow. */
+  followOrchestration(target: OrchestrationTarget, onGraph: (graph: OrchestrationGraph) => void, onEnd?: (error: string | null) => void): Promise<() => void>
+}
+
 /** What the app's `api` offers. */
-export type AppApi = DesktopApi & WorktreeApi
+export type AppApi = DesktopApi & WorktreeApi & OrchestrationApi
 
 /** A field left out stays as it is; null returns it to what megabrain detects. */
 export type ProjectAppearancePatch = { [K in 'name' | 'color' | 'picture']?: string | null }

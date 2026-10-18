@@ -2,15 +2,16 @@ import { lazy, Suspense, useState } from 'react'
 import { activityOf } from '@/components/agent-activity'
 import { ConversationAgent } from '@/components/agent-icons'
 import { api } from '@/api'
-import type { MessagePart, ProjectSession } from '@/api/schema'
+import type { MessagePart, NativeChat, ProjectSession } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
 import { Conversation, type OpenChat, type OpenPath } from '@/chat/Conversation'
 import { Composer, type Notice } from '@/chat/Composer'
 import { useComposeChannel } from '@/chat/chat-menu'
 import { messagePartsToText } from '@/chat/composer-parts'
-import { closable, ownership, ownedTerminalTarget, sessionView, type SessionViewMode } from '@/chat/session-ownership'
+import { closable, ownership, ownedTerminalTarget, sessionView } from '@/chat/session-ownership'
 import { noLogState } from '@/chat/session-open-model'
-import { ViewSwitch } from '@/chat/ViewSwitch'
+import { ViewSwitch, type ChatViewMode } from '@/chat/ViewSwitch'
+import { OrchestrationView } from '@/native-chat/orchestration/OrchestrationView'
 import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { Button, ErrorNote } from '@/components/ui'
 import { pageMx } from '@/lib/page'
@@ -23,6 +24,7 @@ export function SessionView({
   onOpenChat,
   onOpenPath,
   onShowTerminal,
+  onOpenNativeChat,
 }: {
   session: ProjectSession
   worktreePath: string
@@ -30,10 +32,12 @@ export function SessionView({
   onOpenPath?: OpenPath
   /** Shows the app terminal item that runs this session, when one does. */
   onShowTerminal?: () => void
+  /** Opens an app chat, as a card in the orchestration view does. */
+  onOpenNativeChat?: (chat: NativeChat) => void
 }) {
-  const [chosenView, setChosenView] = useState<SessionViewMode>('chat')
+  const [chosenView, setChosenView] = useState<ChatViewMode>('chat')
   const compose = useComposeChannel()
-  const view = sessionView(session, chosenView)
+  const view: ChatViewMode = chosenView === 'orchestration' ? chosenView : sessionView(session, chosenView)
   const [exited, setExited] = useState<number | null | undefined>(undefined)
 
   const ended = session.status === 'ended'
@@ -52,19 +56,20 @@ export function SessionView({
         activity={activityOf(session.status)}
         title={session.title}
         actions={
-          // Chat and terminal are both there only for a session megabrain owns.
-          ownership(session).owned ? (
-            <ViewSwitch
-              view={view}
-              onView={(next) => {
-                setExited(undefined)
-                setChosenView(next)
-              }}
-            />
-          ) : null
+          // Chat and terminal are both there only for a session megabrain owns; any session has its orchestration.
+          <ViewSwitch
+            view={view}
+            views={ownership(session).owned ? ['chat', 'terminal', 'orchestration'] : ['chat', 'orchestration']}
+            onView={(next) => {
+              setExited(undefined)
+              setChosenView(next)
+            }}
+          />
         }
       />
-      {view === 'terminal' && terminalTarget !== null ? (
+      {view === 'orchestration' ? (
+        <OrchestrationView target={{ session: session.sessionId }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />
+      ) : view === 'terminal' && terminalTarget !== null ? (
         <>
           {exited !== undefined && (
             <p className={`${pageMx} mt-3 text-[13px] text-ink-400`}>

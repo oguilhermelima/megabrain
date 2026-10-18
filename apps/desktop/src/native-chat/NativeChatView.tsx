@@ -4,7 +4,7 @@ import { activityOf } from '@/components/agent-activity'
 import { api } from '@/api'
 import type { ChatArtifact, MessagePart, NativeChat, TerminalSession, TranscriptEvent } from '@/api/schema'
 import { ChatHeader } from '@/chat/ChatHeader'
-import { ViewSwitch } from '@/chat/ViewSwitch'
+import { ViewSwitch, type ChatViewMode } from '@/chat/ViewSwitch'
 import { Composer, type Notice } from '@/chat/Composer'
 import type { QueueControls } from '@/chat/QueueStrip'
 import { useComposeChannel } from '@/chat/chat-menu'
@@ -37,6 +37,8 @@ import { OwnerStrip } from '@/native-chat/OwnerStrip'
 import { DockRow } from '@/chat/ComposerDock'
 import { pageMx } from '@/lib/page'
 import { useChatMessageEditing } from '@/native-chat/useChatMessageEditing'
+import { OrchestrationView } from '@/native-chat/orchestration/OrchestrationView'
+import { orchestrationShown, showOrchestration } from '@/native-chat/orchestration/orchestration-shown'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
@@ -81,6 +83,8 @@ export function NativeChatView({
     shownViews.set(chat.id, view)
     setShown(view)
   }
+  // Orchestration lies over the chat or terminal without moving the session; leaving it goes back to whichever showed.
+  const [orchestrating, setOrchestrating] = useState(() => orchestrationShown(listed.id))
   const toggle = modeToggle({ ...chat, mode: shown })
   // Asked for the terminal mid-turn: the pane shows the terminal view and waits for the turn to end.
   const [waitingTerminal, setWaitingTerminal] = useState(false)
@@ -281,6 +285,13 @@ export function NativeChatView({
     else if (step.run === 'stop-then-switch') void api.interruptChat(chat.id).catch(() => {}).then(() => switchMode())
   }
   // To the chat, and to a terminal that already owns the session, only the view moves.
+  const chooseView = (view: ChatViewMode) => {
+    const orchestration = view === 'orchestration'
+    showOrchestration(chat.id, orchestration)
+    setOrchestrating(orchestration)
+    if (!orchestration && view !== mode) requestSwitch()
+  }
+
   const requestSwitch = () => {
     setSwitchNotice(null)
     if (waitingTerminal) return follow(backToChat(true))
@@ -428,7 +439,7 @@ export function NativeChatView({
         agent={chat.agent}
         activity={activityOf(chat.state)}
         title={title}
-        actions={<ViewSwitch view={mode} enabled={toggle.enabled && !switching} reason={toggle.reason} switching={switching} onView={requestSwitch} />}
+        actions={<ViewSwitch view={orchestrating ? 'orchestration' : mode} views={['chat', 'terminal', 'orchestration']} enabled={toggle.enabled && !switching} reason={toggle.reason} switching={switching} onView={chooseView} />}
       />
       {/* A follow that dropped comes back by itself; until then the view says so quietly instead of freezing. */}
       {reconnecting !== null && (
@@ -468,7 +479,9 @@ export function NativeChatView({
           </button>
         </div>
       )}
-      {waitingTerminal ? (
+      {orchestrating ? (
+        <OrchestrationView target={{ chat: chat.id }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />
+      ) : waitingTerminal ? (
         <>
           <div className={`${pageMx} mt-3 flex items-center gap-3 text-[13px] text-ink-300`}>
             <span className="min-w-0 flex-1">{TERMINAL_WAIT_NOTICE}</span>

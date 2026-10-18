@@ -604,3 +604,63 @@ html.native body {
   background-color: var(--color-accent);
   color: var(--color-accent-ink);
 }
+
+/* The orchestration diagram (native-chat/orchestration): dotted connectors whose dots drift towards a
+   lane while it works, and a lane waiting on an unanswered question breathing in amber, the loudest
+   thing on screen. Reduced motion keeps the colours and drops the movement. */
+@keyframes orchestration-flow {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+.orchestration-flow {
+  animation: orchestration-flow 0.9s linear infinite;
+}
+@keyframes orchestration-ask {
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-warn) 18%, transparent);
+  }
+}
+.orchestration-ask {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-warn) 30%, transparent);
+  animation: orchestration-ask 1.6s ease-in-out infinite;
+}
+/* A message travelling an edge: a dot runs along the connector's path (offset-path, set inline) in the
+   message's direction while the edge glows. Reduced motion drops the dot and keeps the glow still. */
+@keyframes orchestration-dot {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+.orchestration-dot {
+  offset-rotate: 0deg;
+  animation: orchestration-dot 1.1s var(--motion-ease-panel) both;
+}
+.orchestration-dot[data-direction='to-parent'] {
+  animation-direction: reverse;
+}
+@keyframes orchestration-edge-pulse {
+  from,
+  to {
+    stroke-opacity: 0;
+  }
+  30% {
+    stroke-opacity: 0.9;
+  }
+}
+.orchestration-edge-pulse {
+  animation: orchestration-edge-pulse 1.3s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .orchestration-flow,
+  .orchestration-ask,
+  .orchestration-edge-pulse {
+    animation: none;
+  }
+  .orchestration-dot {
+    display: none;
+  }
+}

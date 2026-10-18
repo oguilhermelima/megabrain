@@ -2,6 +2,7 @@ import type { AppApi } from '@/api/adapter'
 import { createMockApi } from '@/api/mock'
 import { createTauriApi } from '@/api/tauri'
 import { mockWorktreeApi, tauriWorktreeApi } from '@/api/worktree-create'
+import { mockOrchestrationApi, tauriOrchestrationApi } from '@/native-chat/orchestration/orchestration-api'
 import { announceAction } from '@/lib/app-events'
 import { isIncompatible, reportIncompatible } from '@/native-chat/chatd-reconnect'
 import { native } from '@/lib/surface'
@@ -38,4 +39,4 @@ function reportingIncompatible(base: AppApi): AppApi {
   return wrapped
 }
 
-export const api: AppApi = reportingIncompatible(announcingActions(native || webBridge ? { ...createTauriApi(), ...tauriWorktreeApi() } : { ...createMockApi(), ...mockWorktreeApi() }))
+export const api: AppApi = reportingIncompatible(announcingActions(native || webBridge ? { ...createTauriApi(), ...tauriWorktreeApi(), ...tauriOrchestrationApi() } : { ...createMockApi(), ...mockWorktreeApi(), ...mockOrchestrationApi() }))
