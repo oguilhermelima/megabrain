@@ -4,7 +4,7 @@ import type { CodeGoto } from '@/code/CodeFrame'
 import type { CodeTarget } from '@/code/code-pane-model'
 import { itemKey, singlePane } from '@/panes/pane-model'
 import { layoutOf, parseLayout, type Layout } from '@/panes/split-groups'
-import type { GithubKind } from '@/github/useGithubCounts'
+import type { GithubPageKind } from '@/github/useGithubCounts'
 import type { PaneView } from '@/chat/action-bar-model'
 
 export const panesKey = 'megabrain.panes'
@@ -31,7 +31,7 @@ export function usePaneState() {
   const [paneViews, setPaneViews] = useState<Record<string, PaneView>>({})
   const [splitViews, setSplitViews] = useState<Record<string, PaneView>>({})
   // A project's pull request or issue page shown over the pane layout.
-  const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubKind; focus: number | null } | null>(null)
+  const [githubPage, setGithubPage] = useState<{ path: string; kind: GithubPageKind; focus: number | null } | null>(null)
   // Code roots stay mounted until their server stops; idle roots retain their last-use time.
   const [codeTargets, setCodeTargets] = useState<CodeTarget[]>([])
   const [idleCode, setIdleCode] = useState<Readonly<Record<string, number>>>({})

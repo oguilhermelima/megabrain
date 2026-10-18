@@ -10,6 +10,21 @@ import { Collapse } from '@/components/Collapse'
 import type { MenuItem } from '@/components/ContextMenu'
 import { MoreButton, RowActions, type MenuOpener } from '@/advanced/SidebarRows'
 
+/** An entry for one of the app's pages (Artifacts, Knowledge, Tasks) above the Projects header, padded and shaped like a project row. */
+export function PageEntry({ label, icon, selected, onOpen }: { label: string; icon: ReactNode; selected: boolean; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-current={selected ? 'page' : undefined}
+      className={`flex h-9 w-full min-w-0 items-center gap-2.5 rounded-[12px] pr-1.5 pl-2.5 text-left transition-colors select-none ${selected ? 'bg-row-selected text-ink-100' : 'text-ink-300 hover:bg-row-hover hover:text-ink-100'}`}
+    >
+      <span className="grid size-6 shrink-0 place-items-center">{icon}</span>
+      <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-[-0.01em]">{label}</span>
+    </button>
+  )
+}
+
 /** What a drop on the hover's map does, in words. */
 function arrangeNote(target: ArrangeTarget): string {
   if (target.kind === 'side') return target.side === 'top' || target.side === 'bottom' ? `Span the width, ${target.side === 'top' ? 'on top' : 'at the bottom'}` : `Span the height, on the ${target.side}`

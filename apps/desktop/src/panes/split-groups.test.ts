@@ -14,6 +14,7 @@ import {
   minPaneHeight,
   minPaneWidth,
   openLayoutItem,
+  openPageItem,
   parseLayout,
   presetsFor,
   presetTree,
@@ -117,6 +118,18 @@ describe('opening items with groups', () => {
     const layout = openLayoutItem(pair(), 'z')
     expect(groupItems(layout, 'g1')).toEqual(['a', 'b'])
     expect(shownItems(layout)).toEqual(['z'])
+  })
+
+  test('a page held once opens in place of its open copy, in its group, on the item picked from it', () => {
+    const find = (list: readonly string[]) => list.find((item) => item.startsWith('page:')) ?? null
+    const grouped = changeShown(start(), (panes) => dropItem(panes, 'page:one', 'p1', 'right', 'p2'), 'g1')
+    const away = openLayoutItem(grouped, 'z')
+    const swapped = openPageItem(away, find, () => 'page:two')
+    expect(swapped.active).toBe('g1')
+    expect(groupItems(swapped, 'g1')).toEqual(['a', 'page:two'])
+    // Kept as it is when the pick is the open one; opened like any item when none is open.
+    expect(groupItems(openPageItem(away, find, (open) => open ?? 'page:new'), 'g1')).toEqual(['a', 'page:one'])
+    expect(shownItems(openPageItem(start(), find, (open) => open ?? 'page:new'))).toEqual(['page:new'])
   })
 
   test('focusGroup shows the group, and with an item focuses that member', () => {

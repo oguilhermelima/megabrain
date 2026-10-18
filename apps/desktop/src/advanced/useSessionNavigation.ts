@@ -5,7 +5,7 @@ import { openLayoutItem } from '@/panes/split-groups'
 import { itemKey } from '@/panes/pane-model'
 import { useStableCallback } from '@/lib/useStableCallback'
 import type { OpenChat } from '@/chat/Conversation'
-import type { GithubKind } from '@/github/useGithubCounts'
+import type { GithubPageKind } from '@/github/useGithubCounts'
 
 type ExtraSessions = Record<string, { session: ProjectSession; worktreePath: string }>
 
@@ -21,7 +21,7 @@ export function useSessionNavigation({
   status: { dispatches: DispatchRecord[] } | null
   extraSessions: ExtraSessions
   setExtraSessions: Dispatch<SetStateAction<ExtraSessions>>
-  setGithubPage: Dispatch<SetStateAction<{ path: string; kind: GithubKind; focus: number | null } | null>>
+  setGithubPage: Dispatch<SetStateAction<{ path: string; kind: GithubPageKind; focus: number | null } | null>>
   setLayout: Dispatch<SetStateAction<Layout>>
 }) {
   const findSession = (sessionId: string) => {

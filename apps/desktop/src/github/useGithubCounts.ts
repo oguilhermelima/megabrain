@@ -8,6 +8,9 @@ import { usePoll } from '@/lib/usePoll'
 
 export type GithubKind = 'prs' | 'issues' | 'actions'
 
+/** The kinds the GitHub page lists; a project's issues are the Tasks page's. */
+export type GithubPageKind = Exclude<GithubKind, 'issues'>
+
 /** Open pull requests and issues per project path; null until known or when gh could not answer. */
 export type GithubCounts = Record<string, { prs: number | null; issues: number | null }>
 

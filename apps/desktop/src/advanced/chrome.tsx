@@ -85,6 +85,15 @@ export function ArtifactsIcon() {
   )
 }
 
+export function TasksIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="2.25" width="12" height="11.5" rx="2" />
+      <path d="M5.25 5.75 6.25 6.75 8 5M5.25 10 6.25 11 8 9.25M9.75 6h1.5M9.75 10.25h1.5" />
+    </svg>
+  )
+}
+
 export function PlusIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">

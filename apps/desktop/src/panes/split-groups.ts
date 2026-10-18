@@ -100,6 +100,23 @@ export function openLayoutItem(layout: Layout, item: string): Layout {
   return { ...layout, active: null, single }
 }
 
+/**
+ * Opens a page the layout holds once (Knowledge, Artifacts, Tasks): `find` names the one already open
+ * among every item, `pick` the item to show from it; that item takes the open one's place wherever it
+ * shows, else opens like any item.
+ */
+export function openPageItem(layout: Layout, find: (items: readonly string[]) => string | null, pick: (open: string | null) => string): Layout {
+  const open = find([layout.single, ...layout.groups.map((group) => group.panes)].flatMap((panes) => paneList(panes.root).map((leaf) => leaf.item)))
+  const item = pick(open)
+  if (open === null || open === item) return openLayoutItem(layout, item)
+  const swap = (panes: Panes) => {
+    const leaf = paneOfItem(panes, open)
+    return leaf === null ? panes : replaceItem(panes, leaf.id, item)
+  }
+  const group = groupOfItem(layout, open)
+  return openLayoutItem(group === null ? { ...layout, single: swap(layout.single) } : changeGroupPanes(layout, group.id, swap), item)
+}
+
 /** Shows group `groupId`, focused on the member showing `item` when given. */
 export function focusGroup(layout: Layout, groupId: string, item?: string): Layout {
   const group = layout.groups.find((candidate) => candidate.id === groupId)

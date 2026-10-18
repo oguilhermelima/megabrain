@@ -16,6 +16,8 @@ import { ChatView } from '@/chat/ChatView'
 import { SidebarUsage } from '@/advanced/SidebarUsage'
 import { homeView, knowledgeItem, knowledgeItemIn, knowledgeView, type KnowledgeView } from '@/advanced/knowledge-model'
 import { artifactsItem, artifactsItemIn } from '@/advanced/artifacts-model'
+import { tasksItem } from '@/tasks/tasks-model'
+import { targetTasks } from '@/tasks/tasks-target'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
 import { CodeRootsProvider, type OpenPath } from '@/chat/Conversation'
@@ -48,7 +50,7 @@ import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, mountsInBackground, removeTerminal, renameTerminal, terminalExited, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
 import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, spanItem, type Panes } from '@/panes/pane-model'
-import { activeGroup, changeGroupPanes, changeShown, groupOfItem, openLayoutItem, removeLayoutItem, shownPanes } from '@/panes/split-groups'
+import { activeGroup, changeShown, openLayoutItem, openPageItem, removeLayoutItem, shownPanes } from '@/panes/split-groups'
 import { groupRows, groupsByPlace, type MemberInfo } from '@/advanced/split-rows'
 import { SplitRowsContext, type SplitRowsValue } from '@/advanced/SplitRows'
 import { hasActionBar, presetIcons, presetNames } from '@/advanced/pane-layout-display'
@@ -80,6 +82,7 @@ const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) =>
 const ProjectPage = lazy(() => import('@/advanced/ProjectPage').then((module) => ({ default: module.ProjectPage })))
 const KnowledgePage = lazy(() => import('@/advanced/KnowledgePage').then((module) => ({ default: module.KnowledgePage })))
 const ArtifactsPage = lazy(() => import('@/advanced/ArtifactsPage').then((module) => ({ default: module.ArtifactsPage })))
+const TasksPage = lazy(() => import('@/tasks/TasksPage').then((module) => ({ default: module.TasksPage })))
 
 function Loading() {
   return <PaneSkeleton />
@@ -391,6 +394,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       case 'project':
       case 'knowledge':
       case 'artifact':
+      case 'tasks':
         return null
       default: {
         const root = rootOf(item)
@@ -438,6 +442,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         return { title: 'Knowledge', mark: { kind: 'knowledge' }, state: 'idle', worktree }
       case 'artifact':
         return { title: 'Artifacts', mark: { kind: 'artifact' }, state: 'idle', worktree }
+      case 'tasks':
+        return { title: 'Tasks', mark: { kind: 'tasks' }, state: 'idle', worktree }
     }
   }
   const splitRowsValue = groupRows(paneLayout, describeItem)
@@ -459,24 +465,17 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     } else if (row.kind === 'native') drag.start(event, { kind: 'item', item: itemKey('native', row.chat.id), label: row.chat.title ?? 'New chat' })
     else drag.start(event, { kind: 'item', item: itemKey('terminal', row.terminal.id), label: terminalLabel(row.terminal) })
   })
+  // A project's issues are the Tasks page's list, on the issue when one is given.
   const openGithub = useStableCallback((project: Project, kind: GithubKind, focus?: number) => {
-    setGithubPage({ path: project.path, kind, focus: focus ?? null })
+    if (kind !== 'issues') return setGithubPage({ path: project.path, kind, focus: focus ?? null })
+    targetTasks(project.path, focus ?? null)
+    openTasks()
   })
   const openProject = useStableCallback((project: Project) => showItem(itemKey('project', project.path)))
   /** The Knowledge page, one in the layout: shown where it already is, on `view` when given, else in the focused pane. */
   const openKnowledge = useStableCallback((view: KnowledgeView | null) => {
     setGithubPage(null)
-    setLayout((current) => {
-      const open = knowledgeItemIn([current.single, ...current.groups.map((group) => group.panes)].flatMap((panes) => paneList(panes.root).map((leaf) => leaf.item)))
-      const item = view === null ? (open ?? knowledgeItem(homeView)) : knowledgeItem(view)
-      if (open === null || open === item) return openLayoutItem(current, item)
-      const swap = (panes: Panes) => {
-        const leaf = paneOfItem(panes, open)
-        return leaf === null ? panes : replaceItem(panes, leaf.id, item)
-      }
-      const group = groupOfItem(current, open)
-      return openLayoutItem(group === null ? { ...current, single: swap(current.single) } : changeGroupPanes(current, group.id, swap), item)
-    })
+    setLayout((current) => openPageItem(current, knowledgeItemIn, (open) => (view === null ? (open ?? knowledgeItem(homeView)) : knowledgeItem(view))))
   })
   const openKnowledgeHome = useStableCallback(() => openKnowledge(null))
   const openKnowledgeTopic = useStableCallback((repo: string, topic: string) => openKnowledge({ repo, topic, chat: null, map: false }))
@@ -484,19 +483,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const openArtifact = useStableCallback((artifact: Artifact | null) => openArtifactId(artifact?.id ?? null))
   const openArtifactId = useStableCallback((artifactId: string | null) => {
     setGithubPage(null)
-    setLayout((current) => {
-      const open = artifactsItemIn([current.single, ...current.groups.map((group) => group.panes)].flatMap((panes) => paneList(panes.root).map((leaf) => leaf.item)))
-      const item = artifactId === null ? (open ?? artifactsItem(null)) : artifactsItem(artifactId)
-      if (open === null || open === item) return openLayoutItem(current, item)
-      const swap = (panes: Panes) => {
-        const leaf = paneOfItem(panes, open)
-        return leaf === null ? panes : replaceItem(panes, leaf.id, item)
-      }
-      const group = groupOfItem(current, open)
-      return openLayoutItem(group === null ? { ...current, single: swap(current.single) } : changeGroupPanes(current, group.id, swap), item)
-    })
+    setLayout((current) => openPageItem(current, artifactsItemIn, (open) => (artifactId === null ? (open ?? artifactsItem(null)) : artifactsItem(artifactId))))
   })
   const openArtifacts = useStableCallback(() => openArtifact(null))
+  const openTasks = useStableCallback(() => showItem(tasksItem))
   /** Settings on its Knowledge page, at a project's row when given. */
   const openKnowledgeSettings = useStableCallback((repo: string | null) => {
     setSettingsProject(repo)
@@ -538,9 +528,10 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       // The page runs the project's commands in its main checkout.
       case 'project':
         return parsed.id
-      // The page spans a project's worktrees, so it runs nothing; nor does the Artifacts page.
+      // The page spans a project's worktrees, so it runs nothing; nor do the Artifacts and Tasks pages.
       case 'knowledge':
       case 'artifact':
+      case 'tasks':
         return null
     }
   }
@@ -653,6 +644,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             </Suspense>
           ),
         }
+      case 'tasks':
+        return { title: 'Tasks', node: <Suspense fallback={<Loading />}><TasksPage projects={projects} onOpenGithub={maximiseGithub} /></Suspense> }
     }
   }
   // Every terminal stays mounted, shown or not, so it keeps running and reports its exit; a restored
@@ -744,7 +737,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         project={githubProject}
         kind={githubPage.kind}
         focus={githubPage.focus}
-        onKind={(kind) => setGithubPage({ path: githubPage.path, kind, focus: null })}
+        onKind={(kind) => openGithub(githubProject, kind)}
         onClose={() => setGithubPage(null)}
         onMaximise={(kind, number) => maximiseGithub(githubPage.path, kind, number)}
       />
@@ -831,6 +824,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             onOpenKnowledge={openKnowledgeHome}
             artifactsSelected={focusedParsed?.kind === 'artifact'}
             onOpenArtifacts={openArtifacts}
+            tasksSelected={focusedParsed?.kind === 'tasks'}
+            onOpenTasks={openTasks}
           />
         </SplitRowsContext.Provider>
         <SidebarUsage onOpenSettings={() => setSettingsOpen(true)} />

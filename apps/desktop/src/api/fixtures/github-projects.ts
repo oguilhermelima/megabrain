@@ -1,38 +1,74 @@
 import type { GithubProject, GithubProjectItem } from '@/api/schema'
 
-const statusField: NonNullable<GithubProject['statusField']> = {
-  id: 'PVTSSF_lADOA1',
-  name: 'Status',
-  options: [
-    { id: 'opt_todo', name: 'Todo', color: 'GRAY' },
-    { id: 'opt_progress', name: 'In Progress', color: 'BLUE' },
-    { id: 'opt_review', name: 'In Review', color: 'PURPLE' },
-    { id: 'opt_done', name: 'Done', color: 'GREEN' },
-  ],
+// GitHub Projects for the mock API and the Tasks board's tests: one project with a Status field
+// (Todo, In Progress, In Review, Done) and 12 mixed items, among them drafts, pull requests, another
+// repository's issue, items with no status and one whose option was deleted, and one project
+// without a Status field.
+
+export const fixtureRoadmap: GithubProject = {
+  id: 'PVT_roadmap',
+  number: 3,
+  title: 'Roadmap',
+  url: 'https://github.com/users/oguilhermelima/projects/3',
+  owner: 'oguilhermelima',
+  closed: false,
+  statusField: {
+    id: 'PVTSSF_status',
+    name: 'Status',
+    options: [
+      { id: 'opt_todo', name: 'Todo', color: 'GRAY' },
+      { id: 'opt_progress', name: 'In Progress', color: 'YELLOW' },
+      { id: 'opt_review', name: 'In Review', color: 'BLUE' },
+      { id: 'opt_done', name: 'Done', color: 'GREEN' },
+    ],
+  },
 }
 
-export const mockGithubProjects: GithubProject[] = [
-  { id: 'PVT_kwDOBoard1', number: 7, title: 'Desktop roadmap', url: 'https://github.com/orgs/operator/projects/7', owner: 'operator', closed: false, statusField },
-  { id: 'PVT_kwDOBoard2', number: 12, title: 'Research backlog', url: 'https://github.com/orgs/operator/projects/12', owner: 'operator', closed: false, statusField: null },
+export const fixtureBacklog: GithubProject = {
+  id: 'PVT_backlog',
+  number: 5,
+  title: 'Ideas backlog',
+  url: 'https://github.com/users/oguilhermelima/projects/5',
+  owner: 'oguilhermelima',
+  closed: false,
+  statusField: null,
+}
+
+const repo = 'oguilhermelima/megabrain'
+const person = (login: string) => ({ login, avatarUrl: `https://avatars.githubusercontent.com/${login}` })
+const label = (name: string, color: string) => ({ name, color })
+
+function item(id: string, fields: Partial<GithubProjectItem> & Pick<GithubProjectItem, 'title'>): GithubProjectItem {
+  return { id, type: 'ISSUE', number: null, url: null, state: 'OPEN', repository: repo, status: null, assignees: [], labels: [], updatedAt: '2026-10-17T12:00:00.000Z', ...fields }
+}
+
+const issue = (number: number) => ({ number, url: `https://github.com/${repo}/issues/${number}` })
+const pull = (number: number) => ({ type: 'PULL_REQUEST' as const, number, url: `https://github.com/${repo}/pull/${number}` })
+
+export const fixtureRoadmapItems: GithubProjectItem[] = [
+  item('PVTI_01', { ...issue(141), title: 'Tasks page in the desktop app', status: 'opt_progress', assignees: [person('oguilhermelima')], labels: [label('desktop', '1d76db'), label('feature', 'a2eeef')] }),
+  item('PVTI_02', { ...pull(142), title: 'github projects verbs', status: 'opt_review', assignees: [person('oguilhermelima')], labels: [label('cli', 'fbca04')] }),
+  item('PVTI_03', { ...issue(118), title: 'Knowledge map zoom resets on refresh', status: 'opt_todo', labels: [label('bug', 'd73a4a')] }),
+  item('PVTI_04', { type: 'DRAFT_ISSUE', state: null, title: 'Sketch: board swimlanes by assignee', status: 'opt_todo' }),
+  item('PVTI_05', { ...pull(139), title: 'Fold the orchestration log by default', state: 'MERGED', status: 'opt_done', assignees: [person('oguilhermelima')] }),
+  item('PVTI_06', { ...issue(120), title: 'Artifacts revision picker loses its place', state: 'CLOSED', status: 'opt_done', labels: [label('bug', 'd73a4a')] }),
+  item('PVTI_07', { ...issue(131), title: 'Run panel remembers its width per worktree', status: 'opt_progress', assignees: [person('octocat'), person('oguilhermelima')] }),
+  item('PVTI_08', { ...issue(12), title: 'Shared icons for the docs site', repository: 'oguilhermelima/megabrain-docs', url: 'https://github.com/oguilhermelima/megabrain-docs/issues/12', status: 'opt_todo', labels: [label('docs', '0075ca')] }),
+  item('PVTI_09', { ...pull(143), title: 'Draft: drag cards between columns', status: null, assignees: [person('octocat')] }),
+  item('PVTI_10', { ...issue(144), title: 'Board keyboard navigation', status: null, labels: [label('a11y', 'c5def5')] }),
+  item('PVTI_11', { type: 'DRAFT_ISSUE', state: null, title: 'Decide on a board for the CLI lane', status: 'opt_review' }),
+  item('PVTI_12', { ...issue(137), title: 'Item whose option was deleted', status: 'opt_removed', labels: [label('question', 'd876e3')] }),
 ]
 
-const updatedAt = '2026-10-01T12:00:00Z'
-const issue = (i: number, status: string | null): GithubProjectItem => ({
-  id: `PVTI_issue_${i}`, type: 'ISSUE', number: 200 + i, title: `Improve workflow ${i}`, url: `https://github.com/operator/megabrain/issues/${200 + i}`,
-  state: 'OPEN', repository: 'operator/megabrain', status, assignees: [{ login: 'operator', avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4' }],
-  labels: [{ name: i % 2 ? 'enhancement' : 'bug', color: i % 2 ? 'a2eeef' : 'd73a4a' }], updatedAt,
-})
+export const fixtureBacklogItems: GithubProjectItem[] = [
+  item('PVTI_21', { ...issue(150), title: 'Grok leader socket per worktree' }),
+  item('PVTI_22', { type: 'DRAFT_ISSUE', state: null, title: 'A themes gallery' }),
+  item('PVTI_23', { ...pull(151), title: 'Probe tmux 3.6 pane ids', assignees: [person('octocat')] }),
+]
+
+export const mockGithubProjects: GithubProject[] = [fixtureRoadmap, fixtureBacklog]
 
 export const mockGithubProjectItems: Record<number, GithubProjectItem[]> = {
-  7: [
-    issue(1, 'opt_todo'), issue(2, 'opt_todo'),
-    { ...issue(3, 'opt_progress'), id: 'PVTI_pr_3', type: 'PULL_REQUEST', number: 303, title: 'Add project board support', url: 'https://github.com/operator/megabrain/pull/303', state: 'OPEN' },
-    issue(4, 'opt_progress'),
-    { ...issue(5, 'opt_review'), id: 'PVTI_pr_5', type: 'PULL_REQUEST', number: 305, title: 'Polish task interactions', url: 'https://github.com/operator/megabrain/pull/305', state: 'OPEN' },
-    issue(6, 'opt_review'),
-    { ...issue(7, 'opt_done'), id: 'PVTI_pr_7', type: 'PULL_REQUEST', number: 307, title: 'Ship task list', url: 'https://github.com/operator/megabrain/pull/307', state: 'MERGED' },
-    issue(8, 'opt_done'), issue(9, 'opt_todo'), issue(10, 'opt_progress'), issue(11, 'opt_review'),
-    { id: 'PVTI_draft_12', type: 'DRAFT_ISSUE', number: null, title: 'Consider offline task editing', url: null, state: null, repository: null, status: 'opt_todo', assignees: [], labels: [], updatedAt },
-  ],
-  12: [issue(20, null)],
+  [fixtureRoadmap.number]: fixtureRoadmapItems,
+  [fixtureBacklog.number]: fixtureBacklogItems,
 }

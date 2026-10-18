@@ -21,7 +21,7 @@ import { BranchChip, RunStatusIcon, eventName } from '@/github/actions-parts'
 import { useRuns } from '@/github/useRuns'
 import { issuePage, pullRequestPage } from '@/github/github-requests'
 import { CommentIcon, PullRequestIcon } from '@/github/icons'
-import { CheckGlyph, IssueStateIcon, LabelChip, PullRequestStateIcon, ReviewChip, ago, checkTitle, openOnGithub, useNow } from '@/github/parts'
+import { CheckGlyph, LabelChip, PullRequestStateIcon, ReviewChip, ago, checkTitle, openOnGithub, useNow } from '@/github/parts'
 import type { GithubKind } from '@/github/useGithubCounts'
 import { tildePath } from '@/import/parts'
 import { mapLimited } from '@/lib/poll-model'
@@ -260,20 +260,10 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
               />
             </Section>
           )}
+          {/* The project's issues are listed, searched and read on the Tasks page; here, how many are open. */}
           {repository !== null && (
-            <Section title="Issues" count={openCount(issues)} action={{ label: 'All issues', onClick: () => actions.github(project, 'issues') }}>
-              <GithubList
-                load={issues}
-                total={openCount(issues)}
-                noun="issues"
-                onShowAll={() => actions.github(project, 'issues')}
-                empty={<EmptyState text="No open issues." action={{ label: 'All issues', onClick: () => actions.github(project, 'issues') }} />}
-                render={(items: GithubIssue[]) =>
-                  newestFirst(items, shownItems).map((item) => (
-                    <GithubRow key={item.number} icon={<IssueStateIcon state={item.state} size={15} />} title={item.title} labels={item.labels} number={item.number} author={item.author?.login ?? 'unknown'} at={ago(item.updatedAt, now)} comments={item.comments} onClick={() => actions.github(project, 'issues', item.number)} />
-                  ))
-                }
-              />
+            <Section title="Issues" count={openCount(issues)}>
+              <EmptyState text={issuesNote(openCount(issues))} action={{ label: 'Open in Tasks', onClick: () => actions.github(project, 'issues') }} />
             </Section>
           )}
 
@@ -432,6 +422,9 @@ function Expandable<T>({ items, noun, children }: { items: readonly T[]; noun: s
     </>
   )
 }
+
+/** The Issues section's one line: how many are open, once the count is known. */
+const issuesNote = (open: number | null) => (open === null ? 'Issues are listed on the Tasks page.' : open === 0 ? 'No open issues.' : `${open} open ${open === 1 ? 'issue' : 'issues'}, listed on the Tasks page.`)
 
 function EmptyState({ text, action }: { text: string; action: { label: string; onClick: () => void } }) {
   return (

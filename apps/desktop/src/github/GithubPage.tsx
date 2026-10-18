@@ -3,33 +3,19 @@ import { api } from '@/api'
 import type { GithubDetail, GithubIssue, GithubPullRequest, Project } from '@/api/schema'
 import { DetailSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
-import {
-  emptyIssueFilters,
-  emptyPullRequestFilters,
-  filterIssues,
-  filterPullRequests,
-  githubRepository,
-  issueFilterOptions,
-  nextPage,
-  pullRequestFilterOptions,
-  refreshedPage,
-  type GithubPage as Page,
-  type IssueFilters,
-  type IssueTab,
-  type PullRequestFilters,
-  type PullRequestTab,
-} from '@/github/github-model'
+import { emptyPullRequestFilters, filterPullRequests, githubRepository, nextPage, pullRequestFilterOptions, refreshedPage, type GithubPage as Page, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
 import { CloseIcon, CommentIcon, MaximiseIcon, MilestoneIcon, RefreshIcon } from '@/github/icons'
 import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
 import { Avatar, ChecksList, ConversationThread, OpenLink, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, ago, useNow } from '@/github/parts'
 import { BranchFlow, StatPill } from '@/github/ItemHero'
 import { ActionsPage } from '@/github/ActionsPage'
 import { Empty, FilterSelect, IconButton, KindSwitch, LoadMore, Meta, OwnerPicture, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass } from '@/github/page-parts'
-import type { GithubKind } from '@/github/useGithubCounts'
+import type { GithubKind, GithubPageKind } from '@/github/useGithubCounts'
 import { reuse } from '@/lib/reuse'
 import { pageMx, pageX } from '@/lib/page'
 
-// A repository's pull requests or issues, read through `megabrain github … --json`: tabs with every
+// A repository's pull requests, read through `megabrain github … --json` (its issues are the Tasks
+// page's, which lists them with this page's listing, rows and detail pane): tabs with every
 // state's total, one light page of the tab at a time (the next one loads on scroll), search and
 // filters over what is loaded, and a detail pane on the right with the body, comments and, for a
 // pull request, its checks, review and line counts.
@@ -54,8 +40,8 @@ function joined(loaded: Listing | null, next: Listing, how: 'refresh' | 'more'):
   return { kind: 'issues', page: how === 'more' && base !== null ? nextPage(base, next.page) : refreshedPage(base, next.page) }
 }
 
-/** One tab's listing, a page at a time; switching tab or repository starts over from its first page. */
-function useListing(root: string, request: ListRequest) {
+/** One tab's listing, a page at a time; switching tab or repository starts over from its first page. The Tasks page lists issues with it too. */
+export function useListing(root: string, request: ListRequest) {
   const [listing, setListing] = useState<Listing | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
@@ -140,7 +126,7 @@ function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullReq
   )
 }
 
-function IssueRow({ item, selected, now, onSelect }: { item: GithubIssue; selected: boolean; now: number; onSelect: () => void }) {
+export function IssueRow({ item, selected, now, onSelect }: { item: GithubIssue; selected: boolean; now: number; onSelect: () => void }) {
   return (
     <button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={rowClass(selected)}>
       <span className="pt-0.5">
@@ -190,7 +176,8 @@ function IssueRow({ item, selected, now, onSelect }: { item: GithubIssue; select
   )
 }
 
-function DetailPane({ project, kind, number, pullRequest, issue, onMaximise, onClose }: { project: Project; kind: 'prs' | 'issues'; number: number; pullRequest: GithubPullRequest | null; issue: GithubIssue | null; onMaximise: () => void; onClose: () => void }) {
+/** One pull request or issue beside its list, read in full: the Tasks page shows an issue in it too. */
+export function DetailPane({ project, kind, number, pullRequest, issue, onMaximise, onClose }: { project: Project; kind: 'prs' | 'issues'; number: number; pullRequest: GithubPullRequest | null; issue: GithubIssue | null; onMaximise: () => void; onClose: () => void }) {
   const [detail, setDetail] = useState<GithubDetail | null>(null)
   const [error, setError] = useState<unknown>(null)
   const now = useNow(60_000)
@@ -287,44 +274,35 @@ function DetailPane({ project, kind, number, pullRequest, issue, onMaximise, onC
 
 type PageProps = { project: Project; focus: number | null; onKind: (kind: GithubKind) => void; onClose: () => void; onMaximise: (kind: 'pr' | 'issue' | 'run', number: number) => void }
 
-/** A repository's pull requests, issues or Actions runs; the kind switch in the header moves between them. */
-export function GithubPage({ kind, ...props }: PageProps & { kind: GithubKind }) {
+/** A repository's pull requests or Actions runs; the kind switch in the header moves between them, and to the Tasks page for issues. */
+export function GithubPage({ kind, ...props }: PageProps & { kind: GithubPageKind }) {
   if (kind === 'actions') return <ActionsPage project={props.project} focus={props.focus} onKind={props.onKind} onClose={props.onClose} onMaximise={(number) => props.onMaximise('run', number)} />
-  return <ListPage {...props} kind={kind} />
+  return <ListPage {...props} />
 }
 
-function ListPage({ project, kind, focus, onKind, onClose, onMaximise }: PageProps & { kind: 'prs' | 'issues' }) {
+function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
   const repository = githubRepository(project.remote)
   const now = useNow(30_000)
-  const [prTab, setPrTab] = useState<PullRequestTab>('open')
-  const [issueTab, setIssueTab] = useState<IssueTab>('open')
-  const [prFilters, setPrFilters] = useState<PullRequestFilters>(emptyPullRequestFilters)
-  const [issueFilters, setIssueFilters] = useState<IssueFilters>(emptyIssueFilters)
+  const [tab, setTab] = useState<PullRequestTab>('open')
+  const [filters, setFilters] = useState<PullRequestFilters>(emptyPullRequestFilters)
   // Opened on one pull request (a worktree row's number): its detail shows at once, whichever tab lists it.
-  const [selected, setSelected] = useState<number | null>(kind === 'prs' ? focus : null)
-  const { listing, error, loading, loadingMore, reload, more } = useListing(project.path, kind === 'prs' ? { kind, state: prTab } : { kind, state: issueTab })
+  const [selected, setSelected] = useState<number | null>(focus)
+  const { listing, error, loading, loadingMore, reload, more } = useListing(project.path, { kind: 'prs', state: tab })
 
   const prs = useMemo(() => (listing?.kind === 'prs' ? listing.page.items : []), [listing])
-  const issues = useMemo(() => (listing?.kind === 'issues' ? listing.page.items : []), [listing])
-  const shownPrs = useMemo(() => filterPullRequests(prs, prFilters, prTab), [prs, prFilters, prTab])
-  const shownIssues = useMemo(() => filterIssues(issues, issueFilters, issueTab), [issues, issueFilters, issueTab])
-  const prOptions = useMemo(() => pullRequestFilterOptions(prs), [prs])
-  const issueOptions = useMemo(() => issueFilterOptions(issues), [issues])
+  const shown = useMemo(() => filterPullRequests(prs, filters, tab), [prs, filters, tab])
+  const options = useMemo(() => pullRequestFilterOptions(prs), [prs])
   // Every state's total travels with each page, so the tabs keep their counts while another tab loads.
   const [counts, setCounts] = useState<Record<string, number> | null>(null)
   useEffect(() => {
     if (listing !== null) setCounts(listing.page.counts)
   }, [listing])
-  useEffect(() => setCounts(null), [project.path, kind])
-  const filtered = kind === 'prs' ? JSON.stringify(prFilters) !== JSON.stringify(emptyPullRequestFilters) : JSON.stringify(issueFilters) !== JSON.stringify(emptyIssueFilters)
-  const clearFilters = () => (kind === 'prs' ? setPrFilters(emptyPullRequestFilters) : setIssueFilters(emptyIssueFilters))
-  const shownCount = kind === 'prs' ? shownPrs.length : shownIssues.length
-  const selectedPr = kind === 'prs' ? (prs.find((item) => item.number === selected) ?? null) : null
-  const selectedIssue = kind === 'issues' ? (issues.find((item) => item.number === selected) ?? null) : null
+  useEffect(() => setCounts(null), [project.path])
+  const filtered = JSON.stringify(filters) !== JSON.stringify(emptyPullRequestFilters)
+  const clearFilters = () => setFilters(emptyPullRequestFilters)
+  const selectedPr = prs.find((item) => item.number === selected) ?? null
   const known = listing !== null
   const counted = (state: string) => counts?.[state] ?? null
-  const noun = kind === 'prs' ? 'pull requests' : 'issues'
-  const tabName = kind === 'prs' ? prTab : issueTab
   const loadedCount = listing?.page.items.length ?? 0
   const hasMore = (listing?.page.nextCursor ?? null) !== null
 
@@ -339,7 +317,7 @@ function ListPage({ project, kind, focus, onKind, onClose, onMaximise }: PagePro
   if (repository === null) {
     return (
       <div className={`min-h-0 flex-1 overflow-y-auto ${pageX} pt-12`}>
-        <Empty title={`${project.name} has no GitHub remote`} detail="Pull requests and issues are read from the repository's github.com origin." action={<button type="button" onClick={onClose} className={pillButton}>Back</button>} />
+        <Empty title={`${project.name} has no GitHub remote`} detail="Pull requests are read from the repository's github.com origin." action={<button type="button" onClick={onClose} className={pillButton}>Back</button>} />
       </div>
     )
   }
@@ -349,7 +327,7 @@ function ListPage({ project, kind, focus, onKind, onClose, onMaximise }: PagePro
       <header className={`flex items-center gap-4 ${pageX} pt-6 pb-4`}>
         <OwnerPicture owner={repository.owner} />
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[24px] font-semibold tracking-[-0.02em] text-ink-100">{kind === 'prs' ? 'Pull requests' : 'Issues'}</h1>
+          <h1 className="truncate text-[24px] font-semibold tracking-[-0.02em] text-ink-100">Pull requests</h1>
           <p className="flex min-w-0 items-center gap-1.5 text-[13.5px] text-ink-400">
             <span className="truncate">
               {repository.owner} / <span className="font-semibold text-ink-200">{repository.name}</span>
@@ -362,7 +340,7 @@ function ListPage({ project, kind, focus, onKind, onClose, onMaximise }: PagePro
             )}
           </p>
         </div>
-        <KindSwitch kind={kind} onKind={onKind} />
+        <KindSwitch kind="prs" onKind={onKind} />
         <IconButton label="Refresh" onClick={() => void reload()} spinning={loading && known}>
           <RefreshIcon size={15} />
         </IconButton>
@@ -371,52 +349,29 @@ function ListPage({ project, kind, focus, onKind, onClose, onMaximise }: PagePro
         </IconButton>
       </header>
       <div className={`flex flex-wrap items-center gap-2 ${pageX} pb-4`}>
-        {kind === 'prs' ? (
-          <Tabs
-            value={prTab}
-            onChange={setPrTab}
-            tabs={[
-              { value: 'open', label: 'Open', count: counted('open') },
-              { value: 'merged', label: 'Merged', count: counted('merged') },
-              { value: 'closed', label: 'Closed', count: counted('closed') },
-              { value: 'all', label: 'All', count: counted('all') },
-            ]}
-          />
-        ) : (
-          <Tabs
-            value={issueTab}
-            onChange={setIssueTab}
-            tabs={[
-              { value: 'open', label: 'Open', count: counted('open') },
-              { value: 'closed', label: 'Closed', count: counted('closed') },
-              { value: 'all', label: 'All', count: counted('all') },
-            ]}
-          />
-        )}
-        {kind === 'prs' ? (
-          <>
-            <SearchBox value={prFilters.query} placeholder="Search title, number, branch, author, label" onChange={(query) => setPrFilters({ ...prFilters, query })} />
-            <FilterSelect label="Author" value={prFilters.author ?? anyValue} options={people('Any author', prOptions.authors)} onChange={(value) => setPrFilters({ ...prFilters, author: fromAny(value) })} />
-            <FilterSelect label="Label" value={prFilters.label ?? anyValue} options={people('Any label', prOptions.labels)} onChange={(value) => setPrFilters({ ...prFilters, label: fromAny(value) })} />
-            <FilterSelect
-              label="Draft"
-              value={prFilters.draft}
-              options={[
-                { value: 'any', label: 'Drafts and ready' },
-                { value: 'ready', label: 'Ready for review' },
-                { value: 'draft', label: 'Drafts only' },
-              ]}
-              onChange={(draft) => setPrFilters({ ...prFilters, draft })}
-            />
-          </>
-        ) : (
-          <>
-            <SearchBox value={issueFilters.query} placeholder="Search title, number, author, label, milestone" onChange={(query) => setIssueFilters({ ...issueFilters, query })} />
-            <FilterSelect label="Author" value={issueFilters.author ?? anyValue} options={people('Any author', issueOptions.authors)} onChange={(value) => setIssueFilters({ ...issueFilters, author: fromAny(value) })} />
-            <FilterSelect label="Label" value={issueFilters.label ?? anyValue} options={people('Any label', issueOptions.labels)} onChange={(value) => setIssueFilters({ ...issueFilters, label: fromAny(value) })} />
-            <FilterSelect label="Assignee" value={issueFilters.assignee ?? anyValue} options={people('Any assignee', issueOptions.assignees)} onChange={(value) => setIssueFilters({ ...issueFilters, assignee: fromAny(value) })} />
-          </>
-        )}
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          tabs={[
+            { value: 'open', label: 'Open', count: counted('open') },
+            { value: 'merged', label: 'Merged', count: counted('merged') },
+            { value: 'closed', label: 'Closed', count: counted('closed') },
+            { value: 'all', label: 'All', count: counted('all') },
+          ]}
+        />
+        <SearchBox value={filters.query} placeholder="Search title, number, branch, author, label" onChange={(query) => setFilters({ ...filters, query })} />
+        <FilterSelect label="Author" value={filters.author ?? anyValue} options={people('Any author', options.authors)} onChange={(value) => setFilters({ ...filters, author: fromAny(value) })} />
+        <FilterSelect label="Label" value={filters.label ?? anyValue} options={people('Any label', options.labels)} onChange={(value) => setFilters({ ...filters, label: fromAny(value) })} />
+        <FilterSelect
+          label="Draft"
+          value={filters.draft}
+          options={[
+            { value: 'any', label: 'Drafts and ready' },
+            { value: 'ready', label: 'Ready for review' },
+            { value: 'draft', label: 'Drafts only' },
+          ]}
+          onChange={(draft) => setFilters({ ...filters, draft })}
+        />
         {filtered && (
           <button type="button" onClick={clearFilters} className="h-9 shrink-0 rounded-full px-3 text-[12.5px] font-semibold text-ink-400 hover:text-ink-100">
             Clear
@@ -439,32 +394,24 @@ function ListPage({ project, kind, focus, onKind, onClose, onMaximise }: PagePro
               <ErrorNote error={error} />
             </div>
           )}
-          {known && shownCount === 0 && !hasMore &&
+          {known && shown.length === 0 && !hasMore &&
             (filtered ? (
-              <Empty title={`No ${tabName === 'all' ? '' : `${tabName} `}${noun} match`} detail="Try other words or clear the filters." action={<button type="button" onClick={clearFilters} className={pillButton}>Clear filters</button>} />
+              <Empty title={`No ${tab === 'all' ? '' : `${tab} `}pull requests match`} detail="Try other words or clear the filters." action={<button type="button" onClick={clearFilters} className={pillButton}>Clear filters</button>} />
             ) : (
-              <Empty title={`No ${tabName === 'all' ? '' : `${tabName} `}${noun}`} detail={`${repository.nameWithOwner} has none right now.`} />
+              <Empty title={`No ${tab === 'all' ? '' : `${tab} `}pull requests`} detail={`${repository.nameWithOwner} has none right now.`} />
             ))}
           {known && (
             <ul className={`${pageMx} divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60`}>
-              {kind === 'prs'
-                ? shownPrs.map((item) => (
-                    <li key={item.number}>
-                      <PullRequestRow item={item} selected={item.number === selected} now={now} onSelect={() => setSelected(item.number === selected ? null : item.number)} />
-                    </li>
-                  ))
-                : shownIssues.map((item) => (
-                    <li key={item.number}>
-                      <IssueRow item={item} selected={item.number === selected} now={now} onSelect={() => setSelected(item.number === selected ? null : item.number)} />
-                    </li>
-                  ))}
+              {shown.map((item) => (
+                <li key={item.number}>
+                  <PullRequestRow item={item} selected={item.number === selected} now={now} onSelect={() => setSelected(item.number === selected ? null : item.number)} />
+                </li>
+              ))}
             </ul>
           )}
-          {known && hasMore && <LoadMore onVisible={more} loading={loadingMore} loaded={loadedCount} total={counted(tabName)} />}
+          {known && hasMore && <LoadMore onVisible={more} loading={loadingMore} loaded={loadedCount} total={counted(tab)} />}
         </div>
-        {selected !== null && (
-          <DetailPane key={`${kind}-${selected}`} project={project} kind={kind} number={selected} pullRequest={selectedPr} issue={selectedIssue} onMaximise={() => onMaximise(kind === 'prs' ? 'pr' : 'issue', selected)} onClose={() => setSelected(null)} />
-        )}
+        {selected !== null && <DetailPane key={selected} project={project} kind="prs" number={selected} pullRequest={selectedPr} issue={null} onMaximise={() => onMaximise('pr', selected)} onClose={() => setSelected(null)} />}
       </div>
     </div>
   )

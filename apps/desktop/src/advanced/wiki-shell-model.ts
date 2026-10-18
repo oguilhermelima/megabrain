@@ -1,6 +1,6 @@
 import { sidebarLimits, sidebarSurface, type WidthLimits, type WidthStorage } from '@/lib/panel-width'
 
-// The Knowledge and Artifacts pages share one shell (WikiShell.tsx): a top bar over the reading column
+// The Knowledge, Artifacts and Tasks pages share one shell (WikiShell.tsx): a top bar over the reading column
 // and a navigation panel on the right, beside the bar, shown or hidden and resized like the run panel.
 // Each page remembers its own panel per viewer.
 
@@ -8,6 +8,7 @@ import { sidebarLimits, sidebarSurface, type WidthLimits, type WidthStorage } fr
 export const wikiPanels = {
   knowledge: { width: 'megabrain.knowledge.panel.width', open: 'megabrain.knowledge.panel.open' },
   artifacts: { width: 'megabrain.artifacts.panel.width', open: 'megabrain.artifacts.panel.open' },
+  tasks: { width: 'megabrain.tasks.panel.width', open: 'megabrain.tasks.panel.open' },
 } as const
 
 export type WikiPanel = (typeof wikiPanels)[keyof typeof wikiPanels]

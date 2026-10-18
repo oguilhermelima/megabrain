@@ -11,9 +11,9 @@ import type { MenuItem } from '@/components/ContextMenu'
 import { joinLabel } from '@/advanced/item-menus'
 import { useStableCallback } from '@/lib/useStableCallback'
 import type { Strip } from '@/panes/strip'
-import type { GithubKind } from '@/github/useGithubCounts'
+import type { GithubPageKind } from '@/github/useGithubCounts'
 
-type GithubPage = { path: string; kind: GithubKind; focus: number | null } | null
+type GithubPage = { path: string; kind: GithubPageKind; focus: number | null } | null
 
 export function useSplitInteractions({
   paneLayout, setLayout, setGithubPage, newPaneId, newGroupId, newLauncher,

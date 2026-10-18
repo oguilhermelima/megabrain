@@ -83,6 +83,7 @@ export function usePanePersistence({
       case 'code':
       case 'knowledge':
       case 'artifact':
+      case 'tasks':
         return true
       case 'github':
         return parseGithubItemId(parsed.id) !== null

@@ -6,7 +6,7 @@ import { byDisplayName, displayName } from '@/advanced/appearance-model'
 import { projectColor, projectInitials } from '@/advanced/picture-model'
 import { ContextMenu, useContextMenu } from '@/components/ContextMenu'
 
-// What the Knowledge and Artifacts pages draw alike inside their shell (WikiShell): the bar's project
+// What the Knowledge, Artifacts and Tasks pages draw alike inside their shell (WikiShell): the bar's project
 // switcher, a reading section's heading, a list box, and the reading column with nothing to read.
 
 /** A project's picture when megabrain lists it, else its initials on its colour. */

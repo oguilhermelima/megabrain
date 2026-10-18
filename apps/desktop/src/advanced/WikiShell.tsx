@@ -6,7 +6,7 @@ import { SlidePanel } from '@/components/SlidePanel'
 import { pageX } from '@/lib/page'
 import { sidePanelButton, sidePanelHeader, sidePanelHeaderRow, sidePanelList, sidePanelTitle } from '@/lib/side-panel'
 
-// The shell the Knowledge and Artifacts pages share: the page's navigation in a panel on the right that
+// The shell the Knowledge, Artifacts and Tasks pages share: the page's navigation in a panel on the right that
 // runs the pane's full height and opens, closes and resizes like the run panel, drawn like the left
 // sidebar and on its surface; and beside it, over what the page reads, a top bar sized like a chat's
 // (chat/ChatHeader: 12px above a 36px row, 30px pill controls). The panel's header lines up with the
