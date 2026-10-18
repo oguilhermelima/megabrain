@@ -33,7 +33,7 @@ type WorkflowInput = Readonly<{ name: string; description: string; required: boo
 function workflowInputs(source: string): { dispatchable: boolean; inputs: WorkflowInput[] } {
   let document: unknown;
   try { document = parseYaml(source); }
-  catch { return { dispatchable: /\bworkflow_dispatch\b/.test(source), inputs: [] }; }
+  catch { return { dispatchable: false, inputs: [] }; }
   const root = row(document);
   const triggerValue = root.on;
   const triggers = row(triggerValue);
@@ -58,16 +58,19 @@ function workflow(value: unknown, metadata: { dispatchable: boolean; inputs: Wor
   return { id: num(r.id), name: str(r.name), path: str(r.path), state: str(r.state), ...metadata };
 }
 
-async function workflowMetadata(process: ProcessAdapter, repo: string, value: unknown): Promise<Result<{ dispatchable: boolean; inputs: WorkflowInput[] }>> {
+const unavailableWorkflowMetadata = (): { dispatchable: boolean; inputs: WorkflowInput[] } => ({ dispatchable: false, inputs: [] });
+
+async function workflowMetadata(process: ProcessAdapter, repo: string, value: unknown): Promise<{ dispatchable: boolean; inputs: WorkflowInput[] }> {
   const path = str(row(value).path);
-  if (path === "") return ok({ dispatchable: false, inputs: [] });
+  if (path === "" || path.startsWith("dynamic/")) return unavailableWorkflowMetadata();
   const endpoint = `repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}`;
   const fetched = await gh(process, ["api", endpoint], { name: "gh api workflow contents" });
-  if (fetched.kind !== "ok") return fetched;
+  if (fetched.kind !== "ok") return unavailableWorkflowMetadata();
   const content = row(fetched.value);
-  if (content.encoding !== "base64" || typeof content.content !== "string") return ok({ dispatchable: false, inputs: [] });
+  if (content.encoding !== "base64" || typeof content.content !== "string") return unavailableWorkflowMetadata();
   const source = Buffer.from(content.content.replace(/\s/g, ""), "base64").toString("utf8");
-  return ok(workflowInputs(source));
+  try { return workflowInputs(source); }
+  catch { return unavailableWorkflowMetadata(); }
 }
 
 function parse(verb: string, args: readonly string[]) {
@@ -116,16 +119,14 @@ export async function executeActions(verb: string, args: readonly string[], envi
     const workflows = await gh(process, ["api", `repos/${repo}/actions/workflows?per_page=100`], { name: "gh api actions workflows" });
     if (workflows.kind !== "ok") return workflows;
     const workflowRows = Array.isArray(row(workflows.value).workflows) ? row(workflows.value).workflows as unknown[] : [];
-    const metadataResults: Awaited<ReturnType<typeof workflowMetadata>>[] = [];
+    const metadataResults: { dispatchable: boolean; inputs: WorkflowInput[] }[] = [];
     for (let offset = 0; offset < workflowRows.length; offset += 5) {
       const batch = await Promise.all(workflowRows.slice(offset, offset + 5).map((item) => workflowMetadata(process, repo, item)));
       metadataResults.push(...batch);
-      const metadataError = batch.find((result) => result.kind !== "ok");
-      if (metadataError !== undefined) return metadataError;
     }
     const workflowRowsWithMetadata = workflowRows.map((item, index) => {
       const metadata = metadataResults[index];
-      return workflow(item, metadata?.kind === "ok" ? metadata.value : { dispatchable: false, inputs: [] });
+      return workflow(item, metadata ?? unavailableWorkflowMetadata());
     });
     const requestedWorkflow = parsed.flags["--workflow"];
     const matchedWorkflow = requestedWorkflow === undefined ? undefined

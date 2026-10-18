@@ -1336,7 +1336,36 @@ describe("github Actions", () => {
         : args[1]?.includes("actions/runs?") ? stdout(fixture("actions-runs.json"))
           : failed(`unexpected gh ${args.join(" ")}`);
     const result = parsed<{ workflows: { dispatchable: boolean; inputs: unknown[] }[] }>(await github(["runs", path, "--json"]));
-    expect(result.workflows[0]).toMatchObject({ dispatchable: true, inputs: [] });
+    expect(result.workflows[0]).toMatchObject({ dispatchable: false, inputs: [] });
+  });
+
+  test("keeps runs when workflow files are unavailable, dynamic, or malformed", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const workflows = { workflows: [
+      { id: 3, name: "Missing", path: ".github/workflows/missing.yml", state: "active" },
+      { id: 4, name: "Dependabot", path: "dynamic/dependabot/dependabot-updates", state: "active" },
+      { id: 5, name: "Malformed", path: ".github/workflows/malformed.yml", state: "active" },
+      { id: 6, name: "CI", path: ".github/workflows/ci.yml", state: "active" },
+    ] };
+    answer = (args) => {
+      const endpoint = args[1] ?? "";
+      if (endpoint.includes("actions/workflows?")) return stdout(JSON.stringify(workflows));
+      if (endpoint.endsWith("/contents/.github/workflows/missing.yml")) return failed("gh: Not Found (HTTP 404)", 1);
+      if (endpoint.endsWith("/contents/.github/workflows/malformed.yml")) return stdout(JSON.stringify({ encoding: "base64", content: Buffer.from("on: [workflow_dispatch\n").toString("base64") }));
+      if (endpoint.endsWith("/contents/.github/workflows/ci.yml")) return stdout(JSON.stringify({ encoding: "base64", content: Buffer.from("on:\n  workflow_dispatch:\n    inputs:\n      target:\n        type: choice\n        options: [unit, integration]\n").toString("base64") }));
+      if (endpoint.includes("actions/runs?")) return stdout(JSON.stringify({ workflow_runs: [{ id: 19, name: "CI", status: "completed" }] }));
+      return failed(`unexpected gh ${args.join(" ")}`);
+    };
+
+    const result = parsed<{ runs: { id: number }[]; workflows: { name: string; dispatchable: boolean; inputs: unknown[] }[] }>(await github(["runs", path, "--json"]));
+    expect(result.runs).toMatchObject([{ id: 19 }]);
+    expect(result.workflows).toMatchObject([
+      { name: "Missing", dispatchable: false, inputs: [] },
+      { name: "Dependabot", dispatchable: false, inputs: [] },
+      { name: "Malformed", dispatchable: false, inputs: [] },
+      { name: "CI", dispatchable: true, inputs: [{ name: "target", options: ["unit", "integration"] }] },
+    ]);
+    expect(calls.some((call) => (call[1] ?? "").includes("contents/dynamic/"))).toBe(false);
   });
 });
 
