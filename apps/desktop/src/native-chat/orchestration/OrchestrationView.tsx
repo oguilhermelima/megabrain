@@ -1,18 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/api'
-import type { NativeChat } from '@/api/schema'
+import type { NativeChat, OrchestrationEvent, OrchestrationGraph, OrchestrationNode, OrchestrationTarget } from '@/api/schema'
 import type { OpenChat } from '@/chat/Conversation'
 import { TextSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
 import { useNow } from '@/github/parts'
 import { pageMx } from '@/lib/page'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
+import { OrchestrationClosed } from '@/native-chat/orchestration/OrchestrationClosed'
 import { OrchestrationDetail } from '@/native-chat/orchestration/OrchestrationDetail'
 import { OrchestrationDiagram, type LivePulse } from '@/native-chat/orchestration/OrchestrationDiagram'
 import { OrchestrationLog } from '@/native-chat/orchestration/OrchestrationLog'
 import { dispatchOf, newPulses, type Pulse } from '@/native-chat/orchestration/orchestration-layout'
-import type { OrchestrationEvent, OrchestrationGraph, OrchestrationNode, OrchestrationTarget } from '@/native-chat/orchestration/orchestration-schema'
 import { showOrchestration } from '@/native-chat/orchestration/orchestration-shown'
+import { closedGroups, visibleGraph } from '@/native-chat/orchestration/orchestration-visible'
 
 // How long a pulse stays on screen: its dot's run plus the glow fading after it (styles.css).
 const PULSE_MS = 1_400
@@ -22,7 +23,8 @@ const SIDE_DETAIL_WIDTH = 760
 /**
  * The orchestration tree a chat belongs to, with that chat highlighted, followed live over its
  * session log. A click on another app chat's card opens that chat here, in this same view; any other
- * card is selected and its detail shows. A double click on an app chat opens its conversation.
+ * card is selected and its detail shows. A double click on an app chat opens its conversation. A big
+ * tree draws its live lanes and only the latest closed ones; the rest wait behind a toggle.
  */
 export function OrchestrationView({ target, onOpenChat, onOpenNativeChat }: { target: OrchestrationTarget; onOpenChat?: OpenChat; onOpenNativeChat?: (chat: NativeChat) => void }) {
   const [graph, setGraph] = useState<OrchestrationGraph | null>(null)
@@ -37,7 +39,9 @@ export function OrchestrationView({ target, onOpenChat, onOpenNativeChat }: { ta
   const pulseIds = useRef(0)
   const pulseTimers = useRef(new Set<ReturnType<typeof setTimeout>>())
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const key = 'chat' in target ? `chat:${target.chat}` : `session:${target.session}`
+  const visible = useMemo(() => (graph === null ? null : visibleGraph(graph)), [graph])
+  const groups = useMemo(() => (graph === null || visible === null ? [] : closedGroups(graph, visible.hidden)), [graph, visible])
+  const key = 'chatId' in target ? `chat:${target.chatId}` : `session:${target.sessionId}`
 
   const addPulses = (fresh: Pulse[]) => {
     const live = fresh.map((pulse) => ({ ...pulse, id: (pulseIds.current += 1) }))
@@ -143,7 +147,7 @@ export function OrchestrationView({ target, onOpenChat, onOpenNativeChat }: { ta
         <ErrorNote error={error ?? ended} />
       </div>
     )
-  if (graph === null)
+  if (graph === null || visible === null)
     return (
       <div className={`${pageMx} mt-4`}>
         <TextSkeleton lines={4} />
@@ -162,7 +166,8 @@ export function OrchestrationView({ target, onOpenChat, onOpenNativeChat }: { ta
       )}
       <div className="relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
-          <OrchestrationDiagram graph={graph} pulses={pulses} selected={selected} now={now} onClick={click} onDoubleClick={doubleClick} />
+          <OrchestrationDiagram graph={visible.graph} pulses={pulses} selected={selected} now={now} onClick={click} onDoubleClick={doubleClick} />
+          <OrchestrationClosed groups={groups} count={visible.hidden.length} selected={selected} now={now} onSelect={setSelected} />
         </div>
         {detail !== undefined && (
           <div className={beside ? 'flex w-[320px] shrink-0 flex-col border-l border-white/[0.07]' : 'absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col border-t border-white/[0.07] shadow-[0_-12px_32px_rgb(0_0_0/0.5)]'}>

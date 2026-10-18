@@ -1,4 +1,4 @@
-import type { OrchestrationEvent, OrchestrationGraph, OrchestrationNode } from '@/native-chat/orchestration/orchestration-schema'
+import type { OrchestrationEvent, OrchestrationGraph, OrchestrationNode } from '@/api/schema'
 
 // The pure side of the orchestration view: the tree, how its lanes wrap into rows, where the asked
 // chat sits in it, the log's order, and which new events animate an edge.

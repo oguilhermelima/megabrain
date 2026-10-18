@@ -4,7 +4,7 @@ import { AgentIcon } from '@/components/agent-icons'
 import { Button, ErrorNote } from '@/components/ui'
 import { StateChip } from '@/native-chat/orchestration/OrchestrationCard'
 import { dispatchOf } from '@/native-chat/orchestration/orchestration-layout'
-import type { OrchestrationNode } from '@/native-chat/orchestration/orchestration-schema'
+import type { OrchestrationNode } from '@/api/schema'
 
 const NOT_YET = 'Not available yet'
 

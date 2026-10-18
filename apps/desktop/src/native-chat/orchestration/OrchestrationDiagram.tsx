@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
 import { OrchestrationCard } from '@/native-chat/orchestration/OrchestrationCard'
 import { CARD_WIDTH, focusPath, layoutTree, relationTo, treeOf, type LaidOut, type Pulse, type Relation } from '@/native-chat/orchestration/orchestration-layout'
-import type { OrchestrationGraph } from '@/native-chat/orchestration/orchestration-schema'
+import type { OrchestrationGraph } from '@/api/schema'
 
 // The canvas's side padding, which the layout leaves out of the width it wraps lanes in.
 const PADDING = 24

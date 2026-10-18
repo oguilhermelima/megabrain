@@ -444,18 +444,28 @@ export const dispatchMessagesSchema = z.looseObject({
   messages: z.array(z.looseObject({ from: z.string(), type: z.string(), text: z.string() })),
 })
 
+// `megabrain orchestrate graph --json` (src/cli/commands/orchestrate-graph.ts): a coordinator and every
+// lane in its tree, seen from `focus`. --follow prints one full snapshot per line on every change.
+export const orchestrationStateSchema = z.enum(['starting', 'working', 'asking', 'idle', 'done', 'closed', 'failed', 'stalled'])
+export const orchestrationMessageTypeSchema = z.enum(['received', 'ask', 'reply', 'done', 'change', 'supervise', 'stalled'])
+export const orchestrationNodeSchema = z.looseObject({
+  /** A dispatch id, or session:<agent>:<id> for a coordinator that is not a dispatch. */
+  id: z.string(), kind: z.enum(['coordinator', 'lane']), parent: z.string().nullable(), label: z.string(),
+  agent: z.enum(['claude', 'codex', 'grok', 'agy']), model: z.string().nullable(), effort: z.string().nullable(),
+  state: orchestrationStateSchema,
+  startedAt: z.string(), endedAt: z.string().nullable(), contextPercent: z.number().min(0).max(100).nullable(),
+  last: z.looseObject({ type: orchestrationMessageTypeSchema, text: z.string(), at: z.string() }).nullable(),
+  /** unanswered: the latest ask from this node has no reply from its parent yet. */
+  finding: z.string().nullable(), unanswered: z.boolean(), worktree: z.string().nullable(), branch: z.string().nullable(),
+  /** chatId: the app chat this node is; session: agent:session id. */
+  commits: z.number().nullable(), chatId: z.string().nullable(), session: z.string().nullable(),
+})
+export const orchestrationEventSchema = z.looseObject({ at: z.string(), node: z.string(), direction: z.enum(['to-parent', 'to-child']), type: z.string(), text: z.string() })
 export const orchestrationGraphSchema = z.looseObject({
   version: z.literal(1), focus: z.string(), root: z.string(),
-  nodes: z.array(z.looseObject({
-    id: z.string(), kind: z.enum(['coordinator', 'lane']), parent: z.string().nullable(), label: z.string(),
-    agent: z.enum(['claude', 'codex', 'grok', 'agy']), model: z.string().nullable(), effort: z.string().nullable(),
-    state: z.enum(['starting', 'working', 'asking', 'idle', 'done', 'closed', 'failed', 'stalled']),
-    startedAt: z.string(), endedAt: z.string().nullable(), contextPercent: z.number().min(0).max(100).nullable(),
-    last: z.looseObject({ type: z.enum(['received', 'ask', 'reply', 'done', 'change', 'supervise', 'stalled']), text: z.string(), at: z.string() }).nullable(),
-    finding: z.string().nullable(), unanswered: z.boolean(), worktree: z.string().nullable(), branch: z.string().nullable(),
-    commits: z.number().nullable(), chatId: z.string().nullable(), session: z.string().nullable(),
-  })),
-  events: z.array(z.looseObject({ at: z.string(), node: z.string(), direction: z.enum(['to-parent', 'to-child']), type: z.string(), text: z.string() })),
+  nodes: z.array(orchestrationNodeSchema),
+  /** Oldest first, capped at 200 by the CLI. */
+  events: z.array(orchestrationEventSchema),
 })
 
 export type InstallPlan = z.infer<typeof installPlanSchema>
@@ -493,4 +503,9 @@ export type CodeDiff = z.infer<typeof codeDiffSchema>
 export type BranchChanges = z.infer<typeof branchChangesSchema>
 export type ChatRead = z.infer<typeof chatReadSchema>
 export type ReplyResult = z.infer<typeof replyResultSchema>
+export type OrchestrationState = z.infer<typeof orchestrationStateSchema>
+export type OrchestrationNode = z.infer<typeof orchestrationNodeSchema>
+export type OrchestrationEvent = z.infer<typeof orchestrationEventSchema>
 export type OrchestrationGraph = z.infer<typeof orchestrationGraphSchema>
+/** What the graph is asked about: an app chat, or any agent session (agent:id). */
+export type OrchestrationTarget = { chatId: string } | { sessionId: string }

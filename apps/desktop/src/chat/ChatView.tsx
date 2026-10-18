@@ -95,7 +95,7 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath, o
           </ConversationAgent.Provider>
         </div>
       )}
-      {tab === 'orchestration' && session !== null && <OrchestrationView target={{ session }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />}
+      {tab === 'orchestration' && session !== null && <OrchestrationView target={{ sessionId: session }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />}
       {tab === 'terminal' && read === null && readError === null && (
         <div className={`${pageMx} my-5 rounded-[24px] border border-white/[0.06] bg-[#050506] px-5 py-4`}>
           <TextSkeleton lines={6} />

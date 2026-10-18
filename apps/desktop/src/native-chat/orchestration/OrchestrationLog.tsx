@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import { logOrder } from '@/native-chat/orchestration/orchestration-layout'
-import type { OrchestrationEvent, OrchestrationNode } from '@/native-chat/orchestration/orchestration-schema'
+import type { OrchestrationEvent, OrchestrationNode } from '@/api/schema'
 
 const time = (at: string): string => {
   const date = new Date(at)

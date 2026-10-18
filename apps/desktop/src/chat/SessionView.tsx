@@ -68,7 +68,7 @@ export function SessionView({
         }
       />
       {view === 'orchestration' ? (
-        <OrchestrationView target={{ session: session.sessionId }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />
+        <OrchestrationView target={{ sessionId: session.sessionId }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />
       ) : view === 'terminal' && terminalTarget !== null ? (
         <>
           {exited !== undefined && (

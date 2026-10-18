@@ -480,7 +480,7 @@ export function NativeChatView({
         </div>
       )}
       {orchestrating ? (
-        <OrchestrationView target={{ chat: chat.id }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />
+        <OrchestrationView target={{ chatId: chat.id }} onOpenChat={onOpenChat} onOpenNativeChat={onOpenNativeChat} />
       ) : waitingTerminal ? (
         <>
           <div className={`${pageMx} mt-3 flex items-center gap-3 text-[13px] text-ink-300`}>

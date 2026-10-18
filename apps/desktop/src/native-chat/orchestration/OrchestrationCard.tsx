@@ -2,7 +2,7 @@ import type { Ref } from 'react'
 import { AgentIcon } from '@/components/agent-icons'
 import type { AgentActivity } from '@/components/agent-activity'
 import { elapsed, type Relation } from '@/native-chat/orchestration/orchestration-layout'
-import type { OrchestrationNode, OrchestrationState } from '@/native-chat/orchestration/orchestration-schema'
+import type { OrchestrationNode, OrchestrationState } from '@/api/schema'
 
 const chipLook: Record<OrchestrationState, string> = {
   starting: 'text-accent bg-accent/10',

@@ -5,7 +5,7 @@ import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep, NativeChat } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockNewFileDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
-import { mockOrchestrationGraph } from '@/api/fixtures/orchestration-graph'
+import { fixtureGraph, fixtureLiveEvents, withLiveEvent } from '@/api/fixtures/orchestration-graph'
 import { createMockMaestroApi } from '@/api/fixtures/maestro'
 import { createMockChatd } from '@/api/fixtures/chatd'
 import { mockUsageStats } from '@/api/fixtures/usage'
@@ -230,7 +230,22 @@ export function createMockApi(): DesktopApi {
       await wait(150)
       return explainChains(settings.chains, input, settings.limits.readings)
     },
-    orchestrationGraph: async () => mockOrchestrationGraph,
+    orchestrationGraph: async (target) => fixtureGraph(target),
+    async followOrchestration(target, onGraph) {
+      // In dev a fixture event every few seconds, so the live path animates.
+      let graph = fixtureGraph(target)
+      onGraph(graph)
+      if (!import.meta.env.DEV) return () => {}
+      let next = 0
+      const timer = setInterval(() => {
+        const live = fixtureLiveEvents[next % fixtureLiveEvents.length]
+        next += 1
+        if (live === undefined) return
+        graph = withLiveEvent(graph, { ...live, at: new Date().toISOString() })
+        onGraph(graph)
+      }, 5_000)
+      return () => clearInterval(timer)
+    },
     editStep: async (name, index, patch) => {
       await wait(150)
       const editChain = (chain: Chain): Chain => {

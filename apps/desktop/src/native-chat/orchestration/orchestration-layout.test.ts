@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { CARD_GAP, CARD_WIDTH, columnsFor, dispatchOf, elapsed, focusPath, layoutTree, LOG_CAP, logOrder, newPulses, relationTo, treeOf, type LaidOut } from '@/native-chat/orchestration/orchestration-layout'
-import type { OrchestrationEvent, OrchestrationGraph, OrchestrationNode } from '@/native-chat/orchestration/orchestration-schema'
+import type { OrchestrationEvent, OrchestrationGraph, OrchestrationNode } from '@/api/schema'
 
 const node = (id: string, parent: string | null, startedAt = '2026-10-18T10:00:00Z'): OrchestrationNode => ({
   id, kind: parent === null ? 'coordinator' : 'lane', parent, label: id, agent: 'codex', model: null, effort: null, state: 'working',

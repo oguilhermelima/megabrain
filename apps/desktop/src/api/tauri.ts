@@ -12,7 +12,7 @@ import { chatDaemonRetireSchema } from '@/api/schema'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink } from '@/api/adapter'
 import { chatStreamReader, streamMarkerSchema } from '@/api/chat-stream'
-import { usageStatsSchema, agentAutoUpdateSettingsSchema, agentUpdateReportSchema, agentUpdatesSchema, agentCommandSchema, agentDefaultsSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactListSchema, artifactContentSchema, chatArtifactListSchema, chatArtifactContentSchema, sessionHistorySchema, chatEventLineSchema, chatDaemonStatusSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubActionRunsSchema, githubActionRunDetailSchema, githubActionLogSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, bootedSimulatorListSchema, simulatorShutdownSchema, simulatorRestartSchema, inputStartSchema, inputStatusSchema, inputStopSchema, inputActionSchema, inputFrameSchema, orchestrationGraphSchema } from '@/api/schema'
+import { usageStatsSchema, agentAutoUpdateSettingsSchema, agentUpdateReportSchema, agentUpdatesSchema, agentCommandSchema, agentDefaultsSchema, knowledgeListSchema, knowledgeSearchSchema, knowledgeTopicSchema, knowledgeTranscriptSchema, artifactListSchema, artifactContentSchema, chatArtifactListSchema, chatArtifactContentSchema, sessionHistorySchema, chatEventLineSchema, chatDaemonStatusSchema, nativeChatSchema, terminalSessionSchema, githubDetailSchema, githubPullRequestFileSchema, githubPullRequestFilesPageSchema, githubReviewThreadSchema, githubReviewerSchema, githubReviewersSchema, githubImageSchema, githubActionRunsSchema, githubActionRunDetailSchema, githubActionLogSchema, githubIssueListSchema, githubPullRequestListSchema, queuedMessageSchema, slashCommandSchema, stackShowSchema, codeServerSchema, sendResultSchema, settingsSchema, githubRepositorySchema, githubOwnerSchema, discoveredRepositorySchema, projectScriptsSchema, runScriptSchema, projectAppearancesSchema, archivedWorktreeSchema, portFreeSchema, portKillSchema, portListenersSchema, projectsSchema, repositorySchema, chatReadSchema, branchChangesSchema, codeChangeSchema, codeDiffSchema, codeEntrySchema, codeFileSchema, dispatchMessagesSchema, doctorReportSchema, transcriptSchema, installEventSchema, installPlanSchema, moduleResultSchema, replyResultSchema, statusSchema, worktreeListSchema, type ChainBody, type ChainExplainInput, chainExplainSchema, chainValidationSchema, chatQueueItemSchema, maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, bootedSimulatorListSchema, simulatorShutdownSchema, simulatorRestartSchema, inputStartSchema, inputStatusSchema, inputStopSchema, inputActionSchema, inputFrameSchema, orchestrationGraphSchema, type OrchestrationTarget } from '@/api/schema'
 
 interface CliOutput {
   code: number | null
@@ -21,6 +21,9 @@ interface CliOutput {
 }
 
 const firstLine = (text: string): string => text.trim().split('\n').at(-1) ?? ''
+
+/** Which chat or session `orchestrate graph` is asked about. */
+const orchestrationArgs = (target: OrchestrationTarget): string[] => ('chatId' in target ? ['--chat', target.chatId] : ['--session', target.sessionId])
 
 /** Narrows a knowledge read to one repository. */
 const repoArgs = (repo: string | undefined): string[] => (repo === undefined ? [] : ['--repo', repo])
@@ -140,7 +143,21 @@ export function createTauriApi(): DesktopApi {
     windowVisible: () => getCurrentWindow().isVisible(),
     worktrees: () => cliJson(['worktree', 'list', '--json'], worktreeListSchema),
     readChat: (dispatchId, lines) => cliJson(['orchestrate', 'read', dispatchId, '--lines', String(lines), '--operator', '--json'], chatReadSchema),
-    orchestrationGraph: (target) => cliJson(['orchestrate', 'graph', ...('chatId' in target ? ['--chat', target.chatId] : ['--session', target.sessionId]), '--json'], orchestrationGraphSchema),
+    orchestrationGraph: (target) => cliJson(['orchestrate', 'graph', ...orchestrationArgs(target), '--json'], orchestrationGraphSchema),
+    followOrchestration: (target, onGraph, onEnd) => {
+      // As with chat events, the stream's last lines may be the CLI's error and an end marker.
+      let error: string | null = null
+      return cliStream(['orchestrate', 'graph', ...orchestrationArgs(target), '--follow', '--json'], (text) => {
+        const value: unknown = JSON.parse(text)
+        const marker = streamMarkerSchema.safeParse(value)
+        if (marker.success && marker.data.end === true) return onEnd?.(error)
+        if (marker.success && marker.data.error !== undefined) {
+          error = marker.data.error
+          return
+        }
+        onGraph(orchestrationGraphSchema.parse(value))
+      })
+    },
     reply: (dispatchId, text) => cliJson(['orchestrate', 'reply', dispatchId, '--text', text, '--operator', '--json'], replyResultSchema),
     readDispatchMessage: async (dispatchId) => {
       const record = await cliJson(['db', 'show', dispatchId, '--json'], dispatchMessagesSchema)
