@@ -7,8 +7,8 @@ type Frontmatter = Readonly<{ name?: string; description?: string; argumentHint?
 
 // Claude Code 2.1.300 built-in command set. The installed executable does not expose a
 // machine-readable command listing, so keep this list versioned with the verified source.
-const CLAUDE_BUILTINS = ["clear", "compact", "config", "context", "cost", "doctor", "exit", "export", "help", "hooks", "ide", "init", "install-github-app", "login", "logout", "memory", "mcp", "model", "permissions", "plugin", "pr", "release-notes", "review", "status", "terminal-setup", "vim"];
-const CODEX_BUILTINS = ["model", "approvals", "skills", "review", "compact", "clear", "logout", "quit", "exit", "new", "resume", "fork", "init", "diff", "mention", "status", "mcp", "ps", "experimental"];
+const CLAUDE_BUILTINS = ["clear", "compact", "config", "context", "cost", "doctor", "exit", "export", "help", "hooks", "ide", "init", "install-github-app", "login", "logout", "memory", "mcp", "model", "permissions", "plugin", "pr", "release-notes", "review", "status", "usage", "terminal-setup", "vim"];
+const CODEX_BUILTINS = ["model", "approvals", "skills", "review", "compact", "clear", "logout", "quit", "exit", "new", "resume", "fork", "init", "diff", "mention", "status", "usage", "context", "mcp", "ps", "experimental"];
 // Codex CLI 0.162.1 built-in slash actions; its --help lists CLI subcommands, not a slash-command API.
 // Grok 1.0.52 built-in slash commands, from the Slash Commands table of its own ~/.grok/README.md
 // (aliases left out).
@@ -17,12 +17,12 @@ const GROK_BUILTINS: ReadonlyArray<readonly [string, string]> = [
   ["rewind", "Rewind to a previous prompt (restores files)"], ["compact", "Compact conversation history"], ["always-approve", "Toggle auto-approve mode"],
   ["multiline", "Toggle multiline input mode"], ["memory", "Browse, delete, and toggle memory"], ["remember", "Save a note to global memory"],
   ["flush", "Wait for memory capture of finished turns"], ["dream", "Fold memory observations into topics now"], ["skills", "List skills or inject a skill into context"],
-  ["plugins", "Manage plugins (list, reload, trust)"], ["hooks-list", "Show hooks loaded in this session"], ["hooks-trust", "Trust this folder for hooks (writes folder trust)"],
+  ["plugins", "Manage plugins (list, reload, trust)"], ["hooks-list", "Show hooks loaded in this session"], ["hooks-trust", "Trust this folder for hooks (writes folder trust)"], ["status", "Show session status"], ["context", "Show context usage"],
   ["hooks-add", "Add a custom hook file or directory"], ["feedback", "Report an issue or send feedback"], ["exit", "Exit the TUI"],
 ];
 // agy 1.4.0 built-in slash commands. It lists them only inside its TUI (/help); these are the names
 // its binary's own changelog and usage strings refer to, so keep the list versioned with it.
-const AGY_BUILTINS = ["help", "clear", "compact", "model", "effort", "resume", "rewind", "fork", "diff", "config", "settings", "permissions", "hooks", "mcp", "plugin", "skills", "agents", "tasks", "usage", "quota", "keybindings", "copy", "btw", "goal", "plan", "add-dir", "title", "changelog", "login", "logout", "exit"];
+const AGY_BUILTINS = ["help", "clear", "compact", "model", "effort", "resume", "rewind", "fork", "diff", "config", "settings", "permissions", "hooks", "mcp", "plugin", "skills", "agents", "tasks", "usage", "status", "context", "quota", "keybindings", "copy", "btw", "goal", "plan", "add-dir", "title", "changelog", "login", "logout", "exit"];
 
 async function markdownFiles(root: string): Promise<string[]> {
   const files: string[] = [];

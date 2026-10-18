@@ -22,6 +22,7 @@ import { ChatSummarizer } from ".././summaries.js";
 import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFingerprint, listChatArtifacts, listClaudeChatArtifacts, listMegabrainChatArtifacts, type ChatArtifact } from ".././artifacts.js";
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import type { ChatDaemon } from "../daemon.js";
+import { handleLocalInfoCommand } from "./local-command.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
 
@@ -91,6 +92,7 @@ export async function deliver(daemon: ChatDaemon, chat: Chat, parts: Part[], opt
     chat.lastActivityAt = new Date().toISOString();
     await daemon.save(chat);
     await daemon.publish(chat, event("user", textValue, undefined, withImages(parts)));
+    if (await handleLocalInfoCommand(daemon, chat, parts)) return;
     if (options.keepInterrupt !== true) daemon.interrupting.delete(id);
     daemon.interruptedEvents.delete(id);
     if (resuming) {

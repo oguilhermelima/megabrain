@@ -32,6 +32,10 @@ export function updateContext(daemon: ChatDaemon, chat: Chat, usage: Record<stri
     const fields = [input, cacheCreation, cacheRead];
     if (fields.some((value) => value !== undefined && (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0))) return;
     if (fields.some((value) => typeof value === "number")) setContextTokens(chat, fields.reduce<number>((sum, value) => sum + (typeof value === "number" ? value : 0), 0));
+    const output = usage.output_tokens;
+    if ([input, output, cacheRead, cacheCreation].every((value) => value === undefined || (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) && typeof input === "number" && typeof output === "number") {
+      chat.usageTokens = { input, output, ...(typeof cacheRead === "number" ? { cacheRead } : {}), ...(typeof cacheCreation === "number" ? { cacheWrite: cacheCreation } : {}) };
+    }
   }
 
 export function setContextTokens(chat: Chat, tokens: number): void {

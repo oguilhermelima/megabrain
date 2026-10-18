@@ -25,7 +25,7 @@ import type { ChatDaemon } from "../daemon.js";
 import { setContextTokens } from "./artifacts-summaries.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
-import { answeredCommand } from "./local-command.js";
+import { answeredCommand, fallbackClaudeStatus } from "./local-command.js";
 
 export async function handleClaudeStream(daemon: ChatDaemon, id: string, streamEvent: Record<string, unknown>): Promise<void> {
     const kind = text(streamEvent.type);
@@ -207,6 +207,7 @@ export async function handleClaude(daemon: ChatDaemon, id: string, child: ChildP
       // The interrupted turn's own result, after a message sent now already started the next turn.
       if (item.is_error === true && daemon.interrupting.has(id) && chat.state === "working") { daemon.interrupting.delete(id); return; }
       if (typeof item.session_id === "string") chat.agentSessionId = item.session_id;
+      await fallbackClaudeStatus(daemon, chat);
       const modelUsage = object(item.modelUsage);
       const modelUsageEntry = object(modelUsage[chat.model ?? ""] ?? Object.values(modelUsage)[0]);
       const window = modelUsageEntry.contextWindow;
@@ -248,8 +249,12 @@ export async function handleCodex(daemon: ChatDaemon, id: string, child: ChildPr
       const usage = object(params.tokenUsage);
       const last = object(usage.last);
       const input = count(last.inputTokens);
+      const output = count(last.outputTokens);
+      const cacheRead = count(last.cachedInputTokens);
+      const cacheWrite = count(last.cacheWriteInputTokens);
       const window = usage.modelContextWindow;
       if (input !== undefined) setContextTokens(chat, input);
+      if (input !== undefined && output !== undefined) chat.usageTokens = { input, output, ...(cacheRead === undefined ? {} : { cacheRead }), ...(cacheWrite === undefined ? {} : { cacheWrite }) };
       if (typeof window === "number" && Number.isSafeInteger(window) && window > 0) chat.contextWindow = window;
       await daemon.save(chat);
       const total = count(object(usage.total).outputTokens);
