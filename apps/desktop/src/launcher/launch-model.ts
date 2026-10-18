@@ -3,9 +3,8 @@ import { messagePartsToText } from '@/chat/composer-parts'
 
 // The launcher on the center screen: a tile per way to start work in a worktree, and what each does.
 
-export type ChatAgent = 'claude' | 'codex'
-export type TuiAgent = 'grok' | 'agy'
-export type LaunchTileId = 'terminal' | ChatAgent | TuiAgent
+export type ChatAgent = 'claude' | 'codex' | 'grok' | 'agy'
+export type LaunchTileId = 'terminal' | ChatAgent
 
 export interface LaunchTile {
   id: LaunchTileId
@@ -70,8 +69,8 @@ export type LaunchPlan =
   | { kind: 'chat'; agent: ChatAgent; cwd: string; model: string | null; effort: string | null; parts: MessagePart[] }
   /** engine null: the one the settings choose, read when the terminal opens. */
   | { kind: 'terminal'; engine: TerminalEngine | null; cwd: string; firstInput: string | null }
-  /** An agent's own TUI: Grok and agy started fresh, or any agent resuming a past session by its id. */
-  | { kind: 'agent-terminal'; agent: ChatAgent | TuiAgent; engine: 'tmux'; cwd: string; model: string | null; effort: string | null; firstInput: string | null; resume?: string }
+  /** An agent's own TUI, resuming a past session by its id. */
+  | { kind: 'agent-terminal'; agent: ChatAgent; engine: 'tmux'; cwd: string; model: string | null; effort: string | null; firstInput: string | null; resume?: string }
 
 export interface LaunchInput {
   cwd: string
@@ -83,16 +82,13 @@ export interface LaunchInput {
 }
 
 /**
- * Claude and Codex start a native chat. The terminal opens the login shell with the settings engine.
- * Grok and agy run their own TUI on tmux, so megabrain owns the session. A terminal takes typed text
- * as its first input, left unsent.
+ * Every agent starts a native chat. The terminal opens the login shell with the settings engine and
+ * takes typed text as its first input, left unsent.
  */
 export function launchPlan(tile: LaunchTileId, { cwd, parts, model, effort, engine }: LaunchInput): LaunchPlan {
-  if (tile === 'claude' || tile === 'codex') return { kind: 'chat', agent: tile, cwd, model, effort, parts }
+  if (tile !== 'terminal') return { kind: 'chat', agent: tile, cwd, model, effort, parts }
   const text = messagePartsToText(parts)
-  const firstInput = text.trim() === '' ? null : text
-  if (tile === 'terminal') return { kind: 'terminal', engine, cwd, firstInput }
-  return { kind: 'agent-terminal', agent: tile, engine: 'tmux', cwd, model, effort, firstInput }
+  return { kind: 'terminal', engine, cwd, firstInput: text.trim() === '' ? null : text }
 }
 
 export interface ChatStart {

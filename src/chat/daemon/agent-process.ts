@@ -14,6 +14,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from ".././store.js";
 import { chatProtocolAdapters, type MessagePart } from ".././protocol.js";
+import { AcpPeer } from "../grok-acp.js";
 import { discoverSessionId, latestClaudeContextTokens, readSessionTurns, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from ".././subagents.js";
 import { selfInvocation } from "../../core/self-invocation.js";
@@ -57,7 +58,10 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
     void scheduleAgentAutoUpdate(chat.agent, daemon.environment, daemon.processes()).catch(() => undefined);
     const invocation = await chatProtocolAdapters[chat.agent].prepare(chat, daemon.stateDir);
     if (daemon.closed) return;
-    const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...scrubAgentEnvironment({ ...process.env, ...daemon.environment }), MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });
+    const childEnvironment = scrubAgentEnvironment({ ...process.env, ...daemon.environment });
+    // GROK_HOME is configuration and session storage, not a nested-agent marker; keep the isolated home selected by the host.
+    if (chat.agent === "grok" && daemon.environment.GROK_HOME !== undefined) childEnvironment.GROK_HOME = daemon.environment.GROK_HOME;
+    const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...childEnvironment, MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });
     daemon.children.set(chat.id, child);
     chat.owner = "chat";
     await daemon.save(chat);
@@ -78,6 +82,7 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
         const line = stdout.slice(0, end); stdout = stdout.slice(end + 1);
         if (line.trim() === "") continue;
         try {
+          if (chat.agent === "grok") { daemon.acpPeers.get(chat.id)?.receive(line); continue; }
           const parsed = JSON.parse(line) as Record<string, unknown>;
           // A Codex answer settles its request at once: the event being handled may itself wait for it (a turn that ends starts the next).
           if (chat.agent === "codex" && daemon.settleRpc(chat.id, parsed)) continue;
@@ -96,6 +101,8 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
       await readFile(childRecord, "utf8").then(async (raw) => {
         if (Number(object(JSON.parse(raw)).pid) === child.pid) await unlink(childRecord);
       }).catch(() => undefined);
+      daemon.acpPeers.get(chat.id)?.close(new Error(stderr.trim() || `${signal ?? "agent exited"}`));
+      daemon.acpPeers.delete(chat.id);
       for (const waiter of daemon.rpcWaiters.get(chat.id)?.values() ?? []) waiter.reject(new Error(stderr.trim() || `${signal ?? "agent exited"}`));
       daemon.rpcWaiters.delete(chat.id);
       if (daemon.closed || daemon.children.get(chat.id) !== child) return;
@@ -137,6 +144,39 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
       current.agentSessionId = text(object(thread).thread && object(object(thread).thread).id) || text(object(thread).threadId) || current.agentSessionId;
       current.state = "idle";
       await daemon.save(current);
+      await daemon.drain(chat.id);
+    } else if (chat.agent === "grok") {
+      const peer = new AcpPeer((frame) => child.stdin.write(frame));
+      daemon.acpPeers.set(chat.id, peer);
+      peer.onNotification = (frame) => {
+        const previous = daemon.eventChains.get(chat.id) ?? Promise.resolve();
+        const next = previous.then(() => daemon.handleGrok(chat.id, frame)).catch((error: unknown) => daemon.fail(chat.id, error));
+        daemon.eventChains.set(chat.id, next);
+      };
+      peer.onRequest = (frame) => {
+        const previous = daemon.eventChains.get(chat.id) ?? Promise.resolve();
+        const next = previous.then(() => daemon.handleGrokRequest(chat.id, frame, peer)).catch((error: unknown) => {
+          if (frame.id !== undefined) peer.respond(frame.id, { outcome: "cancelled" });
+          return daemon.fail(chat.id, error);
+        });
+        daemon.eventChains.set(chat.id, next);
+      };
+      peer.onResponse = (method, result, error) => {
+        if (method !== "session/prompt") return;
+        const previous = daemon.eventChains.get(chat.id) ?? Promise.resolve();
+        const next = previous.then(() => daemon.finishGrokTurn(chat.id, result, error)).catch((reason: unknown) => daemon.fail(chat.id, reason));
+        daemon.eventChains.set(chat.id, next);
+      };
+      await peer.request("initialize", { protocolVersion: 1, clientInfo: { name: "megabrain", version: "0.2.4" }, clientCapabilities: {} });
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} })}\n`);
+      const sessionParams = { cwd: chat.cwd, mcpServers: [] };
+      const session = await peer.request(chat.agentSessionId ? "session/load" : "session/new", chat.agentSessionId ? { ...sessionParams, sessionId: chat.agentSessionId } : sessionParams);
+      const sessionId = text(object(session).sessionId);
+      if (sessionId) chat.agentSessionId = sessionId;
+      if (chat.model) await peer.request("session/set_config_option", { sessionId: chat.agentSessionId, configId: "model", value: { value: chat.model } });
+      if (chat.effort) await peer.request("session/set_config_option", { sessionId: chat.agentSessionId, configId: "reasoning_effort", value: { value: chat.effort } });
+      chat.state = "idle";
+      await daemon.save(chat);
       await daemon.drain(chat.id);
     } else {
       // Claude prints system/init only after its first user line, so queued input goes out now.
@@ -229,7 +269,7 @@ export async function interrupt(daemon: ChatDaemon, id: string): Promise<void> {
       const turnId = daemon.activeTurns.get(id);
       if (turnId && child) {
         daemon.interrupting.add(id);
-        await chatProtocolAdapters[chat.agent].interrupt(chat, child, turnId, (method, params) => daemon.codexRequest(child, method, params));
+        await chatProtocolAdapters[chat.agent].interrupt(chat, child, turnId, (method, params) => chat.agent === "grok" ? daemon.acpPeers.get(id)?.request(method, params) ?? Promise.reject(new Error("Grok ACP process is not ready")) : daemon.codexRequest(child, method, params));
       } else {
         if (wasWorking) await daemon.publishTurnCut(chat, "interrupted");
         chat.state = "idle";

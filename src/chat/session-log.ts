@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { ProcessAdapter } from "../adapters/proc.js";
 import { readProcessTable } from "../core/session-origin.js";
@@ -130,6 +130,41 @@ export function parseClaudeLog(content: string, parentId?: string): LoggedTurn[]
       }
     }
     turns.push(...identify(uuid, found, at));
+  }
+  return turns;
+}
+
+/** Grok persists its ACP update stream in each session's updates.jsonl file. */
+export function parseGrokLog(content: string): LoggedTurn[] {
+  const turns: LoggedTurn[] = [];
+  const names = new Map<string, string>();
+  for (const [index, row] of records(content).entries()) {
+    const params = object(row.params);
+    const update = object(params.update ?? row.update ?? row.params);
+    const kind = text(update.sessionUpdate ?? row.sessionUpdate);
+    const when = row.timestamp ?? params.timestamp ?? update.timestamp;
+    const at = typeof when === "number" ? new Date(when < 1e12 ? when * 1000 : when).toISOString() : text(when) || new Date(0).toISOString();
+    const id = `${text(row.updateId ?? update.id ?? row.id) || "grok"}:${index}`;
+    const callId = text(update.toolCallId);
+    const toolCall = object(update.toolCall);
+    const toolResult = object(update.toolResult);
+    let found: Omit<LoggedTurn, "sourceId" | "at"> | undefined;
+    if (kind === "user_message_chunk") {
+      const value = text(object(update.content).text ?? object(update.content).content ?? update.text);
+      if (value) found = { kind: "user", text: value };
+    } else if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
+      const value = text(object(update.content).text ?? object(update.content).content ?? update.text);
+      if (value) found = { kind: kind === "agent_message_chunk" ? "assistant" : "thinking", text: value, ...(text(update.messageId) ? { messageId: text(update.messageId) } : {}) };
+    } else if (kind === "tool_call") {
+      const name = text(toolCall.name) || text(toolCall.toolName) || text(update.title) || text(update.name) || "tool";
+      names.set(callId, name);
+      found = { kind: "tool-call", text: name, tool: { name, input: JSON.stringify(toolCall.input ?? toolCall.arguments ?? toolCall.parameters ?? update.rawInput ?? update.input ?? {}) }, ...(callId ? { messageId: callId } : {}) };
+    } else if (kind === "tool_call_update" || kind === "tool_result") {
+      const output = flatten(toolResult.content ?? toolResult.output ?? toolResult.text ?? update.rawOutput ?? update.output ?? update.content);
+      const status = text(toolResult.status ?? update.status);
+      if (callId && (output || ["completed", "failed"].includes(status))) found = { kind: "tool-result", text: output, tool: { name: names.get(callId) ?? (text(toolResult.name ?? update.title) || "tool"), status: status === "failed" || toolResult.isError === true ? "error" : "ok" }, messageId: callId };
+    }
+    if (found) turns.push({ ...found, sourceId: id, at });
   }
   return turns;
 }
@@ -274,9 +309,28 @@ async function codexRolloutPath(home: string, sessionId: string): Promise<string
 }
 
 /** Where the agent keeps this chat's session log; null without a session or a rollout. */
-export async function sessionLogPath(chat: Pick<Chat, "agent" | "cwd" | "agentSessionId">, home: string): Promise<string | null> {
+export async function sessionLogPath(chat: Pick<Chat, "agent" | "cwd" | "agentSessionId">, home: string, grokHome?: string): Promise<string | null> {
   if (chat.agentSessionId === null) return null;
-  return chat.agent === "claude" ? claudeLogPath(home, chat.cwd, chat.agentSessionId) : await codexRolloutPath(home, chat.agentSessionId);
+  if (chat.agent === "claude") return claudeLogPath(home, chat.cwd, chat.agentSessionId);
+  if (chat.agent === "grok") {
+    const root = join(grokHome ?? process.env.GROK_HOME ?? join(home, ".grok"), "sessions");
+    const direct = join(root, encodeURIComponent(chat.cwd), chat.agentSessionId, "updates.jsonl");
+    try { await stat(direct); return direct; } catch { /* long cwd names use Grok's slug-and-hash folder */ }
+    try {
+      for (const name of await readdir(root)) {
+        const groupPath = join(root, name);
+        try {
+          const cwd = (await readFile(join(groupPath, ".cwd"), "utf8")).trim();
+          if (cwd !== chat.cwd) continue;
+          const candidate = join(groupPath, chat.agentSessionId, "updates.jsonl");
+          await stat(candidate);
+          return candidate;
+        } catch { /* this is not the matching group */ }
+      }
+    } catch { /* no Grok sessions yet */ }
+    return direct;
+  }
+  return await codexRolloutPath(home, chat.agentSessionId);
 }
 
 const CLAUDE_INTERRUPTED = "[Request interrupted by user";
@@ -290,6 +344,14 @@ const LOCAL_COMMAND = /^<(?:command-name|command-message|local-command-[a-z]+)>/
 export function sessionTurnOpen(agent: Chat["agent"], content: string): boolean {
   let open = false;
   for (const row of records(content)) {
+    if (agent === "grok") {
+      const update = object(object(row.params).update ?? row.update);
+      const kind = text(update.sessionUpdate ?? row.sessionUpdate);
+      if (kind === "user_message_chunk" || kind === "tool_call") open = true;
+      else if (/turn_(?:complete|completed|aborted|finished)|session_end/.test(kind) || object(row.result).stopReason !== undefined || row.result !== undefined) open = false;
+      else if (kind === "agent_message_chunk" && (update.isFinal === true || update.final === true || update.complete === true || update.stopReason !== undefined)) open = false;
+      continue;
+    }
     if (agent === "codex") {
       const kind = text(object(row.payload).type);
       if (row.type === "event_msg" && (kind === "task_started" || kind === "turn_started")) open = true;
@@ -314,11 +376,11 @@ export function sessionTurnOpen(agent: Chat["agent"], content: string): boolean 
 }
 
 /** Every turn the agent's own log holds for this chat's session; a missing log is no turns. */
-export async function readSessionTurns(chat: Pick<Chat, "agent" | "cwd" | "agentSessionId">, home: string): Promise<LoggedTurn[]> {
-  const path = await sessionLogPath(chat, home);
+export async function readSessionTurns(chat: Pick<Chat, "agent" | "cwd" | "agentSessionId">, home: string, grokHome?: string): Promise<LoggedTurn[]> {
+  const path = await sessionLogPath(chat, home, grokHome);
   if (path === null) return [];
   let main: LoggedTurn[];
-  try { main = (chat.agent === "claude" ? parseClaudeLog : parseCodexRollout)(await readFile(path, "utf8")); }
+  try { main = (chat.agent === "claude" ? parseClaudeLog : chat.agent === "grok" ? parseGrokLog : parseCodexRollout)(await readFile(path, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
   if (!main.some((turn) => turn.subagent !== undefined)) return main;
   return withSubagents(main, chat.agent === "claude" ? await claudeSubagentTurns(path, main) : await codexSubagentTurns(home, main));

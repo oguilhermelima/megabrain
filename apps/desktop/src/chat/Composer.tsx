@@ -65,6 +65,7 @@ export function Composer({
   context,
   model = null,
   onModelChange,
+  modelLock = null,
   onSend,
   running = false,
   onStop,
@@ -93,6 +94,8 @@ export function Composer({
   model?: string | null
   /** Set for native chats, which switch model and effort themselves; without it, picking a model sends /model <model> through onSend. */
   onModelChange?: (model: string, effort: string | undefined) => Promise<void>
+  /** Why the model picker cannot switch this chat now; set, the picker shows the model, locked, with the reason. */
+  modelLock?: string | null
   /** Sends the message as text and image parts in order; resolves to the notice to show (null: sent, nothing to say), and clears the box unless it is bad or held. */
   onSend: (parts: MessagePart[]) => Promise<Notice | null>
   /** The agent's turn runs: with nothing typed, the send button stops it through onStop. */
@@ -442,7 +445,7 @@ export function Composer({
         onDrop={onDrop}
         onDragEnd={() => setDropCaret(null)}
         dropCaret={dropCaret}
-        toolbar={{ picker, disabled, agent, hasSkills, skillAnchor, setSkillAnchor, skillMenu, commands, recent: [...recent], pickSkill, closeSkills, shownContext, shownModel, shownEffort, canSetEffort: onModelChange !== undefined, pickModel, dictation, button, onStop, send, onAttachFiles: (files) => attach(files.map(fromFile)) }}
+        toolbar={{ picker, disabled, agent, hasSkills, skillAnchor, setSkillAnchor, skillMenu, commands, recent: [...recent], pickSkill, closeSkills, shownContext, shownModel, shownEffort, canSetEffort: onModelChange !== undefined, modelLock, pickModel, dictation, button, onStop, send, onAttachFiles: (files) => attach(files.map(fromFile)) }}
       />
       <ContextMenu menu={contextMenu.menu} onClose={contextMenu.close} />
     </footer>

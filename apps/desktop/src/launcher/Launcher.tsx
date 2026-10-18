@@ -127,7 +127,7 @@ export function Launcher({
   /** The worktree whose + opened the launcher; null for ⌘N or the home screen. */
   clicked: string | null
   onChat: (chat: NativeChat) => void
-  /** An agent's own TUI started in a terminal (Grok and agy). */
+  /** A terminal the launcher opened: the login shell with typed text waiting in it. */
   onLaunch: (launch: TerminalLaunch) => void
   /** Opens a new terminal in the worktree. */
   onTerminal: (cwd: string) => void
@@ -312,7 +312,6 @@ export function Launcher({
 function placeholder(tile: LaunchTileId, current: LaunchTile | undefined): string {
   if (current !== undefined && !current.enabled) return current.hint ?? `${current.label} is not available`
   if (tile === 'terminal') return 'Install an agent to start a chat here; New terminal opens a shell.'
-  if (tile === 'grok' || tile === 'agy') return `What should ${current?.label ?? tile} do? It is typed into its terminal for you to send…`
   return `What should ${current?.label ?? tile} do? Enter starts it…`
 }
 

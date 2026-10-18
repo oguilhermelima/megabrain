@@ -7,6 +7,7 @@ import type { SessionHolder } from "../core/session-holders.js";
 import { statSync } from "node:fs";
 import packageJson from "../../package.json" with { type: "json" };
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from "./store.js";
+import { AcpPeer } from "./grok-acp.js";
 import type { MessagePart } from "./protocol.js";
 import type { ChatArtifact } from "./artifacts.js";
 import type { Subagent, SubagentEnd } from "./subagents.js";
@@ -20,7 +21,7 @@ import { start as startImpl, handle as handleImpl, startChat as startChatImpl, s
 import { queueOperation as queueOperationImpl, loadQueue as loadQueueImpl, persistQueue as persistQueueImpl, enqueue as enqueueImpl, drain as drainImpl, drainOnce as drainOnceImpl } from "./daemon/queue.js";
 import { resumeDrained as resumeDrainedImpl, send as sendImpl, resume as resumeImpl, deliver as deliverImpl, resumeFailed as resumeFailedImpl } from "./daemon/resume.js";
 import { trackCallback as trackCallbackImpl, runAgent as runAgentImpl, runAgentInternal as runAgentInternalImpl, clearTerminalHoldersBeforeResume as clearTerminalHoldersBeforeResumeImpl, armStartTimer as armStartTimerImpl, clearStartTimer as clearStartTimerImpl, interrupt as interruptImpl, stop as stopImpl } from "./daemon/agent-process.js";
-import { handleClaudeStream as handleClaudeStreamImpl, publishToolCall as publishToolCallImpl, startSubagent as startSubagentImpl, endSubagent as endSubagentImpl, publishClaudeStep as publishClaudeStepImpl, handleClaude as handleClaudeImpl, settleRpc as settleRpcImpl, handleCodex as handleCodexImpl, handleCodexSubagent as handleCodexSubagentImpl, codexRequest as codexRequestImpl, publishTurnCut as publishTurnCutImpl, publishBackgroundTask as publishBackgroundTaskImpl } from "./daemon/agent-streams.js";
+import { handleClaudeStream as handleClaudeStreamImpl, publishToolCall as publishToolCallImpl, startSubagent as startSubagentImpl, endSubagent as endSubagentImpl, publishClaudeStep as publishClaudeStepImpl, handleClaude as handleClaudeImpl, settleRpc as settleRpcImpl, handleCodex as handleCodexImpl, handleCodexSubagent as handleCodexSubagentImpl, codexRequest as codexRequestImpl, publishTurnCut as publishTurnCutImpl, publishBackgroundTask as publishBackgroundTaskImpl, handleGrok as handleGrokImpl, handleGrokRequest as handleGrokRequestImpl, finishGrokTurn as finishGrokTurnImpl } from "./daemon/agent-streams.js";
 import { rename as renameImpl, remove as removeImpl, mode as modeImpl, takeOver as takeOverImpl, importTerminalTurns as importTerminalTurnsImpl, logTurnOpen as logTurnOpenImpl, foreignHolders as foreignHoldersImpl, panesOf as panesOfImpl, endAppTerminals as endAppTerminalsImpl, refreshTerminalChats as refreshTerminalChatsImpl, terminalCommand as terminalCommandImpl } from "./daemon/terminal-mode.js";
 import { updateContext as updateContextImpl, setModel as setModelImpl, startArtifactWatch as startArtifactWatchImpl, stopArtifactWatch as stopArtifactWatchImpl, replaceArtifactSnapshot as replaceArtifactSnapshotImpl, refreshClaudeArtifacts as refreshClaudeArtifactsImpl, checkArtifactWatch as checkArtifactWatchImpl } from "./daemon/artifacts-summaries.js";
 import { requireChat as requireChatImpl, normalizeParts as normalizePartsImpl, processes as processesImpl, entryOf as entryOfImpl, track as trackImpl, dropConversation as dropConversationImpl, pruneUnused as pruneUnusedImpl, sessionOfTerminal as sessionOfTerminalImpl, save as saveImpl } from "./daemon/chat-state.js";
@@ -164,6 +165,7 @@ export class ChatDaemon {
   readonly claudeTokens = new Map<string, { done: number; thinking: number; textChars: number }>();
   /** A Codex turn counts from the thread's output tokens before it, which a resumed thread carries from earlier turns. */
   readonly codexTokenBase = new Map<string, number>();
+  readonly grokMessages = new Map<string, { id: string; text: string; thinking: string }>();
   readonly toolNames = new Map<string, Map<string, string>>();
   readonly backgroundTaskIds = new Map<string, Map<string, string>>();
   /** Each chat's subagents by id: the tool that started one, whether it runs in the background, whether it ended. */
@@ -294,7 +296,12 @@ async handleCodex(id: string, child: ChildProcessWithoutNullStreams, item: Recor
 
 async handleCodexSubagent(chat: Chat, thread: string, method: string, params: Record<string, unknown>): Promise<void> { return await handleCodexSubagentImpl(this, chat, thread, method, params); }
 
+async handleGrok(id: string, frame: import("./grok-acp.js").Frame): Promise<void> { return await handleGrokImpl(this, id, frame); }
+async handleGrokRequest(id: string, frame: import("./grok-acp.js").Frame, peer: AcpPeer): Promise<void> { return await handleGrokRequestImpl(this, id, frame, peer); }
+async finishGrokTurn(id: string, result: unknown, error?: Error): Promise<void> { return await finishGrokTurnImpl(this, id, result, error); }
+
   readonly rpcWaiters = new Map<string, Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>>();
+  readonly acpPeers = new Map<string, AcpPeer>();
   readonly pendingRpcApproval = new Map<string, string>();
   rpcSequence = 1;
 async codexRequest(child: ChildProcessWithoutNullStreams, method: string, params: Record<string, unknown>): Promise<unknown> { return await codexRequestImpl(this, child, method, params); }

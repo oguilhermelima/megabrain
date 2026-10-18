@@ -15,6 +15,7 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
+import { chatControls } from '@/native-chat/capabilities'
 import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, resumableChatState, shouldInterrupt, thinkingProgress, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
@@ -97,7 +98,9 @@ export function NativeChatView({
   // A step that needs a yes first: sending a queued message now, which stops a running turn.
   const [confirming, setConfirming] = useState<{ text: string; action: string; run: () => void } | null>(null)
   const title = chat.title ?? 'New chat'
-  const pending = pendingApproval(state)
+  // What the agent's protocol lets this chat do: the controls it cannot use stay out.
+  const controls = chatControls(chat)
+  const pending = controls.approvals ? pendingApproval(state) : null
   const live = useMemo(() => liveTail(state), [state])
   const working = workingStatus(state)
   // Nothing said yet: the agent waits for the first message, so suggestions replace any spinner.
@@ -127,12 +130,12 @@ export function NativeChatView({
   // A new function whenever what is pending changes, so the cards re-render with it.
   const renderApproval = useCallback(
     (event: TranscriptEvent) => {
-      const approval = state.approvals[event.id]
+      const approval = controls.approvals ? state.approvals[event.id] : undefined
       if (approval === undefined) return <p className="text-center text-[12px] text-ink-400">{event.text}</p>
       return <ApprovalCard approval={approval} pending={pending?.id === approval.id} onAnswer={(decision) => answer(approval.id, decision)} />
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.approvals, pending?.id, chat.id],
+    [state.approvals, pending?.id, chat.id, controls.approvals],
   )
 
   const act = (run: () => Promise<void>) =>
@@ -241,16 +244,20 @@ export function NativeChatView({
     edit: (itemId, parts) => changeQueue({ action: 'edit', itemId, parts }),
     move: (itemId, to) => changeQueue({ action: 'move', itemId, to }).then(() => {}, setActionError),
     remove: (itemId) => changeQueue({ action: 'remove', itemId }).then(() => {}, setActionError),
-    // Sending now stops a running turn, so it asks first.
-    sendNow: (itemId) => {
-      const run = () => {
-        setConfirming(null)
-        changeQueue({ action: 'send-now', itemId }).then(() => {}, setActionError)
-      }
-      if (busy) setConfirming({ text: 'Stop the running turn and send this message now?', action: 'Send now', run })
-      else run()
-    },
-    ...(chat.agent === 'codex' && chat.state === 'working' ? { steer: (itemId: string) => changeQueue({ action: 'steer', itemId }).then(() => {}, setActionError) } : {}),
+    // Sending now stops a running turn, so it asks first; an agent that cannot be stopped waits for the turn instead.
+    ...(busy && !controls.sendNowWhileBusy
+      ? {}
+      : {
+          sendNow: (itemId: string) => {
+            const run = () => {
+              setConfirming(null)
+              changeQueue({ action: 'send-now', itemId }).then(() => {}, setActionError)
+            }
+            if (busy) setConfirming({ text: 'Stop the running turn and send this message now?', action: 'Send now', run })
+            else run()
+          },
+        }),
+    ...(controls.steer ? { steer: (itemId: string) => changeQueue({ action: 'steer', itemId }).then(() => {}, setActionError) } : {}),
   }
 
   const stop = () => void act(() => api.interruptChat(chat.id))
@@ -347,7 +354,7 @@ export function NativeChatView({
   const onComposerKey = (event: KeyboardEvent<HTMLDivElement>) => {
     const box = event.target
     if (event.defaultPrevented || !(box instanceof HTMLElement) || !box.isContentEditable) return
-    if (!shouldInterrupt(event.key, box.textContent ?? '', chat.state)) return
+    if (!controls.stop || !shouldInterrupt(event.key, box.textContent ?? '', chat.state)) return
     event.preventDefault()
     stop()
   }
@@ -458,9 +465,11 @@ export function NativeChatView({
         <>
           <div className={`${pageMx} mt-3 flex items-center gap-3 text-[13px] text-ink-300`}>
             <span className="min-w-0 flex-1">{TERMINAL_WAIT_NOTICE}</span>
-            <button type="button" onClick={() => follow(stopAndOpen(true))} className="shrink-0 text-[12.5px] text-ink-400 underline-offset-2 hover:text-ink-100 hover:underline">
-              Stop the turn and open now
-            </button>
+            {controls.stop && (
+              <button type="button" onClick={() => follow(stopAndOpen(true))} className="shrink-0 text-[12.5px] text-ink-400 underline-offset-2 hover:text-ink-100 hover:underline">
+                Stop the turn and open now
+              </button>
+            )}
           </div>
           {transcript}
         </>
@@ -501,16 +510,17 @@ export function NativeChatView({
             </div>
             <div onKeyDown={(event) => { onChatKey(event); onComposerKey(event) }} className="contents">
               <Composer
-                placeholder={owner === 'terminal' ? 'Reply to take over from the terminal…' : resumable(chat.state) ? 'Reply to resume the session…' : chat.state === 'working' ? 'Queue a reply for when the turn ends…' : 'Reply…'}
+                placeholder={owner === 'terminal' ? `Reply to ${title}… (takes over from the terminal)` : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends…${controls.stop ? ' (Esc stops the turn)' : ''}` : `Reply to ${title}…`}
                 disabled={false}
                 agent={chat.agent}
                 cwd={chat.cwd}
                 context={composerContext(chat)}
                 model={chat.model}
                 onModelChange={changeModel}
+                modelLock={controls.modelLock}
                 onSend={send}
                 running={chat.state === 'working'}
-                onStop={stop}
+                {...(controls.stop ? { onStop: stop } : {})}
                 fill={fill}
                 channel={compose}
                 initCommands={chat.slashCommands}

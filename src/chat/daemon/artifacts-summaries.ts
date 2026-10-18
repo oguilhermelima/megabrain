@@ -46,8 +46,18 @@ export async function setModel(daemon: ChatDaemon, id: string, model: string, ef
     if (!model || model.length > 200) throw new Error("model must be a non-empty id no longer than 200 characters");
     const chat = await daemon.requireChat(id);
     if ((chat.state !== "idle" && chat.state !== "suspended") || chat.mode !== "chat") throw new Error(`cannot change the model while chat is ${chat.state}; wait until it is idle`);
+    const previous = { model: chat.model, effort: chat.effort };
     chat.model = model;
     if (effort !== null) chat.effort = effort;
+    if (chat.agent === "grok" && chat.state === "idle" && chat.agentSessionId) {
+      const peer = daemon.acpPeers.get(id);
+      if (peer) {
+        try {
+          await peer.request("session/set_config_option", { sessionId: chat.agentSessionId, configId: "model", value: { value: model } });
+          if (effort !== null) await peer.request("session/set_config_option", { sessionId: chat.agentSessionId, configId: "reasoning_effort", value: { value: effort } });
+        } catch (error) { chat.model = previous.model; chat.effort = previous.effort; throw error; }
+      }
+    }
     chat.lastActivityAt = new Date().toISOString();
     if (chat.agent === "claude" && chat.state === "idle") {
       const child = daemon.children.get(id);

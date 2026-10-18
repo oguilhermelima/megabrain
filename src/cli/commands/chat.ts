@@ -94,7 +94,8 @@ export async function executeChat(args: readonly string[], environment: Environm
       const partsArg = takeValue(cwdArg.rest, "--parts");
       const approvals = partsArg.rest.includes("--approvals");
       partsArg.rest = partsArg.rest.filter((arg) => arg !== "--approvals");
-      if (agent === undefined || cwdArg.value === undefined || effortArg.value === "" || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
+      if (agent === "agy") throw new Error("agy chats are not available yet");
+      if (agent === undefined || !["claude", "codex", "grok"].includes(agent) || cwdArg.value === undefined || effortArg.value === "" || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex|grok> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
       const parts = partsJson(partsArg.value);
       // Without --model the chat takes the agent's default from Settings > Models, when one is set.
       const registry = loadModelRegistry(environment);

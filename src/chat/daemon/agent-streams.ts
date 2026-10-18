@@ -22,6 +22,7 @@ import { ChatSummarizer } from ".././summaries.js";
 import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFingerprint, listChatArtifacts, listClaudeChatArtifacts, listMegabrainChatArtifacts, type ChatArtifact } from ".././artifacts.js";
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import type { ChatDaemon } from "../daemon.js";
+import type { AcpPeer } from "../grok-acp.js";
 import { setContextTokens } from "./artifacts-summaries.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
@@ -264,6 +265,7 @@ export async function handleCodex(daemon: ChatDaemon, id: string, child: ChildPr
         daemon.codexTokenBase.set(id, base);
         daemon.publishProgress(id, { tokens: total - base });
       }
+
     } else if (method === "error") {
       const detail = text(object(params.error).message) || "error";
       if (params.willRetry === true) daemon.publishProgress(id, { retry: { reason: detail } });
@@ -316,6 +318,84 @@ export async function handleCodex(daemon: ChatDaemon, id: string, child: ChildPr
       await daemon.drain(id);
     }
   }
+
+export async function handleGrok(daemon: ChatDaemon, id: string, frame: { params?: Record<string, unknown> }): Promise<void> {
+  const params = object(frame.params);
+  if (text(params.sessionId) === "") return;
+  const chat = await daemon.requireChat(id);
+  const update = object(params.update);
+  const kind = text(update.sessionUpdate);
+  const content = object(update.content);
+  const messageId = text(update.messageId ?? update.toolCallId);
+  if (kind === "agent_message_chunk" || kind === "agent_thought_chunk") {
+    const stream = kind === "agent_thought_chunk" ? "thinking" : "assistant";
+    const value = text(content.text);
+    if (value) {
+      const message = daemon.grokMessages.get(id);
+      if (message) { if (messageId) message.id = messageId; if (stream === "assistant") message.text += value; else message.thinking += value; }
+      if (stream === "assistant") daemon.turnHasPartial.add(id);
+      daemon.publishLive(id, event("delta", value, undefined, { stream, ...withMessage(messageId || message?.id || "") }));
+    }
+  } else if (kind === "tool_call") {
+    const callId = text(update.toolCallId);
+    const name = text(update.title) || text(update.name) || "tool";
+    const input = JSON.stringify(update.rawInput ?? update.input ?? {});
+    if (callId) daemon.toolNames.set(id, new Map(daemon.toolNames.get(id) ?? []).set(callId, name));
+    await daemon.publish(chat, event("tool-call", name, { name, input }, withMessage(callId)));
+  } else if (kind === "tool_call_update") {
+    const callId = text(update.toolCallId);
+    const name = daemon.toolNames.get(id)?.get(callId) ?? (text(update.title) || "tool");
+    const output = flattenContent(update.rawOutput ?? update.output ?? update.content);
+    if (output || ["completed", "failed"].includes(text(update.status))) {
+      await daemon.publish(chat, event("tool-result", output, { name, status: text(update.status) === "failed" ? "error" : "ok" }, withMessage(callId)));
+    }
+  } else if (kind === "usage_update" || kind === "current_mode_update") {
+    const usage = object(update.usage ?? update);
+    const tokens = count(usage.outputTokens ?? usage.totalTokens);
+    if (tokens !== undefined) daemon.publishProgress(id, { tokens });
+    const context = count(usage.inputTokens ?? usage.contextTokens);
+    if (context !== undefined) { chat.contextTokens = context; await daemon.save(chat); }
+    const window = count(usage.contextWindow ?? usage.modelContextWindow);
+    if (window !== undefined && window > 0) { chat.contextWindow = window; await daemon.save(chat); }
+  }
+}
+
+export async function handleGrokRequest(daemon: ChatDaemon, id: string, frame: { id?: string | number; params?: Record<string, unknown> }, peer: AcpPeer): Promise<void> {
+  if (frame.id === undefined) return;
+  const params = object(frame.params);
+  const toolCall = object(params.toolCall);
+  const options = Array.isArray(params.options) ? params.options.map(object) : [];
+  const chat = await daemon.requireChat(id);
+  const approval = await daemon.createApproval(chat, text(toolCall.title) || text(toolCall.name) || "tool", JSON.stringify(toolCall.rawInput ?? {}), text(toolCall.toolCallId));
+  const timer = setTimeout(() => {
+    const pending = daemon.pendingApprovals.get(approval.id);
+    if (pending) { daemon.pendingApprovals.delete(approval.id); peer.respond(frame.id as string | number, { outcome: "cancelled" }); }
+  }, 10 * 60_000);
+  daemon.pendingApprovals.set(approval.id, { approval, resolve: (decision) => {
+    clearTimeout(timer);
+    const wants = decision === "deny" ? ["reject_once", "reject_always", "deny"] : decision === "allow-session" ? ["allow_always", "allow_session", "accept_always"] : ["allow_once", "accept_once", "allow"];
+    const option = options.find((item) => wants.includes(text(item.kind)) || wants.includes(text(item.optionId)));
+    peer.respond(frame.id as string | number, option ? { outcome: "selected", optionId: text(option.optionId) } : { outcome: "cancelled" });
+  } });
+}
+
+export async function finishGrokTurn(daemon: ChatDaemon, id: string, result: unknown, error?: Error): Promise<void> {
+  const chat = await daemon.requireChat(id);
+  daemon.activeTurns.delete(id);
+  const message = daemon.grokMessages.get(id);
+  daemon.grokMessages.delete(id);
+  const interrupted = daemon.interrupting.delete(id) || text(object(result).stopReason) === "cancelled";
+  if (interrupted) await daemon.publishTurnCut(chat, "interrupted");
+  else if (error) await daemon.publishTurnCut(chat, /limit|quota|rate.?limit/i.test(error.message) ? "limit" : "error", error.message);
+  chat.state = "idle";
+  chat.error = null;
+  chat.lastActivityAt = new Date().toISOString();
+  await daemon.save(chat);
+  if (message?.thinking) await daemon.publish(chat, event("thinking", message.thinking, undefined, withMessage(message.id)));
+  if (message?.text) await daemon.publish(chat, event("assistant", message.text, undefined, withMessage(message.id)));
+  if (interrupted) await daemon.publishInterrupted(chat);
+  await daemon.drain(id);
+}
 
 export async function handleCodexSubagent(daemon: ChatDaemon, chat: Chat, thread: string, method: string, params: Record<string, unknown>): Promise<void> {
     if (daemon.subagents.get(chat.id)?.has(thread) !== true) return;

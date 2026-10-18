@@ -34,6 +34,12 @@ function fakeAgent(bin: string, name: "claude" | "codex", body: string) {
   chmodSync(path, 0o700);
 }
 
+function fakeGrok(bin: string, body: string) {
+  const path = join(bin, "grok");
+  writeFileSync(path, `#!${process.execPath}\n${body}\n`);
+  chmodSync(path, 0o700);
+}
+
 const processAdapter: ProcessAdapter = {
   async run(command) { return failed(`${command} unavailable`); },
   async startDetached(command) { return failed(`${command} unexpectedly detached`); },
@@ -64,7 +70,7 @@ async function waitForCapture(env: ReturnType<typeof sandbox>, predicate: (conte
     if (predicate(content)) return content;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error(`agent did not ${description}`);
+  throw new Error(`agent did not ${description}: ${existsSync(env.capture) ? readFileSync(env.capture, "utf8") : "no capture"}`);
 }
 
 // The daemon marks a chat working before it writes the turn request, so the state alone does not
@@ -77,7 +83,7 @@ async function waitForRequest(method: string, env: ReturnType<typeof sandbox>) {
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error(`agent never received ${method}`);
+  throw new Error(`agent never received ${method}: ${existsSync(env.capture) ? readFileSync(env.capture, "utf8") : "no capture"}`);
 }
 
 async function socketDaemon(env: ReturnType<typeof sandbox>) {
@@ -407,6 +413,151 @@ rl.on("line", (line) => {
       expect((await call(["chat", "approve", chat.id, approval.id, "--decision", "allow"], env)).kind).toBe("ok");
       const capture = await waitForCapture(env, (content) => content.includes('"decision":"accept"'), "accept the command approval");
       expect(capture).toContain('"decision":"accept"');
+    } finally { await daemon.close(); }
+  });
+
+  test("maps Grok approval choices to ACP permission options", async () => {
+    for (const [decision, kind] of [["allow", "allow_once"], ["deny", "reject_once"], ["allow-session", "allow_always"]] as const) {
+      const env = sandbox();
+      fakeGrok(env.bin, `
+const readline = require("node:readline");
+const { appendFileSync } = require("node:fs");
+const rl = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\\n");
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify(request) + "\\n");
+  if (request.method === "initialize") send({ id: request.id, result: { protocolVersion: 1 } });
+  if (request.method === "session/new") send({ id: request.id, result: { sessionId: "approval-session" } });
+  if (request.method === "session/prompt") { global.promptId = request.id; send({ jsonrpc: "2.0", id: 90, method: "session/request_permission", params: { sessionId: "approval-session", toolCall: { toolCallId: "tool-1", title: "write file", rawInput: { path: "allowed.txt" } }, options: [{ optionId: "allow_once", kind: "allow_once" }, { optionId: "reject_once", kind: "reject_once" }, { optionId: "allow_always", kind: "allow_always" }] } }); }
+  if (request.id === 90 && request.result) { appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify({ permission: request.result }) + "\\n"); send({ id: global.promptId, result: { stopReason: "end_turn" } }); }
+});
+`);
+      const daemon = await socketDaemon(env);
+      try {
+        const started = await call(["chat", "start", "--agent", "grok", "--cwd", env.cwd, "--approvals", "--parts", JSON.stringify([{ type: "text", text: "do it" }]), "--json"], env);
+        expect(started.kind).toBe("ok");
+        if (started.kind !== "ok") continue;
+        const chat = JSON.parse(started.value) as Chat;
+        await waitForChat(chat.id, "waiting-approval", env);
+        const events = await call(["chat", "events", chat.id, "--json"], env);
+        expect(events.kind).toBe("ok");
+        const approval = events.kind === "ok" ? events.value.trim().split("\n").map((line) => JSON.parse(line) as { approval?: { id: string } }).find((line) => line.approval)?.approval : undefined;
+        expect(approval?.id).toBeTruthy();
+        if (!approval) continue;
+        expect((await call(["chat", "approve", chat.id, approval.id, "--decision", decision], env)).kind).toBe("ok");
+        await waitForCapture(env, (content) => content.includes('"permission"'), "answer Grok permission request");
+        expect(readFileSync(env.capture, "utf8")).toContain(`"optionId":"${kind}"`);
+      } finally { await daemon.close(); }
+    }
+  });
+
+  test("cancels a running Grok turn and holds a message queued while busy", async () => {
+    const env = sandbox();
+    fakeGrok(env.bin, `
+const readline = require("node:readline");
+const { appendFileSync } = require("node:fs");
+const rl = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\\n");
+let promptId = 40, prompts = 0;
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify(request) + "\\n");
+  if (request.method === "initialize") send({ id: request.id, result: {} });
+  if (request.method === "session/new") send({ id: request.id, result: { sessionId: "queue-session" } });
+  if (request.method === "session/prompt") { promptId = request.id; if (++prompts > 1) send({ id: request.id, result: { stopReason: "end_turn" } }); }
+  if (request.method === "session/cancel") { send({ id: request.id, result: {} }); send({ id: promptId, result: { stopReason: "cancelled" } }); }
+});
+`);
+    const daemon = await socketDaemon(env);
+    try {
+      const started = await call(["chat", "start", "--agent", "grok", "--cwd", env.cwd, "--parts", JSON.stringify([{ type: "text", text: "first" }]), "--json"], env);
+      expect(started.kind).toBe("ok");
+      if (started.kind !== "ok") return;
+      const chat = JSON.parse(started.value) as Chat;
+      await waitForRequest("session/prompt", env);
+      expect((await call(["chat", "send", chat.id, "--parts", JSON.stringify([{ type: "text", text: "second" }])], env)).kind).toBe("ok");
+      expect((await call(["chat", "interrupt", chat.id], env)).kind).toBe("ok");
+      await waitForChat(chat.id, "idle", env);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const prompts = readFileSync(env.capture, "utf8").split("\n").filter((line) => line.includes('"method":"session/prompt"')).map((line) => JSON.parse(line) as { params: { prompt: Array<{ text: string }> } });
+      expect(prompts.map((request) => request.params.prompt[0]?.text)).toEqual(["first"]);
+      const queue = await call(["chat", "queue", "list", chat.id, "--json"], env);
+      expect(queue.kind).toBe("ok");
+      if (queue.kind === "ok") expect(JSON.parse(queue.value)).toEqual([expect.objectContaining({ parts: [{ type: "text", text: "second" }] })]);
+    } finally { await daemon.close(); }
+  });
+
+  test("loads persisted Grok sessions on resume and reports a failed session/load", async () => {
+    const env = sandbox();
+    fakeGrok(env.bin, `
+const readline = require("node:readline");
+const { appendFileSync } = require("node:fs");
+const rl = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\\n");
+rl.on("line", (line) => {
+  const request = JSON.parse(line); appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify(request) + "\\n");
+  if (request.method === "initialize") send({ id: request.id, result: {} });
+  if (request.method === "session/new") send({ id: request.id, result: { sessionId: "resume-session" } });
+  if (request.method === "session/load") send({ id: request.id, error: { code: -32000, message: "stored session unavailable" } });
+  if (request.method === "session/prompt") send({ id: request.id, result: { stopReason: "end_turn" } });
+});
+`);
+    const daemon = await socketDaemon(env);
+    try {
+      const started = await call(["chat", "start", "--agent", "grok", "--cwd", env.cwd, "--parts", JSON.stringify([{ type: "text", text: "hello" }]), "--json"], env);
+      expect(started.kind).toBe("ok");
+      if (started.kind !== "ok") return;
+      const chat = JSON.parse(started.value) as Chat;
+      await waitForChat(chat.id, "idle", env);
+      const initialList = await call(["chat", "list", "--json"], env);
+      const saved = initialList.kind === "ok" ? (JSON.parse(initialList.value) as Chat[]).find((item) => item.id === chat.id) : undefined;
+      expect(saved?.agentSessionId).toBe("resume-session");
+      expect((await call(["chat", "stop", chat.id], env)).kind).toBe("ok");
+      await waitForChat(chat.id, "suspended", env);
+      await expect(daemon.handle({ operation: "resume", id: chat.id })).resolves.toBeDefined();
+      await waitForChat(chat.id, "suspended", env);
+      expect(readFileSync(env.capture, "utf8")).toContain('"method":"session/load"');
+      const listed = await call(["chat", "list", "--json"], env);
+      expect(listed.kind === "ok" && listed.value).toContain("stored session unavailable");
+    } finally { await daemon.close(); }
+  });
+
+  test("applies Grok model and effort changes, and rolls back refused configuration", async () => {
+    const env = sandbox();
+    fakeGrok(env.bin, `
+const readline = require("node:readline");
+const { appendFileSync } = require("node:fs");
+const rl = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\\n");
+rl.on("line", (line) => {
+  const request = JSON.parse(line); appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify(request) + "\\n");
+  if (request.method === "initialize") send({ id: request.id, result: {} });
+  if (request.method === "session/new") send({ id: request.id, result: { sessionId: "config-session" } });
+  if (request.method === "session/set_config_option" && request.params.value.value === "refused-model") send({ id: request.id, error: { code: -32602, message: "unsupported model" } });
+  else if (request.id !== undefined) send({ id: request.id, result: request.method === "session/set_config_option" ? { configOptions: [{ id: request.params.configId, currentValue: request.params.value.value }] } : {} });
+  if (request.method === "session/prompt") send({ id: request.id, result: { stopReason: "end_turn" } });
+});
+`);
+    const daemon = await socketDaemon(env);
+    try {
+      const started = await call(["chat", "start", "--agent", "grok", "--cwd", env.cwd, "--json"], env);
+      expect(started.kind).toBe("ok");
+      if (started.kind !== "ok") return;
+      const chat = JSON.parse(started.value) as Chat;
+      await waitForChat(chat.id, "idle", env);
+      expect((await call(["chat", "model", chat.id, "grok-4.7", "--effort", "high", "--json"], env)).kind).toBe("ok");
+      const refused = await call(["chat", "model", chat.id, "refused-model", "--json"], env);
+      expect(refused.kind).toBe("failed");
+      const listed = await call(["chat", "list", "--json"], env);
+      const saved = listed.kind === "ok" ? (JSON.parse(listed.value) as Chat[]).find((item) => item.id === chat.id) : undefined;
+      expect(saved).toMatchObject({ model: "grok-4.7", effort: "high" });
+      const configs = readFileSync(env.capture, "utf8").split("\n").filter((line) => line.includes('"method":"session/set_config_option"'));
+      expect(configs.map((line) => (JSON.parse(line) as { params: { configId: string; value: { value: string } } }).params)).toEqual([
+        { sessionId: "config-session", configId: "model", value: { value: "grok-4.7" } },
+        { sessionId: "config-session", configId: "reasoning_effort", value: { value: "high" } },
+        { sessionId: "config-session", configId: "model", value: { value: "refused-model" } },
+      ]);
     } finally { await daemon.close(); }
   });
 

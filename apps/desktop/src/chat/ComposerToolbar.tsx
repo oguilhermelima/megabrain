@@ -9,7 +9,7 @@ import type { SendState } from '@/chat/composer-look'
 
 const ghost = 'grid size-8 shrink-0 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none'
 
-export function ComposerToolbar({ picker, disabled, agent, hasSkills, skillAnchor, setSkillAnchor, skillMenu, commands, recent, pickSkill, closeSkills, shownContext, shownModel, shownEffort, canSetEffort, pickModel, dictation, button, onStop, send, onAttachFiles }: {
+export function ComposerToolbar({ picker, disabled, agent, hasSkills, skillAnchor, setSkillAnchor, skillMenu, commands, recent, pickSkill, closeSkills, shownContext, shownModel, shownEffort, canSetEffort, modelLock, pickModel, dictation, button, onStop, send, onAttachFiles }: {
   picker: RefObject<HTMLInputElement | null>
   disabled: boolean
   agent: string | null
@@ -25,6 +25,7 @@ export function ComposerToolbar({ picker, disabled, agent, hasSkills, skillAncho
   shownModel: string | null
   shownEffort: string | undefined
   canSetEffort: boolean
+  modelLock: string | null
   pickModel: (pick: ModelPick) => void
   dictation: { supported: boolean; listening: boolean; toggle: () => void }
   button: SendState
@@ -54,8 +55,8 @@ export function ComposerToolbar({ picker, disabled, agent, hasSkills, skillAncho
       </Tooltip>
       {skillMenu.shown !== null && <SkillMenu anchor={skillMenu.shown} commands={commands} recent={recent} leaving={skillMenu.leaving} onPick={pickSkill} onClose={closeSkills} />}
       <input ref={picker} type="file" accept="image/*,application/pdf" multiple hidden onChange={(event) => { onAttachFiles(Array.from(event.currentTarget.files ?? [])); event.currentTarget.value = '' }} />
-      <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-white/[0.08]" />
-      <ComposerStatus agent={agent} context={shownContext} model={shownModel} effort={shownEffort} canSetEffort={canSetEffort} onPickModel={pickModel} />
+      <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-white/[0.08]" />
+      <ComposerStatus agent={agent} context={shownContext} model={shownModel} effort={shownEffort} canSetEffort={canSetEffort} modelLock={modelLock} onPickModel={pickModel} />
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {dictation.supported && (
           <Tooltip text={dictation.listening ? 'Stop dictation' : 'Dictate'}>

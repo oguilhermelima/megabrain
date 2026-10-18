@@ -2,9 +2,11 @@ import { chmod, mkdir, readFile, appendFile, rename, writeFile } from "node:fs/p
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+export type ChatCapabilities = { approvals: boolean; interrupt: boolean; liveModelSwitch: boolean; steer: boolean; structuredTools: boolean };
 export type Chat = {
   id: string;
-  agent: "claude" | "codex";
+  agent: "claude" | "codex" | "grok" | "agy";
+  capabilities?: ChatCapabilities;
   model: string | null;
   effort?: string | null;
   contextTokens?: number;

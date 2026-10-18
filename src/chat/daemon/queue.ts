@@ -149,10 +149,12 @@ export async function drainOnce(daemon: ChatDaemon, id: string): Promise<void> {
     chat.state = "working";
     await daemon.save(chat);
     const adapter = chatProtocolAdapters[chat.agent];
-    const turnId = await adapter.send(chat, child, parts, (method, params) => daemon.codexRequest(child, method, params));
-    if (turnId) {
-      daemon.activeTurns.set(id, turnId);
-      if (chat.agent === "codex") await daemon.store.annotateLastUserTurn(id, turnId);
+    if (chat.agent === "grok" && chat.agentSessionId) {
+      daemon.activeTurns.set(id, chat.agentSessionId);
+      daemon.grokMessages.set(id, { id: randomUUID(), text: "", thinking: "" });
     }
+    const turnId = await adapter.send(chat, child, parts, (method, params) => chat.agent === "grok" ? daemon.acpPeers.get(id)?.request(method, params) ?? Promise.reject(new Error("Grok ACP process is not ready")) : daemon.codexRequest(child, method, params));
+    if (turnId) daemon.activeTurns.set(id, turnId);
+    if (turnId && chat.agent === "codex") await daemon.store.annotateLastUserTurn(id, turnId);
     if (chat.agent === "claude" && !daemon.outputSeen.has(id) && !daemon.startTimers.has(id)) daemon.armStartTimer(id, child);
   }

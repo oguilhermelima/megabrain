@@ -63,13 +63,14 @@ export async function handle(daemon: ChatDaemon, request: Request, socket?: Sock
 export async function startChat(daemon: ChatDaemon, request: Request): Promise<Chat> {
     if (daemon.draining) throw new Error(DRAINING);
     const agent = text(request.agent);
-    if (agent !== "claude" && agent !== "codex") throw new Error("--agent must be claude or codex");
+    if (agent === "agy") throw new Error("agy chats are not available yet");
+    if (agent !== "claude" && agent !== "codex" && agent !== "grok") throw new Error("--agent must be claude, codex, or grok");
     const cwd = text(request.cwd);
     if (!cwd || !cwd.startsWith("/")) throw new Error("--cwd must be an absolute path");
     const parts = request.parts === undefined ? [] : await daemon.normalizeParts(cwd, validateParts(request.parts));
     const now = new Date().toISOString();
     const chat: Chat = {
-      id: randomUUID(), agent, cwd, model: text(request.model) || null, ...(text(request.effort) ? { effort: text(request.effort) } : {}), ...(request.approvals === true ? { approvals: true } : {}),
+      id: randomUUID(), agent, capabilities: { approvals: true, interrupt: true, liveModelSwitch: agent === "grok", steer: agent === "codex", structuredTools: true }, cwd, model: text(request.model) || null, ...(text(request.effort) ? { effort: text(request.effort) } : {}), ...(request.approvals === true ? { approvals: true } : {}),
       title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: "starting", mode: "chat", owner: "none",
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
     };

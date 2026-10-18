@@ -16,7 +16,7 @@ import { ChatView } from '@/chat/ChatView'
 import { SidebarUsage } from '@/advanced/SidebarUsage'
 import { homeView, knowledgeItem, knowledgeItemIn, knowledgeView, type KnowledgeView } from '@/advanced/knowledge-model'
 import { artifactsItem, artifactsItemIn } from '@/advanced/artifacts-model'
-import { chooseView, hasActionBar, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
+import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
 import type { OpenPath } from '@/chat/Conversation'
 import { DispatchesContext } from '@/chat/NoticeCard'
@@ -48,10 +48,10 @@ import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, mountsInBackground, removeTerminal, renameTerminal, terminalExited, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
 import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, spanItem, type Panes } from '@/panes/pane-model'
-import { activeGroup, changeGroupPanes, changeShown, groupOfItem, openLayoutItem, removeLayoutItem, shownPanes, type Preset } from '@/panes/split-groups'
+import { activeGroup, changeGroupPanes, changeShown, groupOfItem, openLayoutItem, removeLayoutItem, shownPanes } from '@/panes/split-groups'
 import { groupRows, groupsByPlace, type MemberInfo } from '@/advanced/split-rows'
 import { SplitRowsContext, type SplitRowsValue } from '@/advanced/SplitRows'
-import type { MenuIcon } from '@/components/menu-icons'
+import { hasActionBar, presetIcons, presetNames } from '@/advanced/pane-layout-display'
 import { arrangePane } from '@/panes/arrange'
 import { PaneArea, type PaneContent } from '@/panes/PaneArea'
 import { SplitFrame } from '@/panes/GroupBar'
@@ -155,10 +155,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
           ? (sessionRows.find((row) => row.session.dispatchId === focusedParsed.id)?.session.sessionId ?? null)
           : null
   const nativeChatId = focusedParsed?.kind === 'native' ? focusedParsed.id : null
-  const focusedNativeChat = useMemo(() => {
-    const chat = nativeChatId === null ? undefined : nativeChats.find((entry) => entry.id === nativeChatId)
-    return chat === undefined ? null : { id: chat.id, title: chat.title ?? 'New chat' }
-  }, [nativeChatId, nativeChats])
+  const focusedNativeChat = nativeChatId === null ? null : (nativeChats.find((entry) => entry.id === nativeChatId) ?? null)
+  const focusedNativeChatLabel = focusedNativeChat === null ? null : { id: focusedNativeChat.id, title: focusedNativeChat.title ?? 'New chat' }
   const focusedTerminalId = focusedParsed?.kind === 'terminal' ? focusedParsed.id : null
 
   const viewOf = (item: string): PaneView => {
@@ -667,7 +665,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       open={settingsOpen}
       project={settingsProject}
       section={settingsSection}
-      chat={focusedNativeChat}
+      chat={focusedNativeChatLabel}
       onClose={() => {
         setSettingsOpen(false)
         setSettingsProject(null)
@@ -927,8 +925,3 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 }
 
 const noDispatches: readonly Dispatch[] = []
-
-const presetNames: Record<Preset, string> = { row: 'Side by side', column: 'Stacked', grid: 'Grid', main: 'One large + column', bottom: 'One on the bottom', top: 'One on the top' }
-const presetIcons: Record<Preset, MenuIcon> = { row: 'splitRight', column: 'splitDown', grid: 'splitGrid', main: 'splitMain', bottom: 'splitBottom', top: 'splitTop' }
-
-/** The items whose top bar carries the action bar, and so can show Code: all but a GitHub item. */

@@ -13,6 +13,7 @@ const at = (seconds: number) => new Date(now - seconds * 1000).toISOString()
 export const mockNativeChat: NativeChat = {
   id: 'chat-0001',
   agent: 'claude',
+  capabilities: { approvals: true, interrupt: true, liveModelSwitch: false, steer: false, structuredTools: true },
   model: 'claude-opus-5-5',
   cwd: '/Users/operator/Workspaces/canto',
   title: 'Tidy the onboarding steps',
@@ -164,6 +165,68 @@ export const mockCodexChatLines: ChatEventLine[] = ([
   },
 ] satisfies TranscriptEvent[]).map((event, index) => ({ cursor: String(index + 1), event: { ...event, id: `x${index + 1}` } }))
 
+// Not captured: the Grok (feat/chat-grok-acp) and agy (feat/chat-agy-stream-spike) chat lanes have not
+// landed; these follow their contract, capabilities included. Their own fixtures replace them when they merge.
+
+/** What Grok over ACP and agy following its terminal let a chat do. */
+export const grokCapabilities = { approvals: true, interrupt: true, liveModelSwitch: true, steer: false, structuredTools: true }
+export const agyCapabilities = { approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: false }
+
+/** A Grok chat whose tool calls ran and whose next one waits for approval. */
+export const mockGrokChat: NativeChat = {
+  ...mockNativeChat,
+  id: 'chat-0005',
+  agent: 'grok',
+  model: 'grok-4.7',
+  title: 'Fix the flaky upload test',
+  state: 'waiting-approval',
+  agentSessionId: 'grok-5f6a7b8c',
+  createdAt: at(600),
+  lastActivityAt: at(20),
+  contextTokens: 41_200,
+  contextWindow: 256_000,
+  capabilities: grokCapabilities,
+}
+
+export const mockGrokChatLines: ChatEventLine[] = ([
+  { id: '', at: at(120), kind: 'user', text: 'The upload test fails one run in five. Find out why and fix it.' },
+  { id: '', at: at(115), kind: 'thinking', text: 'A test that fails sometimes usually waits on time or shares state. I will read it first.' },
+  { id: '', at: at(110), kind: 'tool-call', text: 'read_file', tool: { name: 'read_file', input: JSON.stringify({ path: 'apps/web/src/upload/upload.test.ts' }) } },
+  { id: '', at: at(109), kind: 'tool-result', text: "test('uploads a file', async () => {\n  start(file)\n  await sleep(200)\n  expect(progress()).toBe(100)\n})", tool: { name: 'read_file', status: 'ok' } },
+  { id: '', at: at(100), kind: 'tool-call', text: 'grep', tool: { name: 'grep', input: JSON.stringify({ pattern: 'sleep\\(', path: 'apps/web/src/upload' }) } },
+  { id: '', at: at(99), kind: 'tool-result', text: 'apps/web/src/upload/upload.test.ts:14:  await sleep(200)', tool: { name: 'grep', status: 'ok' } },
+  { id: '', at: at(90), kind: 'assistant', text: 'The test sleeps **200 ms** and hopes the upload finished. I will wait for the progress event instead, then run the test twenty times to be sure.' },
+  { id: '', at: at(85), kind: 'tool-call', text: 'edit_file', tool: { name: 'edit_file', input: JSON.stringify({ path: 'apps/web/src/upload/upload.test.ts', old_string: '  await sleep(200)', new_string: "  await once(uploader, 'done')" }) } },
+  { id: '', at: at(84), kind: 'tool-result', text: 'Edited apps/web/src/upload/upload.test.ts', tool: { name: 'edit_file', status: 'ok' } },
+  { id: 'grok-approval', at: at(20), kind: 'approval', text: 'Run the upload test twenty times?' },
+] satisfies TranscriptEvent[]).map((event, index) => ({
+  cursor: String(index + 1),
+  event: { ...event, id: event.id === '' ? `g${index + 1}` : event.id },
+  ...(event.id === 'grok-approval' ? { approval: { id: 'ap-grok-1', tool: 'run_terminal_cmd', input: 'pnpm --filter web test upload --repeat 20', reason: 'Proves the fix holds across runs', decisions: ['allow', 'allow-session', 'deny'] } satisfies ChatApproval } : {}),
+}))
+
+/** An agy chat followed through its terminal: no approvals, no stop, no live model switch. */
+export const mockAgyChat: NativeChat = {
+  ...mockNativeChat,
+  id: 'chat-0006',
+  agent: 'agy',
+  model: 'gemini-3.8-flash',
+  title: 'Polish the seek bar',
+  state: 'working',
+  agentSessionId: 'agy-9d8e7f60',
+  createdAt: at(400),
+  lastActivityAt: at(3),
+  capabilities: agyCapabilities,
+}
+
+export const mockAgyChatLines: ChatEventLine[] = ([
+  { id: '', at: at(90), kind: 'user', text: 'Make the seek bar thumb larger on touch screens and keep it still while dragging.' },
+  { id: '', at: at(80), kind: 'assistant', text: 'Reading the player styles. The thumb is 12px everywhere; I will raise it to 20px under a coarse pointer and stop the hover transition while a drag runs.' },
+  { id: '', at: at(40), kind: 'assistant', text: 'Updated the thumb size and the drag state. Now checking the player in the other themes.' },
+] satisfies TranscriptEvent[]).map((event, index) => ({ cursor: String(index + 1), event: { ...event, id: `agy${index + 1}` } }))
+
+const agyQueued: ChatQueueItem = { id: 'q-agy-1', parts: [{ type: 'text', text: 'Also check the bar in the mini player.' }], createdAt: at(10), updatedAt: at(10) }
+
 type Task = NonNullable<TranscriptEvent['backgroundTask']>
 const task = (seconds: number, backgroundTask: Task): TranscriptEvent => ({ id: '', at: at(seconds), kind: 'background-task', text: backgroundTask.label, backgroundTask })
 const cut = (seconds: number, fields: Pick<TranscriptEvent, 'reason' | 'detail' | 'partial'>): TranscriptEvent => ({ id: '', at: at(seconds), kind: 'turn-cut', text: '', ...fields })
@@ -263,10 +326,15 @@ function mockChat(chatId: string): MockChat {
   const long = chatId === mockLongChat.id
   const cutTurns = chatId === mockCutChat.id
   const codex = chatId === mockCodexChat.id
-  const stored = long || cutTurns || codex
-  const lines = original ? mockChatLines.slice() : long ? mockLongChatLines.slice() : cutTurns ? mockCutChatLines.slice() : codex ? mockCodexChatLines.slice() : []
-  const record: NativeChat = original ? mockNativeChat : long ? mockLongChat : cutTurns ? mockCutChat : codex ? mockCodexChat : { ...mockNativeChat, id: chatId, title: null }
-  chat = { lines, followers: new Set(), state: original || stored ? 'idle' : 'starting', turnStartedAt: original || stored ? null : new Date().toISOString(), cancel: null, queue: [], held: false, owner: 'chat', record }
+  const grok = chatId === mockGrokChat.id
+  const agy = chatId === mockAgyChat.id
+  const stored = long || cutTurns || codex || grok || agy
+  const lines = original ? mockChatLines.slice() : long ? mockLongChatLines.slice() : cutTurns ? mockCutChatLines.slice() : codex ? mockCodexChatLines.slice() : grok ? mockGrokChatLines.slice() : agy ? mockAgyChatLines.slice() : []
+  const record: NativeChat = original ? mockNativeChat : long ? mockLongChat : cutTurns ? mockCutChat : codex ? mockCodexChat : grok ? mockGrokChat : agy ? mockAgyChat : { ...mockNativeChat, id: chatId, title: null }
+  // A stored chat comes back in the state its record says: idle, Grok waiting on its approval, agy mid-turn.
+  const state = original ? 'idle' : stored ? record.state : 'starting'
+  const turnStartedAt = state === 'starting' ? new Date().toISOString() : state === 'working' || state === 'waiting-approval' ? at(agy ? 60 : 25) : null
+  chat = { lines, followers: new Set(), state, turnStartedAt, cancel: null, queue: agy ? [agyQueued] : [], held: false, owner: 'chat', record }
   chats.set(chatId, chat)
   if (original) play(chatId, openingTurn)
   else if (stored) return chat

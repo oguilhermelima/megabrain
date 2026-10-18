@@ -246,7 +246,8 @@ export const queuedMessageSchema = z.looseObject({
 })
 
 // Native chats: conversations megabrain itself owns through each agent's protocol (Claude
-// stream-json, Codex app-server), kept alive by megabrain chatd while the app is closed.
+// stream-json, Codex app-server, Grok ACP, agy stream-json or its followed terminal), kept alive by
+// megabrain chatd while the app is closed.
 export const nativeChatStateSchema = z.enum(['starting', 'idle', 'working', 'waiting-approval', 'suspended', 'stopped', 'error'])
 export const nativeChatSchema = z.looseObject({
   id: z.string(),
@@ -263,6 +264,10 @@ export const nativeChatSchema = z.looseObject({
   }).optional(),
   /** The agent's own session or thread id, for resume. */
   agentSessionId: z.string().nullable(),
+  /** Controls which actions the native chat can offer for this agent. */
+  capabilities: z.looseObject({
+    approvals: z.boolean(), interrupt: z.boolean(), liveModelSwitch: z.boolean(), steer: z.boolean(), structuredTools: z.boolean(),
+  }).optional(),
   createdAt: z.string(),
   lastActivityAt: z.string().nullable(),
   error: z.string().nullable().optional(),

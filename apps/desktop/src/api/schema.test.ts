@@ -109,6 +109,20 @@ describe('native chat ownership', () => {
   })
 })
 
+describe('native chat capabilities', () => {
+  const base = { id: 'chat-1', agent: 'agy', model: null, cwd: '/tmp/project', title: null, state: 'idle', mode: 'chat', agentSessionId: null, createdAt: '2026-10-17T00:00:00Z', lastActivityAt: null }
+
+  test('Grok and agy chats parse, with what each can do', () => {
+    const capabilities = { approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true }
+    expect(nativeChatSchema.parse({ ...base, capabilities }).capabilities).toEqual(capabilities)
+    expect(nativeChatSchema.parse({ ...base, agent: 'grok' }).agent).toBe('grok')
+  })
+
+  test('a record from a daemon that does not report capabilities still parses, without them', () => {
+    expect(nativeChatSchema.parse(base).capabilities).toBeUndefined()
+  })
+})
+
 // The staged sidecar is the CLI the app ships. Run it against throwaway state and HOME so a change in
 // its JSON shows up here instead of as a blank panel. Stage it with `bun run stage-cli`.
 describe('the staged CLI still speaks the schemas', () => {

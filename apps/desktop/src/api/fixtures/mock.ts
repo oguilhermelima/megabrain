@@ -13,7 +13,7 @@ export const mockInstallPlan: InstallPlan = {
   agents: [
     { agent: 'claude', label: 'Claude Code', installed: true, configDir: `${home}/.claude` },
     { agent: 'codex', label: 'Codex', installed: true, configDir: `${home}/.codex` },
-    { agent: 'agy', label: 'Antigravity (agy)', installed: false, configDir: `${home}/.gemini/config` },
+    { agent: 'agy', label: 'Antigravity (agy)', installed: true, configDir: `${home}/.gemini/config` },
     { agent: 'grok', label: 'Grok', installed: true, configDir: `${home}/.grok` },
   ],
   modules: [

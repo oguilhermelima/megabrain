@@ -39,4 +39,3 @@ export function useConversationSearch({
   }
   return { search, marked, closeSearch }
 }
-

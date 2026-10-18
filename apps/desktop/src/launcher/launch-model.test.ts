@@ -103,18 +103,18 @@ describe('launchPlan', () => {
     expect(launchPlan('terminal', { ...base, parts: [] })).toEqual({ kind: 'terminal', engine: 'native', cwd: '/work/repo', firstInput: null })
   })
 
-  test('Grok and agy run their own TUI on the tmux engine whatever settings say', () => {
-    expect(launchPlan('grok', base)).toEqual({ kind: 'agent-terminal', agent: 'grok', engine: 'tmux', cwd: '/work/repo', model: 'opus', effort: 'high', firstInput: 'fix the build' })
-    expect(launchPlan('agy', { ...base, engine: 'native', model: null, effort: null })).toMatchObject({ kind: 'agent-terminal', agent: 'agy', engine: 'tmux', model: null, effort: null })
+  test('Grok and agy start a native chat too, with the parts, model and effort', () => {
+    expect(launchPlan('grok', base)).toEqual({ kind: 'chat', agent: 'grok', cwd: '/work/repo', model: 'opus', effort: 'high', parts: text('fix the build') })
+    expect(launchPlan('agy', { ...base, engine: 'tmux', model: null, effort: null })).toEqual({ kind: 'chat', agent: 'agy', cwd: '/work/repo', model: null, effort: null, parts: text('fix the build') })
   })
 
   test('a terminal only takes text: each image becomes its path on a line of its own', () => {
-    const plan = launchPlan('grok', { ...base, parts: [...text('look at '), { type: 'image', path: '/tmp/shot.png' }] })
+    const plan = launchPlan('terminal', { ...base, parts: [...text('look at '), { type: 'image', path: '/tmp/shot.png' }] })
     expect(plan).toMatchObject({ firstInput: 'look at\n/tmp/shot.png' })
   })
 
   test('blank text is no first input', () => {
-    expect(launchPlan('agy', { ...base, parts: text('   ') })).toMatchObject({ firstInput: null })
+    expect(launchPlan('terminal', { ...base, parts: text('   ') })).toMatchObject({ firstInput: null })
   })
 })
 

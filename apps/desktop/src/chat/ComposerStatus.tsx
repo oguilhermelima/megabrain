@@ -392,41 +392,42 @@ function PickerSkeleton() {
 
 type Open = AnchorRect | null
 
-function Trigger({ ref, agent, label, title, open, onToggle }: { ref: RefObject<HTMLButtonElement | null>; agent: string | null; label: string; title: string; open: boolean; onToggle: (anchor: AnchorRect) => void }) {
+function Trigger({ ref, agent, label, title, locked, open, onToggle }: { ref: RefObject<HTMLButtonElement | null>; agent: string | null; label: string; title: string; locked: boolean; open: boolean; onToggle: (anchor: AnchorRect) => void }) {
   return (
-    <Tooltip text={title}>
-      {(tip) => (
-        <button
-          {...tip}
-          ref={ref}
-          type="button"
-          onMouseDown={(event) => {
-            // Keeps the caret in the box and lets a second click close the open menu.
-            event.preventDefault()
-            event.stopPropagation()
-          }}
-          onClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect()
-            onToggle({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })
-          }}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label={`Model: ${label}`}
-          className="flex h-8 min-w-0 shrink items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] pr-2.5 pl-3 text-[12.5px] @max-[480px]/composer:gap-1.5 @max-[480px]/composer:pr-2 @max-[480px]/composer:pl-2.5 text-ink-200 transition-colors duration-100 hover:border-white/[0.14] hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 aria-expanded:border-white/[0.14] aria-expanded:bg-white/[0.09] aria-expanded:text-ink-100 motion-reduce:transition-none"
-        >
-          {agent !== null && (
-            <span aria-hidden="true" className="contents text-ink-400">
-              <AgentIcon agent={agent} size={14} />
-            </span>
-          )}
-          {/* In a narrow pane only the agent's mark shows, the name in the tooltip, rather than a cut-off word. */}
-          <span className={`min-w-0 truncate ${agent === null ? '' : '@max-[480px]/composer:hidden'}`}>{label}</span>
-          <svg viewBox="0 0 16 16" className="size-3.5 shrink-0 text-ink-400" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
-          </svg>
-        </button>
+    <button
+      ref={ref}
+      type="button"
+      title={title}
+      aria-disabled={locked || undefined}
+      onMouseDown={(event) => {
+        // Keeps the caret in the box and lets a second click close the open menu.
+        event.preventDefault()
+        event.stopPropagation()
+      }}
+      onClick={(event) => {
+        // Locked, the pill only says which model runs; its tooltip says why it does not open.
+        if (locked) return
+        const rect = event.currentTarget.getBoundingClientRect()
+        onToggle({ left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom })
+      }}
+      aria-haspopup={locked ? undefined : 'menu'}
+      aria-expanded={locked ? undefined : open}
+      aria-label={`Model: ${label}`}
+      className="flex h-8 min-w-0 shrink items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] pr-2.5 pl-3 text-[12.5px] @max-[480px]/composer:gap-1.5 @max-[480px]/composer:pr-2 @max-[480px]/composer:pl-2.5 text-ink-200 transition-colors duration-100 hover:border-white/[0.14] hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 aria-disabled:cursor-not-allowed aria-disabled:opacity-60 aria-disabled:hover:border-white/[0.08] aria-disabled:hover:bg-white/[0.03] aria-disabled:hover:text-ink-200 aria-expanded:border-white/[0.14] aria-expanded:bg-white/[0.09] aria-expanded:text-ink-100 motion-reduce:transition-none"
+    >
+      {agent !== null && (
+        <span aria-hidden="true" className="contents text-ink-400">
+          <AgentIcon agent={agent} size={14} />
+        </span>
       )}
-    </Tooltip>
+      {/* In a narrow pane only the agent's mark shows, the name in the tooltip, rather than a cut-off word. */}
+      <span className={`min-w-0 truncate ${agent === null ? '' : '@max-[480px]/composer:hidden'}`}>{label}</span>
+      {!locked && (
+        <svg viewBox="0 0 16 16" className="size-3.5 shrink-0 text-ink-400" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
+        </svg>
+      )}
+    </button>
   )
 }
 
@@ -441,6 +442,7 @@ export function ComposerStatus({
   model,
   effort,
   canSetEffort,
+  modelLock = null,
   onPickModel,
 }: {
   agent: string | null
@@ -448,6 +450,8 @@ export function ComposerStatus({
   model: string | null
   effort: string | undefined
   canSetEffort: boolean
+  /** Why the picker cannot switch the chat; set, it shows the model with the reason and does not open. */
+  modelLock?: string | null
   onPickModel: (pick: ModelPick) => void
 }) {
   const { settings } = useSettings()
@@ -472,7 +476,7 @@ export function ComposerStatus({
   return (
     <div aria-busy={loading} className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
       {loading && <PickerSkeleton />}
-      {models.length > 0 && <Trigger ref={trigger} agent={agent} label={label} title={known ? `${label}: ${model}${size?.derived === true ? ' (window from the model)' : ''}` : `${label}: the agent picks its default model`} open={open !== null} onToggle={(anchor) => setOpen((current) => (current === null ? anchor : null))} />}
+      {models.length > 0 && <Trigger ref={trigger} agent={agent} label={label} title={modelLock ?? (known ? `${label}: ${model}${size?.derived === true ? ' (window from the model)' : ''}` : `${label}: the agent picks its default model`)} locked={modelLock !== null} open={open !== null} onToggle={(anchor) => setOpen((current) => (current === null ? anchor : null))} />}
       <ContextGauge meter={meter} />
       {menu.shown !== null && (
         <ModelMenu

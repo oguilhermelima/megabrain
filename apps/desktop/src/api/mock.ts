@@ -1,8 +1,8 @@
-import { answerMockApproval, changeMockQueue, editLastMockChat, followMockChat, forkMockChat, interruptMockChat, mockCodexChat, mockCutChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat, setMockChatMode, takeOverMockChat } from '@/api/fixtures/chat'
+import { answerMockApproval, changeMockQueue, editLastMockChat, followMockChat, forkMockChat, grokCapabilities, interruptMockChat, mockAgyChat, mockCodexChat, mockCutChat, mockGrokChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat, setMockChatMode, takeOverMockChat } from '@/api/fixtures/chat'
 import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/api/fixtures/chat-artifacts'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
-import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep } from '@/api/schema'
+import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep, NativeChat } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockNewFileDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { createMockMaestroApi } from '@/api/fixtures/maestro'
@@ -21,6 +21,11 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const isNew = (changes: readonly CodeChange[], path: string) => changes.some((change) => change.path === path && (change.status === 'added' || change.status === 'untracked'))
 
 // Runs the UI in a plain browser (`bun run dev`) with fixed data and believable timing.
+const mockChats: NativeChat[] = [mockNativeChat, mockLongChat, mockCutChat, mockCodexChat, mockGrokChat, mockAgyChat]
+
+/** The agent's own TUI on the chat's session, the way each agent resumes one. */
+const mockResumeCommand = (chat: NativeChat) => (chat.agent === 'codex' ? ['codex', 'resume', chat.agentSessionId ?? ''] : [chat.agent, '--resume', chat.agentSessionId ?? ''])
+
 export function createMockApi(): DesktopApi {
   let link: PathLink = {
     linkPath: '/Users/operator/.local/bin/megabrain',
@@ -380,8 +385,20 @@ export function createMockApi(): DesktopApi {
     codeDiff: async (_root, path) => ({ ...(isNew(mockCodeChanges, path) ? mockNewFileDiff : mockCodeDiff), path }),
     codeBranchChanges: async () => mockBranchChanges,
     codeBranchDiff: async (_root, _mergeBase, path) => ({ ...(isNew(mockBranchChanges.changes, path) ? mockNewFileDiff : mockCodeDiff), path }),
-    chats: async () => [mockNativeChat, mockLongChat, mockCutChat, mockCodexChat],
-    startChat: async ({ agent, model, cwd }) => ({ ...mockNativeChat, id: `chat-${Date.now()}`, agent, model: model ?? null, cwd, title: null, state: 'starting' }),
+    chats: async () => mockChats,
+    startChat: async ({ agent, model, cwd }) => {
+      if (agent === 'agy') throw new CliError('agy chats are not available yet', 1)
+      return {
+        ...mockNativeChat,
+        id: `chat-${Date.now()}`,
+        agent,
+        model: model ?? null,
+        cwd,
+        title: null,
+        state: 'starting',
+        ...(agent === 'grok' ? { capabilities: grokCapabilities } : { capabilities: mockNativeChat.capabilities }),
+      }
+    },
     sendChat: async (chatId, parts) => {
       await wait(250)
       const sent = sendMockChat(chatId, parts)
@@ -444,16 +461,19 @@ export function createMockApi(): DesktopApi {
       if (found === null) throw new CliError(revision === undefined ? `unknown artifact: ${artifactId}` : `unknown revision ${revision} of ${artifactId}`, 1)
       return found
     },
-    setChatMode: async (chatId, mode) => ({
-      chat: setMockChatMode(chatId, mode),
-      terminal: mode === 'terminal' ? { id: 'term-mock', engine: 'native', cwd: mockNativeChat.cwd, title: 'claude', tmuxSession: null } : null,
-      command: mode === 'terminal' ? ['claude', '--resume', mockNativeChat.agentSessionId ?? ''] : null,
-    }),
+    setChatMode: async (chatId, mode) => {
+      const chat = setMockChatMode(chatId, mode)
+      return {
+        chat,
+        terminal: mode === 'terminal' ? { id: 'term-mock', engine: 'native', cwd: chat.cwd, title: chat.agent, tmuxSession: null } : null,
+        command: mode === 'terminal' ? mockResumeCommand(chat) : null,
+      }
+    },
     takeOverChat: async (chatId) => {
       await wait(300)
       return takeOverMockChat(chatId)
     },
-    chatTerminalCommand: async () => ['claude', '--resume', mockNativeChat.agentSessionId ?? ''],
+    chatTerminalCommand: async (chatId) => mockResumeCommand(mockChats.find((chat) => chat.id === chatId) ?? mockNativeChat),
     agentDefaults: async () => ({
       agents: [
         { agent: 'claude', model: 'opus', effort: 'high' },

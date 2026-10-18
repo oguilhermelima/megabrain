@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from ".././store.js";
 import { chatProtocolAdapters, type MessagePart } from ".././protocol.js";
-import { discoverSessionId, parseClaudeLog, parseCodexRollout, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
+import { discoverSessionId, parseClaudeLog, parseCodexRollout, parseGrokLog, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from ".././subagents.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { KnowledgePipeline } from "../../knowledge/pipeline.js";
@@ -47,7 +47,7 @@ export async function remove(daemon: ChatDaemon, id: string): Promise<{ removed:
     daemon.stopArtifactWatch(id);
     daemon.terminalFileWatches.get(id)?.close();
     daemon.terminalFileWatches.delete(id);
-    for (const map of [daemon.queues, daemon.queued, daemon.queueWrites, daemon.drainChains, daemon.activeTurns, daemon.eventChains, daemon.appendChains, daemon.publishedState, daemon.turnStarted, daemon.currentMessage, daemon.claudeTokens, daemon.codexTokenBase, daemon.toolNames, daemon.backgroundTaskIds, daemon.backgroundTasks, daemon.subagents, daemon.subscribers]) map.delete(id);
+    for (const map of [daemon.queues, daemon.queued, daemon.queueWrites, daemon.drainChains, daemon.activeTurns, daemon.eventChains, daemon.appendChains, daemon.publishedState, daemon.turnStarted, daemon.currentMessage, daemon.claudeTokens, daemon.codexTokenBase, daemon.grokMessages, daemon.toolNames, daemon.backgroundTaskIds, daemon.backgroundTasks, daemon.subagents, daemon.subscribers]) map.delete(id);
     daemon.queueHeld.delete(id);
     daemon.interrupting.delete(id);
     daemon.interruptedEvents.delete(id);
@@ -156,7 +156,7 @@ export async function importTerminalTurns(daemon: ChatDaemon, chat: Chat, markIn
     const known = new Set(existing.flatMap((item) => item.sourceId === undefined ? [] : [item.sourceId]));
     const shownMessageIds = new Set(existing.flatMap((item) => item.messageId === undefined ? [] : [item.messageId]));
     const since = chat.terminalSince ?? "";
-    const path = await sessionLogPath(chat, daemon.environment.HOME ?? homedir());
+    const path = await sessionLogPath(chat, daemon.environment.HOME ?? homedir(), daemon.environment.GROK_HOME);
     let turns: import(".././session-log.js").LoggedTurn[] = [];
     let byteOffset = 0;
     if (path !== null) {
@@ -166,7 +166,7 @@ export async function importTerminalTurns(daemon: ChatDaemon, chat: Chat, markIn
         const cursorOffset = chat.terminalLogCursor?.byteOffset ?? 0;
         const offset = cursorOffset <= completeEnd ? cursorOffset : 0;
         const tail = bytes.subarray(offset, completeEnd).toString("utf8");
-        turns = chat.agent === "claude" ? parseClaudeLog(tail) : parseCodexRollout(tail);
+        turns = chat.agent === "claude" ? parseClaudeLog(tail) : chat.agent === "grok" ? parseGrokLog(tail) : parseCodexRollout(tail);
         byteOffset = completeEnd;
       } catch { /* a missing or mid-write session file is retried on the next watch or poll */ }
     }
@@ -205,7 +205,7 @@ export async function importTerminalTurns(daemon: ChatDaemon, chat: Chat, markIn
   }
 
 export async function logTurnOpen(daemon: ChatDaemon, chat: Chat): Promise<boolean> {
-    const path = await sessionLogPath(chat, daemon.environment.HOME ?? homedir());
+    const path = await sessionLogPath(chat, daemon.environment.HOME ?? homedir(), daemon.environment.GROK_HOME);
     if (path === null) return false;
     try { return sessionTurnOpen(chat.agent, await readFile(path, "utf8")); } catch { return false; }
   }
@@ -301,7 +301,7 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
       const terminalSelected = listed.mode === "terminal";
       const terminalOwns = listed.owner === "terminal" || (listed.owner === undefined && terminalSelected);
       if (!terminalSelected && !terminalOwns || listed.agentSessionId === null) continue;
-      const path = await sessionLogPath(listed, daemon.environment.HOME ?? homedir());
+      const path = await sessionLogPath(listed, daemon.environment.HOME ?? homedir(), daemon.environment.GROK_HOME);
       let content: string;
       let key: string;
       let logExists = false;

@@ -49,7 +49,7 @@ export async function send(daemon: ChatDaemon, id: string, inputParts: Part[], f
     const holders = await daemon.foreignHolders(chat);
     const terminalOwns = holders.some((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
     if (terminalOwns && await daemon.logTurnOpen(chat)) {
-      const turns = await readSessionTurns(chat, daemon.environment.HOME ?? process.env.HOME ?? "");
+      const turns = await readSessionTurns(chat, daemon.environment.HOME ?? process.env.HOME ?? "", daemon.environment.GROK_HOME);
       let lastUser = -1;
       for (let index = 0; index < turns.length; index += 1) if (turns[index]?.kind === "user") lastUser = index;
       const toolIsRunning = turns.slice(lastUser + 1).some((turn) => turn.kind === "tool-call") || turns.slice(lastUser + 1).some((turn) => turn.kind === "tool-result");

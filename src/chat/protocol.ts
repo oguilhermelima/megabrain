@@ -1,4 +1,4 @@
-import { chmod, writeFile } from "node:fs/promises";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Chat } from "./store.js";
@@ -95,8 +95,38 @@ const codex: ChatProtocolAdapter = {
   },
 };
 
+const grok: ChatProtocolAdapter = {
+  async prepare() { return { command: "grok", args: ["agent", "stdio"] }; },
+  async send(chat, _child, parts, request) {
+    const prompt = await Promise.all(parts.map(async (part) => {
+      if (part.type === "text") return { type: "text", text: part.text };
+      const bytes = await readFile(part.path);
+      if (bytes.length > 5 * 1024 * 1024) throw new Error(`image exceeds 5 MiB: ${part.path}`);
+      const extension = part.path.toLowerCase().split(".").at(-1);
+      const mimeType = extension === "jpg" || extension === "jpeg" ? "image/jpeg" : extension === "gif" ? "image/gif" : extension === "webp" ? "image/webp" : extension === "png" ? "image/png" : undefined;
+      if (!mimeType) throw new Error(`unsupported image type: ${part.path}`);
+      return { type: "image", data: bytes.toString("base64"), mimeType };
+    }));
+    await request("session/prompt", { sessionId: chat.agentSessionId, prompt });
+    return undefined;
+  },
+  async steer() { throw new Error("Grok does not support steering a running turn"); },
+  async interrupt(chat, _child, _turnId, request) {
+    if (chat.agentSessionId) await request("session/cancel", { sessionId: chat.agentSessionId });
+  },
+  terminalCommand(chat) { return ["grok", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : [])]; },
+};
+
+const agyUnavailable: ChatProtocolAdapter = {
+  async prepare() { throw new Error("agy chats are not available yet"); },
+  async send() { throw new Error("agy chats are not available yet"); },
+  async steer() { throw new Error("agy chats are not available yet"); },
+  async interrupt() { throw new Error("agy chats are not available yet"); },
+  terminalCommand() { return ["agy"]; },
+};
+
 function codexInput(parts: MessagePart[]): unknown[] {
   return parts.map((part) => part.type === "text" ? { type: "text", text: part.text } : { type: "localImage", path: part.path });
 }
 
-export const chatProtocolAdapters: Readonly<Record<Chat["agent"], ChatProtocolAdapter>> = { claude, codex };
+export const chatProtocolAdapters: Readonly<Record<Chat["agent"], ChatProtocolAdapter>> = { claude, codex, grok, agy: agyUnavailable };

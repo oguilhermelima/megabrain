@@ -8,10 +8,10 @@ import { readAppPanes, readProcessTable, type ProcessTable } from "./session-ori
 
 export type SessionHolder = Readonly<{ pid: number; tmuxSession: string | null; cwd: string | null }>;
 
-const AGENTS = new Set(["claude", "codex"]);
+const AGENTS = new Set(["claude", "codex", "grok"]);
 const RUNTIMES = new Set(["node", "bun"]);
 
-/** The session an agent's command line resumes: `claude --resume <id>`, `codex resume <id>`, run directly or by node. */
+/** The session an agent's command line resumes: `claude --resume <id>`, `grok --resume <id>`, `codex resume <id>`, run directly or by node. */
 export function resumedSessionOf(command: string): Readonly<{ agent: string; id: string }> | null {
   const words = command.split(/\s+/).filter((word) => word !== "");
   const program = RUNTIMES.has(basename(words[0] ?? "")) ? 1 : 0;

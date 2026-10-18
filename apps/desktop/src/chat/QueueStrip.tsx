@@ -10,8 +10,9 @@ export interface QueueControls {
   edit: (itemId: string, parts: ChatQueueItem['parts']) => Promise<'saved' | 'taken'>
   move: (itemId: string, to: number) => Promise<void>
   remove: (itemId: string) => Promise<void>
-  sendNow: (itemId: string) => void
-  /** Set while a Codex turn runs: puts the message into that turn instead of waiting for it to end. */
+  /** Absent while a turn runs on an agent that cannot be interrupted, since sending now stops that turn first. */
+  sendNow?: (itemId: string) => void
+  /** Set while a turn runs on an agent that takes steering (Codex): puts the message into that turn instead of waiting for it to end. */
   steer?: (itemId: string) => Promise<void>
 }
 
@@ -145,10 +146,10 @@ export function QueueStrip({ queue, editing, onEdit }: { queue: QueueControls; e
                 )}
               </Tooltip>
             )}
-            {index === 0 && (
+            {index === 0 && queue.sendNow !== undefined && (
               <Tooltip text="Stop the running turn and send this message now">
                 {(tip) => (
-                  <button type="button" {...tip} onClick={() => queue.sendNow(item.id)} className={textButton}>
+                  <button type="button" {...tip} onClick={() => queue.sendNow?.(item.id)} className={textButton}>
                     Send now
                   </button>
                 )}
