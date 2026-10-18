@@ -36,5 +36,4 @@ export const claude: Agent = {
     return { kind: "ok", value: parts.join(" ") };
   },
   submitKey: () => ok("Enter"),
-  interruptKey: () => ok("Escape"),
 };

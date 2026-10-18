@@ -103,7 +103,8 @@ describe("agent registry", () => {
     expect(interruptKey("claude")).toEqual({ kind: "ok", value: "Escape" });
     expect(interruptKey("codex")).toEqual({ kind: "ok", value: "Escape" });
     expect(submitKey("agy")).toEqual({ kind: "ok", value: "Enter" });
-    expect(interruptKey("agy")).toEqual({ kind: "ok", value: "Escape" });
+    expect(interruptKey("grok")).toEqual({ kind: "ok", value: "C-c" });
+    expect(interruptKey("agy").kind).toBe("unknown");
   });
 
   test("an unknown agent key is unknown rather than Enter", () => {

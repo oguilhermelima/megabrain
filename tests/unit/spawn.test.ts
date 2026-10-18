@@ -1136,7 +1136,7 @@ describe("executeSpawn", () => {
         ...environment(root, dispatchId),
         MEGABRAIN_SESSION_HOST: "orca",
       }, process, options(worktree("existing")));
-      expect(result).toEqual({ kind: "failed", error: "prompt-transport-failed: orca terminal send --terminal child-terminal: prompt rejected", exitCode: 1 });
+      expect(result).toEqual({ kind: "failed", error: "prompt-transport-failed: orca terminal send: prompt rejected", exitCode: 1 });
       if (result.kind === "failed") expect(result.error).not.toContain(prompt);
     } finally {
       await rm(root, { recursive: true, force: true });

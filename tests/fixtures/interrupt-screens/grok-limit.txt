@@ -1,0 +1,6 @@
+❯ Run sleep 60 in the foreground, then report done.
+┃ You hit your weekly limit.
+┃ 1 (○) Upgrade tier
+┃ 2 (○) Buy more credits
+┃ 3 (○) Try Again
+Tab:next answer │ Esc:scrollback

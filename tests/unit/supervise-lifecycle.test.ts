@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { executeSupervisorWorker, superviseOnce } from "../../src/cli/commands/supervise.js";
-import { appendMessage, createDispatch, enqueueOutbox, listDeliveries, listMessages, listOutbox } from "../../src/adapters/state-db.js";
+import { appendMessage, createDelivery, createDispatch, enqueueOutbox, listDeliveries, listMessages, listOutbox } from "../../src/adapters/state-db.js";
 import { failed, ok } from "../../src/core/result.js";
 import { openDatabase } from "../../src/db/db.js";
 import { listLeases } from "../../src/adapters/state-db.js";
@@ -159,7 +159,7 @@ describe("supervisor lifecycle decisions", () => {
 });
 
 describe("supervisor queued child answers", () => {
-  test("delivers a queued reply after the child is observed idle", async () => {
+  test("delivers a queued reply while the child is busy at an empty composer", async () => {
     const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-answer-`);
     const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
     const opened = openDatabase(environment);
@@ -167,6 +167,7 @@ describe("supervisor queued child answers", () => {
     const meta = {
       dispatchId: "idle-answer", state: "running", processState: "running", runtime: "host",
       childHost: "orca", workspaceId: null, terminalId: "child-terminal", agent: "codex",
+      agentPid: 123,
       promptReceipt: "received", promptState: "confirmed", promptTransport: "delivered",
       parentHost: "local", parentSessionId: "parent", terminalState: "owned",
     };
@@ -195,8 +196,10 @@ describe("supervisor queued child answers", () => {
     process = {
       async run(command: string, args: readonly string[]) {
         calls.push(`${command} ${args.join(" ")}`);
+        if (command === "ps" && args[0] === "-p") return ok({ stdout: "123\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "-ww") return ok({ stdout: "123 123 123 /usr/local/bin/codex agent\n", stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal" }] } }), stderr: "", exitCode: 0 });
-        if (command === "orca" && args[1] === "read") return ok({ stdout: JSON.stringify({ result: { terminal: { tail: ["› Ask Codex to do anything"] } } }), stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "read") return ok({ stdout: JSON.stringify({ result: { terminal: { tail: ["Working (1s)", "esc to interrupt", "› Ask Codex to do anything"] } } }), stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       },
       async startDetached(command: string, args: readonly string[]) {
@@ -215,6 +218,31 @@ describe("supervisor queued child answers", () => {
       expect(deliveries).toMatchObject({ kind: "ok", value: [{ transport: "typed" }] });
     } finally {
       registerHost(original);
+      opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("closed parent delivery backlog", () => {
+  test("settles old parent notices as superseded when supervision starts", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-closed-mail-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const meta = { dispatchId: "closed-mail", state: "closed", agent: "codex", parentHost: "local", parentSessionId: "parent" };
+    const created = createDispatch(opened.value, meta);
+    if (created.kind !== "ok") throw new Error(created.error);
+    const delivery = createDelivery(opened.value, { id: "closed-mail-delivery", dispatchId: "closed-mail", messageSeqs: [1], recipient: "parent", status: "outstanding" });
+    if (delivery.kind !== "ok") throw new Error(delivery.error);
+    const outbox = enqueueOutbox(opened.value.db, { id: "closed-mail-outbox", dispatchId: "closed-mail", targetKind: "parent-pointer", target: "parent", payload: { dispatchId: "closed-mail", sequence: 1 } });
+    if (outbox.kind !== "ok") throw new Error(outbox.error);
+    const process: ProcessAdapter = { async run() { return failed("not used"); }, async startDetached() { return failed("not used"); }, invocationCount() { return 0; } };
+    try {
+      await superviseOnce(directory, opened.value, environment, process, Date.now());
+      expect(listOutbox(opened.value)).toMatchObject({ kind: "ok", value: [{ id: "closed-mail-outbox", status: "suppressed" }] });
+      expect(listDeliveries(opened.value, "closed-mail")).toMatchObject({ kind: "ok", value: [{ status: "superseded" }] });
+    } finally {
       opened.value.close();
       await rm(directory, { recursive: true, force: true });
     }

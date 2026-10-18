@@ -1,0 +1,5 @@
+› Run sleep 60 in the foreground, then report done.
+• Vou executar sleep 60 em primeiro plano e volto quando terminar.
+• Working (19s • esc to interrupt) · 1 background terminal running
+› Ask Codex to do anything
+GPT-6-Luna medium · Context 100% left

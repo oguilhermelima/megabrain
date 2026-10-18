@@ -8,7 +8,7 @@ import { getHost, type HostCommand } from "../../hosts/index.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
 import { cleanTranscript } from "../../core/dispatch-read.js";
-import { stateDatabase, getDispatch, listDispatches, mutateDispatch, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, transcriptPath } from "../../adapters/state-db.js";
+import { acknowledgeImplicitDelivery, stateDatabase, getDispatch, listDeliveries, listDispatches, mutateDispatch, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, transcriptPath } from "../../adapters/state-db.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { ownedGrokLeaders, stopGrokLeader, sweepGrokLeaders } from "../../agents/grok-leader.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -187,6 +187,10 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   };
   const updated = mutateDispatch(database.value, dispatchId, () => next);
   if (updated.kind !== "ok") return updated;
+  const deliveries = listDeliveries(database.value, dispatchId);
+  if (deliveries.kind === "ok") for (const delivery of deliveries.value) {
+    if (delivery.recipient === "parent") acknowledgeImplicitDelivery(database.value, dispatchId, delivery.id, "parent", now);
+  }
   // The agy language server token dies with that agy; keeping it would only leave a secret behind.
   await forgetAgyLanguageServer(resolveStateDirectory(environment), dispatchId);
   await forgetAgyLanguageServer(resolveStateDirectory(environment), agyParentKey(dispatchId));

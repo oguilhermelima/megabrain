@@ -37,6 +37,4 @@ export const grok: Agent = {
     return { kind: "ok", value: parts.join(" ") };
   },
   submitKey: () => ok("Enter"),
-  // Escape only leaves the scrollback; Ctrl+C is what cancels a running turn (measured).
-  interruptKey: () => ok("C-c"),
 };

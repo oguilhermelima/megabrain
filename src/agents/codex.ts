@@ -40,5 +40,4 @@ export const codex: Agent = {
     return { kind: "ok", value: parts.join(" ") };
   },
   submitKey: () => ok("Tab"),
-  interruptKey: () => ok("Escape"),
 };

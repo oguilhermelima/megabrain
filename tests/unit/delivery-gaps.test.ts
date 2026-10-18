@@ -72,6 +72,7 @@ describe("Grok's boxed composer", () => {
     const sends: string[] = [];
     const process: ProcessAdapter = {
       async run(command, args) {
+        if (command === "ps" && args[0] === "-ww") return ok<ProcessOutput>({ stdout: "1 1 1 /usr/local/bin/grok agent\n", stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ terminals: [{ handle: "child-terminal" }] }), stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "read") return ok<ProcessOutput>({ stdout: JSON.stringify(screen), stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "send") { sends.push(args.join(" ")); return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 }); }
@@ -156,5 +157,36 @@ describe("orphaned Grok leaders", () => {
     expect(result.kind).toBe("ok");
     expect(calls).toContain("kill 1002");
     expect(existsSync(orphan)).toBe(false);
+  });
+});
+
+describe("parent pointer recovery", () => {
+  test("supervision restarts a pending ask for a Claude parent", async () => {
+    const root = await tempRoot();
+    const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    const meta = {
+      agent: "codex", agentPid: 1001, runtime: "host", childHost: "local", terminalId: "child-terminal",
+      parentAgent: "claude", parentAgentPid: 2002, parentAgentSessionId: "claude-parent-session",
+      parentHost: "orca", parentSessionId: "claude:parent-session", parentTerminalId: "parent-terminal",
+    };
+    createDispatch(db.value, { dispatchId: "d-parent-ask", state: "running", ...meta });
+    appendMessage(db.value, "d-parent-ask", { from: "child", type: "ask", text: "Need a decision" }, {
+      delivery: { id: "dl-parent-ask", recipient: "parent", status: "outstanding" },
+      outbox: {
+        id: "ob-parent-ask", targetKind: "parent-pointer", target: "orca:parent-terminal",
+        payload: { dispatchId: "d-parent-ask", targetKind: "parent-pointer", sequence: 1, meta, fullMessage: "❓ Need a decision" },
+      },
+    });
+    const starts: string[][] = [];
+    const process: ProcessAdapter = {
+      async run(command, args) { return failed(`unexpected ${command} ${args.join(" ")}`); },
+      async startDetached(_command, args) { starts.push([...args]); return ok({ pid: 3003 }); },
+      invocationCount() { return 0; },
+    };
+
+    await superviseOnce(root, db.value, { HOME: root, MEGABRAIN_STATE_DIR: root }, process, Date.now());
+
+    expect(starts.some((args) => args.includes("__delivery-worker") && args.includes("ob-parent-ask"))).toBe(true);
   });
 });

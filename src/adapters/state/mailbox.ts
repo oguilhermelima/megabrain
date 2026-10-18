@@ -17,15 +17,13 @@ export type AppendMessageEffects = Readonly<{ delivery?: DeliveryInput; outbox?:
 export type AppendMessageOptions = AppendMessageEffects & Readonly<{ derive?: (previous: readonly MessageRecord[]) => AppendMessageEffects }>;
 export type AppendParentReplyOptions = Readonly<{ supersede: boolean; outbox?: OutboxInput }>;
 
-function acknowledgeShownChildMail(db: DatabaseAdapter, dispatchId: string, reportType: string, now: string): void {
-  if (!["ask", "done", "stalled"].includes(reportType)) return;
-  for (const delivery of queryDeliveries(db, dispatchId)) {
-    if (delivery.recipient !== "child" || (delivery.status !== "outstanding" && delivery.status !== "superseded")) continue;
-    const transport = String(delivery.transport ?? "");
-    const readInFull = transport === "checked" || ((transport === "queue" || transport === "typed") && delivery.transportReason === "full-direction");
-    if (!readInFull) continue;
-    db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, now, delivery.id]);
-  }
+export function acknowledgeImplicitDelivery(handle: DatabaseHandle, dispatchId: string, deliveryId: string, recipient: "child" | "parent", now = new Date().toISOString()): Result<boolean> {
+  return write(handle, ({ db }) => {
+    const delivery = queryDeliveries(db, dispatchId).find((item) => item.id === deliveryId);
+    if (delivery === undefined || delivery.recipient !== recipient || !["outstanding", "superseded"].includes(delivery.status)) return false;
+    db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, now, deliveryId]);
+    return true;
+  });
 }
 
 function findMessageByKey(db: DatabaseAdapter, key: string): MessageRecord | undefined {
@@ -38,7 +36,7 @@ function nextMessageSequence(db: DatabaseAdapter, dispatchId: string): number {
 }
 
 export function appendMessage(handle: DatabaseHandle, dispatchId: string, message: Readonly<Record<string, unknown>>, options: AppendMessageOptions = {}): Result<MessageRecord> {
-  return write(handle, ({ db }) => {
+  const appended = write(handle, ({ db }) => {
     const key = typeof message.idempotencyKey === "string" && message.idempotencyKey !== "" ? message.idempotencyKey : undefined;
     if (key !== undefined) {
       const existing = findMessageByKey(db, key);
@@ -65,9 +63,18 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
       });
     }
     if (outbox !== undefined) enqueueOutboxValue(db, { ...outbox, dispatchId }, new Date().toISOString());
-    if (message.from === "child") acknowledgeShownChildMail(db, dispatchId, String(message.type ?? ""), String(assigned.createdAt));
     return queryMessages(db, dispatchId).at(-1) as MessageRecord;
   });
+  if (appended.kind === "ok" && message.from === "child") {
+    const deliveries = queryDeliveries(handle.db, dispatchId);
+    for (const delivery of deliveries) {
+      if (delivery.recipient !== "child" || !Array.isArray(delivery.messageSeqs) || !delivery.messageSeqs.some((sequence) => sequence < appended.value.seq)) continue;
+      const transport = String(delivery.transport ?? "");
+      if (transport !== "checked" && delivery.transportReason !== "full-direction") continue;
+      acknowledgeImplicitDelivery(handle, dispatchId, delivery.id, "child", String(appended.value.createdAt));
+    }
+  }
+  return appended;
 }
 
 export function appendParentReply(handle: DatabaseHandle, dispatchId: string, message: Readonly<Record<string, unknown>>, options: AppendParentReplyOptions): Result<MessageRecord> {
@@ -341,13 +348,89 @@ export function renewOutboxLease(handle: DatabaseHandle, id: string, holder: str
   ).changes > 0);
 }
 
-export function markOutboxPeerSent(handle: DatabaseHandle, id: string, holder: string, messageId: string): Result<boolean> {
-  if (id === "" || holder === "" || messageId === "") return failed("outbox, lease holder and peer message ids must be non-empty");
+export type PeerVerificationRecord = Readonly<{
+  state: "pending" | "fallback-queued" | "delivered" | "fallback-delivered" | "superseded";
+  messageId: string;
+  agent: string;
+  channel: string;
+  transcript?: string;
+  transcriptOffset?: number;
+  agentVersion: string;
+  acceptedAt: number;
+}>;
+const peerStatePrefix = "peer-verification:";
+
+function peerState(detail: string | null): PeerVerificationRecord | undefined {
+  if (detail === null || !detail.startsWith(peerStatePrefix)) return undefined;
+  try {
+    const value = JSON.parse(detail.slice(peerStatePrefix.length)) as Partial<PeerVerificationRecord>;
+    const agent = value.agent ?? "claude";
+    const channel = value.channel ?? "peer-socket";
+    return typeof value.messageId === "string" && typeof agent === "string" && typeof channel === "string" &&
+      typeof value.state === "string" && typeof value.agentVersion === "string" && Number.isSafeInteger(value.acceptedAt) &&
+      (value.transcript === undefined || (typeof value.transcript === "string" && Number.isSafeInteger(value.transcriptOffset)))
+      ? { ...value, agent, channel } as PeerVerificationRecord : undefined;
+  } catch { return undefined; }
+}
+
+export function getOutboxPeerVerification(handle: DatabaseHandle, id: string): Result<PeerVerificationRecord | undefined> {
+  return read(handle, ({ db }) => peerState(db.query<{ detail: string | null }>("SELECT detail FROM outbox WHERE id = ?").get(id)?.detail ?? null));
+}
+
+export function listOutboxPeerVerifications(handle: DatabaseHandle): Result<readonly Readonly<{ id: string; dispatchId: string | null; status: string; record: PeerVerificationRecord }>[]> {
+  return read(handle, ({ db }) => db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null }>("SELECT id, dispatch_id, status, detail FROM outbox WHERE detail LIKE ?").all(`${peerStatePrefix}%`).flatMap((row) => {
+    const record = peerState(row.detail);
+    return record === undefined ? [] : [{ id: row.id, dispatchId: row.dispatch_id, status: row.status, record }];
+  }));
+}
+
+export function markOutboxPeerSent(handle: DatabaseHandle, id: string, holder: string, record: PeerVerificationRecord): Result<boolean> {
+  if (id === "" || holder === "" || record.messageId === "" || record.agent === "" || record.channel === "") return failed("outbox and delivery verification details are invalid");
   const now = new Date().toISOString();
   return write(handle, ({ db }) => db.run(
     "UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ?",
-    [`peer-sent:${messageId}`, now, id, holder],
+    [`${peerStatePrefix}${JSON.stringify(record)}`, now, id, holder],
   ).changes > 0);
+}
+
+export function finishOutboxPeerVerification(handle: DatabaseHandle, id: string, state: PeerVerificationRecord["state"]): Result<boolean> {
+  const now = new Date().toISOString();
+  return write(handle, ({ db }) => {
+    const row = db.query<{ detail: string | null }>("SELECT detail FROM outbox WHERE id = ?").get(id);
+    const current = peerState(row?.detail ?? null);
+    if (current === undefined) return false;
+    db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ?", [`${peerStatePrefix}${JSON.stringify({ ...current, state })}`, now, id]);
+    return true;
+  });
+}
+
+export function supersedeClosedParentDeliveries(handle: DatabaseHandle, dispatchId: string, reason: string): Result<void> {
+  if (dispatchId === "" || reason === "") return failed("closed delivery settlement requires a dispatch and reason");
+  const now = new Date().toISOString();
+  return write(handle, ({ db }) => {
+    db.run("UPDATE deliveries SET status = 'superseded', updated_at = ? WHERE dispatch_id = ? AND json_extract(extra, '$.recipient') = 'parent' AND status = 'outstanding'", [now, dispatchId]);
+    db.run("UPDATE outbox SET status = 'suppressed', detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE dispatch_id = ? AND target_kind = 'parent-pointer' AND status IN ('pending', 'sending')", [reason, now, dispatchId]);
+    const verifications = db.query<{ id: string; detail: string | null }>("SELECT id, detail FROM outbox WHERE dispatch_id = ? AND target_kind = 'parent-pointer' AND detail LIKE ? AND status = 'sent'").all(dispatchId, `${peerStatePrefix}%`);
+    for (const item of verifications) {
+      const current = peerState(item.detail);
+      if (current?.state === "pending" || current?.state === "fallback-queued") {
+        db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ? AND status = 'sent'", [`${peerStatePrefix}${JSON.stringify({ ...current, state: "superseded" })}`, now, item.id]);
+      }
+    }
+  });
+}
+
+export function requeueOutboxPeerFallback(handle: DatabaseHandle, id: string): Result<boolean> {
+  const now = new Date().toISOString();
+  return write(handle, ({ db }) => {
+    const row = db.query<{ detail: string | null; status: string }>("SELECT detail, status FROM outbox WHERE id = ?").get(id);
+    const current = peerState(row?.detail ?? null);
+    if (current === undefined || current.state !== "pending" || row?.status !== "sent") return false;
+    db.run("UPDATE outbox SET status = 'pending', detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sent'", [
+      `${peerStatePrefix}${JSON.stringify({ ...current, state: "fallback-queued" })}`, now, id,
+    ]);
+    return true;
+  });
 }
 
 export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null): Result<void> {
@@ -356,7 +439,8 @@ export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" 
     const current = outboxRow(db, id);
     if (current === undefined) return { kind: "missing" as const };
     if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
-    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, detail, now, id]);
+    const keepPeerState = peerState(current.detail) !== undefined && status === "sent";
+    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, keepPeerState ? current.detail : detail, now, id]);
     return { kind: "finished" as const };
   });
   if (result.kind !== "ok") return result;
@@ -372,7 +456,8 @@ export function finishNotification(handle: DatabaseHandle, id: string, status: "
     if (current === undefined) return { kind: "missing" as const };
     if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
     if (current.dispatchId !== event.dispatchId) throw new Error("notification event dispatch does not match outbox item");
-    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, event.reason, now, id]);
+    const keepPeerState = peerState(current.detail) !== undefined && status === "sent";
+    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, keepPeerState ? current.detail : event.reason, now, id]);
     const appended = appendNudge(db, event.dispatchId, event.pointer, event.outcome, event.reason, event.createdAt ?? now);
     if (appended.kind !== "ok") throw new Error(appended.error);
     return { kind: "finished" as const };

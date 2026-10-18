@@ -197,6 +197,7 @@ async function runReply(root: string, socket: string | undefined) {
   const sends: string[] = [];
   const process: ProcessAdapter = {
     async run(command, args) {
+      if (command === "ps" && args[0] === "-ww") return ok<ProcessOutput>({ stdout: "1 1 1 /usr/local/bin/grok agent\n", stderr: "", exitCode: 0 });
       if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ terminals: [{ handle: "child-terminal" }] }), stderr: "", exitCode: 0 });
       if (command === "orca" && args[1] === "read") return ok<ProcessOutput>({ stdout: JSON.stringify(screen), stderr: "", exitCode: 0 });
       if (command === "orca" && args[1] === "send") { sends.push(args.join(" ")); return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 }); }
@@ -227,8 +228,8 @@ describe("reply to a Grok child", () => {
     expect(leader.connections).toBe(1);
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
-    expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
-    expect(run.channel).toMatchObject({ status: "working", agentVersion: "1.0.52", failures: 0 });
+    expect(run.deliveries[0]).toMatchObject({ transport: "ack-verifying" });
+    expect(run.channel).toBeUndefined();
   });
 
   // The typed path cannot read Grok's boxed composer, so these assert the hand-off to it through
@@ -302,7 +303,7 @@ describe("child mail to a Grok parent", () => {
     const run = await runParentNotice(root, { agent: "codex", parentAgent: "grok", parentGrokLeaderSocket: join(root, "p.sock"), parentGrokSessionId: PARENT_SESSION });
     const prompt = leader.received.find((message) => message.method === "session/prompt") as { params?: { sessionId?: string; prompt?: Array<{ text?: string }> } } | undefined;
     expect(prompt?.params?.sessionId).toBe(PARENT_SESSION);
-    expect(prompt?.params?.prompt?.[0]?.text).toBe("✅ done: finished the migration");
+    expect(prompt?.params?.prompt?.[0]?.text).toContain("✅ done: finished the migration\nAfter reading, acknowledge with: megabrain orchestrate ack d-grok dl-parent");
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
   });

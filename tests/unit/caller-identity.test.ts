@@ -27,7 +27,7 @@ import { callerFromEnvironment } from "../../src/cli/commands/orchestrate-list.j
 import { decorateDispatchRecord, parseDispatchRecord } from "../../src/core/dispatch.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { callerSession as installDoctorCallerSession } from "../../src/cli/commands/install-doctor.js";
-import { createDispatch } from "../../src/adapters/state-db.js";
+import { appendMessage, createDelivery, createDispatch, listDeliveries } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
 
 // ---------------------------------------------------------------------------
@@ -330,17 +330,27 @@ describe("parent verbs accept the structured-session caller that spawned the dis
   test("close", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta());
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "which option?" });
+    createDelivery(db.value, { id: "delivery-close", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding" });
     const process = orcaHostProcess("child-term-1");
     const result = await executeOrchestrateClose(["dispatch-1", "--json"], structuredClaudeEnvironment(root), process);
     expect(isOwnershipRefusal(result)).toBe(false);
+    expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "acknowledged" }] });
   });
 
   test("read", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta());
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "which option?" });
+    createDelivery(db.value, { id: "delivery-read", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding" });
     const process = orcaHostProcess("child-term-1");
     const result = await executeOrchestrateRead(["dispatch-1", "--json"], structuredClaudeEnvironment(root), process);
     expect(isOwnershipRefusal(result)).toBe(false);
+    expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "acknowledged" }] });
   });
 
   test("liveness", async () => {
@@ -359,6 +369,20 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     const process = orcaHostProcess("child-term-1");
     const result = await executeOrchestrateReply(["dispatch-1", "--text", "hello", "--json"], structuredClaudeEnvironment(root), process);
     expect(isOwnershipRefusal(result)).toBe(false);
+  });
+
+  test("a reply acknowledges the child ask it answers", async () => {
+    const root = await tempStateDir();
+    await writeDispatch(root, "dispatch-1", baseMeta());
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "which option?" });
+    createDelivery(db.value, { id: "delivery-reply", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding", consumer: null, consumerGeneration: null });
+    const result = await executeOrchestrateReply(["dispatch-1", "--text", "use option A", "--json"], structuredClaudeEnvironment(root), fakeProcess());
+    expect(result.kind).toBe("ok");
+    const deliveries = listDeliveries(db.value, "dispatch-1");
+    expect(deliveries.kind).toBe("ok");
+    if (deliveries.kind === "ok") expect(deliveries.value.find((delivery) => delivery.id === "delivery-reply")).toMatchObject({ status: "acknowledged" });
   });
 
   test("stop", async () => {
@@ -392,8 +416,13 @@ describe("parent verbs accept the structured-session caller that spawned the dis
   test("watch", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta());
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "which option?" });
+    createDelivery(db.value, { id: "delivery-watch", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding", consumer: null, consumerGeneration: null });
     const result = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--json"], structuredClaudeEnvironment(root));
     expect(isOwnershipRefusal(result)).toBe(false);
+    expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "acknowledged" }] });
   });
 
   test("ack", async () => {
@@ -403,6 +432,18 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     // No delivery exists yet; the point is that ownership is accepted before that check runs.
     const result = await executeOrchestrateAck(["dispatch-1", "delivery-1", "--json"], structuredClaudeEnvironment(root), process);
     expect(isOwnershipRefusal(result)).toBe(false);
+  });
+
+  test("ack on the printed line counts as reading the delivery", async () => {
+    const root = await tempStateDir();
+    await writeDispatch(root, "dispatch-1", baseMeta());
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    const created = createDelivery(db.value, { id: "delivery-1", dispatchId: "dispatch-1", messageSeqs: [1], status: "outstanding" });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const result = await executeOrchestrateAck(["dispatch-1", "delivery-1", "--json"], structuredClaudeEnvironment(root), orcaHostProcess("child-term-1"));
+    expect(result.kind).toBe("ok");
+    expect(result.kind === "ok" ? JSON.parse(result.value) : {}).toMatchObject({ acknowledged: true, status: "acknowledged" });
   });
 });
 

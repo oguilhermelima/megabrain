@@ -2,25 +2,30 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { acquireLease, claimOutbox, finishNotification, finishOutbox, getDispatch, listDeliveries, listOutbox, markOutboxPeerSent, mutateDispatch, releaseLease, renewOutboxLease, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
-import { claudeSessionPermissionClass } from "../../agents/claude-peer.js";
+import { acknowledgeImplicitDelivery, acquireLease, claimOutbox, finishNotification, finishOutbox, finishOutboxPeerVerification, getDispatch, getOutboxPeerVerification, listDeliveries, listOutbox, markOutboxPeerSent, mutateDispatch, recordChannelResult, releaseLease, requeueOutboxPeerFallback, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { claudeSessionPermissionClass, scanTranscript } from "../../agents/claude-peer.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { composerReadback } from "../../core/composer-proof.js";
-import { choosePeerChannel, CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, senderPermissionClass, type PeerChannelChoice, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
-import { formatOneLine } from "../../core/chat-message-format.js";
+import { choosePeerChannel, CLAUDE_PEER_CHANNEL, deliverThroughClaudePeer, senderPermissionClass, verifyClaudePeerConsumption, type PeerChannelChoice, type PeerDeliveryOutcome } from "../../core/claude-peer-delivery.js";
+import { formatDeliveryAcknowledgment, formatOneLine } from "../../core/chat-message-format.js";
 import { deliverThroughGrokLeader, GROK_LEADER_CHANNEL } from "../../core/grok-leader-delivery.js";
 import { AGY_LS_CHANNEL, deliverThroughAgyLanguageServer } from "../../core/agy-ls-delivery.js";
 import { agyParentKey } from "../../agents/agy-ls.js";
-import { deliverWhenIdle, startDeferredDelivery } from "../../core/idle-delivery.js";
+import { deliverImmediately, startDeferredDelivery } from "../../core/idle-delivery.js";
+import { deliverOperatorText } from "../../core/session-send.js";
+import { sendSessionMessage, type SessionSendChannel } from "../../core/session-send.js";
+import { deliverCodexQueue, findCodexProcessByThread } from "../../core/codex-delivery.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
-import { getTmux, sendTmuxPair } from "../../hosts/tmux.js";
-import { submitKey } from "../../agents/index.js";
-import { deliveryComposer, deliveryHasKeystrokeDialog, readDeliveryScreen } from "./delivery-screen.js";
+import { getTmux } from "../../hosts/tmux.js";
+import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
 import { selfInvocation } from "../../core/self-invocation.js";
+import { startSupervisorWorker } from "./supervise.js";
+import { agentOwnsForegroundProcess } from "../../core/terminal-process.js";
+import { settleClosedParentBacklog } from "../../core/closed-deliveries.js";
 
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
@@ -104,66 +109,48 @@ async function readWasPulled(root: string, dispatch: string, sequence: number): 
 }
 
 async function sendTyped(
-  root: string,
   meta: Meta,
   text: string,
-  environment: WorkerEnvironment,
   process: ProcessAdapter,
-  adoptStatus?: (status: ClaudeStatus | undefined, proof: string, screenStatus: "idle" | "busy" | "unknown") => Promise<void>,
   fail: (reason: string) => void = () => undefined,
   recordReadback: (readback: Readonly<{ region?: string; orcaDraft?: string }>) => void = () => undefined,
-  ignoreDraft = false,
 ): Promise<boolean> {
   const agent = String(meta.agent ?? "");
   const host = String(meta.childHost ?? "");
-  const submit = submitKey(agent);
-  if (submit.kind !== "ok") { fail(submit.error); return false; }
-  let raceReadback: Readonly<{ region?: string; orcaDraft?: string }> | undefined;
-  const preflight = async (): Promise<Result<void>> => {
-    const screen = await readDeliveryScreen(meta, process);
-    if (screen.kind !== "ok") return failed(screen.kind === "failed" ? screen.error : screen.reason);
-    const status = await claudeStatus(meta, environment);
-    const typed = deliveryComposer(agent, screen.value);
-    const dialog = deliveryHasKeystrokeDialog(agent, screen.value);
-    const screenStatus = deliveryStatus(classifyLiveness(agent, screen.value).status);
-    const observed = status?.pid !== undefined && status.status !== "unknown" ? status.status : screenStatus;
-    await adoptStatus?.(status, status?.pid === undefined ? "screen" : "claude-session", observed);
-    if (dialog || (typed !== "" && !ignoreDraft)) return failed(dialog ? "target is showing a keystroke dialog" : "target composer is occupied");
-    return ok(undefined);
-  };
-  if (meta.runtime === "tmux") {
-    const sent = await sendTmuxPair(root, String(meta.tmuxPane ?? ""), text, submit.value, {}, process, false, preflight);
-    if (sent.kind !== "ok") fail(sent.error);
-    return sent.kind === "ok";
-  }
-  const provider = getHost(host);
-  if (provider === undefined) { fail(`unknown host ${host}`); return false; }
-  const screen = await preflight();
-  if (screen.kind !== "ok") { fail(`preflight: ${screen.error}`); return false; }
-  const target = { workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: String(meta.terminalId ?? "") };
-  const call = provider.send({ ...target, text: host === "orca" ? formatOneLine(text) : text, enter: true });
-  if (call.kind !== "ok") { fail(`${host} send command: ${call.error}`); return false; }
-  const sent = await runHostSend(host, process, call.value);
-  if (sent.kind === "ok") {
-    if (host === "orca") {
-      try {
-        const screen = await readDeliveryScreen(meta, process);
-        if (screen.kind === "ok") {
-          const observed = composerReadback(agent, screen.value);
-          recordReadback({
-            ...(observed.region === undefined ? {} : { region: observed.region.slice(0, 300) }),
-            ...(observed.orcaDraft === undefined ? {} : { orcaDraft: observed.orcaDraft.slice(0, 300) }),
-          });
+  const sent = await deliverOperatorText({
+    agent, text,
+    read: async () => {
+      const screen = await readDeliveryScreen(meta, process);
+      if (screen.kind !== "ok") return undefined;
+      const observed = composerReadback(agent, screen.value);
+      if (host === "orca") recordReadback({
+        ...(observed.region === undefined ? {} : { region: observed.region.slice(0, 300) }),
+        ...(observed.orcaDraft === undefined ? {} : { orcaDraft: observed.orcaDraft.slice(0, 300) }),
+      });
+      return screen.value;
+    },
+    send: async (value, enter) => {
+      if (meta.runtime === "tmux") {
+        if (value !== "") {
+          const pasted = await getTmux().pasteText(String(meta.tmuxPane ?? ""), value, process, String(meta.tmuxSession ?? meta.tmuxSessionId ?? "") || undefined);
+          if (pasted.kind !== "ok") return pasted.error;
         }
-      } catch {
-        // Post-submit read-back is diagnostic only; it cannot undo a successful send.
+        if (enter) {
+          const submitted = await getTmux().sendKey(String(meta.tmuxPane ?? ""), "Enter", process, String(meta.tmuxSession ?? meta.tmuxSessionId ?? "") || undefined);
+          if (submitted.kind !== "ok") return submitted.error;
+        }
+        return "ok";
       }
-    }
-    return true;
-  }
-  const detail = (sent.kind === "failed" ? sent.stdout ?? "" : "").trim().slice(0, 300);
-  fail(`${host} send: ${sent.error}${detail === "" ? "" : ` | ${detail}`}`);
-  return false;
+      const provider = getHost(host);
+      if (provider === undefined) return `unknown host ${host}`;
+      const call = provider.send({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: String(meta.terminalId ?? ""), text: host === "orca" ? formatOneLine(value) : value, enter });
+      if (call.kind !== "ok") return call.kind === "failed" ? call.error : call.reason;
+      const result = await runHostSend(host, process, call.value);
+      return result.kind === "ok" ? "ok" : result.kind === "failed" ? result.error : result.reason;
+    },
+  });
+  if (!sent.delivered) { fail(sent.detail ?? "typed submit could not be verified"); return false; }
+  return true;
 }
 
 async function clearOwnComposer(root: string, meta: Meta, process: ProcessAdapter): Promise<boolean> {
@@ -186,6 +173,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   if (!existsSync(resolve(root, "megabrain.db"))) return ok("delivery source state was removed\n");
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const settled = settleClosedParentBacklog(database.value);
+  if (settled.kind !== "ok") return settled;
   const claimed = claimOutbox(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
   if (claimed.kind !== "ok" || claimed.value === undefined) {
     if (!nested) releaseLease(database.value, leaseKey, holder);
@@ -219,7 +208,24 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     const session = await getTmux().sessionForPane(String(meta.tmuxPane ?? ""), process);
     if (session.kind === "ok") meta = { ...meta, tmuxSession: session.value };
   }
-  const text = typeof payload.fullMessage === "string" ? payload.fullMessage : "";
+  const rawText = typeof payload.fullMessage === "string" ? payload.fullMessage : "";
+  const deliveryRows = dispatch === "" ? undefined : listDeliveries(database.value, dispatch);
+  const delivery = deliveryRows?.kind === "ok" ? deliveryRows.value.find((row) => Array.isArray(row.messageSeqs) && row.messageSeqs.includes(sequence)) : undefined;
+  const recipient = delivery?.recipient === "child" ? "child" : delivery === undefined ? undefined : "parent";
+  const ackInstruction = delivery === undefined || recipient === undefined ? "" : `\n${formatDeliveryAcknowledgment(dispatch, delivery.id, recipient)}`;
+  const text = `${rawText}${ackInstruction}`;
+  const priorVerification = getOutboxPeerVerification(database.value, outboxId);
+  const fallbackOnly = priorVerification.kind === "ok" && priorVerification.value?.state === "fallback-queued";
+  const queueVerification = async (channel: string, messageId: string, agentVersion: string, transcript?: string, transcriptOffset?: number): Promise<void> => {
+    const saved = markOutboxPeerSent(database.value, outboxId, holder, {
+      state: "pending", messageId, agent: String(meta.agent ?? "unknown"), channel, agentVersion,
+      acceptedAt: Date.now(), ...(transcript === undefined ? {} : { transcript, transcriptOffset }),
+    });
+    if (saved.kind !== "ok" || !saved.value) return;
+    const verifier = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["__delivery-verify", outboxId]);
+    await process.startDetached(verifier.command, verifier.args);
+    await startSupervisorWorker(root, environment, process);
+  };
   const pointer = typeof payload.pointer === "string" ? payload.pointer : "mail: megabrain check";
   let proofSource = "screen";
   let statusRead: "idle" | "busy" | "unknown" = "unknown";
@@ -227,6 +233,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let proofReason: string | undefined;
   let transport = "failed";
   let outcome = "failed";
+  let receiverGone = false;
   let lastDecision: string | undefined;
   let sendError: string | undefined;
   let composerReadbackAfterSubmit: Readonly<{ region?: string; orcaDraft?: string }> | undefined;
@@ -241,188 +248,156 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     mutateDispatch(database.value, dispatch, () => ({ [field]: status.pid }));
     meta = { ...meta, agentPid: status.pid };
   };
-  const renewLeases = async (): Promise<void> => {
-    if (!nested) {
-      const lease = acquireLease(database.value, leaseKey, holder, DELIVERY_LEASE_SECONDS);
-      if (lease.kind !== "ok" || !lease.value) throw new Error("delivery target lease was lost");
-    }
-    const outboxLease = renewOutboxLease(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
-    if (outboxLease.kind !== "ok" || !outboxLease.value) throw new Error("outbox lease was lost");
-  };
-  // A Claude target takes the message through its peer socket: no composer, no draft to wait on,
-  // no idle wait. Typing stays as the fallback whenever the socket is unavailable, marked broken,
-  // or drops it.
+  // Transport order and message-id deduplication belong to the central session sender.
   let peer: PeerDeliveryOutcome | Readonly<{ kind: "aborted" }> | undefined;
   let peerChannel = CLAUDE_PEER_CHANNEL;
+  const peerFallbackReason = (): string | undefined => peer?.kind === "fallback" ? peer.reason : undefined;
   const home = environment.HOME;
   const choice = home === undefined || meta.agent !== "claude" ? undefined : await peerChannelChoice(targetKind, persistedMeta, home);
-  if (choice?.kind === "type") peer = { kind: "fallback", reason: choice.reason };
-  if (choice?.kind === "socket" && home && text !== "" && dispatch !== "" && sequence > 0 && typeof meta.agentSessionId === "string") {
-    const senderMode = choice.senderMode;
-    const idleDrop = Number(environment.MEGABRAIN_PEER_IDLE_DROP_MS);
-    try {
-      peer = await deliverThroughClaudePeer({
-        database: database.value,
-        home,
-        pid: Number(meta.agentPid),
-        sessionId: meta.agentSessionId,
-        text,
-        deadline,
-        ...(senderMode === undefined ? {} : { senderMode }),
-        ...(Number.isFinite(idleDrop) && idleDrop > 0 ? { idleDropMs: idleDrop } : {}),
-        isRead: async () => readWasPulled(root, dispatch, sequence),
-        renew: renewLeases,
-        onSent: (msgId) => { markOutboxPeerSent(database.value, outboxId, holder, msgId); },
-      });
-    } catch {
-      // Only a lost lease throws here; another worker owns the target now, so typing would duplicate.
-      peer = { kind: "aborted" };
-    }
-    peerChannel = CLAUDE_PEER_CHANNEL;
-  }
-  // A Grok child started with its own leader, or a Grok parent running under one, takes the message
-  // straight into its session queue.
   const direct = targetKind === "child-delivery" || targetKind === "parent-pointer";
-  if (direct && meta.agent === "grok" && typeof meta.grokLeaderSocket === "string" && typeof meta.grokSessionId === "string" && text !== "" && dispatch !== "" && sequence > 0) {
-    peer = await deliverThroughGrokLeader({ database: database.value, socketPath: meta.grokLeaderSocket, sessionId: meta.grokSessionId, text });
-    peerChannel = GROK_LEADER_CHANNEL;
-  }
-  // An agy child that reported its language server, or an agy parent that spawned from one of its
-  // tool shells, takes the message into its conversation queue.
-  if (peer === undefined && direct && meta.agent === "agy" && text !== "" && dispatch !== "" && sequence > 0) {
-    const pollMs = Number(environment.MEGABRAIN_AGY_POLL_MS);
-    try {
-      const agy = await deliverThroughAgyLanguageServer({
-        database: database.value,
-        stateRoot: root,
-        endpointKey: targetKind === "parent-pointer" ? agyParentKey(dispatch) : dispatch,
-        text,
-        deadline,
-        ...(Number.isFinite(pollMs) && pollMs > 0 ? { pollMs } : {}),
-        isRead: async () => readWasPulled(root, dispatch, sequence),
-        renew: renewLeases,
-      });
-      if (agy !== undefined) { peer = agy; peerChannel = AGY_LS_CHANNEL; }
-    } catch {
-      // Only a lost lease throws here; another worker owns the target now, so typing would duplicate.
-      peer = { kind: "aborted" };
-    }
-  }
-  // A fallback is logged on the typing attempts that follow, as peerFallback.
-  if (peer !== undefined && (peer.kind === "delivered" || peer.kind === "read")) {
-    await decisionLog.record({
-      dispatchId: dispatch,
-      outboxId,
-      channel: peerChannel,
-      decision: peer.kind === "delivered" ? "peer-delivered" : "cancelled",
-      ...(peer.kind === "delivered" ? { msgId: peer.msgId } : {}),
-    });
-  }
-  const peerFallback = peer?.kind === "fallback" ? peer.reason : undefined;
-  const unsupportedHost = meta.runtime === "host" && meta.childHost === "superset";
-  // A local parent has no terminal: past its direct channel there is nothing to type into, and the
-  // Stop hook and orchestrate watch surface the mail instead.
   const localParent = targetKind === "parent-pointer" && meta.runtime === "host" && meta.childHost === "local";
-  if (peer?.kind === "delivered") {
-    outcome = "delivered";
-    transport = "socket";
-  } else if (peer?.kind === "read") {
-    outcome = "cancelled";
-    transport = "checked";
-  } else if (peer?.kind === "aborted") {
-    outcome = "failed";
-    transport = "failed";
-  } else if (unsupportedHost) {
-    outcome = "failed";
-    transport = "deferred";
-  } else if (localParent) {
-    outcome = "failed";
-    transport = "failed";
-  } else if (text !== "" && dispatch !== "" && sequence > 0) {
-    let result: Awaited<ReturnType<typeof deliverWhenIdle>>;
+  const threadId = targetKind === "parent-pointer" ? persistedMeta.parentAgentThreadId : persistedMeta.agentThreadId;
+  const typed = async (): Promise<boolean | Readonly<{ delivered: boolean; stop?: boolean; detail?: string }>> => {
+    if (localParent || text === "" || dispatch === "" || sequence < 1) return false;
+    if (!(await agentOwnsForegroundProcess(String(meta.agent ?? ""), Number(meta.agentPid), process))) {
+      receiverGone = true;
+      outcome = "receiver-gone";
+      transport = "receiver-gone";
+      return { delivered: false, stop: true, detail: "receiver-gone: receiver is no longer the terminal's foreground agent process" };
+    }
+    let result: Awaited<ReturnType<typeof deliverImmediately>>;
     try {
-      result = await deliverWhenIdle({
-      timeoutMs: Math.max(0, deadline - Date.now()),
-      allowBusy: targetKind === "parent-pointer",
-      ignoreDraft: targetKind === "parent-pointer",
-      initialDelayMs: 500,
-      maxDelayMs: 10_000,
-      ownDraft: text,
-      inspect: async () => {
-        const screen = await readDeliveryScreen(meta, process);
-        const status = await claudeStatus(meta, environment);
-        adoptClaudePid(status);
-        if (screen.kind !== "ok") {
-          screenDownSince ??= Date.now();
-          screenError = screen.kind === "failed" ? screen.error : screen.reason;
+      result = await deliverImmediately({
+        timeoutMs: Math.max(0, deadline - Date.now()),
+        initialDelayMs: 500,
+        maxDelayMs: 10_000,
+        ownDraft: meta.childHost === "orca" ? formatOneLine(text) : text,
+        inspect: async () => {
+          const screen = await readDeliveryScreen(meta, process);
+          const status = await claudeStatus(meta, environment);
+          adoptClaudePid(status);
+          if (screen.kind !== "ok") {
+            screenDownSince ??= Date.now();
+            screenError = screen.kind === "failed" ? screen.error : screen.reason;
+            const sessionProven = status?.pid !== undefined;
+            proofSource = sessionProven ? "claude-session" : "screen-unavailable";
+            statusRead = sessionProven && status.status !== "unknown" ? status.status : "unknown";
+            statusUpdatedAtRead = status?.statusUpdatedAt;
+            proofReason = `terminal screen unavailable: ${screenError}`;
+            return statusRead;
+          }
+          screenDownSince = undefined;
+          const screenStatus = deliveryStatus(classifyLiveness(String(meta.agent ?? ""), screen.value).status);
           const sessionProven = status?.pid !== undefined;
-          proofSource = sessionProven ? "claude-session" : "screen-unavailable";
-          statusRead = sessionProven && status.status !== "unknown" ? status.status : "unknown";
+          proofSource = sessionProven ? "claude-session" : "screen";
+          proofReason = status?.reason;
+          const observed = sessionProven && status.status !== "unknown" ? status.status : screenStatus;
+          statusRead = observed;
           statusUpdatedAtRead = status?.statusUpdatedAt;
-          proofReason = `terminal screen unavailable: ${screenError}`;
-          return statusRead;
-        }
-        screenDownSince = undefined;
-        const screenStatus = deliveryStatus(classifyLiveness(String(meta.agent ?? ""), screen.value).status);
-        const sessionProven = status?.pid !== undefined;
-        proofSource = sessionProven ? "claude-session" : "screen";
-        proofReason = status?.reason;
-        const observed = sessionProven && status.status !== "unknown" ? status.status : screenStatus;
-        statusRead = observed;
-        statusUpdatedAtRead = status?.statusUpdatedAt;
-        return observed;
-      },
-      composer: async () => {
-        const screen = await readDeliveryScreen(meta, process);
-        const agent = String(meta.agent ?? "");
-        const typed = screen.kind === "ok" && !deliveryHasKeystrokeDialog(agent, screen.value) ? deliveryComposer(agent, screen.value) : undefined;
-        return typed;
-      },
-      clear: async () => clearOwnComposer(root, meta, process),
-      send: async () => sendTyped(root, meta, text, environment, process, async (status, proof, fallbackStatus) => {
-        adoptClaudePid(status);
-        const sessionProven = status?.pid !== undefined;
-        proofSource = proof;
-        proofReason = status?.reason;
-        statusRead = sessionProven && status.status !== "unknown" ? status.status : fallbackStatus;
-        statusUpdatedAtRead = status?.statusUpdatedAt;
-      }, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; }, targetKind === "parent-pointer"),
-      sendError: () => sendError,
-      isRead: async () => readWasPulled(root, dispatch, sequence),
-      giveUp: () => screenDownSince !== undefined && Date.now() - screenDownSince >= giveUpAfterMs,
-      renew: renewLeases,
-      attempt: async (details) => {
-        lastDecision = details.decision;
-        const entry = {
-          dispatchId: dispatch,
-          outboxId,
-          proofSource,
-          status: statusRead,
-          statusUpdatedAt: statusUpdatedAtRead ?? null,
-          composer: details.composer,
-          decision: details.decision,
-          ...(proofReason === undefined ? {} : { proofReason }),
-          ...(details.reason === undefined ? {} : { reason: details.reason }),
-          ...(peerFallback === undefined ? {} : { peerFallback }),
-          ...(details.decision === "send" && composerReadbackAfterSubmit !== undefined ? { composerReadback: composerReadbackAfterSubmit } : {}),
-        };
-        await decisionLog.record(entry);
-      },
-      record: async (result) => { outcome = result; },
+          return observed;
+        },
+        composer: async () => {
+          const screen = await readDeliveryScreen(meta, process);
+          return screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
+        },
+        clear: async () => clearOwnComposer(root, meta, process),
+        send: async () => sendTyped(meta, text, process, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; }),
+        sendError: () => sendError,
+        isRead: async () => readWasPulled(root, dispatch, sequence),
+        attempt: async (details) => {
+          lastDecision = details.decision;
+          await decisionLog.record({
+            dispatchId: dispatch, outboxId, proofSource, status: statusRead,
+            statusUpdatedAt: statusUpdatedAtRead ?? null, composer: details.composer, decision: details.decision,
+            ...(proofReason === undefined ? {} : { proofReason }),
+            ...(details.reason === undefined ? {} : { reason: details.reason }),
+            ...(peerFallbackReason() === undefined ? {} : { peerFallback: peerFallbackReason() }),
+            ...(details.decision === "send" && composerReadbackAfterSubmit !== undefined ? { composerReadback: composerReadbackAfterSubmit } : {}),
+          });
+        },
+        record: async (value) => { outcome = value; },
       });
     } catch {
       result = "failed";
     }
     outcome = result;
     transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
+    if (fallbackOnly && result === "delivered") finishOutboxPeerVerification(database.value, outboxId, "fallback-delivered");
+    return result === "delivered" ? true : result === "cancelled" ? { delivered: false, stop: true } : false;
+  };
+  const sent = await sendSessionMessage({
+    caller: targetKind === "child-delivery" ? "reply" : "parent-notice",
+    messageId: outboxId,
+    target: { agent: String(meta.agent ?? "unknown"), id: `${root}:${dispatch}:${String(meta.agentSessionId ?? threadId ?? meta.tmuxPane ?? meta.terminalId ?? target)}` },
+    text,
+    channels: {
+      "peer-socket": async () => {
+        if (fallbackOnly || choice?.kind !== "socket" || home === undefined || text === "" || dispatch === "" || sequence < 1 || typeof meta.agentSessionId !== "string") return false;
+        try {
+          peer = await deliverThroughClaudePeer({
+            database: database.value, home, pid: Number(meta.agentPid), sessionId: meta.agentSessionId, text,
+            ...(choice.senderMode === undefined ? {} : { senderMode: choice.senderMode }),
+            isRead: async () => readWasPulled(root, dispatch, sequence),
+            onAccepted: async (record) => {
+              await queueVerification(CLAUDE_PEER_CHANNEL, record.messageId, record.agentVersion, record.transcript, record.transcriptOffset);
+            },
+          });
+        } catch { peer = { kind: "aborted" }; }
+        peerChannel = CLAUDE_PEER_CHANNEL;
+        if (peer.kind === "accepted") { outcome = "verifying"; transport = "ack-verifying"; return true; }
+        if (peer.kind === "delivered") { outcome = "delivered"; transport = "socket"; return true; }
+        if (peer.kind === "read") { outcome = "cancelled"; transport = "checked"; return { delivered: false, stop: true }; }
+        if (peer.kind === "aborted") return { delivered: false, stop: true, detail: "delivery lease was lost; refusing to risk a duplicate typed send" };
+        return false;
+      },
+      "leader-socket": async () => {
+        if (fallbackOnly || !direct || meta.agent !== "grok" || typeof meta.grokLeaderSocket !== "string" || typeof meta.grokSessionId !== "string" || text === "") return false;
+        peer = await deliverThroughGrokLeader({ database: database.value, socketPath: meta.grokLeaderSocket, sessionId: meta.grokSessionId, text });
+        peerChannel = GROK_LEADER_CHANNEL;
+        if (peer.kind !== "delivered") return false;
+        await queueVerification(GROK_LEADER_CHANNEL, peer.msgId, peer.agentVersion ?? "unknown");
+        outcome = "verifying"; transport = "ack-verifying"; return true;
+      },
+      "agy-language-server": async () => {
+        if (fallbackOnly || !direct || meta.agent !== "agy" || text === "" || dispatch === "" || sequence < 1) return false;
+        try {
+          peer = await deliverThroughAgyLanguageServer({
+            database: database.value, stateRoot: root, endpointKey: targetKind === "parent-pointer" ? agyParentKey(dispatch) : dispatch,
+            text, isRead: async () => readWasPulled(root, dispatch, sequence),
+          });
+        } catch { peer = { kind: "aborted" }; }
+        peerChannel = AGY_LS_CHANNEL;
+        if (peer?.kind === "delivered") { await queueVerification(AGY_LS_CHANNEL, peer.msgId, peer.agentVersion ?? "unknown"); outcome = "verifying"; transport = "ack-verifying"; return true; }
+        if (peer?.kind === "read") { outcome = "cancelled"; transport = "checked"; return { delivered: false, stop: true }; }
+        return false;
+      },
+      "codex-queue": async () => {
+        if (fallbackOnly || typeof threadId !== "string" || threadId === "" || text === "") return false;
+        const found = await findCodexProcessByThread(threadId, process);
+        if (!("pid" in found)) { peer = { kind: "fallback", reason: found.reason }; return false; }
+        const queued = await deliverCodexQueue(threadId, found.pid, text, process);
+        if (queued.kind !== "queued") { peer = { kind: "fallback", reason: queued.reason }; return false; }
+        await queueVerification("codex-queue", outboxId, "unknown");
+        outcome = "verifying"; transport = "ack-verifying"; return true;
+      },
+      typed,
+    },
+    recordChannel: async (channel: SessionSendChannel) => {
+      if (channel === "typed") recordChannelResult(database.value, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true });
+    },
+  });
+  if (peer !== undefined && (peer.kind === "delivered" || peer.kind === "accepted" || peer.kind === "read")) {
+    await decisionLog.record({ dispatchId: dispatch, outboxId, channel: peerChannel, decision: peer.kind === "read" ? "cancelled" : peer.kind === "accepted" ? "ack-verifying" : "peer-delivered", ...(peer.kind === "read" ? {} : { msgId: peer.msgId }) });
   }
+  const peerFallback = peerFallbackReason();
+  if (!sent.delivered && outcome !== "cancelled" && !receiverGone) outcome = "failed";
   const unavailable = outcome === "unavailable";
-  const untypable = localParent && peer?.kind !== "delivered" && peer?.kind !== "read" && peer?.kind !== "aborted";
-  const reason = unsupportedHost ? "superset-unverifiable-composer" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "wait-composer" ? "composer-occupied" : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
-  setDeliveryTransport(database.value, dispatch, sequence, transport, unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined);
+  const untypable = localParent && peer?.kind !== "delivered" && peer?.kind !== "accepted" && peer?.kind !== "read" && peer?.kind !== "aborted";
+  const reason = receiverGone ? "receiver-gone: receiver is no longer the terminal's foreground agent process" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
+  setDeliveryTransport(database.value, dispatch, sequence, transport, receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && !["failed", "deferred"].includes(transport) ? "full-direction" : undefined);
   const finished = claimed.value.targetKind === "parent-pointer"
-    ? finishNotification(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason })
-    : finishOutbox(database.value, outboxId, transport === "failed" ? "failed" : transport === "deferred" ? "suppressed" : "sent", reason);
+    ? finishNotification(database.value, outboxId, transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason })
+    : finishOutbox(database.value, outboxId, transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", reason);
   if (!nested) {
     const quietDeadline = Math.min(deadline, Date.now() + 1000);
     while (Date.now() < quietDeadline) {
@@ -438,4 +413,71 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     releaseLease(database.value, leaseKey, holder);
   }
   return finished.kind === "ok" ? ok(`delivery ${transport}\n`) : finished;
+}
+
+export async function executeDeliveryVerificationWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter): Promise<Result<string>> {
+  const [outboxId] = args;
+  if (!outboxId) return failed("delivery verification worker requires an outbox id", 2);
+  const root = resolveStateDirectory(environment);
+  const database = stateDatabase(environment);
+  if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const settled = settleClosedParentBacklog(database.value);
+  if (settled.kind !== "ok") return settled;
+  const saved = getOutboxPeerVerification(database.value, outboxId);
+  if (saved.kind !== "ok" || saved.value === undefined || saved.value.state !== "pending") return ok("peer verification is already settled\n");
+  const rows = listOutbox(database.value);
+  if (rows.kind !== "ok") return rows;
+  const outbox = rows.value.find((item) => item.id === outboxId);
+  if (outbox === undefined || outbox.dispatchId === null) return failed(`delivery verification outbox item not found: ${outboxId}`);
+  const payload = typeof outbox.payload === "object" && outbox.payload !== null ? outbox.payload as Meta : {};
+  const dispatch = String(payload.dispatchId ?? outbox.dispatchId);
+  const sequence = Number(payload.sequence ?? 0);
+  const meta = typeof payload.meta === "object" && payload.meta !== null ? payload.meta as Meta : {};
+  const home = environment.HOME ?? "";
+  const parentTarget = outbox.targetKind === "parent-pointer";
+  const receiverAgent = String(parentTarget ? meta.parentAgent ?? meta.agent : meta.agent ?? "unknown");
+  const sessionId = String(parentTarget ? meta.parentAgentSessionId ?? "" : meta.agentSessionId ?? "");
+  const pid = Number(parentTarget ? meta.parentAgentPid ?? 0 : meta.agentPid ?? 0);
+  const deliveries = listDeliveries(database.value, dispatch);
+  if (deliveries.kind !== "ok") return deliveries;
+  const delivery = deliveries.value.find((item) => Array.isArray(item.messageSeqs) && item.messageSeqs.includes(sequence));
+  if (delivery === undefined) return failed(`delivery verification delivery row not found for ${outboxId}`);
+  const verifierLeaseKey = `delivery-verification:${outboxId}`;
+  const verifierHolder = `${globalThis.process.pid}-${randomUUID()}`;
+  const verifierLease = acquireLease(database.value, verifierLeaseKey, verifierHolder, 90);
+  if (verifierLease.kind !== "ok" || !verifierLease.value) return ok("peer verification is already running\n");
+  try {
+  const result = await verifyClaudePeerConsumption({
+    heartbeat: async () => { acquireLease(database.value, verifierLeaseKey, verifierHolder, 90); },
+    acknowledged: async () => {
+      const current = listDeliveries(database.value, dispatch);
+      return current.kind === "ok" && current.value.some((item) => item.id === delivery.id && item.status === "acknowledged");
+    },
+    status: async () => {
+      if (receiverAgent !== "claude") return "idle";
+      const current = await resolveClaudeSession(home, pid, sessionId);
+      return current === undefined ? "ended" : current.status === "idle" ? "idle" : "busy";
+    },
+    scan: async () => saved.value!.transcript === undefined || saved.value!.transcriptOffset === undefined
+      ? undefined
+      : (await scanTranscript(saved.value!.transcript, saved.value!.transcriptOffset, saved.value!.messageId)).seen,
+    sleep: async (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    fallback: async () => {
+      if (saved.value!.agent === "claude") recordChannelResult(database.value, { agent: saved.value!.agent, channel: saved.value!.channel, agentVersion: saved.value!.agentVersion, ok: false, error: `peer message ${saved.value!.messageId} was not acknowledged or consumed`, now: Date.now() });
+      const queued = requeueOutboxPeerFallback(database.value, outboxId);
+      if (queued.kind !== "ok" || !queued.value) return;
+      const retryMeta = { ...meta, ...payload, targetKind: outbox.targetKind, dispatchId: dispatch };
+      await startDeliveryWorker(root, dispatch, outboxId, retryMeta, process);
+    },
+  });
+  if (result === "delivered") {
+    if (delivery.recipient === "child" || delivery.recipient === "parent") acknowledgeImplicitDelivery(database.value, dispatch, delivery.id, delivery.recipient);
+    recordChannelResult(database.value, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });
+    finishOutboxPeerVerification(database.value, outboxId, "delivered");
+    setDeliveryTransport(database.value, dispatch, sequence, "acknowledged");
+  }
+  return ok(`peer verification ${result}\n`);
+  } finally {
+    releaseLease(database.value, verifierLeaseKey, verifierHolder);
+  }
 }

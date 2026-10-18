@@ -6,7 +6,7 @@ import { findChild, type QueueEnvironment } from "./queue-write.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
-import { claimDelivery, createDelivery, listDeliveries, listMessages, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { acknowledgeImplicitDelivery, claimDelivery, createDelivery, listDeliveries, listMessages, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import type { DeliveryRecord } from "../../db/queries/deliveries.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
@@ -122,6 +122,7 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
         for (const sequence of selected.delivery.messageSeqs) {
           setDeliveryTransport(database.value, dispatch, sequence, "checked");
         }
+        acknowledgeImplicitDelivery(database.value, dispatch, selected.delivery.id, "child");
       }
       return ok(report(dispatch, selected.delivery, messages, selected.replayed, json));
     }

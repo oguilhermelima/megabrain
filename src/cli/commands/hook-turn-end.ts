@@ -9,12 +9,13 @@ import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-te
 import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
-import { getDispatch, listDeliveries, listDispatches, listMessages, listOutbox, mutateDispatch, noDispatchChange, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDeliveries, listDispatches, listMessages, listOutbox, mutateDispatch, noDispatchChange, recordChannelResult, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { backgroundTasks } from "../../core/supervise.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { randomUUID } from "node:crypto";
 import { waitForStableIdle } from "../../core/liveness.js";
+import { sendSessionMessage } from "../../core/session-send.js";
 import { readContextMeter } from "../../core/context-meter.js";
 import { decideLoopTurn, evaluateContextThreshold, hasCeilingThreshold, hasCompactThreshold, type ContextPolicy, type ContextThresholdState } from "../../core/context-policy.js";
 import { contextWindowOf, loadModelRegistry } from "../../core/model.js";
@@ -134,18 +135,27 @@ async function readContextFrame(meta: RecordValue, processAdapter: ProcessAdapte
 async function sendContextInput(root: string, meta: RecordValue, text: string, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<Result<void>> {
   const identity = await terminalStatus(meta, processAdapter);
   if (identity !== "proven") return failed(`context action could not be sent: terminal identity is ${identity}`);
-  if (meta.runtime === "tmux") {
-    const pane = typeof meta.tmuxPane === "string" ? meta.tmuxPane : "";
-    if (pane === "") return failed("context action could not be sent: dispatch pane is missing");
-    return sendTmuxPair(root, pane, text, "Enter", environment, processAdapter);
-  }
   const hostId = typeof meta.childHost === "string" ? meta.childHost : "";
-  const provider = getHost(hostId);
-  if (provider === undefined) return failed(`context action could not be sent: host is unavailable: ${hostId || "unknown"}`);
-  const call = provider.send({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: typeof meta.terminalId === "string" ? meta.terminalId : "", text });
-  if (call.kind !== "ok") return failed(call.kind === "failed" ? call.error : call.reason);
-  const result = await runHostSend(hostId, processAdapter, call.value);
-  return result.kind === "ok" ? ok(undefined) : failed(result.kind === "failed" ? result.error : result.reason);
+  const sent = await sendSessionMessage({
+    caller: "turn-end", messageId: `${String(meta.dispatchId ?? "dispatch")}:context:${randomUUID()}`,
+    target: { agent: String(meta.agent ?? "unknown"), id: String(meta.agentSessionId ?? meta.tmuxPane ?? meta.terminalId ?? meta.dispatchId ?? "unknown") }, text,
+    channels: { typed: async () => {
+      if (meta.runtime === "tmux") {
+        const pane = typeof meta.tmuxPane === "string" ? meta.tmuxPane : "";
+        if (pane === "") return { delivered: false, detail: "dispatch pane is missing" };
+        const result = await sendTmuxPair(root, pane, text, "Enter", environment, processAdapter);
+        return result.kind === "ok" ? true : { delivered: false, detail: result.error };
+      }
+      const provider = getHost(hostId);
+      if (provider === undefined) return { delivered: false, detail: `host is unavailable: ${hostId || "unknown"}` };
+      const call = provider.send({ workspaceId: typeof meta.workspaceId === "string" ? meta.workspaceId : null, terminalId: typeof meta.terminalId === "string" ? meta.terminalId : "", text, enter: true });
+      if (call.kind !== "ok") return { delivered: false, detail: call.kind === "failed" ? call.error : call.reason };
+      const result = await runHostSend(hostId, processAdapter, call.value);
+      return result.kind === "ok" ? true : { delivered: false, detail: result.kind === "failed" ? result.error : result.reason };
+    } },
+    recordChannel: (channel) => { const database = stateDatabase({ MEGABRAIN_STATE_DIR: root }); if (database.kind === "ok") recordChannelResult(database.value, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true }); },
+  });
+  return sent.delivered ? ok(undefined) : failed(sent.detail ?? "context action could not be sent");
 }
 
 function policyValue(value: unknown): ContextPolicy {
@@ -427,7 +437,7 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
     if (message === undefined) continue;
     const line = `${message.type || "mail"} ${parentMailSummary(message.text)} — megabrain orchestrate watch ${dispatchId}`;
     const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((entry) => entry.dispatchId === dispatchId && entry.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(entry, sequences, outstandingParentDeliveryCount === 1)) : [];
-    if (matchingOutbox.some((item) => item.status === "sending" && item.detail?.startsWith("peer-sent:"))) continue;
+    if (delivery.transport !== "deferred" && matchingOutbox.some((item) => item.status === "sending" && item.detail?.startsWith("peer-sent:"))) continue;
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
     const heldOutbox = matchingOutbox.some((item) => item.status === "failed" && /composer-occupied|composer-race|superset-unverifiable-composer|target is no longer idle|session is no longer idle|keystroke dialog/i.test(item.detail ?? ""));
     if (delivery.transport === "failed") {
@@ -440,7 +450,7 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
       for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
       continue;
     }
-    if (heldOutbox || ((delivery.transport === "deferred" || pendingOutbox) && parentMailWaitedTooLong(delivery, matchingOutbox))) {
+    if (heldOutbox || delivery.transport === "deferred" || (pendingOutbox && parentMailWaitedTooLong(delivery, matchingOutbox))) {
       pending.push(line);
       for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
     }

@@ -9,7 +9,7 @@ import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-te
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
-import { stateDatabase, getDispatch, transcriptPath } from "../../adapters/state-db.js";
+import { acknowledgeImplicitDelivery, listDeliveries, stateDatabase, getDispatch, transcriptPath } from "../../adapters/state-db.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -71,6 +71,13 @@ export async function executeOrchestrateRead(args: readonly string[], environmen
   let output = ""; let source: "tmux" | "file" | "host"; let truncated = false; let pane = "";
   if (runtime === "tmux") { pane = stringValue(meta.tmuxPane); const live = await capture(pane, lines, process); if (live.kind === "ok") { output = live.value; source = "tmux"; } else { const path = transcriptPath(environment, dispatchId); const file = path.kind === "ok" ? await readFile(path.value, "utf8").catch(() => undefined) : undefined; if (file === undefined) return failed(`could not read tmux pane ${pane} and no persisted transcript exists`); const rendered = renderTranscript(file, cap); output = rendered.text; truncated = rendered.truncated; source = "file"; } }
   else { const host = await hostRead(meta, process); if (host.kind !== "ok") return host; output = host.value; source = "host"; }
+  const database = stateDatabase(environment);
+  if (database.kind === "ok") {
+    const deliveries = listDeliveries(database.value, dispatchId);
+    if (deliveries.kind === "ok") for (const delivery of deliveries.value) {
+      if (delivery.recipient === "parent") acknowledgeImplicitDelivery(database.value, dispatchId, delivery.id, "parent");
+    }
+  }
   return ok(formatDispatchRead({ dispatchId, pane, source, truncated, text: output }, json, cap));
 }
 

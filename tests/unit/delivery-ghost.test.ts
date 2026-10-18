@@ -96,12 +96,17 @@ async function orcaRun(composer: (read: number, pasted: boolean) => string, env:
   const sends: string[] = [];
   const process: ProcessAdapter = {
     async run(command, args) {
+      if (command === "ps" && args[0] === "-ww") return ok<ProcessOutput>({ stdout: "41414 41414 41414 /opt/claude/bin/claude --resume parent-session\n", stderr: "", exitCode: 0 });
       if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ terminals: [{ handle: "parent-terminal" }] }), stderr: "", exitCode: 0 });
       if (command === "orca" && args[1] === "read") { reads += 1; return ok<ProcessOutput>({ stdout: screens(reads), stderr: "", exitCode: 0 }); }
       if (command === "orca" && args[1] === "send") {
         sends.push(args.join(" "));
         const textIndex = args.indexOf("--text");
         if (textIndex >= 0 && args[textIndex + 1] !== "") pasted = true;
+        return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 });
+      }
+      if (command === "superset" && args[0] === "terminals" && args[1] === "send") {
+        sends.push(args.join(" "));
         return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 });
       }
       return failed(`unexpected ${command} ${args.join(" ")}`);
@@ -121,19 +126,19 @@ async function orcaRun(composer: (read: number, pasted: boolean) => string, env:
 }
 
 describe("composer text on Orca, where ghost and typed text look the same", () => {
-  // Orca reports Claude's grey next-prompt suggestion as composer text, so a parent notice that
-  // waited for an empty composer waited until the user next typed (18 minutes on 2026-10-13).
-  // Composer text no longer holds a parent notice; only an open dialog does.
-  test("composer text does not hold a parent notice", async () => {
+  test("submits a parent notice even when Orca cannot distinguish suggestion text from a draft", async () => {
     const run = await orcaRun(() => "sim, agenda a cada 15 min e pode seguir as 3 fases", {}, 1500);
     expect(run.sends).toHaveLength(1);
     expect(run.sends[0]).toContain("--enter");
     expect(run.outbox[0]?.status).toBe("sent");
+    expect(run.deliveries[0]?.transport).toBe("typed");
   });
 
-  test("a line that keeps changing does not hold a parent notice either", async () => {
+  test("submits a parent notice while composer text changes", async () => {
     const run = await orcaRun((read) => `write the test fi${read}`, {}, 1500);
     expect(run.sends).toHaveLength(1);
+    expect(run.sends[0]).toContain("--enter");
+    expect(run.outbox[0]?.status).toBe("sent");
   });
 
   test("submits in one call even when the post-paste read-back diverges", async () => {
@@ -144,18 +149,20 @@ describe("composer text on Orca, where ghost and typed text look the same", () =
     expect(run.outbox[0]?.status).toBe("sent");
   });
 
-  test("submits the notice and Enter in one call without a composer read-back gate", async () => {
-    const run = await orcaRun((_read, pasted) => pasted ? "✅ test finished" : "", {}, 1500);
+  test("does not submit twice when the composer shows the exact ack line we sent", async () => {
+    const run = await orcaRun((_read, pasted) => pasted ? "✅ test finished — After reading, acknowledge with: megabrain orchestrate ack d-ghost dl-ghost" : "", {}, 5000);
     expect(run.sends).toHaveLength(1);
     expect(run.sends[0]).toContain("--enter");
     expect(run.sends[0]).toContain("--text");
+    expect(run.sends[0]).toContain("After reading, acknowledge with: megabrain orchestrate ack d-ghost dl-ghost");
   });
 
-  test("holds Superset delivery when submit cannot be verified", async () => {
+  test("submits to Superset without a readable composer proof", async () => {
     const run = await orcaRun(() => "", {}, 1500, "superset");
-    expect(run.sends).toHaveLength(0);
-    expect(run.outbox[0]).toMatchObject({ status: "suppressed", detail: "superset-unverifiable-composer" });
-    expect(run.deliveries[0]).toMatchObject({ transport: "deferred" });
+    expect(run.sends).toHaveLength(1);
+    expect(run.sends[0]).toContain("--text ✅ test finished");
+    expect(run.outbox[0]?.status).toBe("sent");
+    expect(run.deliveries[0]?.transport).toBe("typed");
   });
 
 });

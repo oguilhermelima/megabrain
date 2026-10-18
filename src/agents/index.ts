@@ -4,6 +4,7 @@ import { codex } from "./codex.js";
 import { grok } from "./grok.js";
 import { unknown, type Result } from "../core/result.js";
 import { unavailableKey, type Agent, type AgentCommandOptions, type InterruptKey, type SubmitKey } from "./types.js";
+import { interruptKeyForAgent } from "./interrupt-affordance.js";
 
 const registry = new Map<string, Agent>([
   [claude.id, claude],
@@ -34,9 +35,10 @@ export function submitKey(agentId: string): Result<SubmitKey> {
   return agent?.submitKey?.() ?? unavailableKey(agentId, "submit");
 }
 
-export function interruptKey(agentId: string): Result<InterruptKey> {
-  const agent = getAgent(agentId);
-  return agent?.interruptKey?.() ?? unavailableKey(agentId, "interrupt");
+export function interruptKey(agentId: string, screen = ""): Result<InterruptKey> {
+  const affordance = interruptKeyForAgent(agentId, screen);
+  if (affordance.kind === "ok") return affordance;
+  return getAgent(agentId)?.interruptKey?.() ?? affordance;
 }
 
 export function resolveAgentDescriptor(descriptor: string): string | undefined {

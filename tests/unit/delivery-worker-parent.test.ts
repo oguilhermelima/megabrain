@@ -11,12 +11,16 @@ import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 const sessionShape = new URL("../fixtures/claude-session-idle.json", import.meta.url);
 const screenShape = new URL("../fixtures/orca-terminal-screen-claude-idle.json", import.meta.url);
 
-function processFor(screen: string, onScreenRead?: (read: number, current: string) => Promise<string | void> | string | void, afterSend?: (current: string) => string) {
+function processFor(screen: string, onScreenRead?: (read: number, current: string) => Promise<string | void> | string | void, afterSend?: (current: string) => string, foregroundAgent = "claude") {
   const calls: { command: string; args: readonly string[] }[] = [];
   let screenReads = 0;
   let currentScreen = screen;
   const process: ProcessAdapter = {
     async run(command, args) {
+      if (command === "ps" && args[0] === "-ww") {
+        const pid = args[2] ?? "0";
+        return ok<ProcessOutput>({ stdout: `${pid} ${pid} ${pid} /usr/local/bin/${foregroundAgent}\n`, stderr: "", exitCode: 0 });
+      }
       const isSubmitOnly = command === "orca" && args[0] === "terminal" && args[1] === "send" && args.includes("--enter") && (args[args.indexOf("--text") + 1] ?? "") === "";
       if (!isSubmitOnly) calls.push({ command, args: [...args] });
       if (command === "orca" && args[0] === "terminal" && args[1] === "list") {
@@ -34,6 +38,11 @@ function processFor(screen: string, onScreenRead?: (read: number, current: strin
         if (pasted !== "") {
           const value = JSON.parse(currentScreen) as { result: { terminal: { tail: string[] } } };
           value.result.terminal.tail = value.result.terminal.tail.map((line) => line.startsWith("❯") ? `❯ ${pasted}` : line);
+          currentScreen = JSON.stringify(value);
+        }
+        if (args.includes("--enter")) {
+          const value = JSON.parse(currentScreen) as { result: { terminal: { tail: string[] } } };
+          value.result.terminal.tail = value.result.terminal.tail.map((line) => line.startsWith("❯") ? "❯" : line);
           currentScreen = JSON.stringify(value);
           if (afterSend !== undefined) currentScreen = afterSend(currentScreen);
         }
@@ -141,7 +150,8 @@ describe("Claude parent idle delivery", () => {
       expect(sends).toHaveLength(1);
       expect(sends[0]?.args).toContain("--enter");
       const textIndex = sends[0]?.args.indexOf("--text") ?? -1;
-      expect(sends[0]?.args[textIndex + 1]).toBe("✅ Claude · test finished — The task is complete.");
+      expect(sends[0]?.args[textIndex + 1]).toStartWith("✅ Claude · test finished — The task is complete.");
+      expect(sends[0]?.args[textIndex + 1]).toContain("After reading, acknowledge with: megabrain orchestrate ack");
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -164,6 +174,29 @@ describe("Claude parent idle delivery", () => {
     const empty = JSON.stringify({ ...screenValue, result: { terminal: { ...screenValue.result.terminal, tail: screenValue.result.terminal.tail.map((line) => line.startsWith("❯") ? "❯" : line) } } });
     const fake = processFor(empty);
     try {
+      const result = await runWorker(root, ids, fake.process, 2000);
+      expect(result).toMatchObject({ kind: "ok", value: "delivery typed\n" });
+      expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("submits a parent notice when the composer cannot be parsed", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-unreadable-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    session.pid = 41236;
+    await fs.writeFile(path.join(sessions, "41236.json"), JSON.stringify(session));
+    const ids = await setupWorker(root, session);
+    const frame = JSON.parse(await fs.readFile(screenShape, "utf8")) as { result: { terminal: { tail: string[] } } };
+    frame.result.terminal.tail = ["screen loaded, composer not recognized"];
+    const fake = processFor(JSON.stringify(frame));
+    try {
       await runWorker(root, ids, fake.process, 2000);
       expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
     } finally {
@@ -171,7 +204,33 @@ describe("Claude parent idle delivery", () => {
     }
   });
 
-  test("holds a human composer draft and delivers after it clears while Claude is busy", async () => {
+  test("delivers to a busy Codex parent when the composer is empty", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const os = await import("node:os");
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "delivery-parent-codex-"));
+    const sessions = path.join(root, ".claude", "sessions");
+    await fs.mkdir(sessions, { recursive: true });
+    const session = JSON.parse(await fs.readFile(sessionShape, "utf8")) as Record<string, unknown>;
+    session.pid = 41235;
+    await fs.writeFile(path.join(sessions, "41235.json"), JSON.stringify(session));
+    const ids = await setupWorker(root, session, { parentAgent: "codex", parentAgentPid: session.pid, parentAgentSessionId: undefined });
+    const screen = JSON.stringify({ result: { terminal: { tail: ["Working (1s)", "esc to interrupt", "› Ask Codex to do anything"] } } });
+    const fake = processFor(screen, undefined, undefined, "codex");
+    try {
+      const result = await runWorker(root, ids, fake.process, 2000);
+      expect(result).toMatchObject({ kind: "ok", value: "delivery typed\n" });
+      expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
+      const opened = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+      if (opened.kind !== "ok") throw new Error(opened.error);
+      try { expect(listDeliveries(opened.value, ids.dispatchId)).toMatchObject({ value: [{ transport: "typed" }] }); }
+      finally { opened.value.close(); }
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("delivers to a busy parent immediately despite foreign composer text", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const os = await import("node:os");
@@ -186,7 +245,6 @@ describe("Claude parent idle delivery", () => {
     const ids = await setupWorker(root, session);
     const value = JSON.parse(await fs.readFile(screenShape, "utf8")) as { result: { terminal: { tail: string[] } } };
     let reads = 0;
-    let sentBeforeHumanDraftCleared = false;
     const fake = processFor("", async () => { reads += 1; });
     const response = (draft: string) => JSON.stringify({ ...value, result: { terminal: { ...value.result.terminal, tail: value.result.terminal.tail.map((line) => line.startsWith("❯") ? `❯ ${draft}` : line) } } });
     // Replace only screen responses so the first probe sees a human draft and later probes see an empty composer.
@@ -195,23 +253,21 @@ describe("Claude parent idle delivery", () => {
       async run(command, args) {
         if (command === "orca" && args[0] === "terminal" && args[1] === "read") {
           reads += 1;
-          return ok<ProcessOutput>({ stdout: response(reads < 3 ? "human text" : ""), stderr: "", exitCode: 0 });
+          return ok<ProcessOutput>({ stdout: response("human text"), stderr: "", exitCode: 0 });
         }
-        if (command === "orca" && args[0] === "terminal" && args[1] === "send" && reads < 3) sentBeforeHumanDraftCleared = true;
         return fake.process.run(command, args);
       },
     };
     try {
       await runWorker(root, ids, dynamic, 2500);
-      expect(reads).toBeGreaterThanOrEqual(3);
-      expect(sentBeforeHumanDraftCleared).toBe(false);
+      expect(reads).toBeLessThan(6);
       expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  test("holds delivery while a permission dialog is on screen", async () => {
+  test("delivers immediately while a permission dialog is on screen", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const os = await import("node:os");
@@ -228,13 +284,13 @@ describe("Claude parent idle delivery", () => {
     const fake = processFor(dialog);
     try {
       await runWorker(root, ids, fake.process, 100);
-      expect(fake.calls.some((call) => call.args[1] === "send")).toBe(false);
+      expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
   });
 
-  test("holds delivery when a permission dialog has an empty-looking composer", async () => {
+  test("delivers immediately when a permission dialog has an empty-looking composer", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const os = await import("node:os");
@@ -250,7 +306,7 @@ describe("Claude parent idle delivery", () => {
     const fake = processFor(dialog);
     try {
       await runWorker(root, ids, fake.process, 100);
-      expect(fake.calls.some((call) => call.args[1] === "send")).toBe(false);
+      expect(fake.calls.filter((call) => call.args[1] === "send")).toHaveLength(1);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -369,7 +425,7 @@ describe("Claude parent idle delivery", () => {
     }
   });
 
-  test("stops waiting after the screen stays unavailable, records why, and never types", async () => {
+  test("tries to send immediately when the screen is unavailable", async () => {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     const os = await import("node:os");
@@ -385,6 +441,7 @@ describe("Claude parent idle delivery", () => {
     const broken: ProcessAdapter = {
       async run(command, args) {
         calls.push([command, ...args]);
+        if (command === "ps" && args[0] === "-ww") return ok<ProcessOutput>({ stdout: "14142 14142 14142 /opt/claude/bin/claude --resume parent\n", stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ terminals: [{ handle: "parent-terminal" }] }), stderr: "", exitCode: 0 });
         return failed("orca terminal read broke");
       },
@@ -393,16 +450,17 @@ describe("Claude parent idle delivery", () => {
     };
     const started = Date.now();
     try {
-      await runWorker(root, ids, broken, 8000, { MEGABRAIN_PROOF_UNAVAILABLE_MS: "200" });
-      expect(Date.now() - started).toBeLessThan(5000);
-      expect(calls.some((call) => call[2] === "send")).toBe(false);
+      await runWorker(root, ids, broken, 300, { MEGABRAIN_PROOF_UNAVAILABLE_MS: "200" });
+      expect(Date.now() - started).toBeLessThan(1000);
+      expect(calls.some((call) => call[2] === "send")).toBe(true);
       const decisions = (await fs.readFile(path.join(root, "delivery-decisions.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
       expect(decisions[0]).toMatchObject({ proofSource: "claude-session", proofReason: expect.stringContaining("orca terminal read broke") });
       const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
       if (db.kind !== "ok") throw new Error(db.error);
       const deliveries = listDeliveries(db.value, ids.dispatchId);
       if (deliveries.kind !== "ok") throw new Error(deliveries.error);
-      expect(deliveries.value[0]).toMatchObject({ transport: "failed", transportReason: "proof-unavailable" });
+      expect(deliveries.value[0]).toMatchObject({ transport: "failed" });
+      expect(decisions.some((decision: { decision?: string }) => decision.decision === "send-failed")).toBe(true);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
@@ -436,10 +494,20 @@ describe("tmux parent composer suggestion", () => {
         captured = `────────────────────────────────────────────────────────────\n❯ ${text.replace(/\n/g, "\n  ")}\n────────────────────────────────────────────────────────────\n`;
         return ok(undefined);
       },
-      sendKey: async (_pane, key) => { keys.push(key); return ok(undefined); },
+      pasteText: async (_pane, text) => {
+        typed.push(text);
+        captured = `────────────────────────────────────────────────────────────\n❯ ${text.replace(/\n/g, "\n  ")}\n────────────────────────────────────────────────────────────\n`;
+        return ok(undefined);
+      },
+      sendKey: async (_pane, key) => {
+        keys.push(key);
+        if (key === "Enter") captured = `────────────────────────────────────────────────────────────\n❯\n────────────────────────────────────────────────────────────\n`;
+        return ok(undefined);
+      },
     });
     const process: ProcessAdapter = {
       async run(command, args) {
+        if (command === "ps" && args[0] === "-ww") return ok<ProcessOutput>({ stdout: "45678 45678 45678 /opt/claude/bin/claude --resume parent\n", stderr: "", exitCode: 0 });
         if (command === "ps" && args[0] === "-p") return ok<ProcessOutput>({ stdout: "ttys001\n", stderr: "", exitCode: 0 });
         if (command === "ps") return ok<ProcessOutput>({ stdout: "45678 1 claude MEGABRAIN_DISPATCH_ID=dispatch-parent-gate\n", stderr: "", exitCode: 0 });
         return failed(`unexpected command: ${command} ${args.join(" ")}`);

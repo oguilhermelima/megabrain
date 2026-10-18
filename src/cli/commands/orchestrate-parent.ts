@@ -8,7 +8,7 @@ import { loadDeliveries, loadMessages, migrateDeliveries, report } from "./check
 import { ackCloseRefusal, parseParentAckArgs } from "../../core/parent-queue.js";
 import { resolveCaller } from "./queue-write.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
-import { ackDelivery, claimDelivery, deleteWaiter, fenceDelivery, getDispatch, isDispatchArchived, listDeliveries, nudgeCursor, putWaiter, stateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
+import { ackDelivery, acknowledgeImplicitDelivery, claimDelivery, deleteWaiter, fenceDelivery, getDispatch, isDispatchArchived, listDeliveries, nudgeCursor, putWaiter, stateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
 import { usageText } from "../../core/usage.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 
@@ -101,6 +101,7 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
           if (claimed.kind !== "ok") return claimed;
           if (claimed.value === undefined) continue;
         }
+        if (selected.delivery.recipient === "parent") acknowledgeImplicitDelivery(database.value, dispatchId, selected.delivery.id, "parent");
         return ok(report(dispatchId, selected.delivery, messages, selected.replayed, parsed.value.json));
       }
       const elapsed = Date.now() - started;
@@ -132,8 +133,16 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, ...consumerSession(caller) });
   if (identity.kind !== "known") return failed(identity.reason);
   const deliveries = listDeliveries(database.value, dispatchId); if (deliveries.kind !== "ok") return deliveries;
-  const delivery = deliveries.value.find((item) => item.id === parsed.value.deliveryId);
+  let delivery = deliveries.value.find((item) => item.id === parsed.value.deliveryId);
   if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);
+  // The command is printed inside the delivered message. Reaching it proves that this consumer
+  // received the message, so an unclaimed delivery can be claimed here before it is acknowledged.
+  if (delivery.consumer === null || delivery.consumer === undefined) {
+    const claimed = claimDelivery(database.value, delivery.id, identity.value, parsed.value.generation);
+    if (claimed.kind !== "ok") return claimed;
+    if (claimed.value === undefined) return failed(`delivery ${delivery.id} refused: it belongs to another consumer`);
+    delivery = claimed.value;
+  }
   const ack = ackDelivery(database.value, parsed.value.deliveryId, identity.value, parsed.value.generation); if (ack.kind !== "ok") return ack;
   const messageSeqs = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs : [];
   const acknowledgment = { dispatchId, deliveryId: parsed.value.deliveryId, acknowledged: true, duplicate: ack.value.duplicate, status: "acknowledged", messageSeqs };

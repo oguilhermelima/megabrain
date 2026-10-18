@@ -54,14 +54,13 @@ async function parentMeta(database: DatabaseHandle, dispatch: string, env: Queue
   return ok({ ...meta, dispatchId: resolved.value });
 }
 
-async function tmuxLiveness(meta: RecordValue, process: ProcessAdapter): Promise<{ readonly status: string; readonly reason: string; readonly identity: TerminalStatus }> {
+async function tmuxLiveness(meta: RecordValue, process: ProcessAdapter): Promise<{ readonly status: string; readonly reason: string; readonly identity: TerminalStatus; readonly screen: string }> {
   const identity = await terminalStatus(meta, process);
-  if (identity !== "proven") return { status: identity === "missing" ? "missing" : "unknown", reason: identity === "missing" ? "terminal is no longer available" : "terminal identity is unproven", identity };
-  const pane = value(meta.tmuxPane);
+  if (identity !== "proven") return { status: identity === "missing" ? "missing" : "unknown", reason: identity === "missing" ? "terminal is no longer available" : "terminal identity is unproven", identity, screen: "" };
   const capture = await readDeliveryScreen(meta, process);
-  if (capture.kind !== "ok") return { status: "unknown", reason: "terminal output is unavailable", identity };
+  if (capture.kind !== "ok") return { status: "unknown", reason: "terminal output is unavailable", identity, screen: "" };
   const classified = classifyLiveness(value(meta.agent), capture.value);
-  return { status: classified.status, reason: classified.reason ?? "", identity };
+  return { status: classified.status, reason: classified.reason ?? "", identity, screen: capture.value };
 }
 
 function childMessages(database: DatabaseHandle, dispatch: string): RecordValue[] {
@@ -129,7 +128,7 @@ export async function executeOrchestrateStop(args: readonly string[], env: Queue
   if (runtime === "tmux") {
     const live = await tmuxLiveness(meta, process); status = live.status;
     reason = status === "pending-check" ? "pending check frame: messages are waiting for the next tool call" : status === "unknown" ? `unknown liveness: ${live.reason || "liveness is not proven"}` : live.reason || `${status}: agent is not working`;
-    const affordance = interruptKey(value(meta.agent));
+    const affordance = interruptKey(value(meta.agent), live.screen);
     const decision = stopDecision(status, affordance.kind === "ok" ? "known" : "unknown");
     if (decision.kind !== "ok") return failed(`dispatch ${dispatchId} cannot be stopped: ${reason || decision.error}`);
     if (affordance.kind !== "ok") return failed(`dispatch ${dispatchId} cannot be stopped: ${affordance.error}`);

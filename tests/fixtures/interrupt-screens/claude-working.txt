@@ -1,0 +1,6 @@
+❯ Use Bash to run sleep 60 in the foreground, then report done.
+⏺ Waiting 60 seconds
+  ⎿ $ sleep 60
+✳ Thundering… (9s · ↓ 505 tokens · thought for 1s)
+❯
+Opus 5.5 1M (Medium) │ 72k/1M ctx

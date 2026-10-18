@@ -15,8 +15,8 @@ export type GrokLeaderDeliveryInput = Readonly<{
   now?: () => number;
 }>;
 
-// The leader's queue announcement is the proof, so there is nothing to poll afterwards. Grok's
-// version is only known once the leader answers, so a broken channel waits out its retry time.
+// The leader acceptance only proves that the prompt entered its queue. The receiver's ack is the
+// delivery proof, so the caller verifies it before marking this channel healthy.
 export async function deliverThroughGrokLeader(input: GrokLeaderDeliveryInput): Promise<PeerDeliveryOutcome> {
   const now = input.now ?? Date.now;
   const state = getDeliveryChannel(input.database, "grok", GROK_LEADER_CHANNEL);
@@ -30,6 +30,5 @@ export async function deliverThroughGrokLeader(input: GrokLeaderDeliveryInput): 
     recordChannelResult(input.database, { agent: "grok", channel: GROK_LEADER_CHANNEL, agentVersion, ok: false, error: sent.reason, now: now() });
     return { kind: "fallback", reason: sent.reason };
   }
-  recordChannelResult(input.database, { agent: "grok", channel: GROK_LEADER_CHANNEL, agentVersion, ok: true, now: now() });
-  return { kind: "delivered", msgId: sent.promptId };
+  return { kind: "delivered", msgId: sent.promptId, agentVersion };
 }

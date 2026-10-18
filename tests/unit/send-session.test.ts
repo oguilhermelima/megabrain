@@ -36,7 +36,7 @@ describe("send to agent sessions", () => {
     expect(matchOrcaTerminal(terminals, { agent: "claude", worktreePath: "/Users/operator/Workspaces/Canto" })).toBeUndefined();
   });
 
-  test("reports a busy operator composer without typing over it", async () => {
+  test("submits immediately over foreign operator composer text", async () => {
     const { deliverOperatorText } = await import("../../src/core/session-send.js");
     const calls: string[][] = [];
     const result = await deliverOperatorText({
@@ -44,56 +44,50 @@ describe("send to agent sessions", () => {
       read: async () => "❯ draft",
       send: async (text, enter) => { calls.push([text, String(enter)]); return "ok"; },
     });
-    expect(result).toEqual({ delivered: false, detail: "The session already has text in its input box in its terminal; send it or clear it there, then try again." });
-    expect(calls).toEqual([]);
+    expect(result).toEqual({ delivered: true });
+    expect(calls).toEqual([["hello", "true"]]);
   });
 
-  test("explains a dialog, an unreadable terminal and unconfirmed text for the person", async () => {
+  test("sends through a dialog and an initially unreadable composer", async () => {
     const { deliverOperatorText } = await import("../../src/core/session-send.js");
-    const send = async () => "ok";
-    expect(await deliverOperatorText({ terminalId: "term-1", agent: "claude", text: "hello", read: async () => "Choose an option", send }))
-      .toEqual({ delivered: false, detail: "The session is showing a question in its terminal; answer it there first." });
-    expect(await deliverOperatorText({ terminalId: "term-1", agent: "claude", text: "hello", read: async () => undefined, send }))
-      .toEqual({ delivered: false, detail: "Could not read the session's terminal." });
-    expect(await deliverOperatorText({ terminalId: "term-1", agent: "claude", text: "hello", read: async () => "❯ ", send }))
-      .toEqual({ delivered: false, detail: "The text could not be confirmed in the session's input. It was left in the input box unsent; send or clear it in the terminal." });
+    const calls: string[][] = [];
+    const send = async (text = "", enter = false) => { calls.push([text, String(enter)]); return "ok"; };
+    expect(await deliverOperatorText({ terminalId: "term-1", agent: "claude", text: "hello", read: async () => "Choose an option", send })).toEqual({ delivered: true });
+    expect(await deliverOperatorText({ terminalId: "term-1", agent: "claude", text: "hello", read: async () => undefined, send })).toEqual({ delivered: true });
+    expect(calls).toEqual([["hello", "true"], ["hello", "true"]]);
   });
 
-  test("clears exactly what it typed when the text cannot be confirmed, and says so", async () => {
+  test("submits again if the composer still contains the message after the first submit", async () => {
     const { deliverOperatorText } = await import("../../src/core/session-send.js");
     const events: string[] = [];
     let screen = "❯ ";
     const result = await deliverOperatorText({
       agent: "claude", text: "hello",
       read: async () => screen,
-      send: async (text, enter) => { events.push(`send:${text}:${enter}`); screen = "❯ something else"; return "ok"; },
-      clear: async () => { events.push("clear"); screen = "❯ "; return "ok"; },
+      send: async (text, enter) => { events.push(`send:${text}:${enter}`); screen = text === "" ? "❯ " : "❯ hello"; return "ok"; },
     });
-    expect(events).toEqual(["send:hello:false", "clear"]);
-    expect(result.delivered).toBe(false);
-    expect(result.detail).toContain("cleared");
+    expect(events).toEqual(["send:hello:true", "send::true"]);
+    expect(result).toEqual({ delivered: true });
   });
 
-  test("says the text may still be unsent when it cannot clear it", async () => {
+  test("does not resend when the composer no longer contains the message", async () => {
     const { deliverOperatorText } = await import("../../src/core/session-send.js");
     let screen = "❯ ";
     const result = await deliverOperatorText({
       agent: "claude", text: "hello",
       read: async () => screen,
-      send: async () => { screen = "❯ something else"; return "ok"; },
-      clear: async () => "ok",
+      send: async () => { screen = "❯ other text"; return "ok"; },
     });
-    expect(result.delivered).toBe(false);
-    expect(result.detail).toContain("still");
+    expect(result).toEqual({ delivered: true });
   });
 
-  test("says the text was left in the input when no clear is available", async () => {
+  test("submits even when the post-submit screen is unreadable", async () => {
     const { deliverOperatorText } = await import("../../src/core/session-send.js");
-    const result = await deliverOperatorText({ agent: "claude", text: "hello", read: async () => "❯ ", send: async () => "ok" });
-    expect(result.detail).toContain("left");
+    const result = await deliverOperatorText({ agent: "claude", text: "hello", read: async () => undefined, send: async () => "ok" });
+    expect(result).toEqual({ delivered: true });
   });
 
-  test("waits for a slow composer to show the paste, then presses Enter once", async () => {
+  test("submits a paste immediately and retries Enter if the text remains", async () => {
     const { deliverOperatorText } = await import("../../src/core/session-send.js");
     const events: string[] = [];
     let pasted = false;
@@ -103,18 +97,16 @@ describe("send to agent sessions", () => {
       read: async () => {
         if (!pasted) return "❯ ";
         readsAfterPaste += 1;
-        return readsAfterPaste >= 3 ? "❯ hello" : "❯ ";
+        return readsAfterPaste === 1 ? "❯ hello" : "❯ ";
       },
       send: async (text, enter) => { events.push(`send:${text}:${enter}`); if (text !== "") pasted = true; return "ok"; },
-      clear: async () => { events.push("clear"); return "ok"; },
-      pollIntervalMs: 5, confirmTimeoutMs: 500,
     });
     expect(result).toEqual({ delivered: true });
-    expect(events).toEqual(["send:hello:false", "send::true"]);
-    expect(readsAfterPaste).toBe(3);
+    expect(events).toEqual(["send:hello:true", "send::true"]);
+    expect(readsAfterPaste).toBe(2);
   });
 
-  test("fails after the deadline and clears when the paste never shows", async () => {
+  test("does not wait when the paste read-back remains empty", async () => {
     const { deliverOperatorText } = await import("../../src/core/session-send.js");
     const events: string[] = [];
     const started = Date.now();
@@ -122,31 +114,27 @@ describe("send to agent sessions", () => {
       agent: "claude", text: "hello",
       read: async () => "❯ ",
       send: async (text, enter) => { events.push(`send:${text}:${enter}`); return "ok"; },
-      clear: async () => { events.push("clear"); return "ok"; },
-      pollIntervalMs: 10, confirmTimeoutMs: 100,
     });
-    expect(Date.now() - started).toBeGreaterThanOrEqual(100);
-    expect(events).toEqual(["send:hello:false", "clear"]);
-    expect(result.delivered).toBe(false);
-    expect(result.detail).toContain("cleared");
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(events).toEqual(["send:hello:true"]);
+    expect(result).toEqual({ delivered: true });
   });
 
-  test("waits for a visible empty composer before pasting", async () => {
+  test("sends without waiting for a readable empty composer", async () => {
     const { deliverOperatorText } = await import("../../src/core/session-send.js");
-    const screens: (string | undefined)[] = [undefined, "Loading conversation", "❯ "];
+    const screens: (string | undefined)[] = [undefined, "❯ hello"];
     let reads = 0;
     let pasted = false;
     const result = await deliverOperatorText({
       agent: "claude", text: "hello",
       read: async () => {
-        if (pasted) return "❯ hello";
+        if (pasted) return screens[Math.min(reads++, screens.length - 1)];
         return screens[Math.min(reads++, screens.length - 1)];
       },
       send: async (text) => { if (text !== "") pasted = true; return "ok"; },
-      pollIntervalMs: 5, readyTimeoutMs: 500,
     });
     expect(result).toEqual({ delivered: true });
-    expect(reads).toBe(3);
+    expect(reads).toBe(1);
   });
 
   test("returns delivered false when an actual session has no channel", async () => {
@@ -158,7 +146,7 @@ describe("send to agent sessions", () => {
 
       expect(result).toEqual({
         kind: "ok",
-        value: `${JSON.stringify({ delivered: false, channel: "none", detail: "no delivery channel is available for this session" }, null, 2)}\n`,
+        value: `${JSON.stringify({ delivered: false, channel: "typed", detail: "no delivery channel is available for this session" }, null, 2)}\n`,
         exitCode: 1,
       });
     } finally {

@@ -212,7 +212,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
-  test("stays quiet while an outstanding parent-pointer delivery is in flight", async () => {
+  test("surfaces outstanding mail while a deferred parent-pointer delivery is in flight", async () => {
     await withRoot("pending-mail", async (root) => {
       await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
       const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -225,10 +225,10 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       setDeliveryTransport(database.value, "d1", appended.value.seq, "deferred", "parent composer is occupied");
 
       const result = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
-      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+      expect(result).toMatchObject({ kind: "ok", value: expect.stringContaining("unread child message: done finished") });
       const deliveries = listDeliveries(database.value, "d1");
       if (deliveries.kind !== "ok") throw new Error(deliveries.error);
-      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["deferred"]);
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["hook-notified"]);
     });
   });
 
@@ -258,7 +258,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
-  test("does not surface or mark a peer-sent message while its worker awaits transcript consumption", async () => {
+  test("surfaces deferred peer-sent mail while its worker awaits transcript consumption", async () => {
     await withRoot("peer-sent-parent-mail", async (root) => {
       await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
       const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -273,10 +273,10 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       database.value.db.run("UPDATE outbox SET status = 'sending', detail = ?, created_at = ?, updated_at = ? WHERE id = ?", ["peer-sent:msg-123", old, old, "peer-sent-parent-outbox"]);
 
       const result = await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin);
-      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+      expect(result).toMatchObject({ kind: "ok", value: expect.stringContaining("unread child message: done finished") });
       const deliveries = listDeliveries(database.value, "d1");
       if (deliveries.kind !== "ok") throw new Error(deliveries.error);
-      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["deferred"]);
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["hook-notified"]);
     });
   });
 
@@ -350,10 +350,10 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     });
   });
 
-  test("stays quiet for a fresh deferred ask and leaves it unnotified", async () => {
+  test("surfaces fresh deferred Claude-parent mail at the next Stop hook", async () => {
     await withRoot("actionable-mail-in-flight", async (root) => {
-      await writeMeta(root, "d1", { ...parentedBase, state: "running", processState: "running" });
-      const appended = await appendMessage(root, "d1", "child", "ask", "which branch?", "child-session", environment(root), fakeProcess());
+      await writeMeta(root, "d1", { ...parentedBase, parentAgent: "claude", parentAgentSessionId: "claude-parent", state: "running", processState: "running" });
+      const appended = await appendMessage(root, "d1", "child", "done", "finished the task", "child-session", environment(root), fakeProcess());
       if (appended.kind !== "ok") throw new Error(appended.error);
       const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (database.kind !== "ok") throw new Error(database.error);
@@ -362,10 +362,12 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       expect(first).toMatchObject({ kind: "ok" });
       const deliveries = listDeliveries(database.value, "d1");
       if (deliveries.kind !== "ok") throw new Error(deliveries.error);
-      expect(first).toEqual({ kind: "ok", value: "{}\n" });
-      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["deferred"]);
+      expect(first).toMatchObject({ kind: "ok", value: expect.stringContaining("1 unread child message: done finished the task — megabrain orchestrate watch d1") });
+      expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
+      expect(deliveries.value.map((delivery) => delivery.transport)).toEqual(["hook-notified"]);
     });
   });
+
 
   test("reports an aged deferred ask once, briefly, then marks it as notified", async () => {
     await withRoot("actionable-mail-aged-once", async (root) => {
@@ -591,7 +593,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     });
   });
 
-  test("replays checked replies until the child reports, without blocking the hook again", async () => {
+  test("a check implicitly acknowledges a reply, without blocking the hook again", async () => {
     await withRoot("reply-available", async (root) => {
       await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
       const fp = fakeProcess();
@@ -600,7 +602,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       expect(check).toMatchObject({ kind: "ok" });
       expect(JSON.parse(check.kind === "ok" ? check.value : "{}")).toMatchObject({ replayed: false, text: "do the other thing" });
       const repeated = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], childEnv(root), fp);
-      expect(JSON.parse(repeated.kind === "ok" ? repeated.value : "{}")).toMatchObject({ replayed: true, text: "do the other thing" });
+      expect(JSON.parse(repeated.kind === "ok" ? repeated.value : "{}")).toMatchObject({ replayed: false, status: "empty", messages: [] });
       const afterShown = await executeHookTurnEnd([], childEnv(root), fp, noStdin);
       expect(afterShown).toEqual({ kind: "ok", value: "{}\n" });
 

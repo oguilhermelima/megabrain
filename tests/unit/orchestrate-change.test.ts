@@ -23,7 +23,7 @@ const interruptedCodex = [
   "  GPT-6-Luna high · Context 68% left · weekly 59% left · 5h 11% left",
   "  ? for shortcuts                                              ⚠ 3 warnings · f2 to view",
 ].join("\n");
-const codexWorking = "• Working (1s • esc to interrupt)";
+const codexWorking = "• Working (1s • esc to interrupt)\n› Ask Codex to do anything";
 const direction = "Use the existing parser, preserve the current behavior, and update the docs.";
 const formatted = `🔀 codex · megabrain/main new direction\nStop the approach you were on and follow this instead:\n${direction}\n(The same text is available with megabrain check.)`;
 
@@ -53,6 +53,7 @@ function meta(overrides: JsonRecord = {}): JsonRecord {
     parentChatName: "megabrain/main",
     agent: "codex",
     agentId: "codex",
+    agentPid: 999,
     runtime: "tmux",
     tmuxSession: "child-session",
     tmuxPane: "%2",
@@ -76,6 +77,7 @@ function environment(root: string, overrides: Record<string, string> = {}): Reco
 function processAdapter(): ProcessAdapter {
   return {
     async run(command, args) {
+      if (command === "ps" && args[0] === "-ww") return ok({ stdout: "999 999 999 /usr/local/bin/codex --resume child\n", stderr: "", exitCode: 0 });
       if (command === "ps" && args[0] === "-p") return ok({ stdout: "pts/7\n", stderr: "", exitCode: 0 });
       if (command === "ps" && args[0] === "eww") return ok({ stdout: "999 1 child MEGABRAIN_DISPATCH_ID=change\n", stderr: "", exitCode: 0 });
       return ok({ stdout: "", stderr: "", exitCode: 0 });
@@ -104,8 +106,9 @@ function installTmux(options: HarnessOptions = {}) {
     panePid: async () => ok("999"),
     capturePane: async () => {
       if (delivered) return ok(options.idleAfterDelivery ? codexIdle : codexWorking);
+      if (options.initialComposer !== undefined) return ok(options.initialComposer);
       if (options.alwaysBusy || interrupts < (options.idleAfterInterrupt ?? 1)) return ok(codexWorking);
-      return ok(options.initialComposer ?? codexIdle);
+      return ok(codexIdle);
     },
     sendKey: async (_pane, key) => {
       events.push(`key:${key}`);
@@ -113,6 +116,7 @@ function installTmux(options: HarnessOptions = {}) {
       if (key === "Tab" || key === "Enter") delivered = true;
       return ok(undefined);
     },
+    pasteText: async (_pane, text) => { events.push(`text:${text}`); return ok(undefined); },
     sendText: async (_pane, text) => {
       events.push(`text:${text}`);
       return ok(undefined);
@@ -147,7 +151,26 @@ afterEach(() => {
 });
 
 describe("orchestrate change delivery", () => {
-  test("interrupts once, waits for stable idle, and types only into the empty composer", async () => {
+  test("interrupts a busy child once and delivers without waiting for idle", async () => {
+    const root = await tempStateDir();
+    const harness = installTmux({ alwaysBusy: true });
+    try {
+      await writeDispatch(root);
+      const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "1", "--attempts", "1", "--json"], environment(root), processAdapter());
+      expect(result.kind).toBe("ok");
+      const output = result.kind === "ok" ? JSON.parse(result.value) as JsonRecord : {};
+      expect(output).toMatchObject({ attempts: 1, idleReached: false, delivered: true, confirmed: true });
+      expect(harness.events[0]).toBe("key:Escape");
+      expect(harness.events[1]).toStartWith(`text:${formatted}`);
+      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[2]).toBe("key:Enter");
+    } finally {
+      harness.restore();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("interrupts once before delivering into an empty idle composer", async () => {
     const root = await tempStateDir();
     const harness = installTmux();
     try {
@@ -155,10 +178,13 @@ describe("orchestrate change delivery", () => {
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
       const output = result.kind === "ok" ? JSON.parse(result.value) as JsonRecord : {};
-      expect(output).toMatchObject({ attempts: 1, idleReached: true, delivered: true, confirmed: true, supersededQueued: 0, supersededDelivered: 0 });
-      expect(harness.events).toEqual(["key:Escape", `text:${formatted}`, "key:Tab"]);
+      expect(output).toMatchObject({ attempts: 1, idleReached: false, delivered: true, confirmed: true, supersededQueued: 0, supersededDelivered: 0 });
+      expect(harness.events[0]).toBe("key:Escape");
+      expect(harness.events[1]).toStartWith(`text:${formatted}`);
+      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[2]).toBe("key:Enter");
       const messages = await readMessages(root);
-      expect(messages.map((message) => message.type)).toEqual(["reply", "interrupt", "interrupt-result", "idle-result", "composer-clear", "delivery-result", "delivery-confirmation"]);
+      expect(messages.map((message) => message.type)).toEqual(["reply", "composer-clear", "delivery-result", "delivery-confirmation"]);
       expect((messages[0] as JsonRecord).text).toBe(direction);
     } finally {
       harness.restore();
@@ -166,54 +192,59 @@ describe("orchestrate change delivery", () => {
     }
   });
 
-  test("leaves a foreign composer draft untouched and keeps the change queued", async () => {
+  test("submits the change immediately over foreign composer text", async () => {
     const root = await tempStateDir();
-    const harness = installTmux({ initialComposer: `${codexIdle}\n› operator draft` });
+    const harness = installTmux({ initialComposer: `${codexWorking}\n› operator draft` });
     try {
       await writeDispatch(root);
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
-      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ idleReached: true, delivered: false, reason: expect.stringContaining("delivery deferred") });
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
       const db = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
-      expect(requireOk(listOutbox(db))).toHaveLength(1);
-      expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "deferred" });
-      expect(harness.events).toEqual(["key:Escape"]);
+      expect(requireOk(listOutbox(db))).toMatchObject([{ status: "sent" }]);
+      expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "typed" });
+      expect(harness.events[0]).toBe("key:Escape");
+      expect(harness.events[1]).toStartWith(`text:${formatted}`);
+      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[2]).toBe("key:Enter");
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("retries the interrupt while busy and sends only after the second idle result", async () => {
+  test("interrupts once and delivers to a busy child immediately", async () => {
     const root = await tempStateDir();
     const harness = installTmux({ idleAfterInterrupt: 2 });
     try {
       await writeDispatch(root);
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--attempts", "3", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
-      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 2, idleReached: true, delivered: true });
-      expect(harness.events.filter((event) => event === "key:Escape")).toHaveLength(2);
-      expect(harness.events).not.toContain("key:C-u");
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
+      expect(harness.events[0]).toBe("key:Escape");
+      expect(harness.events[1]).toStartWith(`text:${formatted}`);
+      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[2]).toBe("key:Enter");
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("fails after three interrupts without typing while keeping the change queued", async () => {
+  test("submits a direction immediately while foreign text remains in the composer", async () => {
     const root = await tempStateDir();
-    const harness = installTmux({ alwaysBusy: true });
+    const harness = installTmux({ alwaysBusy: true, initialComposer: `${codexWorking}\n› operator draft` });
     try {
       await writeDispatch(root);
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "1", "--attempts", "3", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
-      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 3, idleReached: false, delivered: false, reason: expect.stringContaining("delivery deferred") });
-      expect(harness.events.filter((event) => event === "key:Escape")).toHaveLength(3);
-      expect(harness.events.some((event) => event.startsWith("text:"))).toBe(false);
-      expect((await readMessages(root)).map((message) => message.type)).toEqual(["reply", "interrupt", "interrupt-result", "idle-result", "interrupt", "interrupt-result", "idle-result", "interrupt", "interrupt-result", "idle-result", "delivery-result"]);
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
+      expect(harness.events.filter((event) => event === "key:Escape")).toHaveLength(1);
+      expect(harness.events.some((event) => event.startsWith(`text:${formatted}`) && event.includes("acknowledge with: megabrain ack"))).toBe(true);
+      expect((await readMessages(root)).map((message) => message.type)).toEqual(["reply", "composer-clear", "delivery-result", "delivery-confirmation"]);
       const db = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
-      expect(requireOk(listOutbox(db))).toHaveLength(1);
-      expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "deferred" });
+      expect(requireOk(listOutbox(db))).toMatchObject([{ status: "sent" }]);
+      expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "typed" });
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
@@ -229,7 +260,7 @@ describe("orchestrate change delivery", () => {
       const result = await executeOrchestrateChange(["change", "--text", large, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: true, oversized: true });
-      expect(harness.events).toContain("text:🔀 codex · megabrain/main new direction\nA new direction is queued; run megabrain check to read it.");
+      expect(harness.events.some((event) => event.startsWith("text:🔀 codex · megabrain/main new direction\nA new direction is queued; run megabrain check to read it.") && event.includes("acknowledge with: megabrain ack"))).toBe(true);
       expect(harness.events.some((event) => event.includes(large))).toBe(false);
     } finally {
       harness.restore();
@@ -237,18 +268,18 @@ describe("orchestrate change delivery", () => {
     }
   });
 
-  test("preserves the Superset interrupt refusal and leaves the direction queued", async () => {
+  test("delivers through Superset even though it cannot interrupt", async () => {
     const root = await tempStateDir();
     try {
       await writeDispatch(root, { runtime: "host", childHost: "superset", workspaceId: "workspace", terminalId: "child-terminal" });
       const result = await executeOrchestrateChange(["change", "--text", direction, "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
-      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 0, idleReached: false, delivered: false });
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
       expect((await readMessages(root))[0]).toMatchObject({ type: "reply", text: direction });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  test("uses Orca interrupt, screen reads, and submits full direction", async () => {
+  test("interrupts a busy Orca terminal once and sends the full direction", async () => {
     const root = await tempStateDir();
     const calls: string[] = [];
     const restoreHost = installOrcaHost(calls);
@@ -256,6 +287,7 @@ describe("orchestrate change delivery", () => {
     const fakeProcess: ProcessAdapter = {
       async run(command, args) {
         calls.push(`${command} ${args.join(" ")}`);
+        if (command === "ps" && args[0] === "-ww") return ok({ stdout: "999 999 999 /usr/local/bin/codex --resume child\n", stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal" }] } }), stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "read") {
           screenReads += 1;
@@ -271,10 +303,11 @@ describe("orchestrate change delivery", () => {
       await writeDispatch(root, { runtime: "host", tmuxSession: null, tmuxPane: null });
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), fakeProcess);
       expect(result.kind).toBe("ok");
-      expect(calls.some((call) => call.includes("--interrupt"))).toBe(true);
+      expect(calls.filter((call) => call.includes("\u001b"))).toHaveLength(1);
+      expect(calls.some((call) => call.includes("--interrupt"))).toBe(false);
       expect(calls.some((call) => call.includes("--screen"))).toBe(true);
       expect(calls.some((call) => call.includes("\u0015"))).toBe(false);
-      expect(calls.some((call) => call.includes(formatted))).toBe(true);
+      expect(calls.some((call) => call.includes(direction))).toBe(true);
     } finally {
       restoreHost();
       await rm(root, { recursive: true, force: true });
@@ -295,15 +328,18 @@ describe("orchestrate change delivery", () => {
     }
   });
 
-  test("types the direction after an interrupted Codex frame with a dim placeholder", async () => {
+  test("interrupts once before delivering into the dim Codex placeholder", async () => {
     const root = await tempStateDir();
     const harness = installTmux({ initialComposer: interruptedCodex });
     try {
       await writeDispatch(root);
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
-      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: true, delivered: true });
-      expect(harness.events).toEqual(["key:Escape", `text:${formatted}`, "key:Tab"]);
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
+      expect(harness.events[0]).toBe("key:Escape");
+      expect(harness.events[1]).toStartWith(`text:${formatted}`);
+      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[2]).toBe("key:Enter");
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });

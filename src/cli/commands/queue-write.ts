@@ -13,8 +13,9 @@ import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { isReceiptFailure } from "../../core/spawn-plan.js";
-import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange, setDeliveryTransport } from "../../adapters/state-db.js";
+import { appendMessage as appendDatabaseMessage, claimOutbox, finishNotification, getDispatch, listDispatches, recordChannelResult, stateDatabase, getWaiter, deleteWaiter, mutateDispatch, noDispatchChange, setDeliveryTransport } from "../../adapters/state-db.js";
 import { deliverCodexQueue, findCodexProcess } from "../../core/codex-delivery.js";
+import { sendSessionMessage } from "../../core/session-send.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
 
 export type QueueEnvironment = Readonly<Record<string, string | undefined>>;
@@ -275,22 +276,25 @@ async function parentHasDirectChannel(root: string, dispatch: string, meta: Json
   return false;
 }
 
-export async function sendParentPointer(root: string, meta: JsonRecord, pointer: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, fullMessage = pointer): Promise<NotificationResult> {
+export async function sendParentPointer(root: string, meta: JsonRecord, pointer: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, fullMessage = pointer, messageId = `${String(meta.dispatchId ?? "parent")}:${pointer}`): Promise<NotificationResult> {
   if (typeof meta.parentAgentThreadId === "string") {
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (database.kind !== "ok") return { outcome: "deferred", reason: `${database.error}; terminal delivery worker will retry`, transport: "deferred" };
     const found = await findCodexProcess(meta.parentAgentThreadId, {
       runtime: typeof meta.parentTmuxPane === "string" ? "tmux" : "host",
       host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId,
       workspaceId: meta.parentWorkspaceId, tmuxPane: meta.parentTmuxPane, tmuxSessionId: meta.parentTmuxSessionId,
     }, processAdapter);
-    if ("pid" in found) {
-      const queued = await deliverCodexQueue(meta.parentAgentThreadId, found.pid, fullMessage, processAdapter);
-      if (queued.kind === "queued") return { outcome: "delivered", reason: "parent-notified", transport: "queue" };
-      return { outcome: "deferred", reason: `${queued.reason}; parent requires idle-gated delivery`, transport: "deferred" };
-    }
-    return { outcome: "deferred", reason: `${found.reason}; parent requires idle-gated delivery`, transport: "deferred" };
+    const result = await sendSessionMessage({ caller: "parent-notice", messageId, target: { agent: "codex", id: String(meta.parentAgentThreadId) }, text: fullMessage, channels: {
+      "codex-queue": async () => {
+        if (!("pid" in found)) return { delivered: false, detail: found.reason };
+        return (await deliverCodexQueue(meta.parentAgentThreadId as string, found.pid, fullMessage, processAdapter)).kind === "queued";
+      },
+    }, recordChannel: (channel) => { recordChannelResult(database.value, { agent: "codex", channel, agentVersion: "unknown", ok: true }); } });
+    return result.delivered ? { outcome: "delivered", reason: "parent-notified", transport: "queue" } : { outcome: "deferred", reason: `${result.detail ?? "Codex queue unavailable"}; terminal delivery worker will retry`, transport: "deferred" };
   }
   void root; void environment;
-  return { outcome: "deferred", reason: `parent requires idle-gated delivery: ${pointer}`, transport: "deferred" };
+  return { outcome: "deferred", reason: `no direct parent channel; terminal delivery worker will retry: ${pointer}`, transport: "deferred" };
 }
 
 async function notifyParent(root: string, meta: JsonRecord, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<NotificationResult> {
@@ -304,20 +308,21 @@ async function notifyParent(root: string, meta: JsonRecord, dispatch: string, en
   return sendParentPointer(root, meta, pointer, environment, processAdapter);
 }
 
-export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}, fullMessage = `[megabrain] reply available; run megabrain check`) : Promise<NotificationResult> {
+export async function notifyChild(root: string, meta: JsonRecord, dispatch: string, processAdapter: ProcessAdapter, environment: QueueEnvironment = {}, fullMessage = `[megabrain] reply available; run megabrain check`, messageId = `${dispatch}:${fullMessage}`) : Promise<NotificationResult> {
   void root; void dispatch; void environment;
   if (typeof meta.agentThreadId === "string") {
+    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (database.kind !== "ok") return { outcome: "deferred", reason: `${database.error}; terminal delivery worker will retry`, transport: "deferred" };
     const found = await findCodexProcess(meta.agentThreadId, meta, processAdapter);
     if ("pid" in found) {
-      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-      if (database.kind === "ok") mutateDispatch(database.value, dispatch, (current) => ({ ...current, agentPid: found.pid, updatedAt: new Date().toISOString() }));
-      const queued = await deliverCodexQueue(meta.agentThreadId, found.pid, fullMessage, processAdapter);
-      if (queued.kind === "queued") return { outcome: "delivered", reason: "child-notified", transport: "queue" };
-      return { outcome: "deferred", reason: `${queued.reason}; child requires idle-gated delivery`, transport: "deferred" };
+      mutateDispatch(database.value, dispatch, (current) => ({ ...current, agentPid: found.pid, updatedAt: new Date().toISOString() }));
     }
-    return { outcome: "deferred", reason: `${found.reason}; child requires idle-gated delivery`, transport: "deferred" };
+    const result = await sendSessionMessage({ caller: "reply", messageId, target: { agent: "codex", id: String(meta.agentThreadId) }, text: fullMessage, channels: {
+      "codex-queue": async () => "pid" in found ? (await deliverCodexQueue(meta.agentThreadId as string, found.pid, fullMessage, processAdapter)).kind === "queued" : { delivered: false, detail: found.reason },
+    }, recordChannel: (channel) => { recordChannelResult(database.value, { agent: "codex", channel, agentVersion: "unknown", ok: true }); } });
+    return result.delivered ? { outcome: "delivered", reason: "child-notified", transport: "queue" } : { outcome: "deferred", reason: `${result.detail ?? "Codex queue unavailable"}; terminal delivery worker will retry`, transport: "deferred" };
   }
-  return { outcome: "deferred", reason: "child requires idle-gated delivery", transport: "deferred" };
+  return { outcome: "deferred", reason: "no direct child channel; terminal delivery worker will retry", transport: "deferred" };
 }
 
 export async function appendMessage(root: string, dispatch: string, from: string, type: string, text: string, sessionId: string, environment: QueueEnvironment, processAdapter: ProcessAdapter, lockHeld = false): Promise<Result<number>> {
@@ -350,7 +355,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
           outbox: {
             id: outboxId, dispatchId: dispatch, targetKind: "parent-pointer",
             target: typeof metaRecord.parentSessionId === "string" ? metaRecord.parentSessionId : dispatch,
-            payload: { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: (previous.at(-1)?.seq ?? 0) + 1, pointer, fullMessage: formatDispatchMessage({ dispatchId: dispatch, chatName: String(metaRecord.chatName ?? metaRecord.branch ?? dispatch), agent: String(metaRecord.agent ?? "unknown"), type, text, direction: "parent-bound" }) },
+            payload: { meta: metaRecord, dispatchId: dispatch, targetKind: "parent-pointer", sequence: (previous.at(-1)?.seq ?? 0) + 1, pointer, fullDirection: true, fullMessage: formatDispatchMessage({ dispatchId: dispatch, chatName: String(metaRecord.chatName ?? metaRecord.branch ?? dispatch), agent: String(metaRecord.agent ?? "unknown"), type, text, direction: "parent-bound" }) },
           },
         }),
       };
@@ -367,7 +372,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
       if (metaRecord.parentHost === "local" && typeof metaRecord.parentAgentThreadId !== "string" && !(await parentHasDirectChannel(root, dispatch, metaRecord))) notification = { outcome: "queued", reason: "local parent has no terminal to type into; the Stop hook and orchestrate watch surface it", transport: "failed" };
       else if (!(await parentContextMatches(root, metaRecord, processAdapter))) notification = { outcome: "suppressed", reason: "state-directory-mismatch", transport: "failed" };
       else if (await waiterIsActive(root, dispatch)) notification = { outcome: "suppressed", reason: "active-waiter", transport: "failed" };
-      else notification = await sendParentPointer(root, metaRecord, pointer, environment, processAdapter, payload.fullMessage);
+      else notification = await sendParentPointer(root, metaRecord, pointer, environment, processAdapter, payload.fullMessage, outboxId);
       if (notification.transport === "queue") {
         const claim = claimOutbox(database.value, outboxId, `${process.pid}:${randomUUID()}`, 30);
         if (claim.kind === "ok" && claim.value !== undefined) finishNotification(database.value, outboxId, "sent", { dispatchId: dispatch, pointer, outcome: notification.outcome, reason: notification.reason });
