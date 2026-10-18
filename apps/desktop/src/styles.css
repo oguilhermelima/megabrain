@@ -120,6 +120,14 @@ body {
   user-select: none;
 }
 
+/* WebKit inherits -webkit-user-select, so a contenteditable under the body above takes no caret on
+   click; an editable area opts back in. */
+[contenteditable='true'],
+[contenteditable='plaintext-only'] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* In the app the windows are transparent: the sidebar shows the macOS glass, the rest paints black. */
 html.native body {
   background: transparent;
