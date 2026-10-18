@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { GithubProject, GithubProjectItem } from '@/api/schema'
 import { ContextMenu, openMenuFromKeyboard, useContextMenu, type MenuRow } from '@/components/ContextMenu'
@@ -10,27 +10,49 @@ import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts
 import { Avatar, LabelChip, OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
 import { pageX } from '@/lib/page'
 import { answeredItems, boardColumns, movesItem, otherRepository, shownItems, withoutMove, type BoardColumn, type PendingMove } from '@/tasks/board-model'
+import { boardKey, distinctItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache, type BoardCache } from '@/tasks/board-cache'
+import { BoardFilterBar } from '@/tasks/BoardFilterBar'
+import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
 
 // The Tasks page's board: one of the repository's GitHub Projects, picked under the bar, its items
 // in a column per Status option (board-model.ts). A card moves by dragging it to another column, or
 // from its menu (its … button, a right click or the menu key): the move shows at once and goes back,
 // with a note, when GitHub refuses it. GitHub moves set a status, never clear one, so No status
-// takes no drops and says so under its header. A project without a Status field lists its items under a note.
+// takes no drops and says so under its header; it shows only when asked for, remembered per viewer.
+// A project without a Status field lists its items under a note.
+// The board opens from its last read (board-cache.ts) and reads again behind it, a page at a time.
+// Its filters (board-filters.ts) narrow every column, whose counts are of what they show.
 
 const refreshMs = 60_000
 /** A project's items come a page at a time; past this many pages the board shows what it has. */
 const maxPages = 20
 const dragThreshold = 4
 
+const browserStorage = () => localStorage
+// The board cache for the app's life (board-cache.ts), started from storage; storage keeps a trimmed copy.
+let cache: BoardCache | null = null
+const boardCache = () => (cache ??= readBoardCache(browserStorage))
+const remember = (next: BoardCache) => {
+  cache = next
+  writeBoardCache(browserStorage, next)
+}
+/** The repositories whose projects this run has read: opening their board again reads none until Refresh. */
+const readProjects = new Set<string>()
+
+/** The repository's projects: the last read at once, read again only the first time this run. */
 function useBoards(root: string) {
-  const [boards, setBoards] = useState<GithubProject[] | null>(null)
+  const [boards, setBoards] = useState<GithubProject[] | null>(() => boardCache().projects[root]?.value ?? null)
   const [error, setError] = useState<unknown>(null)
   const read = useCallback(() => {
     let stopped = false
     setError(null)
     api.githubProjects(root).then(
-      (list) => !stopped && setBoards(list.projects),
+      (list) => {
+        readProjects.add(root)
+        remember(withProjects(boardCache(), root, list.projects, Date.now()))
+        if (!stopped) setBoards(list.projects)
+      },
       (cause: unknown) => !stopped && setError(cause),
     )
     return () => {
@@ -38,47 +60,71 @@ function useBoards(root: string) {
     }
   }, [root])
   useEffect(() => {
-    setBoards(null)
-    return read()
-  }, [read])
+    setBoards(boardCache().projects[root]?.value ?? null)
+    if (!readProjects.has(root)) return read()
+  }, [root, read])
   return { boards, error, reload: read }
 }
 
-/** Every item of the board, all its pages, read again every minute. */
+/**
+ * Every item of the board: the last read at once, read again when older than a minute and every
+ * minute after; each page shows as it arrives, over the items shown before it.
+ */
 function useBoardItems(root: string, board: GithubProject) {
-  const [items, setItems] = useState<GithubProjectItem[] | null>(null)
+  const key = boardKey(board)
+  const [items, setItems] = useState<GithubProjectItem[] | null>(() => boardCache().items[key]?.value ?? null)
   const [error, setError] = useState<unknown>(null)
-  const [loading, setLoading] = useState(true)
-  const key = `${root}\n${board.owner}\n${board.number}`
-  const current = useRef(key)
-  current.current = key
+  const [loading, setLoading] = useState(false)
+  const shown = useRef(items)
+  shown.current = items
+  const reading = useRef(false)
+  const alive = useRef(true)
   const read = useCallback(async () => {
+    if (reading.current) return
+    reading.current = true
     setLoading(true)
+    const before = shown.current ?? []
     try {
-      const all: GithubProjectItem[] = []
+      let all: GithubProjectItem[] = []
       let after: string | null = null
       for (let page = 0; page < maxPages; page++) {
         const next = await api.githubProject(root, board.number, board.owner, after)
-        all.push(...next.items)
+        if (!alive.current) return
+        all = distinctItems([...all, ...next.items])
         after = next.next
-        if (after === null) break
+        const last = after === null || page === maxPages - 1
+        setItems(last ? all : mergedPages(all, before))
+        if (last) break
       }
-      if (current.current !== key) return
-      setItems(all)
+      remember(withItems(boardCache(), key, all, Date.now()))
       setError(null)
     } catch (cause: unknown) {
-      if (current.current === key) setError(cause)
+      if (alive.current) setError(cause)
     } finally {
-      if (current.current === key) setLoading(false)
+      reading.current = false
+      if (alive.current) setLoading(false)
     }
   }, [root, board.number, board.owner, key])
   useEffect(() => {
-    setItems(null)
-    void read()
+    alive.current = true
+    const at = boardCache().items[key]?.at
+    if (at === undefined || Date.now() - at >= refreshMs) void read()
     const timer = setInterval(() => void read(), refreshMs)
-    return () => clearInterval(timer)
-  }, [read])
-  return { items, setItems, error, loading, reload: read }
+    return () => {
+      alive.current = false
+      clearInterval(timer)
+    }
+  }, [read, key])
+  /** GitHub confirmed a move: the item it answers with replaces the one shown, and the one kept. */
+  const answer = useCallback(
+    (item: GithubProjectItem) => {
+      setItems((current) => (current === null ? current : answeredItems(current, item)))
+      const entry = boardCache().items[key]
+      if (entry !== undefined) remember(withItems(boardCache(), key, answeredItems(entry.value, item), entry.at))
+    },
+    [key],
+  )
+  return { items, answer, error, loading, reload: read }
 }
 
 interface CardDrag {
@@ -214,7 +260,7 @@ function Card({ item, repo, moving, onPointerDown, onOpen, onMenu }: { item: Git
 function Column({ column, droppable, over, count, children }: { column: BoardColumn; droppable: boolean; over: boolean; count: number; children: ReactNode }) {
   return (
     <section aria-label={column.name} data-board-column={droppable ? (column.id ?? '') : ''} className={`flex max-h-full w-[288px] shrink-0 flex-col rounded-[20px] border transition-colors ${over ? 'border-accent/60 bg-accent/[0.06]' : 'border-white/[0.07] bg-ink-900/60'}`}>
-      <header className="flex shrink-0 items-center gap-2 px-4 pt-3.5 pb-2.5">
+      <header className="flex shrink-0 items-center gap-2 px-4 pt-3 pb-2.5">
         <span aria-hidden="true" style={{ borderColor: column.color }} className="size-3 shrink-0 rounded-full border-2" />
         <h3 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-100">{column.name}</h3>
         <span className="shrink-0 text-[12px] text-ink-500 tabular-nums">{count}</span>
@@ -226,7 +272,7 @@ function Column({ column, droppable, over, count, children }: { column: BoardCol
 }
 
 export function TasksBoard({ root, repo, remembered, onPick, onOpenGithub }: { root: string; repo: string; remembered: number | undefined; onPick: (number: number) => void; onOpenGithub: (kind: 'pr' | 'issue', number: number) => void }) {
-  const { boards, error, reload } = useBoards(root)
+  const { boards, error, reload: reloadBoards } = useBoards(root)
   const number = boards === null ? null : shownBoard(boards, remembered)
   const board = boards?.find((entry) => entry.number === number) ?? null
   if (boards === null) {
@@ -237,24 +283,37 @@ export function TasksBoard({ root, repo, remembered, onPick, onOpenGithub }: { r
     ) : (
       <div className={`space-y-3 ${pageX} py-6`}>
         <ErrorNote error={error} />
-        <button type="button" onClick={reload} className={pillButton}>
+        <button type="button" onClick={reloadBoards} className={pillButton}>
           Try again
         </button>
       </div>
     )
   }
   if (board === null) return <Empty title="No GitHub Projects" detail={`${repo} is in no project yet. Link one to the repository on GitHub to see its board here.`} />
-  return <Board key={`${board.owner}/${board.number}`} root={root} repo={repo} board={board} boards={boards} onPick={onPick} onOpenGithub={onOpenGithub} />
+  return <Board key={`${board.owner}/${board.number}`} root={root} repo={repo} board={board} boards={boards} onReloadBoards={reloadBoards} onPick={onPick} onOpenGithub={onOpenGithub} />
 }
 
-function Board({ root, repo, board, boards, onPick, onOpenGithub }: { root: string; repo: string; board: GithubProject; boards: GithubProject[]; onPick: (number: number) => void; onOpenGithub: (kind: 'pr' | 'issue', number: number) => void }) {
-  const { items, setItems, error, loading, reload } = useBoardItems(root, board)
+function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub }: { root: string; repo: string; board: GithubProject; boards: GithubProject[]; onReloadBoards: () => void; onPick: (number: number) => void; onOpenGithub: (kind: 'pr' | 'issue', number: number) => void }) {
+  const { items, answer, error, loading, reload } = useBoardItems(root, board)
   const [pending, setPending] = useState<PendingMove[]>([])
   const [toast, setToast] = useState<ToastMessage | null>(null)
   const closeToast = useCallback(() => setToast(null), [])
   const { menu, open: openMenu, close: closeMenu } = useContextMenu()
   const nextMove = useRef(0)
   const field = board.statusField
+  const key = boardKey(board)
+  const [filters, setFilters] = useState<BoardFilters>(() => readBoardPrefs(browserStorage).filters[key] ?? emptyBoardFilters)
+  const filter = (next: BoardFilters) => {
+    setFilters(next)
+    const prefs = readBoardPrefs(browserStorage)
+    writeBoardPrefs(browserStorage, { ...prefs, filters: { ...prefs.filters, [key]: next } })
+  }
+  const [showNoStatus, setShowNoStatus] = useState(() => readBoardPrefs(browserStorage).showNoStatus)
+  const toggleNoStatus = () => {
+    setShowNoStatus(!showNoStatus)
+    writeBoardPrefs(browserStorage, { ...readBoardPrefs(browserStorage), showNoStatus: !showNoStatus })
+  }
+  const options = useMemo(() => boardFilterOptions(items ?? [], filters), [items, filters])
 
   const move = (item: GithubProjectItem, status: string) => {
     if (items === null || !movesItem(items, pending, item.id, status)) return
@@ -262,8 +321,8 @@ function Board({ root, repo, board, boards, onPick, onOpenGithub }: { root: stri
     setPending((current) => [...current, { id, itemId: item.id, status }])
     // Applied to the newest state, so a refresh or another move meanwhile is kept.
     api.githubProjectMove(root, board.number, item.id, status, board.owner).then(
-      (answer) => {
-        setItems((read) => (read === null ? read : answeredItems(read, answer)))
+      (answered) => {
+        answer(answered)
         setPending((current) => withoutMove(current, id))
       },
       (cause: unknown) => {
@@ -292,7 +351,9 @@ function Board({ root, repo, board, boards, onPick, onOpenGithub }: { root: stri
     openMenu(event, [moves, links].filter((section) => section.length > 0))
   }
 
-  const shown = items === null ? null : shownItems(items, pending)
+  const shown = items === null ? null : filterBoardItems(shownItems(items, pending), filters)
+  const columns = shown === null || field === null ? [] : boardColumns(field, shown)
+  const noStatus = columns.find((column) => column.id === null)?.items.length ?? 0
   const moving = new Set(pending.map((entry) => entry.itemId))
   const card = (item: GithubProjectItem) => (
     <Card key={item.id} item={item} repo={repo} moving={moving.has(item.id) || drag?.item.id === item.id} onPointerDown={(event) => start(event, item)} onOpen={opener(item)} onMenu={(event) => menuFor(event, item, item.status)} />
@@ -302,9 +363,21 @@ function Board({ root, repo, board, boards, onPick, onOpenGithub }: { root: stri
     <div className="flex h-full min-h-0 flex-col">
       <div className={`flex flex-wrap items-center gap-2 ${pageX} pt-4 pb-4`}>
         <FilterSelect label="Project" value={String(board.number)} options={boards.map((entry) => ({ value: String(entry.number), label: entry.closed ? `${entry.title} (closed)` : entry.title }))} onChange={(value) => onPick(Number(value))} />
+        <BoardFilterBar filters={filters} options={options} onChange={filter} />
         <span className="ml-auto" />
+        {field !== null && (
+          <button type="button" onClick={toggleNoStatus} aria-pressed={showNoStatus} className={`h-9 shrink-0 rounded-full border px-3.5 text-[13px] font-semibold ${showNoStatus ? 'border-accent/50 bg-accent/[0.16] text-ink-100' : 'border-white/[0.08] bg-white/[0.05] text-ink-300 hover:text-ink-100'}`}>
+            Show No status{noStatus > 0 && <span className="ml-1.5 font-normal text-ink-400 tabular-nums">{noStatus}</span>}
+          </button>
+        )}
         <OpenLink url={board.url} />
-        <IconButton label="Refresh" onClick={() => void reload()} spinning={loading && items !== null}>
+        <IconButton
+          label="Refresh"
+          onClick={() => {
+            onReloadBoards()
+            void reload()
+          }}
+          spinning={loading && items !== null}>
           <RefreshIcon size={15} />
         </IconButton>
       </div>
@@ -316,15 +389,15 @@ function Board({ root, repo, board, boards, onPick, onOpenGithub }: { root: stri
       {shown === null ? (
         error === null && <SkeletonRows count={4} />
       ) : field === null ? (
-        <div className="min-h-0 flex-1 overflow-y-auto border-t border-white/[0.06] py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto border-t border-white/[0.06] pt-3 pb-5">
           <p className={`${pageX} pb-3 text-[13px] text-ink-400`}>{board.title} has no Status field, so its items show as a list. Add a Status field on GitHub to see them as a board.</p>
           <ul onKeyDown={openMenuFromKeyboard} className={`${pageX} grid max-w-[720px] gap-2`}>
             {shown.map(card)}
           </ul>
         </div>
       ) : (
-        <div className={`flex min-h-0 flex-1 items-start gap-3 overflow-x-auto border-t border-white/[0.06] ${pageX} py-5`}>
-          {boardColumns(field, shown).map((column) => (
+        <div className={`flex min-h-0 flex-1 items-start gap-3 overflow-x-auto border-t border-white/[0.06] ${pageX} pt-3 pb-5`}>
+          {columns.filter((column) => showNoStatus || column.id !== null).map((column) => (
             <Column key={column.id ?? ''} column={column} droppable={column.id !== null} over={drag !== null && drag.over !== null && drag.over === column.id} count={column.items.length}>
               <ul onKeyDown={openMenuFromKeyboard} className="min-h-12 space-y-2 overflow-y-auto px-2.5 pb-2.5">
                 {column.items.map(card)}
