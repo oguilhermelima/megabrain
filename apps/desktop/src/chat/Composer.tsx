@@ -24,33 +24,33 @@ import { useComposerKeyboard } from '@/chat/ComposerKeyboard'
 import { useComposerAttachmentDrop } from '@/chat/ComposerAttachmentDrop'
 import { useComposerQueueEditing } from '@/chat/ComposerQueueEditing'
 import { useComposerDictation } from '@/chat/ComposerDictation'
-import { pageMx } from '@/lib/page'
+import { DockAction, DockRow } from '@/chat/ComposerDock'
 
 export type { Notice } from '@/chat/composer-look'
 
-/** On the box's top edge while it holds the last message for editing: what sending does, and the way out. */
+/** At the top of the card while the box holds the last message for editing: what sending does, and the way out. */
 function EditLastStrip({ onCancel }: { onCancel: () => void }) {
   return (
-    <div className={`${pageMx} flex min-w-0 items-center gap-2 rounded-t-[14px] border border-b-0 border-accent/30 bg-accent/[0.06] py-1 pr-1 pl-3 text-[12.5px] text-ink-200`}>
-      <svg viewBox="0 0 16 16" width={13} height={13} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-accent">
-        <path d="M10.5 2.5 13.5 5.5 6 13H3v-3ZM9 4l3 3" />
-      </svg>
-      <span role="status" className="min-w-0 truncate py-1">
-        Editing your last message <span className="text-ink-400">· sending replaces it and its answer</span>
-      </span>
-      <button
-        type="button"
-        onClick={onCancel}
-        className="h-6 shrink-0 rounded-full border border-white/[0.12] px-2.5 text-[12px] font-semibold text-ink-100 transition-colors duration-100 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
-      >
-        Cancel
-      </button>
-    </div>
+    <DockRow
+      tone="accent"
+      icon={
+        <svg viewBox="0 0 16 16" width={13} height={13} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-accent">
+          <path d="M10.5 2.5 13.5 5.5 6 13H3v-3ZM9 4l3 3" />
+        </svg>
+      }
+      text={
+        <>
+          Editing your last message <span className="text-ink-400">· sending replaces it and its answer</span>
+        </>
+      }
+    >
+      <DockAction label="Cancel" onClick={onCancel} />
+    </DockRow>
   )
 }
 
 /**
- * The message box both chat views share: docked across the pane's bottom edge, growing with
+ * The message box both chat views share: a card on the pane's bottom edge, growing with
  * its text up to about 40% of the height. Images and PDFs sit inside the text as labelled chips where
  * they were pasted, dropped or picked; hovering an image's chip shows it, and a chip can be dragged to
  * another place. Enter sends, Shift+Enter

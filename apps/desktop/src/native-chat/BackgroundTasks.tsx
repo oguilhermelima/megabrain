@@ -34,7 +34,7 @@ export function BackgroundIndicator({ tasks, onJump }: { tasks: BackgroundTask[]
           const { left, top, right, bottom } = event.currentTarget.getBoundingClientRect()
           setMenuAt((current) => (current === null ? { left, top, right, bottom } : null))
         }}
-        className={`flex h-7 items-center gap-1.5 rounded-full pr-2 pl-2.5 text-[12.5px] font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
+        className={`flex h-7 items-center gap-1.5 rounded-full pr-2 pl-2.5 text-chat-small font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
           menuAt !== null ? 'bg-white/[0.14] text-ink-100' : 'bg-white/[0.05] text-ink-300 hover:bg-white/[0.08] hover:text-ink-100'
         }`}
       >
@@ -78,7 +78,7 @@ function TaskMenu({ tasks, anchor, leaving, trigger, onPick, onClose }: { tasks:
   return (
     <Popover role="menu" focus='[role="menuitem"]' className="max-h-[min(320px,calc(100vh-16px))] overflow-y-auto p-1.5" anchor={anchor} label="Background tasks" leaving={leaving} onClose={onClose} trigger={trigger} gap={4}>
       <div className="w-[300px] max-w-[calc(100vw-32px)]" onKeyDown={walk}>
-        <p className="px-2.5 pt-1.5 pb-1 text-[11px] font-medium tracking-[0.04em] text-ink-400 uppercase">Running in background</p>
+        <p className="px-2.5 pt-1.5 pb-1 text-chat-label font-medium tracking-[0.04em] text-ink-400 uppercase">Running in background</p>
         {tasks.map((task) => {
           const ms = taskDurationMs(task, now)
           return (
@@ -89,11 +89,11 @@ function TaskMenu({ tasks, anchor, leaving, trigger, onPick, onClose }: { tasks:
                   role="menuitem"
                   {...tip}
                   onClick={() => onPick(task)}
-                  className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] transition-colors duration-100 hover:bg-white/[0.06] focus-visible:bg-white/[0.08] focus-visible:outline-none motion-reduce:transition-none"
+                  className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-chat-ui transition-colors duration-100 hover:bg-white/[0.06] focus-visible:bg-white/[0.08] focus-visible:outline-none motion-reduce:transition-none"
                 >
                   <ToolIcon name={taskTool[task.kind]} status="running" size={13} />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-200">{task.label}</span>
-                  {ms !== null && <span className="shrink-0 text-[11.5px] text-ink-400 tabular-nums">{formatElapsed(ms)}</span>}
+                  <span className="min-w-0 flex-1 truncate font-mono text-chat-code text-ink-200">{task.label}</span>
+                  {ms !== null && <span className="shrink-0 text-chat-label text-ink-400 tabular-nums">{formatElapsed(ms)}</span>}
                 </button>
               )}
             </Tooltip>

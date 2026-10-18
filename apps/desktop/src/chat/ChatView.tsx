@@ -110,7 +110,7 @@ export const ChatView = memo(function ChatView({ chat, onOpenChat, onOpenPath }:
         </div>
       )}
       <Composer
-        placeholder={state === 'ended' ? 'This chat has ended' : `Reply to ${chatName(chat)}…`}
+        placeholder={state === 'ended' ? 'This chat has ended' : 'Reply…'}
         disabled={state === 'ended'}
         agent={chat.agent ?? null}
         cwd={chat.worktreePath ?? null}

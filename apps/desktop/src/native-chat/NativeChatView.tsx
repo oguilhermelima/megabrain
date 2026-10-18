@@ -32,6 +32,7 @@ import { usePaneWidth } from '@/native-chat/usePaneWidth'
 import { runningTasks, taskRows } from '@/chat/background-tasks'
 import { BackgroundIndicator } from '@/native-chat/BackgroundTasks'
 import { OwnerStrip } from '@/native-chat/OwnerStrip'
+import { DockRow } from '@/chat/ComposerDock'
 import { pageMx } from '@/lib/page'
 import { useChatMessageEditing } from '@/native-chat/useChatMessageEditing'
 
@@ -498,10 +499,9 @@ export function NativeChatView({
               {/* On a narrow pane the artifact lies over the transcript; the composer below stays in reach. */}
               {opened !== null && layout.mode === 'overlay' && artifactPanel(opened, true)}
             </div>
-            {pending !== null && <p className={`${pageMx} -mb-1 px-3 text-[12.5px] text-warn`}>{pending.tool} waits for your approval above.</p>}
             <div onKeyDown={(event) => { onChatKey(event); onComposerKey(event) }} className="contents">
               <Composer
-                placeholder={owner === 'terminal' ? `Reply to ${title}… (takes over from the terminal)` : resumable(chat.state) ? `Reply to ${title}… (resumes the session)` : chat.state === 'working' ? `Queue a reply for when the turn ends… (Esc stops the turn)` : `Reply to ${title}…`}
+                placeholder={owner === 'terminal' ? 'Reply to take over from the terminal…' : resumable(chat.state) ? 'Reply to resume the session…' : chat.state === 'working' ? 'Queue a reply for when the turn ends…' : 'Reply…'}
                 disabled={false}
                 agent={chat.agent}
                 cwd={chat.cwd}
@@ -524,16 +524,21 @@ export function NativeChatView({
                   )
                 }
                 edge={
-                  bar === null ? undefined : (
-                    <OwnerStrip
-                      bar={bar}
-                      busy={busy}
-                      takingOver={takingOver}
-                      onAction={() => {
-                        if (bar.action === 'take-over') void act(takeOver)
-                        else setHold(bar.action === 'cancel' ? 'held' : 'armed')
-                      }}
-                    />
+                  bar === null && pending === null ? undefined : (
+                    <>
+                      {pending !== null && <DockRow tone="warn" icon={<span className="size-1.5 animate-pulse rounded-full bg-warn motion-reduce:animate-none" />} text={`${pending.tool} waits for your approval above`} />}
+                      {bar !== null && (
+                        <OwnerStrip
+                          bar={bar}
+                          busy={busy}
+                          takingOver={takingOver}
+                          onAction={() => {
+                            if (bar.action === 'take-over') void act(takeOver)
+                            else setHold(bar.action === 'cancel' ? 'held' : 'armed')
+                          }}
+                        />
+                      )}
+                    </>
                   )
                 }
                 sendDraft={sendDraft}

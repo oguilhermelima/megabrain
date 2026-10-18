@@ -60,7 +60,7 @@ function FileDiff({ file, failed }: { file: FileEdit; failed: boolean }) {
   }
   return (
     <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.03]">
-      <div className="flex items-center gap-2 border-b border-white/[0.05] px-3 py-1.5 text-[12px]">
+      <div className="flex items-center gap-2 border-b border-white/[0.05] px-3 py-1.5 text-chat-small">
         {target === null ? (
           <span title={file.path} className="min-w-0 truncate font-mono text-ink-200">
             {name}
@@ -80,12 +80,12 @@ function FileDiff({ file, failed }: { file: FileEdit; failed: boolean }) {
           <LineCounts additions={file.added} deletions={file.removed} />
         </span>
       </div>
-      {rows.length > 0 && <div className={`overflow-x-auto py-1 font-mono text-[12px] leading-[18px] ${failed ? 'opacity-50 grayscale' : ''}`}>{shown.map(row)}</div>}
+      {rows.length > 0 && <div className={`overflow-x-auto py-1 font-mono text-chat-code ${failed ? 'opacity-50 grayscale' : ''}`}>{shown.map(row)}</div>}
       {clip.hidden > 0 && (
         <button
           type="button"
           onClick={() => setFull((value) => !value)}
-          className="w-full border-t border-white/[0.05] px-3 py-1.5 text-left text-[12px] text-ink-400 hover:bg-white/[0.04] hover:text-ink-200"
+          className="w-full border-t border-white/[0.05] px-3 py-1.5 text-left text-chat-small text-ink-400 hover:bg-white/[0.04] hover:text-ink-200"
         >
           {full ? 'Show less' : `Show ${clip.hidden} more ${clip.hidden === 1 ? 'line' : 'lines'}`}
         </button>

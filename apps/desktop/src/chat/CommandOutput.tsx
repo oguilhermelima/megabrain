@@ -27,7 +27,7 @@ function Inline({ text }: { text: string }) {
         segment.type === 'text' ? (
           segment.value
         ) : (
-          <code key={index} className="rounded-md bg-white/[0.08] px-1 py-0.5 font-mono text-[12.5px] text-ink-100">
+          <code key={index} className="rounded-md bg-white/[0.08] px-1 py-0.5 font-mono text-chat-code text-ink-100">
             {segment.value}
           </code>
         ),
@@ -41,14 +41,14 @@ function Meters({ rows }: { rows: Extract<OutputRow, { type: 'meter' }>[] }) {
     <ul className="grid grid-cols-[minmax(0,max-content)_minmax(64px,240px)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2">
       {rows.map((row, index) => (
         <li key={index} className="contents" aria-label={`${row.label === '' ? '' : `${row.label}: `}${percent(row.percent)} used${row.note === null ? '' : `, ${row.note}`}`}>
-          <span aria-hidden="true" className="truncate text-[13px] text-ink-200">{row.label}</span>
+          <span aria-hidden="true" className="truncate text-chat-ui text-ink-200">{row.label}</span>
           <span aria-hidden="true" className="block h-1.5 overflow-hidden rounded-full bg-white/[0.08]">
             <span className={`block h-full rounded-full ${fillClass[row.tone]}`} style={{ width: `${Math.max(2, Math.min(100, Math.round(row.percent)))}%` }} />
           </span>
-          <span aria-hidden="true" className={`text-right text-[13px] font-semibold tabular-nums ${row.tone === 'normal' ? 'text-ink-100' : percentClass(row.tone)}`}>
+          <span aria-hidden="true" className={`text-right text-chat-ui font-semibold tabular-nums ${row.tone === 'normal' ? 'text-ink-100' : percentClass(row.tone)}`}>
             {percent(row.percent)}
           </span>
-          <span aria-hidden="true" title={row.note ?? undefined} className="truncate text-[12px] text-ink-500">{row.note ?? ''}</span>
+          <span aria-hidden="true" title={row.note ?? undefined} className="truncate text-chat-small text-ink-500">{row.note ?? ''}</span>
         </li>
       ))}
     </ul>
@@ -57,7 +57,7 @@ function Meters({ rows }: { rows: Extract<OutputRow, { type: 'meter' }>[] }) {
 
 function Fields({ rows }: { rows: Extract<OutputRow, { type: 'field' }>[] }) {
   return (
-    <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1 text-[13px]">
+    <dl className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1 text-chat-ui">
       {rows.map((row, index) => (
         <div key={index} className="contents">
           <dt className="text-ink-400">{row.label}</dt>
@@ -72,7 +72,7 @@ function Fields({ rows }: { rows: Extract<OutputRow, { type: 'field' }>[] }) {
 
 function Shares({ rows }: { rows: Extract<OutputRow, { type: 'share' }>[] }) {
   return (
-    <ul className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]">
+    <ul className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1 text-chat-ui">
       {rows.map((row, index) => (
         <li key={index} className="contents">
           <span className="text-right font-semibold text-ink-100 tabular-nums">{percent(row.percent)}</span>
@@ -103,7 +103,7 @@ function Rows({ rows }: { rows: OutputRow[] }) {
   if (first.type === 'field') return <Fields rows={rows as Extract<OutputRow, { type: 'field' }>[]} />
   if (first.type === 'share') return <Shares rows={rows as Extract<OutputRow, { type: 'share' }>[]} />
   return (
-    <div className="space-y-1 text-[13.5px] leading-relaxed text-ink-200">
+    <div className="space-y-1 text-chat-ui leading-relaxed text-ink-200">
       {(rows as Extract<OutputRow, { type: 'text' }>[]).map((row, index) => (
         <p key={index} className="break-words">
           <Inline text={row.text} />
@@ -115,13 +115,13 @@ function Rows({ rows }: { rows: OutputRow[] }) {
 
 function Block({ block }: { block: OutputBlock }) {
   if (block.type === 'markdown') return <MarkdownText text={block.text} />
-  if (block.type === 'code') return <pre className="overflow-x-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] leading-relaxed text-ink-200">{block.text}</pre>
+  if (block.type === 'code') return <pre className="overflow-x-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-chat-code text-ink-200">{block.text}</pre>
   return (
     <section className="space-y-2">
       {block.title !== null && (
         <header className="flex items-baseline gap-3">
-          <h3 className="text-[11px] font-medium tracking-[0.04em] text-ink-400 uppercase">{block.title}</h3>
-          {block.detail !== null && <span className="text-[12px] text-ink-500 tabular-nums">{block.detail}</span>}
+          <h3 className="text-chat-label font-medium tracking-[0.04em] text-ink-400 uppercase">{block.title}</h3>
+          {block.detail !== null && <span className="text-chat-small text-ink-500 tabular-nums">{block.detail}</span>}
         </header>
       )}
       {runs(block.rows).map((run, index) => (
@@ -140,14 +140,14 @@ const panelFillClass: Record<LimitTone, string> = { normal: 'bg-accent', amber: 
 function UsageMeter({ meter }: { meter: Meter }) {
   return (
     <li aria-label={`${meter.label}: ${percent(meter.percent)} used${meter.reset === null ? '' : `, ${meter.reset}`}`} className="space-y-1">
-      {meter.label !== '' && <div aria-hidden="true" className="text-[13px] font-semibold text-ink-100">{meter.label}</div>}
+      {meter.label !== '' && <div aria-hidden="true" className="text-chat-ui font-semibold text-ink-100">{meter.label}</div>}
       <div aria-hidden="true" className="flex items-center gap-3">
         <span className="block h-1.5 max-w-[320px] min-w-[64px] flex-1 overflow-hidden rounded-full bg-white/[0.08]">
           <span className={`block h-full rounded-full ${panelFillClass[meter.tone]}`} style={{ width: `${Math.max(2, Math.min(100, Math.round(meter.percent)))}%` }} />
         </span>
-        <span className={`shrink-0 text-[13px] font-semibold tabular-nums ${meter.tone === 'normal' ? 'text-ink-100' : percentClass(meter.tone)}`}>{percent(meter.percent)} used</span>
+        <span className={`shrink-0 text-chat-ui font-semibold tabular-nums ${meter.tone === 'normal' ? 'text-ink-100' : percentClass(meter.tone)}`}>{percent(meter.percent)} used</span>
       </div>
-      {meter.reset !== null && <div aria-hidden="true" className="text-[12px] text-ink-500">{meter.reset}</div>}
+      {meter.reset !== null && <div aria-hidden="true" className="text-chat-small text-ink-500">{meter.reset}</div>}
     </li>
   )
 }
@@ -155,15 +155,15 @@ function UsageMeter({ meter }: { meter: Meter }) {
 function SectionTitle({ title, detail }: { title: string; detail: string | null }) {
   return (
     <header className="flex items-baseline gap-3">
-      <h3 className="text-[11px] font-medium tracking-[0.04em] text-ink-400 uppercase">{title}</h3>
-      {detail !== null && <span className="text-[12px] text-ink-500 tabular-nums">{detail}</span>}
+      <h3 className="text-chat-label font-medium tracking-[0.04em] text-ink-400 uppercase">{title}</h3>
+      {detail !== null && <span className="text-chat-small text-ink-500 tabular-nums">{detail}</span>}
     </header>
   )
 }
 
 function UsageSectionView({ section }: { section: UsageSection }) {
   if (section.type === 'fallback') return <>{section.blocks.map((block, index) => <Block key={index} block={block} />)}</>
-  if (section.type === 'note') return <p className="text-[13px] text-ink-400"><Inline text={section.text} /></p>
+  if (section.type === 'note') return <p className="text-chat-ui text-ink-400"><Inline text={section.text} /></p>
   if (section.type === 'meters') {
     return (
       <ul className="space-y-3">
@@ -174,8 +174,8 @@ function UsageSectionView({ section }: { section: UsageSection }) {
   if (section.type === 'insights') {
     return (
       <div className="space-y-0.5">
-        <h3 className="text-[13px] font-semibold text-ink-100">{section.title}</h3>
-        {section.note !== null && <p className="text-[12px] leading-relaxed text-ink-500">{section.note}</p>}
+        <h3 className="text-chat-ui font-semibold text-ink-100">{section.title}</h3>
+        {section.note !== null && <p className="text-chat-small leading-relaxed text-ink-500">{section.note}</p>}
       </div>
     )
   }
@@ -205,7 +205,7 @@ function Categories({ section }: { section: Extract<ContextSection, { type: 'cat
   const bySize = section.categories.filter((category) => category.role === 'used').sort((a, b) => b.percent - a.percent)
   const styleOf = new Map(section.categories.map((category) => [category, categoryStyle(category, bySize.indexOf(category))]))
   const legend = (categories: ContextCategory[], muted: boolean) => (
-    <ul className="grid grid-cols-[max-content_minmax(0,1fr)_max-content_max-content] items-center gap-x-3 gap-y-1 text-[13px]">
+    <ul className="grid grid-cols-[max-content_minmax(0,1fr)_max-content_max-content] items-center gap-x-3 gap-y-1 text-chat-ui">
       {categories.map((category) => (
         <li key={category.name} className="contents">
           <span aria-hidden="true" className="block size-2.5 rounded-[3px]" style={styleOf.get(category)} />
@@ -229,7 +229,7 @@ function Categories({ section }: { section: Extract<ContextSection, { type: 'cat
       {legend(inWindow, false)}
       {deferred.length > 0 && (
         <div className="space-y-1">
-          <div className="text-[12px] text-ink-500">Deferred, not in the window</div>
+          <div className="text-chat-small text-ink-500">Deferred, not in the window</div>
           {legend(deferred, true)}
         </div>
       )}
@@ -247,10 +247,10 @@ const shortName = (row: ContextRow, group: string | null) => (group !== null && 
 
 function ContextRows({ rows, group }: { rows: ContextRow[]; group: string | null }) {
   return (
-    <ul className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)_max-content] items-baseline gap-x-3 gap-y-0.5 text-[12.5px]">
+    <ul className="grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)_max-content] items-baseline gap-x-3 gap-y-0.5 text-chat-small">
       {rows.map((row, index) => (
         <li key={index} className="contents">
-          <span title={row.name} className="truncate font-mono text-[12px] text-ink-200">{shortName(row, group)}</span>
+          <span title={row.name} className="truncate font-mono text-chat-code text-ink-200">{shortName(row, group)}</span>
           <span title={row.detail} className="truncate text-ink-500">{group === null ? row.detail : ''}</span>
           <span className="text-right text-ink-300 tabular-nums">{row.tokens}</span>
         </li>
@@ -270,12 +270,12 @@ function RowsSection({ section }: { section: Extract<ContextSection, { type: 'ro
           {section.groups.map((group) => (
             <li key={group.name}>
               <details className="group/row">
-                <summary className="flex cursor-default list-none items-baseline gap-2 rounded-lg px-1 py-0.5 text-[13px] hover:bg-row-hover [&::-webkit-details-marker]:hidden">
+                <summary className="flex cursor-default list-none items-baseline gap-2 rounded-lg px-1 py-0.5 text-chat-ui hover:bg-row-hover [&::-webkit-details-marker]:hidden">
                   <svg viewBox="0 0 16 16" width={10} height={10} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 self-center text-ink-500 transition-transform group-open/row:rotate-90">
                     <path d="m6 3.5 4.5 4.5L6 12.5" />
                   </svg>
                   <span className="min-w-0 flex-1 truncate text-ink-200">{group.name}</span>
-                  <span className="text-[12px] text-ink-500 tabular-nums">{group.rows.length}</span>
+                  <span className="text-chat-small text-ink-500 tabular-nums">{group.rows.length}</span>
                   <span className="w-16 text-right text-ink-300 tabular-nums">{group.tokens}</span>
                 </summary>
                 <div className="py-1 pr-1 pl-5">
@@ -338,8 +338,8 @@ function Panel({ panel }: { panel: InfoPanel }) {
   return (
     <>
       {(panel.model !== null || panel.tokens !== null) && (
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px]">
-          {panel.model !== null && <span className="font-mono text-[12.5px] text-ink-200">{panel.model}</span>}
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-chat-ui">
+          {panel.model !== null && <span className="font-mono text-chat-code text-ink-200">{panel.model}</span>}
           {panel.tokens !== null && (
             <span className="text-ink-400 tabular-nums">
               {panel.tokens.used} / {panel.tokens.total} tokens ·{' '}
@@ -353,7 +353,7 @@ function Panel({ panel }: { panel: InfoPanel }) {
   )
 }
 
-const actionClass = 'rounded-full px-2.5 py-1 text-[12px] font-semibold text-accent hover:bg-white/[0.08]'
+const actionClass = 'rounded-full px-2.5 py-1 text-chat-small font-semibold text-accent hover:bg-white/[0.08]'
 
 /**
  * `command` is what was run, slash included; "" when the record does not say. `data` is what megabrain read
@@ -380,7 +380,7 @@ export function CommandOutput({ command, text, data, latest = true }: { command:
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-white/[0.03]">
       <div className="flex items-center gap-1 pt-1.5 pr-1.5 pb-1 pl-2">
-        <button type="button" onClick={() => setToggled(!open)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1 text-left text-[13px] hover:bg-white/[0.04]">
+        <button type="button" onClick={() => setToggled(!open)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-1 text-left text-chat-ui hover:bg-white/[0.04]">
           <svg viewBox="0 0 16 16" width={10} height={10} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`shrink-0 text-ink-500 transition-transform ${open ? 'rotate-90' : ''}`}>
             <path d="m6 3.5 4.5 4.5L6 12.5" />
           </svg>
@@ -389,7 +389,7 @@ export function CommandOutput({ command, text, data, latest = true }: { command:
               <AgentIcon agent={agent} size={13} />
             </span>
           )}
-          <span className={command === '' ? 'font-semibold text-ink-300' : 'font-mono text-[12.5px] font-semibold text-ink-200'}>{command === '' ? 'Command output' : command}</span>
+          <span className={command === '' ? 'font-semibold text-ink-300' : 'font-mono text-chat-code font-semibold text-ink-200'}>{command === '' ? 'Command output' : command}</span>
         </button>
         {open && (
           <>
@@ -407,7 +407,7 @@ export function CommandOutput({ command, text, data, latest = true }: { command:
           {/* Collapsed, the result fades out at its foot whatever the background behind the card. */}
           <div className={`space-y-4 px-3.5 pt-1 pb-3 ${collapsed ? 'max-h-[360px] overflow-hidden [mask-image:linear-gradient(to_bottom,black_70%,transparent)]' : ''}`}>
             {raw ? (
-              <pre className="overflow-x-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] leading-relaxed text-ink-200">{stripAnsi(text)}</pre>
+              <pre className="overflow-x-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-chat-code text-ink-200">{stripAnsi(text)}</pre>
             ) : panel !== null ? (
               <Panel panel={panel} />
             ) : (

@@ -48,7 +48,7 @@ function fenceLanguage(node: unknown): string | null {
   return found === undefined ? null : found.slice('language-'.length)
 }
 
-/** A fenced block: 12 px mono on its own surface, scrolling sideways, with its language and a copy button. */
+/** A fenced block: mono at the chat's code size on its own surface, scrolling sideways, with its language and a copy button. */
 function CodeBlock({ node, children, ...props }: React.ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
   const pre = useRef<HTMLPreElement>(null)
   const [copied, setCopied] = useState(false)
@@ -62,14 +62,14 @@ function CodeBlock({ node, children, ...props }: React.ComponentPropsWithoutRef<
   }
   return (
     <div className="group/code relative overflow-hidden rounded-xl border border-white/[0.08] bg-white/[0.035]">
-      <div className="flex h-8 items-center justify-between border-b border-white/[0.06] pr-1.5 pl-3 text-[11.5px] text-ink-400">
+      <div className="flex h-8 items-center justify-between border-b border-white/[0.06] pr-1.5 pl-4 text-chat-label text-ink-400">
         <span className="font-mono">{language ?? 'code'}</span>
-        <button type="button" onClick={copy} title="Copy code" className="flex items-center gap-1.5 rounded-md px-2 py-1 hover:bg-white/[0.07] hover:text-ink-200">
+        <button type="button" onClick={copy} title="Copy code" className="flex items-center gap-1.5 rounded-md px-2 py-1 text-chat-small hover:bg-white/[0.07] hover:text-ink-200">
           <MenuIconGlyph icon="copy" />
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre ref={pre} className="overflow-x-auto px-3.5 py-3 font-mono text-[12px] leading-[19px]" {...props}>
+      <pre ref={pre} className="overflow-x-auto px-4 py-3 font-mono text-chat-code" {...props}>
         {children}
       </pre>
     </div>
@@ -84,8 +84,8 @@ const components = {
       <Linked>{children}</Linked>
     </p>
   ),
-  ul: (props: React.ComponentPropsWithoutRef<'ul'>) => <ul className="list-disc space-y-1.5 pl-6 marker:text-ink-400 [&_ol]:mt-1.5 [&_ul]:mt-1.5" {...props} />,
-  ol: (props: React.ComponentPropsWithoutRef<'ol'>) => <ol className="list-decimal space-y-1.5 pl-6 marker:text-ink-400 [&_ol]:mt-1.5 [&_ul]:mt-1.5" {...props} />,
+  ul: (props: React.ComponentPropsWithoutRef<'ul'>) => <ul className="list-disc space-y-1 pl-6 marker:text-ink-400 [&_ol]:mt-1.5 [&_ul]:mt-1.5" {...props} />,
+  ol: (props: React.ComponentPropsWithoutRef<'ol'>) => <ol className="list-decimal space-y-1 pl-6 marker:text-ink-400 [&_ol]:mt-1.5 [&_ul]:mt-1.5" {...props} />,
   li: ({ children, ...props }: React.ComponentPropsWithoutRef<'li'>) => (
     <li className="pl-1 [&>p+p]:mt-1.5" {...props}>
       <Linked>{children}</Linked>
@@ -101,21 +101,21 @@ const components = {
       <Linked>{children}</Linked>
     </em>
   ),
-  h1: (props: React.ComponentPropsWithoutRef<'h1'>) => <h1 className="pt-2 text-[19px] leading-[26px] font-semibold tracking-[-0.01em] text-ink-100" {...props} />,
-  h2: (props: React.ComponentPropsWithoutRef<'h2'>) => <h2 className="pt-2 text-[16.5px] leading-[24px] font-semibold tracking-[-0.01em] text-ink-100" {...props} />,
-  h3: (props: React.ComponentPropsWithoutRef<'h3'>) => <h3 className="pt-1 text-[15px] leading-[22px] font-semibold text-ink-100" {...props} />,
-  h4: (props: React.ComponentPropsWithoutRef<'h4'>) => <h4 className="text-[14px] font-semibold text-ink-100" {...props} />,
+  h1: (props: React.ComponentPropsWithoutRef<'h1'>) => <h1 className="pt-3 text-chat-h1 font-semibold tracking-[-0.015em] text-ink-100" {...props} />,
+  h2: (props: React.ComponentPropsWithoutRef<'h2'>) => <h2 className="pt-2.5 text-chat-h2 font-semibold tracking-[-0.01em] text-ink-100" {...props} />,
+  h3: (props: React.ComponentPropsWithoutRef<'h3'>) => <h3 className="pt-1.5 text-chat-h3 font-semibold text-ink-100" {...props} />,
+  h4: (props: React.ComponentPropsWithoutRef<'h4'>) => <h4 className="pt-1 font-semibold text-ink-100" {...props} />,
   blockquote: (props: React.ComponentPropsWithoutRef<'blockquote'>) => (
-    <blockquote className="space-y-2 border-l-[3px] border-white/15 pl-3.5 text-ink-300" {...props} />
+    <blockquote className="space-y-2 border-l-[3px] border-white/15 pl-4 text-ink-300" {...props} />
   ),
-  hr: (props: React.ComponentPropsWithoutRef<'hr'>) => <hr className="my-4 border-white/10" {...props} />,
+  hr: (props: React.ComponentPropsWithoutRef<'hr'>) => <hr className="my-5 border-white/10" {...props} />,
   code: ({ node: _node, className, children, ...props }: React.ComponentPropsWithoutRef<'code'> & { node?: unknown }) =>
     className?.includes('language-') ? (
       <code className={`${className} font-mono text-ink-100`} {...props}>
         {children}
       </code>
     ) : (
-      <code className="rounded-[5px] border border-white/[0.07] bg-white/[0.06] px-[5px] py-px font-mono text-[12.5px] text-ink-100 [pre_&]:border-0 [pre_&]:bg-transparent [pre_&]:p-0 [pre_&]:text-[12px]" {...props}>
+      <code className="rounded-[5px] border border-white/[0.07] bg-white/[0.06] px-[5px] py-px font-mono text-[0.875em] text-ink-100 [pre_&]:border-0 [pre_&]:bg-transparent [pre_&]:p-0 [pre_&]:text-[1em]" {...props}>
         <Linked>{children}</Linked>
       </code>
     ),
@@ -123,7 +123,7 @@ const components = {
   // A wide table scrolls inside its frame rather than widening the message.
   table: (props: React.ComponentPropsWithoutRef<'table'>) => (
     <div className="w-fit max-w-full overflow-x-auto rounded-xl border border-white/[0.08]">
-      <table className="border-collapse text-[13px] leading-[19px]" {...props} />
+      <table className="border-collapse text-chat-ui" {...props} />
     </div>
   ),
   th: (props: React.ComponentPropsWithoutRef<'th'>) => (
@@ -163,7 +163,8 @@ export function MarkdownText({ text, className = '', image, picture, elements }:
           },
         }
   return (
-    <div className={`space-y-3 text-[14px] ${className}`}>
+    // The size comes from where it shows: the transcript sets the chat's (text-chat), a page passes its own.
+    <div className={`space-y-3 ${className}`}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw, [rehypeSanitize, image === undefined ? defaultSchema : imageSlotSchema]]} components={slotted}>
         {text}
       </ReactMarkdown>

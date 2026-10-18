@@ -1,17 +1,24 @@
-import { createContext, useContext, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from 'react'
 import type { TranscriptEvent } from '@/api/schema'
 import { Checkbox } from '@/components/Checkbox'
+import type { MenuRow } from '@/components/ContextMenu'
 import { MenuIconGlyph, type MenuIcon } from '@/components/menu-icons'
 import { Tooltip } from '@/components/Tooltip'
 
-// The actions on each message of the person and of the assistant: a small group that shows on hover or
-// keyboard focus in the message's bottom corner, and the checkbox each one shows while messages are
-// being selected. The transcript provides them; without a provider (a shared image) nothing shows.
+// The actions under each message, as an icon row like a chat app's: under the last answer of each
+// turn the row keeps its place and shows on hover or keyboard focus, always for the latest answer;
+// under the person's messages and an answer in the middle of a turn a lighter row floats in on hover,
+// so a turn keeps one row and the person's messages keep their spacing. While messages are being selected each one shows its checkbox
+// instead. The transcript provides them; without a provider (a shared image) nothing shows.
 
 export interface MessageActionsValue {
   copy: (event: TranscriptEvent) => Promise<void>
+  /** Copies text the row worked out itself (the message as it reads, without markdown). */
+  copyText: (text: string) => Promise<void>
   /** Opens the share menu (Copy image, Download PNG) under the button. */
   share: (event: TranscriptEvent, trigger: ReactMouseEvent<HTMLElement>) => void
+  /** Opens a menu of these rows under the button. */
+  menu: (trigger: ReactMouseEvent<HTMLElement>, sections: MenuRow[][]) => void
   /** Enters selection with this message selected. */
   select: (event: TranscriptEvent) => void
   selecting: boolean
@@ -23,28 +30,42 @@ export interface MessageActionsValue {
   edit: ((event: TranscriptEvent) => void) | null
   /** The last answer of each turn, which a branch can start from. */
   turnEnds: ReadonlySet<string>
+  /** The latest answer once no turn runs: its row always shows. */
+  lastAnswer: string | null
   branch: ((event: TranscriptEvent) => void) | null
 }
 
 export const MessageActionsContext = createContext<MessageActionsValue | null>(null)
 
 const button =
-  'grid size-7 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none'
+  'grid size-8 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.07] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:pointer-events-none disabled:opacity-40 aria-expanded:bg-white/[0.08] aria-expanded:text-ink-100 motion-reduce:transition-none'
 
-function Action({ label, icon, onClick, disabled = false, expanded }: { label: string; icon: MenuIcon; onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void; disabled?: boolean; expanded?: boolean }) {
+function Action({ label, icon, onClick, disabled = false, menu = false }: { label: string; icon: MenuIcon | 'more'; onClick: (event: ReactMouseEvent<HTMLButtonElement>) => void; disabled?: boolean; menu?: boolean }) {
   return (
     <Tooltip text={label}>
       {(tip) => (
-        <button type="button" {...tip} aria-label={label} aria-haspopup={expanded === undefined ? undefined : 'menu'} disabled={disabled} onClick={onClick} className={button}>
-          <MenuIconGlyph icon={icon} />
+        <button type="button" {...tip} aria-label={label} aria-haspopup={menu ? 'menu' : undefined} disabled={disabled} onClick={onClick} className={button}>
+          {icon === 'more' ? (
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+              <circle cx="3.5" cy="8" r="1.25" />
+              <circle cx="8" cy="8" r="1.25" />
+              <circle cx="12.5" cy="8" r="1.25" />
+            </svg>
+          ) : (
+            <MenuIconGlyph icon={icon} />
+          )}
         </button>
       )}
     </Tooltip>
   )
 }
 
-/** The hover group under a settled message; `side` is the corner it sits in, the message's own. */
-export function MessageActions({ event, side }: { event: TranscriptEvent; side: 'left' | 'right' }) {
+/**
+ * The row under a settled message, on the message's own side. `raw` and `onRaw` are set where the
+ * message renders markdown, to show its source instead; `body` is the rendered message, whose text
+ * Copy as plain text takes.
+ */
+export function MessageActions({ event, side, raw, onRaw, body }: { event: TranscriptEvent; side: 'left' | 'right'; raw?: boolean; onRaw?: () => void; body?: RefObject<HTMLElement | null> }) {
   const actions = useContext(MessageActionsContext)
   const [copied, setCopied] = useState(false)
   useEffect(() => {
@@ -53,19 +74,32 @@ export function MessageActions({ event, side }: { event: TranscriptEvent; side: 
     return () => clearTimeout(timer)
   }, [copied])
   if (actions === null || actions.selecting) return null
+  const person = event.kind === 'user'
   const editable = actions.edit !== null && event.id === actions.lastPerson
   const branchable = actions.branch !== null && actions.turnEnds.has(event.id)
+  const latest = event.id === actions.lastAnswer
+  // The person's messages and an answer in the middle of a turn float their row in on hover instead of keeping a place under it.
+  const kept = !person && actions.turnEnds.has(event.id)
+  const more: MenuRow[][] = [
+    [
+      { label: 'Select messages', icon: 'select', onSelect: () => actions.select(event) },
+      ...(onRaw === undefined ? [] : [{ label: raw === true ? 'Show formatted' : 'Show raw', icon: 'code' as const, onSelect: onRaw }]),
+      ...(person || body === undefined ? [] : [{ label: 'Copy as plain text', icon: 'copy' as const, onSelect: () => void actions.copyText(body.current?.innerText ?? '').catch(() => {}) }]),
+    ],
+  ]
   return (
     <div
       role="toolbar"
       aria-label="Message actions"
-      className={`absolute -bottom-4 z-10 flex items-center gap-0.5 rounded-full border border-white/[0.08] bg-ink-900/95 p-0.5 opacity-0 shadow-lg transition-opacity duration-100 group-hover/message:opacity-100 focus-within:opacity-100 motion-reduce:transition-none ${side === 'right' ? 'right-2' : 'left-0'}`}
+      className={`flex items-center gap-0.5 transition-opacity duration-100 focus-within:opacity-100 group-hover/message:opacity-100 motion-reduce:transition-none ${latest ? '' : 'opacity-0'} ${
+        kept ? '-ml-2 mt-1' : `absolute top-full z-10 mt-0.5 rounded-full border border-white/[0.08] bg-ink-900/95 p-0.5 shadow-lg ${side === 'right' ? 'right-0' : 'left-0'}`
+      }`}
     >
-      <Action label={copied ? 'Copied' : event.kind === 'user' ? 'Copy text' : 'Copy markdown'} icon={copied ? 'check' : 'copy'} onClick={() => void actions.copy(event).then(() => setCopied(true), () => {})} />
-      <Action label="Share as image" icon="share" expanded={false} onClick={(click) => actions.share(event, click)} />
-      <Action label="Select messages" icon="select" onClick={() => actions.select(event)} />
-      {editable && <Action label={actions.editDisabled ? 'Edit when the turn ends' : 'Edit (↑ in an empty composer)'} icon="rename" disabled={actions.editDisabled} onClick={() => actions.edit?.(event)} />}
+      <Action label={copied ? 'Copied' : person ? 'Copy text' : 'Copy markdown'} icon={copied ? 'check' : 'copy'} onClick={() => void actions.copy(event).then(() => setCopied(true), () => {})} />
+      <Action label="Share as image" icon="share" menu onClick={(click) => actions.share(event, click)} />
       {branchable && <Action label="Branch from here" icon="branch" onClick={() => actions.branch?.(event)} />}
+      {editable && <Action label={actions.editDisabled ? 'Edit when the turn ends' : 'Edit (↑ in an empty composer)'} icon="rename" disabled={actions.editDisabled} onClick={() => actions.edit?.(event)} />}
+      <Action label="More" icon="more" menu onClick={(click) => actions.menu(click, more)} />
     </div>
   )
 }

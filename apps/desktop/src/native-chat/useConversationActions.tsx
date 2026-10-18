@@ -7,11 +7,9 @@ import { useContextMenu } from '@/components/ContextMenu'
 import { ConversationAgent } from '@/components/agent-icons'
 import { SelectionBar, type MessageActionsValue } from '@/native-chat/MessageActions'
 import { SearchBar } from '@/native-chat/TranscriptSearch'
-import { messageCopyText, messageRoles, selectionCopyText, shareFileName } from '@/native-chat/message-actions'
+import { keepShareFooter, messageCopyText, messageRoles, readShareFooter, selectionCopyText, shareFileName } from '@/native-chat/message-actions'
 import { emptySelection, selectableIds, selectedInOrder, toggleMessage, type MessageSelection } from '@/native-chat/message-selection'
 import { renderPng } from '@/native-chat/share-image'
-
-const footerKey = 'megabrain.share.footer'
 
 export function ConversationActionBars({ search, closeSearch, selecting, selection, shareImage, chosen, stopSelecting, failed, setFlash, pinned, onJumpToLatest }: {
   search: TranscriptSearch
@@ -39,20 +37,12 @@ export function ConversationActionBars({ search, closeSearch, selecting, selecti
         />
       )}
       {!pinned && !selecting && (
-        <button type="button" onClick={onJumpToLatest} className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-ink-900/90 px-4 py-1.5 text-[12.5px] font-semibold text-ink-100 shadow-lg">
+        <button type="button" onClick={onJumpToLatest} className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-ink-900/90 px-4 py-1.5 text-chat-small font-semibold text-ink-100 shadow-lg">
           Jump to latest
         </button>
       )}
     </>
   )
-}
-
-function readShareFooter(): boolean {
-  try {
-    return localStorage.getItem(footerKey) !== '0'
-  } catch {
-    return true
-  }
 }
 
 /** Owns message selection, sharing and the actions exposed by each settled message. */
@@ -84,7 +74,7 @@ export function useConversationActions({
   const [shareFooter, setShareFooter] = useState(readShareFooter)
   const order = useMemo(() => selectableIds(items), [items])
   const byId = useMemo(() => new Map(items.flatMap((item) => (item.type === 'message' ? [[item.event.id, item.event] as const] : []))), [items])
-  const roles = useMemo(() => ({ latest: messageRoles(items, false).lastPerson, turnEnds: messageRoles(items, busy).turnEnds }), [items, busy])
+  const roles = useMemo(() => ({ latest: messageRoles(items, false).lastPerson, ...messageRoles(items, busy) }), [items, busy])
   const cardWidth = () => Math.min(880, Math.max(520, list.current?.clientWidth ?? 720))
   const shareImage = (events: TranscriptEvent[], how: 'copy' | 'save') =>
     renderPng(renderCard(events, agent, shareFooter ? shareTitle : null, cardWidth()))
@@ -106,6 +96,8 @@ export function useConversationActions({
         failed(caught)
         throw caught
       }),
+      copyText: (text) => api.copyText(text).then(() => setFlash({ text: 'Text copied', bad: false }), failed),
+      menu: (trigger, sections) => contextMenu.open(trigger, sections),
       share: (event, trigger) =>
         contextMenu.open(trigger, [
           [
@@ -118,11 +110,7 @@ export function useConversationActions({
               icon: 'chat',
               onSelect: () => {
                 setShareFooter(!shareFooter)
-                try {
-                  localStorage.setItem(footerKey, shareFooter ? '0' : '1')
-                } catch {
-                  // Not kept: the next app run shows the title again.
-                }
+                keepShareFooter(!shareFooter)
               },
             },
           ],
@@ -138,6 +126,7 @@ export function useConversationActions({
       editDisabled: busy,
       edit: onEditLast ?? null,
       turnEnds: roles.turnEnds,
+      lastAnswer: roles.lastAnswer,
       branch: onBranch ?? null,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

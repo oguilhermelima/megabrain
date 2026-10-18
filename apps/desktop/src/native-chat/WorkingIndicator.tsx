@@ -18,7 +18,7 @@ export function WorkingIndicator({ agent, status, progress }: { agent: string; s
   const waiting = status.label === 'Waiting for approval'
   const report = progress?.(now) ?? null
   return (
-    <li role="status" aria-live="polite" className="motion-rise py-1 text-[13px]">
+    <li role="status" aria-live="polite" className="motion-rise py-1 text-chat-ui">
       <div className="flex items-center gap-2.5">
         {status.tool === undefined ? (
           <span aria-hidden="true" className="contents text-ink-400">
@@ -53,7 +53,7 @@ function ThinkingTail({ text }: { text: string }) {
       onClick={() => setOpen((value) => !value)}
       aria-expanded={open}
       aria-label={open ? 'Show less of the thinking' : 'Show all of the thinking'}
-      className={`mt-1 ml-6 flex max-w-[80%] flex-col text-left text-[13px] whitespace-pre-wrap text-ink-400 italic hover:text-ink-300 ${open ? 'max-h-60 overflow-y-auto' : `max-h-[4.5em] justify-end overflow-hidden ${cut ? '[mask-image:linear-gradient(to_bottom,transparent,black_1.5em)]' : ''}`}`}
+      className={`mt-1 ml-6 flex max-w-[80%] flex-col text-left text-chat-ui whitespace-pre-wrap text-ink-400 italic hover:text-ink-300 ${open ? 'max-h-60 overflow-y-auto' : `max-h-[4.5em] justify-end overflow-hidden ${cut ? '[mask-image:linear-gradient(to_bottom,transparent,black_1.5em)]' : ''}`}`}
     >
       <span>{text.trim()}</span>
     </button>

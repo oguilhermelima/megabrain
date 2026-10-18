@@ -60,6 +60,13 @@ describe('messageRoles', () => {
     expect([...roles.turnEnds]).toEqual(['a1'])
   })
 
+  test('the latest answer, whose actions always show, only once no turn runs and while nothing of the person follows it', () => {
+    expect(messageRoles(rows, false).lastAnswer).toBe('a3')
+    expect(messageRoles(rows, true).lastAnswer).toBe(null)
+    expect(messageRoles([message('u1', 'user', 'Tidy'), message('a1', 'assistant', 'Done'), message('u2', 'user', 'More')], false).lastAnswer).toBe(null)
+    expect(messageRoles([message('u1', 'user', 'Tidy')], false).lastAnswer).toBe(null)
+  })
+
   test('no message of the person, nothing to edit', () => {
     expect(messageRoles([message('a1', 'assistant', 'Hi')], false).lastPerson).toBe(null)
   })

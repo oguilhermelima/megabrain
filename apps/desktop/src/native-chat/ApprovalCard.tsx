@@ -30,13 +30,13 @@ export function ApprovalCard({ approval, pending, onAnswer }: { approval: ChatAp
 
   return (
     <div className={`max-w-[85%] rounded-[20px] border px-4 py-3.5 ${pending ? 'border-warn/30 bg-warn/[0.06]' : 'border-white/[0.06] bg-white/[0.03]'}`}>
-      <p className="text-[13px] text-ink-300">
+      <p className="text-chat-ui text-ink-300">
         <span className={`font-semibold ${pending ? 'text-warn' : 'text-ink-300'}`}>{pending ? 'Approval needed' : 'Approval'}</span>
         <span className="text-ink-400"> · </span>
         <span className="font-semibold text-ink-100">{approval.tool}</span>
       </p>
-      <pre className="mt-2 max-h-48 overflow-y-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] whitespace-pre-wrap text-ink-200 select-text">{approval.input}</pre>
-      {approval.reason !== undefined && approval.reason !== null && approval.reason !== '' && <p className="mt-2 text-[13px] text-ink-300">{approval.reason}</p>}
+      <pre className="mt-2 max-h-48 overflow-y-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-chat-code whitespace-pre-wrap text-ink-200 select-text">{approval.input}</pre>
+      {approval.reason !== undefined && approval.reason !== null && approval.reason !== '' && <p className="mt-2 text-chat-ui text-ink-300">{approval.reason}</p>}
       {pending && (
         <div className="mt-3 flex flex-wrap gap-2">
           {approval.decisions.map((decision) => (
@@ -45,7 +45,7 @@ export function ApprovalCard({ approval, pending, onAnswer }: { approval: ChatAp
               type="button"
               disabled={answering !== null}
               onClick={() => answer(decision)}
-              className={`inline-flex h-8 items-center gap-2 rounded-full px-4 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${decisionStyle[decision]}`}
+              className={`inline-flex h-8 items-center gap-2 rounded-full px-4 text-chat-ui font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${decisionStyle[decision]}`}
             >
               {answering === decision && <Spinner />}
               {decisionLabel[decision]}

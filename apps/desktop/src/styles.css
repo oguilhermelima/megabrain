@@ -25,6 +25,25 @@
   /* Sidebar rows: hover and selection are a faint lift of the glass, never a coloured block. */
   --color-row-hover: rgb(255 255 255 / 0.05);
   --color-row-selected: rgb(255 255 255 / 0.09);
+  /* The conversation's type scale, defined once: prose in messages and panels reads at --text-chat,
+     the UI around it (tool sentences, panel rows, cards) at chat-ui, metadata at chat-small, section
+     labels at chat-label and every mono block at chat-code. Headings step up from the prose. */
+  --text-chat: 15px;
+  --text-chat--line-height: 1.6;
+  --text-chat-ui: 14px;
+  --text-chat-ui--line-height: 1.5;
+  --text-chat-small: 12.5px;
+  --text-chat-small--line-height: 1.45;
+  --text-chat-label: 11.5px;
+  --text-chat-label--line-height: 1.35;
+  --text-chat-code: 13px;
+  --text-chat-code--line-height: 1.6;
+  --text-chat-h1: 21px;
+  --text-chat-h1--line-height: 1.35;
+  --text-chat-h2: 18px;
+  --text-chat-h2--line-height: 1.4;
+  --text-chat-h3: 16px;
+  --text-chat-h3--line-height: 1.5;
   --radius-card: 24px;
   --radius-panel: 32px;
 }

@@ -52,7 +52,7 @@ function ActionButton({ children, onClick, active = false }: { children: ReactNo
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`rounded-full border px-3 py-1 text-[12px] font-semibold ${active ? 'border-white/20 bg-white/[0.1] text-ink-100' : 'border-white/10 text-ink-300 hover:bg-white/[0.08]'}`}
+      className={`rounded-full border px-3 py-1 text-chat-small font-semibold ${active ? 'border-white/20 bg-white/[0.1] text-ink-100' : 'border-white/10 text-ink-300 hover:bg-white/[0.08]'}`}
     >
       {children}
     </button>
@@ -96,18 +96,18 @@ function ReplyBox({ dispatchId }: { dispatchId: string }) {
           rows={1}
           placeholder="Answer the question"
           aria-label="Answer the question"
-          className="max-h-32 min-h-8 flex-1 resize-none bg-transparent px-2 py-1.5 text-[13.5px] text-ink-100 outline-none placeholder:text-ink-500"
+          className="max-h-32 min-h-8 flex-1 resize-none bg-transparent px-2 py-1.5 text-chat-ui text-ink-100 outline-none placeholder:text-ink-500"
         />
         <button
           type="button"
           onClick={() => void send()}
           disabled={text.trim() === '' || sending}
-          className="h-8 shrink-0 rounded-full bg-accent px-4 text-[12.5px] font-semibold text-accent-ink hover:bg-[#a3aeff] disabled:bg-ink-700 disabled:text-ink-400"
+          className="h-8 shrink-0 rounded-full bg-accent px-4 text-chat-small font-semibold text-accent-ink hover:bg-[#a3aeff] disabled:bg-ink-700 disabled:text-ink-400"
         >
           {sending ? 'Sending…' : 'Send'}
         </button>
       </div>
-      {sent && <p className="px-1 text-[12px] text-ink-400">Sent. It reaches the chat on its next check.</p>}
+      {sent && <p className="px-1 text-chat-small text-ink-400">Sent. It reaches the chat on its next check.</p>}
       {error !== null && <ErrorNote error={error} />}
     </div>
   )
@@ -144,7 +144,7 @@ export function NoticeCard({ card, onOpenChat }: { card: NoticeCardItem; onOpenC
 
   if (dismissed) {
     return (
-      <li className="flex items-center justify-center gap-2 text-[12px] text-ink-500">
+      <li className="flex items-center justify-center gap-2 text-chat-small text-ink-500">
         <span className="truncate">{notice.summary}</span>
         <button type="button" onClick={() => dismiss(false)} className="shrink-0 font-semibold text-ink-400 hover:text-ink-200">
           Show
@@ -158,24 +158,24 @@ export function NoticeCard({ card, onOpenChat }: { card: NoticeCardItem; onOpenC
   return (
     <li className="max-w-[85%] rounded-2xl border border-white/[0.06] bg-white/[0.03]">
       <div className="flex items-start gap-3 px-4 py-3">
-        <span className={`mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-[12px] font-bold ${toneBadge[live.tone]}`} aria-label={live.kind}>
+        <span className={`mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-chat-small font-bold ${toneBadge[live.tone]}`} aria-label={live.kind}>
           {toneGlyph[live.tone]}
         </span>
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex items-center gap-2 text-[12px] font-semibold text-ink-300">
+          <div className="flex items-center gap-2 text-chat-small font-semibold text-ink-300">
             {notice.agent !== null && <AgentIcon agent={notice.agent} size={13} className="text-ink-300" />}
             <span className="truncate">{notice.label ?? notice.agent ?? 'megabrain'}</span>
-            {count > 1 && <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-ink-400">{count} notices</span>}
+            {count > 1 && <span className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-chat-label text-ink-400">{count} notices</span>}
           </div>
-          <p className="text-[13.5px] text-ink-100">{notice.summary}</p>
-          {live.state !== null && <p className="text-[12px] text-ink-400">Now {live.state}</p>}
+          <p className="text-chat-ui text-ink-100">{notice.summary}</p>
+          {live.state !== null && <p className="text-chat-small text-ink-400">Now {live.state}</p>}
         </div>
         {onOpenChat !== undefined && target !== null && (
           <button
             type="button"
             onClick={() => onOpenChat(target)}
             aria-label="Open the chat"
-            className="shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-[12px] font-semibold text-ink-300 hover:bg-white/[0.08]"
+            className="shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-chat-small font-semibold text-ink-300 hover:bg-white/[0.08]"
           >
             →
           </button>
@@ -214,7 +214,7 @@ export function NoticeCard({ card, onOpenChat }: { card: NoticeCardItem; onOpenC
                 <MarkdownText text={panel.text} />
               </div>
             ) : (
-              <pre className="max-h-48 overflow-y-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-[12px] whitespace-pre-wrap text-ink-200">{panel.text}</pre>
+              <pre className="max-h-48 overflow-y-auto rounded-xl bg-white/[0.05] px-3 py-2 font-mono text-chat-code whitespace-pre-wrap text-ink-200">{panel.text}</pre>
             ))}
         </div>
       )}

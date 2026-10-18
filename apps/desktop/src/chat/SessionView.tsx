@@ -91,7 +91,7 @@ export function SessionView({
             <ResumeBar session={session} onResumed={() => setChosenView('terminal')} />
           ) : (
             <Composer
-              placeholder={ended ? 'This session has ended' : `Reply to ${session.title}…`}
+              placeholder={ended ? 'This session has ended' : 'Reply…'}
               disabled={ended}
               agent={session.agent}
               cwd={worktreePath}

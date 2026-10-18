@@ -7,7 +7,7 @@ import { native } from '@/lib/surface'
 import { attachmentKind } from '@/chat/composer-model'
 import { initialQueueState, queueReducer, type QueueAction, type QueueState } from '@/chat/queue-model'
 import type { Banner } from '@/chat/composer-look'
-import { pageMx } from '@/lib/page'
+import { DockDismiss, DockRow, DockAction } from '@/chat/ComposerDock'
 import { Tooltip } from '@/components/Tooltip'
 
 // An image or PDF going with the next message. Pasted and picked files are saved through
@@ -204,38 +204,21 @@ export function ChipPreview({ attachment, left, top }: { attachment: Attachment 
 export function NoticeBanner({ banner, onRetry, onDismiss }: { banner: Banner; onRetry: () => void; onDismiss: () => void }) {
   const bad = banner.tone === 'bad'
   return (
-    <div
+    <DockRow
+      tone={bad ? 'bad' : 'neutral'}
       role={banner.role}
-      className={`${pageMx} flex min-w-0 items-center gap-2 rounded-t-[14px] border border-b-0 py-1 pr-1 pl-3 text-[12.5px] ${bad ? 'border-bad/25 bg-bad/[0.08] text-bad' : 'border-white/[0.08] bg-white/[0.03] text-ink-300'}`}
-    >
-      <svg viewBox="0 0 16 16" className={`size-3.5 shrink-0 ${bad ? 'text-bad' : 'text-ok'}`} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="8" cy="8" r="6.25" />
-        {bad ? <path d="M8 4.75v3.75M8 11.1v.15" /> : <path d="m5.5 8.2 1.75 1.75L10.6 6.4" />}
-      </svg>
-      <span className="min-w-0 flex-1 truncate py-1 select-text" title={banner.text}>
-        {banner.text}
-      </span>
-      {banner.action === 'retry' && (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="h-6 shrink-0 rounded-full px-2.5 text-[12px] font-semibold text-ink-100 transition-colors duration-100 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
-        >
-          Retry
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={onDismiss}
-        aria-label="Dismiss"
-        title="Dismiss"
-        className="grid size-6 shrink-0 place-items-center rounded-full text-ink-400 transition-colors duration-100 hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
-      >
-        <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-          <path d="m4.5 4.5 7 7m0-7-7 7" />
+      title={banner.text}
+      icon={
+        <svg viewBox="0 0 16 16" className={`size-3.5 ${bad ? 'text-bad' : 'text-ok'}`} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="8" cy="8" r="6.25" />
+          {bad ? <path d="M8 4.75v3.75M8 11.1v.15" /> : <path d="m5.5 8.2 1.75 1.75L10.6 6.4" />}
         </svg>
-      </button>
-    </div>
+      }
+      text={banner.text}
+    >
+      {banner.action === 'retry' && <DockAction label="Retry" onClick={onRetry} />}
+      <DockDismiss onClick={onDismiss} />
+    </DockRow>
   )
 }
 
