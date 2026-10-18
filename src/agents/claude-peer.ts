@@ -9,8 +9,8 @@ import { resolveClaudeSession } from "./claude-session.js";
 // session lists a Unix socket in ~/.claude/sessions/<pid>.json and a peer token in
 // <pid>.<hash>.key beside it. A peer connects, writes {"type":"auth","token"} and one user frame,
 // one JSON object per line, and Claude queues the message for its next turn without touching the
-// composer. The socket answers nothing and closes cleanly even on a frame it drops. The receiver's
-// mailbox ack is the primary proof; its transcript msg_id is the fallback proof.
+// composer. The socket answers nothing, and it closes cleanly even on a frame it drops, so only
+// the message's msg_id reaching the session transcript proves delivery.
 
 export type ClaudePeerTarget = Readonly<{
   pid: number;

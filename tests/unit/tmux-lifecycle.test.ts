@@ -136,7 +136,7 @@ describe("tmux send lifecycle", () => {
     registerTmux(providerFor(calls));
     try {
       const result = await notifyChild(root, { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "codex" }, "dispatch", processFor(), { MEGABRAIN_LOCK_WAIT_SECONDS: "0" });
-      expect(result).toEqual({ outcome: "deferred", reason: "no direct child channel; terminal delivery worker will retry", transport: "deferred" });
+      expect(result).toEqual({ outcome: "deferred", reason: "child requires idle-gated delivery", transport: "deferred" });
       expect(calls).toEqual([]);
     } finally {
       registerTmux(original);

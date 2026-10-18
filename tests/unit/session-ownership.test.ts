@@ -226,7 +226,7 @@ describe("send to an owned session", () => {
     const sent = await executeSend(["--session", key, "--text", "olá mundo", "--json"], { ...environment, MEGABRAIN_OPERATOR: "1" }, tmux);
     expect(sent.kind).toBe("ok");
     if (sent.kind !== "ok") return;
-    expect(JSON.parse(sent.value)).toEqual({ delivered: true, channel: "typed" });
+    expect(JSON.parse(sent.value)).toEqual({ delivered: true, channel: "tmux" });
     expect(tmux.calls.some((call) => call.command === "orca")).toBe(false);
     expect(tmux.pasted().length).toBe(1);
     for (const call of tmux.calls.filter((entry) => entry.command === "tmux")) expect(call.args.slice(0, 2)).toEqual(["-L", "megabrain-app"]);
@@ -247,7 +247,7 @@ describe("send to an owned session", () => {
     const tmux = fakeTmux();
     const sent = await executeSend(["--session", "claude:external-one", "--text", "hi", "--json"], { ...environment, MEGABRAIN_OPERATOR: "1" }, tmux);
     expect(sent.kind).toBe("ok");
-    if (sent.kind === "ok") expect(JSON.parse(sent.value)).toMatchObject({ delivered: false, channel: "typed", detail: "no delivery channel is available for this session" });
+    if (sent.kind === "ok") expect(JSON.parse(sent.value)).toMatchObject({ delivered: false, channel: "none" });
     expect(tmux.calls.some((call) => call.args.includes("paste-buffer"))).toBe(false);
   });
 });

@@ -62,12 +62,6 @@ export function formatFullDirection(input: DispatchMessageInput, text: string): 
   return `${header}\n${text}`;
 }
 
-export function formatDeliveryAcknowledgment(dispatchId: string, deliveryId: string, recipient: "parent" | "child"): string {
-  return recipient === "child"
-    ? `After reading, acknowledge with: megabrain ack ${deliveryId}`
-    : `After reading, acknowledge with: megabrain orchestrate ack ${dispatchId} ${deliveryId}`;
-}
-
 /** Joins a message onto one line for hosts that cannot take newlines; the pointer arrow only reads right on its own line. */
 export function formatOneLine(message: string): string {
   return message.replace(/\r\n?/g, "\n").replace(/\n→ /g, "\n").replace(/\n/g, " — ");

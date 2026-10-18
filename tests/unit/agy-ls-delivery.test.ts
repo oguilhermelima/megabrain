@@ -164,11 +164,11 @@ describe("reply to an agy child", () => {
     const server = await startLanguageServer();
     const run = await runReply(root, server.address);
     expect(server.sent).toHaveLength(1);
-    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: expect.stringContaining("↩ reply: use the second option\nAfter reading, acknowledge with: megabrain orchestrate ack d-agy dl-agy") }], deliveryStrategy: "MESSAGE_DELIVERY_STRATEGY_WHEN_IDLE", cascadeConfig: USER_CONFIG });
+    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: "↩ reply: use the second option" }], deliveryStrategy: "MESSAGE_DELIVERY_STRATEGY_WHEN_IDLE", cascadeConfig: USER_CONFIG });
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
-    expect(run.deliveries[0]).toMatchObject({ transport: "ack-verifying" });
-    expect(run.channel).toBeUndefined();
+    expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
+    expect(run.channel).toMatchObject({ status: "working", agentVersion: "1.3.4" });
   });
 
   test("without a recorded cascade config nothing is sent, since the CLI would fail to run it", async () => {
@@ -200,14 +200,12 @@ describe("reply to an agy child", () => {
     expect(run.channel).toMatchObject({ status: "broken", failures: 1 });
   });
 
-  test("counts the accepted language-server queue send without waiting for the conversation", async () => {
+  test("a message that never reaches the conversation is not counted as delivered", async () => {
     const root = await tempRoot();
     const server = await startLanguageServer("accept-never-shown");
     const run = await runReply(root, server.address);
     expect(server.sent).toHaveLength(1);
-    expect(run.deliveries[0]?.transport).toBe("ack-verifying");
-    expect(run.outbox[0]?.status).toBe("sent");
-    expect(run.channel).toBeUndefined();
+    expect(run.deliveries[0]?.transport).not.toBe("socket");
   });
 
   test("a broken channel inside its retry window is not tried", async () => {
@@ -264,7 +262,7 @@ describe("child mail to an agy parent", () => {
     const server = await startLanguageServer();
     const run = await runParentNotice(root, { agent: "codex", parentAgent: "agy" }, { parent: server.address });
     expect(server.sent).toHaveLength(1);
-    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: expect.stringContaining("✅ done: finished the migration\nAfter reading, acknowledge with: megabrain orchestrate ack d-agy dl-parent") }], cascadeConfig: USER_CONFIG });
+    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: "✅ done: finished the migration" }], cascadeConfig: USER_CONFIG });
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
   });

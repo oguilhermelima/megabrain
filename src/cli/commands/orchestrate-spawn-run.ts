@@ -18,8 +18,7 @@ import { createTmuxLauncher, createTmuxSession, dispatchTmuxProcess, getTmux, on
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, recordChannelResult, releaseLease } from "../../adapters/state-db.js";
-import { sendSessionMessage } from "../../core/session-send.js";
+import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
@@ -406,17 +405,9 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
         const host = getHost(childHost);
-        const call = host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: prompt, enter: true });
-        const sent = await sendSessionMessage({
-          caller: "spawn-fallback", messageId: `${id}:initial-prompt`, target: { agent: options.agent, id: terminalId }, text: prompt,
-          channels: { typed: async () => {
-            if (call?.kind !== "ok") return { delivered: false, detail: resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built") };
-            const result = await runHostSend(childHost ?? "", process, call.value);
-            return result.kind === "ok" ? true : { delivered: false, detail: result.kind === "failed" ? result.error : result.reason };
-          } },
-          recordChannel: (channel) => { recordChannelResult(database.value, { agent: options.agent, channel, agentVersion: "unknown", ok: true }); },
-        });
-        if (!sent.delivered) outcome = { kind: "prompt-transport", status: "failed", failure: { call: `${childHost} terminal send`, detail: sent.detail ?? "session message was not delivered" } };
+        const call = host?.send({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, text: prompt });
+        const sent = call?.kind === "ok" ? await runHostSend(childHost ?? "", process, call.value) : failed(resultError(call ?? failed("host prompt could not be built"), "host prompt could not be built"));
+        if (sent.kind !== "ok") outcome = { kind: "prompt-transport", status: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
         else outcome = settleHostReceipt(root, id);
       }
     } else {

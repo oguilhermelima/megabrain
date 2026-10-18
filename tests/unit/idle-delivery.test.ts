@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { deliverImmediately, startDeferredDelivery } from "../../src/core/idle-delivery.js";
+import { deliverWhenIdle, startDeferredDelivery } from "../../src/core/idle-delivery.js";
 
-function harness(overrides: Partial<Parameters<typeof deliverImmediately>[0]> = {}) {
+function harness(overrides: Partial<Parameters<typeof deliverWhenIdle>[0]> = {}) {
   let state: "busy" | "idle" = "busy";
   let composer = "";
   let read = false;
   const calls = { sends: 0, clears: 0, waits: 0 };
-  const input: Parameters<typeof deliverImmediately>[0] = {
+  const input: Parameters<typeof deliverWhenIdle>[0] = {
     timeoutMs: 100,
     initialDelayMs: 10,
     maxDelayMs: 20,
@@ -21,72 +21,75 @@ function harness(overrides: Partial<Parameters<typeof deliverImmediately>[0]> = 
   return { input, calls, setState: (value: "busy" | "idle") => { state = value; }, setComposer: (value: string) => { composer = value; }, setRead: (value: boolean) => { read = value; } };
 }
 
-describe("immediate message delivery", () => {
-  test("sends while busy when the composer is empty", async () => {
-    const h = harness({ wait: async () => { throw new Error("delivery waited for the child to become idle"); } });
-    const result = await deliverImmediately(h.input);
+describe("idle-gated message delivery", () => {
+  test("defers while busy and delivers once idle", async () => {
+    const h = harness();
+    const result = await deliverWhenIdle(h.input);
     expect(result).toBe("delivered");
-    expect(h.calls).toMatchObject({ sends: 1, waits: 0 });
-  });
-
-  test("sends to a busy child immediately when its composer is empty", async () => {
-    const h = harness({ wait: async () => { throw new Error("delivery waited for the child to become idle"); } });
-    const result = await deliverImmediately(h.input);
-    expect(result).toBe("delivered");
-    expect(h.calls).toMatchObject({ sends: 1, waits: 0 });
-  });
-
-  test("sends immediately over foreign composer text", async () => {
-    const decisions: string[] = [];
-    const h = harness({ composer: async () => "human draft", attempt: async ({ decision }) => { decisions.push(decision); } });
-    expect(await deliverImmediately(h.input)).toBe("delivered");
-    expect(h.calls.waits).toBe(0);
-    expect(h.calls.clears).toBe(0);
-    expect(h.calls.sends).toBe(1);
-    expect(decisions).toEqual(["send"]);
-    expect(decisions.some((decision) => decision.startsWith("wait-") )).toBe(false);
-  });
-
-  test("sends immediately when the composer cannot be read", async () => {
-    const h = harness({ composer: async () => undefined });
-    expect(await deliverImmediately(h.input)).toBe("delivered");
-    expect(h.calls.waits).toBe(0);
     expect(h.calls.sends).toBe(1);
   });
 
-  test("sends immediately on foreign composer text without clearing it", async () => {
+  test("with ignoreDraft, foreign composer text does not hold the send and is not cleared", async () => {
+    const h = harness({ ignoreDraft: true });
+    h.setState("idle");
+    h.setComposer("a grey suggestion");
+    const result = await deliverWhenIdle(h.input);
+    expect(result).toBe("delivered");
+    expect(h.calls).toMatchObject({ sends: 1, clears: 0 });
+  });
+
+  test("with ignoreDraft, an unreadable composer still holds the send", async () => {
+    const h = harness({ ignoreDraft: true, composer: async () => undefined });
+    h.setState("idle");
+    expect(await deliverWhenIdle(h.input)).toBe("failed");
+    expect(h.calls.sends).toBe(0);
+  });
+
+  test("waits on foreign composer text without clearing it", async () => {
     const h = harness();
     h.setState("idle");
     h.setComposer("operator draft");
-    const result = await deliverImmediately(h.input);
+    let checks = 0;
+    h.input.wait = async () => { checks += 1; if (checks === 1) h.setComposer(""); };
+    const result = await deliverWhenIdle(h.input);
     expect(result).toBe("delivered");
     expect(h.calls.clears).toBe(0);
-    expect(h.calls.waits).toBe(0);
     expect(h.calls.sends).toBe(1);
+  });
+
+  test("renews the worker lease while waiting beyond its original TTL", async () => {
+    const renewals: number[] = [];
+    const h = harness({
+      timeoutMs: 10_000,
+      renew: async () => { renewals.push(Date.now()); },
+      wait: async () => { h.setState("idle"); },
+    });
+    h.setState("busy");
+    expect(await deliverWhenIdle(h.input)).toBe("delivered");
+    expect(renewals.length).toBeGreaterThan(0);
   });
 
   test("clears only a composer draft that matches its own text", async () => {
     const h = harness({ ownDraft: "our previous nudge" });
     h.setState("idle");
     h.setComposer("our previous nudge");
-    expect(await deliverImmediately(h.input)).toBe("delivered");
+    expect(await deliverWhenIdle(h.input)).toBe("delivered");
     expect(h.calls.clears).toBe(1);
   });
 
   test("cancels when the message is read before delivery", async () => {
     const h = harness();
     h.setRead(true);
-    expect(await deliverImmediately(h.input)).toBe("cancelled");
+    expect(await deliverWhenIdle(h.input)).toBe("cancelled");
     expect(h.calls.sends).toBe(0);
   });
 
-  test("does not wait while a composer draft remains", async () => {
+  test("times out as failed when the target never becomes idle", async () => {
     let recorded = "";
-    const h = harness({ timeoutMs: 15, wait: async () => {}, composer: async () => "human draft", record: async (outcome) => { recorded = outcome; } });
-    expect(await deliverImmediately(h.input)).toBe("delivered");
-    expect(recorded).toBe("delivered");
-    expect(h.calls.sends).toBe(1);
-    expect(h.calls.waits).toBe(0);
+    const h = harness({ timeoutMs: 15, wait: async () => {}, record: async (outcome) => { recorded = outcome; } });
+    expect(await deliverWhenIdle(h.input)).toBe("failed");
+    expect(recorded).toBe("failed");
+    expect(h.calls.sends).toBe(0);
   });
 
   test("does not start a second deliverer for the same target", async () => {
@@ -106,7 +109,7 @@ describe("immediate message delivery", () => {
     const waits: number[] = [];
     h.input.wait = async (ms) => { waits.push(ms); };
     h.input.send = async () => { h.calls.sends += 1; return h.calls.sends >= 3; };
-    expect(await deliverImmediately(h.input)).toBe("delivered");
+    expect(await deliverWhenIdle(h.input)).toBe("delivered");
     expect(h.calls.sends).toBe(3);
     expect(waits).toEqual([5, 15]);
   });
@@ -119,7 +122,7 @@ describe("immediate message delivery", () => {
     h.input.sendError = () => "orca terminal send exited 1: no such terminal";
     const attempts: { decision: string; reason?: string }[] = [];
     h.input.attempt = async (details) => { attempts.push({ decision: details.decision, reason: details.reason }); };
-    expect(await deliverImmediately(h.input)).toBe("failed");
+    expect(await deliverWhenIdle(h.input)).toBe("failed");
     expect(h.calls.sends).toBe(4);
     const sendFailures = attempts.filter((a) => a.decision === "send-failed");
     expect(sendFailures).toHaveLength(4);
@@ -131,7 +134,7 @@ describe("immediate message delivery", () => {
     h.setState("idle");
     h.input.wait = async () => { h.setRead(true); };
     h.input.send = async () => { h.calls.sends += 1; return false; };
-    expect(await deliverImmediately(h.input)).toBe("cancelled");
+    expect(await deliverWhenIdle(h.input)).toBe("cancelled");
     expect(h.calls.sends).toBe(1);
   });
 });

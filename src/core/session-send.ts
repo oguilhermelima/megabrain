@@ -1,54 +1,8 @@
 import { composerExactlyHoldsText, composerReadback } from "./composer-proof.js";
 
 export type SessionSendAgent = "claude" | "codex" | "grok" | "agy";
-export type SessionSendChannel = "peer-socket" | "leader-socket" | "agy-language-server" | "codex-queue" | "typed" | "tmux";
+export type SessionSendChannel = "peer-socket" | "leader-socket" | "codex-queue" | "tmux";
 export type OperatorSendChannel = "tmux" | "orca" | "peer-socket" | "leader-socket" | "codex-queue";
-export type SessionDeliveryCaller = "reply" | "change" | "parent-notice" | "supervisor" | "operator-send" | "turn-end" | "spawn-fallback";
-export type SessionDeliveryResult = Readonly<{ delivered: boolean; channel: SessionSendChannel; detail?: string }>;
-export type SessionDeliveryHandlers = Partial<Record<SessionSendChannel, () => Promise<boolean | Readonly<{ delivered: boolean; stop?: boolean; detail?: string }>>>>;
-
-const SESSION_CHANNEL_ORDER: readonly SessionSendChannel[] = ["peer-socket", "leader-socket", "agy-language-server", "codex-queue", "typed"];
-const inFlightOrDelivered = new Map<string, Promise<SessionDeliveryResult>>();
-
-/** Select and execute one session transport in the shared, stable priority order. */
-export function sendSessionMessage(input: Readonly<{
-  caller: SessionDeliveryCaller;
-  messageId: string;
-  target: Readonly<{ agent: string; id?: string }>;
-  text: string;
-  channels: SessionDeliveryHandlers;
-  recordChannel: (channel: SessionSendChannel) => Promise<void> | void;
-}>): Promise<SessionDeliveryResult> {
-  if (input.messageId === "") return Promise.resolve({ delivered: false, channel: "typed", detail: "message id is required" });
-  // A queue id can be reused by a different session (for example, parent and child queues both
-  // use a local sequence). Scope the id to its destination so that does not suppress delivery.
-  const deliveryKey = `${input.target.agent}\0${input.target.id ?? "unknown"}\0${input.messageId}`;
-  const previous = inFlightOrDelivered.get(deliveryKey);
-  if (previous !== undefined) return previous;
-  const delivery = (async (): Promise<SessionDeliveryResult> => {
-    let detail: string | undefined;
-    let attempted = false;
-    for (const channel of SESSION_CHANNEL_ORDER) {
-      const send = input.channels[channel];
-      if (send === undefined) continue;
-      attempted = true;
-      try {
-        const attempt = await send();
-        const result = typeof attempt === "boolean" ? { delivered: attempt } : attempt;
-        if (result.stop === true) return { delivered: false, channel, ...(result.detail === undefined ? {} : { detail: result.detail }) };
-        if (!result.delivered) { detail = result.detail ?? detail; continue; }
-        try { await input.recordChannel(channel); } catch { /* A send that landed cannot be undone by channel telemetry. */ }
-        return { delivered: true, channel };
-      } catch (error) {
-        detail = error instanceof Error ? error.message : String(error);
-      }
-    }
-    return { delivered: false, channel: "typed", ...(detail === undefined ? attempted ? {} : { detail: "no delivery channel is available for this session" } : { detail }) };
-  })();
-  inFlightOrDelivered.set(deliveryKey, delivery);
-  void delivery.then((result) => { if (!result.delivered && inFlightOrDelivered.get(deliveryKey) === delivery) inFlightOrDelivered.delete(deliveryKey); });
-  return delivery;
-}
 export type SessionSendAvailability = Readonly<{
   peerSocket?: boolean;
   leaderSocket?: boolean;
@@ -106,17 +60,39 @@ export async function deliverOperatorText(input: Readonly<{
   readyTimeoutMs?: number;
   confirmTimeoutMs?: number;
 }>): Promise<Readonly<{ delivered: boolean; detail?: string }>> {
-  const submitted = await input.send(input.text, true);
-  if (submitted !== "ok") return { delivered: false, detail: submitted };
-  let screen = await input.read();
-  // A successful submit command is the only usable proof when the target cannot be read.
-  if (screen === undefined) return { delivered: true };
-  if (!composerExactlyHoldsText(input.agent, screen, input.text)) return { delivered: true };
-  const resubmitted = await input.send("", true);
-  if (resubmitted !== "ok") return { delivered: false, detail: resubmitted };
-  screen = await input.read();
-  if (screen !== undefined && composerExactlyHoldsText(input.agent, screen, input.text)) {
-    return { delivered: false, detail: "The submitted text could not be verified in the session." };
+  const interval = input.pollIntervalMs ?? 150;
+  const readUntil = async (accept: (screen: string | undefined) => boolean, timeoutMs: number): Promise<string | undefined> => {
+    const deadline = Date.now() + timeoutMs;
+    let screen = await input.read();
+    while (!accept(screen) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, interval));
+      screen = await input.read();
+    }
+    return screen;
+  };
+  const initial = await readUntil((screen) => {
+    if (screen === undefined) return false;
+    if (/\b(?:Press|Choose|Allow|Deny|Approve|trust this|permission request)\b/i.test(screen)) return true;
+    return composerReadback(input.agent, screen).region?.trim() === "";
+  }, input.readyTimeoutMs ?? 0);
+  if (initial === undefined) return { delivered: false, detail: "Could not read the session's terminal." };
+  if (/\b(?:Press|Choose|Allow|Deny|Approve|trust this|permission request)\b/i.test(initial)) return { delivered: false, detail: "The session is showing a question in its terminal; answer it there first." };
+  const before = composerReadback(input.agent, initial).region;
+  if (before === undefined) return { delivered: false, detail: "Could not read the session's terminal." };
+  if (before.trim() !== "") return { delivered: false, detail: "The session already has text in its input box in its terminal; send it or clear it there, then try again." };
+  const typed = await input.send(input.text, false);
+  if (typed !== "ok") return { delivered: false, detail: typed };
+  const readback = await readUntil((screen) => screen !== undefined && composerExactlyHoldsText(input.agent, screen, input.text), input.confirmTimeoutMs ?? 3000);
+  if (readback === undefined || !composerExactlyHoldsText(input.agent, readback, input.text)) {
+    const unconfirmed = "The text could not be confirmed in the session's input.";
+    if (input.clear === undefined) return { delivered: false, detail: `${unconfirmed} It was left in the input box unsent; send or clear it in the terminal.` };
+    const cleared = await input.clear();
+    const after = cleared === "ok" ? await input.read() : undefined;
+    const region = after === undefined ? undefined : composerReadback(input.agent, after).region;
+    return region !== undefined && region.trim() === ""
+      ? { delivered: false, detail: `${unconfirmed} What was typed was cleared, so nothing was sent.` }
+      : { delivered: false, detail: `${unconfirmed} It may still be in the input box unsent; check its terminal before sending again.` };
   }
-  return { delivered: true };
+  const submitted = await input.send("", true);
+  return submitted === "ok" ? { delivered: true } : { delivered: false, detail: submitted };
 }

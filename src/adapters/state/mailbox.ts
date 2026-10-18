@@ -341,67 +341,13 @@ export function renewOutboxLease(handle: DatabaseHandle, id: string, holder: str
   ).changes > 0);
 }
 
-export type PeerVerificationRecord = Readonly<{
-  state: "pending" | "fallback-queued" | "delivered" | "fallback-delivered";
-  messageId: string;
-  transcript: string;
-  transcriptOffset: number;
-  agentVersion: string;
-  acceptedAt: number;
-}>;
-const peerStatePrefix = "peer-verification:";
-
-function peerState(detail: string | null): PeerVerificationRecord | undefined {
-  if (detail === null || !detail.startsWith(peerStatePrefix)) return undefined;
-  try {
-    const value = JSON.parse(detail.slice(peerStatePrefix.length)) as PeerVerificationRecord;
-    return typeof value.messageId === "string" && typeof value.transcript === "string" && Number.isSafeInteger(value.transcriptOffset)
-      ? value : undefined;
-  } catch { return undefined; }
-}
-
-export function getOutboxPeerVerification(handle: DatabaseHandle, id: string): Result<PeerVerificationRecord | undefined> {
-  return read(handle, ({ db }) => peerState(db.query<{ detail: string | null }>("SELECT detail FROM outbox WHERE id = ?").get(id)?.detail ?? null));
-}
-
-export function listOutboxPeerVerifications(handle: DatabaseHandle): Result<readonly Readonly<{ id: string; dispatchId: string | null; status: string; record: PeerVerificationRecord }>[]> {
-  return read(handle, ({ db }) => db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null }>("SELECT id, dispatch_id, status, detail FROM outbox WHERE detail LIKE ?").all(`${peerStatePrefix}%`).flatMap((row) => {
-    const record = peerState(row.detail);
-    return record === undefined ? [] : [{ id: row.id, dispatchId: row.dispatch_id, status: row.status, record }];
-  }));
-}
-
-export function markOutboxPeerSent(handle: DatabaseHandle, id: string, holder: string, record: PeerVerificationRecord): Result<boolean> {
-  if (id === "" || holder === "" || record.messageId === "" || record.transcript === "" || !Number.isSafeInteger(record.transcriptOffset)) return failed("outbox and peer verification details are invalid");
+export function markOutboxPeerSent(handle: DatabaseHandle, id: string, holder: string, messageId: string): Result<boolean> {
+  if (id === "" || holder === "" || messageId === "") return failed("outbox, lease holder and peer message ids must be non-empty");
   const now = new Date().toISOString();
   return write(handle, ({ db }) => db.run(
     "UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ?",
-    [`${peerStatePrefix}${JSON.stringify(record)}`, now, id, holder],
+    [`peer-sent:${messageId}`, now, id, holder],
   ).changes > 0);
-}
-
-export function finishOutboxPeerVerification(handle: DatabaseHandle, id: string, state: PeerVerificationRecord["state"]): Result<boolean> {
-  const now = new Date().toISOString();
-  return write(handle, ({ db }) => {
-    const row = db.query<{ detail: string | null }>("SELECT detail FROM outbox WHERE id = ?").get(id);
-    const current = peerState(row?.detail ?? null);
-    if (current === undefined) return false;
-    db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ?", [`${peerStatePrefix}${JSON.stringify({ ...current, state })}`, now, id]);
-    return true;
-  });
-}
-
-export function requeueOutboxPeerFallback(handle: DatabaseHandle, id: string): Result<boolean> {
-  const now = new Date().toISOString();
-  return write(handle, ({ db }) => {
-    const row = db.query<{ detail: string | null; status: string }>("SELECT detail, status FROM outbox WHERE id = ?").get(id);
-    const current = peerState(row?.detail ?? null);
-    if (current === undefined || current.state !== "pending" || row?.status !== "sent") return false;
-    db.run("UPDATE outbox SET status = 'pending', detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sent'", [
-      `${peerStatePrefix}${JSON.stringify({ ...current, state: "fallback-queued" })}`, now, id,
-    ]);
-    return true;
-  });
 }
 
 export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null): Result<void> {
@@ -410,8 +356,7 @@ export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" 
     const current = outboxRow(db, id);
     if (current === undefined) return { kind: "missing" as const };
     if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
-    const keepPeerState = peerState(current.detail) !== undefined && status === "sent";
-    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, keepPeerState ? current.detail : detail, now, id]);
+    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, detail, now, id]);
     return { kind: "finished" as const };
   });
   if (result.kind !== "ok") return result;
@@ -427,8 +372,7 @@ export function finishNotification(handle: DatabaseHandle, id: string, status: "
     if (current === undefined) return { kind: "missing" as const };
     if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
     if (current.dispatchId !== event.dispatchId) throw new Error("notification event dispatch does not match outbox item");
-    const keepPeerState = peerState(current.detail) !== undefined && status === "sent";
-    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, keepPeerState ? current.detail : event.reason, now, id]);
+    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, event.reason, now, id]);
     const appended = appendNudge(db, event.dispatchId, event.pointer, event.outcome, event.reason, event.createdAt ?? now);
     if (appended.kind !== "ok") throw new Error(appended.error);
     return { kind: "finished" as const };

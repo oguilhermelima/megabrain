@@ -276,7 +276,7 @@ describe("tmux identity provider", () => {
     registerTmux(fake);
     try {
       const result = await notifyChild("/tmp/unused", { runtime: "tmux", tmuxSession: "s", tmuxPane: "%4", agent: "codex" }, "dispatch", processFor());
-      expect(result).toEqual({ outcome: "deferred", reason: "no direct child channel; terminal delivery worker will retry", transport: "deferred" });
+      expect(result).toEqual({ outcome: "deferred", reason: "child requires idle-gated delivery", transport: "deferred" });
       expect(calls).toEqual([]);
     } finally {
       registerTmux(original);

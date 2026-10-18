@@ -1,10 +1,14 @@
 import { getDeliveryChannel, recordChannelResult } from "../adapters/state-db.js";
 import { resolveClaudePeer, scanTranscript, sendClaudePeer, transcriptSize, type PeerPermissionClass } from "../agents/claude-peer.js";
 import { commandLine } from "../agents/index.js";
+import { resolveClaudeSession } from "../agents/claude-session.js";
 import type { DatabaseHandle } from "../db/db.js";
 import { channelVerdict } from "./delivery-channel.js";
 
 export const CLAUDE_PEER_CHANNEL = "peer-socket";
+const DEFAULT_IDLE_DROP_MS = 20_000;
+const POLL_MS = 500;
+
 // Flags with which each agent's launch line turns off its own approval prompts.
 const NO_PROMPT_FLAGS = ["--dangerously-skip-permissions", "--dangerously-bypass-approvals-and-sandbox", "--always-approve"];
 
@@ -17,20 +21,22 @@ export function senderPermissionClass(agent: string): PeerPermissionClass | unde
   return NO_PROMPT_FLAGS.some((flag) => words.includes(flag)) ? "bypass" : "prompting";
 }
 
-// Claude may hold a peer message when its permission class differs from the sender's. Only use the
-// socket when both classes are known and match; otherwise send immediately through the typed path.
+// Claude holds a peer message when the attested class differs from its own, or when none is
+// attested and it bypasses prompts. Both classes are read before sending, so the channel is chosen
+// up front: a class is attested only when it is the sender's real one, and a receiver that would
+// hold every honest envelope is typed to instead.
 export type PeerChannelChoice =
   | Readonly<{ kind: "socket"; senderMode?: PeerPermissionClass }>
   | Readonly<{ kind: "type"; reason: string }>;
 
 export function choosePeerChannel(sender: PeerPermissionClass | undefined, receiver: PeerPermissionClass | undefined): PeerChannelChoice {
-  if (sender !== undefined && receiver !== undefined && receiver === sender) return { kind: "socket", senderMode: sender };
-  return { kind: "type", reason: `the sender and receiver permission classes are not both known and equal (sender: ${sender ?? "unknown"}, receiver: ${receiver ?? "unknown"})` };
+  if (sender !== undefined && (receiver === undefined || receiver === sender)) return { kind: "socket", senderMode: sender };
+  if (receiver === "prompting") return { kind: "socket" };
+  return { kind: "type", reason: `the receiver bypasses prompts and the sender's permission class is ${sender ?? "unknown"}, so Claude would hold the message` };
 }
 
 export type PeerDeliveryOutcome =
   | Readonly<{ kind: "delivered"; msgId: string }>
-  | Readonly<{ kind: "accepted"; msgId: string }>
   | Readonly<{ kind: "read" }>
   | Readonly<{ kind: "fallback"; reason: string }>;
 
@@ -42,52 +48,24 @@ export type PeerDeliveryInput = Readonly<{
   text: string;
   // The class of the agent the notice comes from; omitted when it cannot be stated honestly.
   senderMode?: PeerPermissionClass;
+  deadline: number;
+  // How long the session may sit idle without consuming the message before it counts as dropped.
+  // An idle Claude starts a turn on a peer message within a second; a busy one takes it when the
+  // running tool or turn ends, so only idle time counts.
+  idleDropMs?: number;
   isRead: () => Promise<boolean>;
+  renew: () => Promise<void>;
   onSent?: (msgId: string) => Promise<void> | void;
-  onAccepted?: (record: Readonly<{ messageId: string; transcript: string; transcriptOffset: number; agentVersion: string; acceptedAt: number }>) => Promise<void> | void;
+  wait?: (milliseconds: number) => Promise<void>;
   now?: () => number;
 }>;
 
-export type PeerConsumption = "consumed" | "held" | undefined;
-export type PeerSessionStatus = "idle" | "busy" | "ended";
-
-// The timeout is measured only while Claude reports idle. A busy session may keep a queued
-// peer message for as long as needed without turning socket acceptance into a false success.
-export async function verifyClaudePeerConsumption(input: Readonly<{
-  acknowledged: () => Promise<boolean>;
-  status: () => Promise<PeerSessionStatus>;
-  scan: () => Promise<PeerConsumption>;
-  fallback: () => Promise<void>;
-  heartbeat?: () => Promise<void>;
-  sleep: (milliseconds: number) => Promise<void>;
-  now?: () => number;
-  idleWindowMs?: number;
-  pollIntervalMs?: number;
-}>): Promise<"delivered" | "fallback"> {
-  const now = input.now ?? Date.now;
-  const idleWindowMs = input.idleWindowMs ?? 20_000;
-  const pollIntervalMs = input.pollIntervalMs ?? 250;
-  let idleSince: number | undefined;
-  for (;;) {
-    await input.heartbeat?.();
-    if (await input.acknowledged()) return "delivered";
-    const status = await input.status();
-    if (status === "ended") break;
-    const current = now();
-    if (status === "busy") idleSince = undefined;
-    else {
-      idleSince ??= current;
-      if (current - idleSince >= idleWindowMs) break;
-    }
-    await input.sleep(pollIntervalMs);
-  }
-  if (await input.scan() === "consumed") return "delivered";
-  await input.fallback();
-  return "fallback";
-}
+const defaultWait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 export async function deliverThroughClaudePeer(input: PeerDeliveryInput): Promise<PeerDeliveryOutcome> {
   const now = input.now ?? Date.now;
+  const wait = input.wait ?? defaultWait;
+  const idleDropMs = input.idleDropMs ?? DEFAULT_IDLE_DROP_MS;
   const broken = (agentVersion: string, error: string): PeerDeliveryOutcome => {
     recordChannelResult(input.database, { agent: "claude", channel: CLAUDE_PEER_CHANNEL, agentVersion, ok: false, error, now: now() });
     return { kind: "fallback", reason: error };
@@ -101,12 +79,33 @@ export async function deliverThroughClaudePeer(input: PeerDeliveryInput): Promis
   if (state.kind === "ok" && channelVerdict(state.value, target.version, now()) === "skip") {
     return { kind: "fallback", reason: `peer socket marked broken until ${String(state.value?.retryAfter)}: ${String(state.value?.lastError)}` };
   }
-  if (await input.isRead()) return { kind: "read" };
-  const transcriptOffset = await transcriptSize(target.transcript);
+
+  let scanned = await transcriptSize(target.transcript);
   const sent = await sendClaudePeer(target, input.text, input.senderMode);
   if (sent.kind !== "ok") return broken(target.version, sent.error);
   const msgId = sent.value;
   try { await input.onSent?.(msgId); } catch { /* Recording acceptance must not undo a sent peer message. */ }
-  try { await input.onAccepted?.({ messageId: msgId, transcript: target.transcript, transcriptOffset, agentVersion: target.version, acceptedAt: now() }); } catch { /* The supervisor can recover a peer send without a verifier record. */ }
-  return { kind: "accepted", msgId };
+  let idleSince: number | undefined;
+  while (true) {
+    const scan = await scanTranscript(target.transcript, scanned, msgId);
+    scanned = scan.next;
+    if (scan.seen === "consumed") {
+      recordChannelResult(input.database, { agent: "claude", channel: CLAUDE_PEER_CHANNEL, agentVersion: target.version, ok: true, now: now() });
+      return { kind: "delivered", msgId };
+    }
+    // A hold is this session's crossSessionInbound policy at work, not a broken channel.
+    if (scan.seen === "held") return { kind: "fallback", reason: `Claude held peer message ${msgId} for review (crossSessionInbound policy)` };
+    if (await input.isRead()) return { kind: "read" };
+    const session = await resolveClaudeSession(input.home, target.pid, target.sessionId);
+    if (session === undefined) return { kind: "fallback", reason: "Claude session ended before it consumed the peer message" };
+    if (session.status === "idle") {
+      idleSince ??= now();
+      if (now() - idleSince >= idleDropMs) return broken(target.version, `idle session did not consume peer message ${msgId} within ${idleDropMs} ms`);
+    } else {
+      idleSince = undefined;
+    }
+    if (now() >= input.deadline) return { kind: "fallback", reason: "delivery deadline passed before Claude consumed the peer message" };
+    await input.renew();
+    await wait(POLL_MS);
+  }
 }
