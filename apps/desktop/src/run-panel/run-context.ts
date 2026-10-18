@@ -7,6 +7,8 @@ export interface RunControls {
   /** The worktree the open chat belongs to. */
   root: string
   panel: WorktreePanel
+  /** The run panel shows this worktree's runs, so the Run control sits in its header instead of the top bar. */
+  panelShown: boolean
   /** `port` is the port the command binds, when known; a taken one is offered a way around before running. */
   run: (action: RunAction, command: string, port?: ScriptPort | null) => void
   /** Stops the action's run, after the run panel's confirmation; nothing when it does not run. */

@@ -90,9 +90,10 @@ export function RunPanelToggle() {
 /**
  * Run, Build or Install in the open chat's worktree. The main half repeats the action used last
  * (Run at first); the caret lists all three with their commands. An action without a command
- * offers Set up, which opens the project's commands in Settings.
+ * offers Set up, which opens the project's commands in Settings. While the run panel shows the
+ * worktree, the control lives in the panel's header (`inPanel`) and leaves the top bar.
  */
-export function RunButton() {
+export function RunButton({ inPanel = false }: { inPanel?: boolean }) {
   const controls = useRunControls()
   const scripts = useProjectScripts(controls?.root ?? null)
   const [open, setOpen] = useState(false)
@@ -116,7 +117,7 @@ export function RunButton() {
     }
   }, [open])
 
-  if (controls === null) return null
+  if (controls === null || (!inPanel && controls.panelShown)) return null
   const repo = scripts?.repo ?? controls.root
   const primary = primaryAction(controls.panel.last)
   const primaryCommand = commandFor(scripts, primary)
@@ -140,11 +141,11 @@ export function RunButton() {
           onClick={() => choose(primary)}
           title={primaryCommand ?? `Set up the ${runActionLabel[primary].toLowerCase()} command`}
           aria-label={primaryLabel}
-          className="flex h-full items-center gap-1.5 pr-1.5 pl-[6px] transition-colors hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent @3xl/header:pr-2.5 @3xl/header:pl-2"
+          className={`flex h-full items-center gap-1.5 transition-colors hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent ${inPanel ? 'pr-2.5 pl-2' : 'pr-1.5 pl-[6px] @3xl/header:pr-2.5 @3xl/header:pl-2'}`}
         >
           <PlayIcon />
-          {/* In a narrow chat header only the icon shows, so the title keeps its room. */}
-          <span className="hidden @3xl/header:inline">{primaryLabel}</span>
+          {/* In a narrow chat header only the icon shows, so the title keeps its room; the panel always has it. */}
+          <span className={inPanel ? undefined : 'hidden @3xl/header:inline'}>{primaryLabel}</span>
         </button>
         <span aria-hidden="true" className="h-4 w-px shrink-0 bg-white/10" />
         <button
@@ -159,7 +160,7 @@ export function RunButton() {
         </button>
       </div>
       {menu.shown !== null && (
-        <div role="menu" data-leaving={menu.leaving || undefined} inert={menu.leaving} className="popover absolute top-full right-0 z-50 mt-1.5 w-[300px] max-w-[80vw] p-1.5">
+        <div role="menu" data-leaving={menu.leaving || undefined} inert={menu.leaving} className={`popover absolute top-full z-50 ${inPanel ? 'left-0' : 'right-0'} mt-1.5 w-[300px] max-w-[80vw] p-1.5`}>
           {runActions.map((action) => {
             const command = commandFor(scripts, action)
             return (

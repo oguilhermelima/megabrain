@@ -701,7 +701,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       ? null
       : {
           root,
-          panel: panelFor(runs.panels, root),
+          panel: panelFor(runs.panels, root), panelShown: root === runRoot && panelFor(runs.panels, root).open,
           run: (action, command, port) => runs.run(root, action, command, port),
           stop: (action) => {
             const tab = panelFor(runs.panels, root).tabs.find((entry) => entry.action === action)
@@ -911,7 +911,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
         >
           {(present) =>
             runPanelRoots.map((root) => (
-              <RunPanel key={root} worktree={root} panel={panelFor(runs.panels, root)} visible={present && root === runRoot} runs={runs} onEditCommands={() => runControls?.editCommands(root)} />
+              <RunContext.Provider key={root} value={controlsFor(root)}><RunPanel worktree={root} panel={panelFor(runs.panels, root)} visible={present && root === runRoot} runs={runs} onEditCommands={() => runControls?.editCommands(root)} /></RunContext.Provider>
             ))
           }
         </SlidePanel>

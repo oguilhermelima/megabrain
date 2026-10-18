@@ -6,6 +6,7 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { Spinner, ErrorNote } from '@/components/ui'
 import { runActionLabel, runActions, attachCommand, runTabTitle, type RunTab, type WorktreePanel } from '@/run-panel/run-model'
 import { runStatusView, type RunTone } from '@/run-panel/run-view'
+import { RunButton } from '@/run-panel/RunButton'
 import type { RunPanelsState } from '@/run-panel/useRunPanels'
 
 // xterm loads the first time something runs.
@@ -177,20 +178,12 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
 
   return (
     <div className={visible ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
-      {/* Laid out as the support panels are (lib/side-panel): the title and the tabs start 20px from the edge and the close glyph ends 20px from it; the command and a port choice are boxes 10px in, as a row's highlight. */}
+      {/* Laid out as the support panels are (lib/side-panel): the Run control and the tabs start 20px from the edge and the close glyph ends 20px from it; the command and a port choice are boxes 10px in, as a row's highlight. */}
       <header data-tauri-drag-region className="flex shrink-0 flex-col gap-2 px-5 pt-3 pb-2">
         <div data-tauri-drag-region className="flex items-center gap-2">
-          <span className="text-ink-400">
-            <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="4.5" cy="3.5" r="1.5" />
-              <circle cx="4.5" cy="12.5" r="1.5" />
-              <circle cx="11.5" cy="5.5" r="1.5" />
-              <path d="M4.5 5v6M11.5 7c0 2.5-2 3.5-7 4" />
-            </svg>
-          </span>
-          <h2 title={worktree} className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-100">
-            {name}
-          </h2>
+          {/* The top bar's Run control, moved here while the panel shows (it leaves the bar meanwhile). */}
+          <RunButton inPanel />
+          <span data-tauri-drag-region className="min-w-0 flex-1 self-stretch" />
           <button type="button" onClick={() => runs.setOpen(worktree, false)} aria-label="Close run panel" title="Hide panel (runs keep going)" className={`${ghost} -mr-[6px]`}>
             <Icon>
               <rect x="1.5" y="2.5" width="13" height="11" rx="2" />
@@ -242,23 +235,32 @@ export function RunPanel({ worktree, panel, visible, runs, onEditCommands }: { w
           <span className="shrink-0 font-mono text-[12px] text-ink-500 select-none" aria-hidden="true">
             $
           </span>
-          <code title={active.command} className="min-w-0 flex-1 truncate pl-1 font-mono text-[12px] text-ink-300 select-text">
+          {/* The command and its state on the left, what to do about it on the right. */}
+          <code title={active.command} className="min-w-0 truncate pl-1 font-mono text-[12px] text-ink-300 select-text">
             {active.command}
           </code>
           <CopyButton text={active.command} />
-          <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-white/[0.08]" />
           <span role="status" className={`shrink-0 px-1 text-[11.5px] font-medium ${toneText[activeView.tone]}`}>
             {activeView.label}
           </span>
+          <span className="flex-1" />
           <button type="button" onClick={() => runs.restart(worktree, active)} aria-label="Restart" title="Restart" className={ghost}>
             <Icon>
               <path d="M13 8a5 5 0 1 1-1.5-3.6" />
               <path d="M13 2.5v3h-3" />
             </Icon>
           </button>
-          <button type="button" onClick={() => runs.stop(worktree, active)} disabled={!activeView.live} aria-label="Stop" title="Stop" className={`${ghost} hover:text-bad`}>
+          {/* Same box and glyph size as Restart; filled red only while there is something to stop. */}
+          <button
+            type="button"
+            onClick={() => runs.stop(worktree, active)}
+            disabled={!activeView.live}
+            aria-label="Stop"
+            title="Stop"
+            className={`${ghost} ${activeView.live ? 'bg-bad text-ink-950 hover:bg-bad/85 hover:text-ink-950' : 'ring-1 ring-white/[0.1] ring-inset'}`}
+          >
             <Icon>
-              <rect x="4" y="4" width="8" height="8" rx="1.5" />
+              <rect x="4" y="4" width="8" height="8" rx="1.5" fill="currentColor" />
             </Icon>
           </button>
         </div>
