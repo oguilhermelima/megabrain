@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { emptySidebarState, legacySidebarState, parseSidebarState, pruneSidebarState, serialiseSidebarState } from '@/advanced/sidebar-state'
+import { emptySidebarState, foldKeys, legacySidebarState, parseSidebarState, pruneSidebarState, serialiseSidebarState, stackFoldKey, worktreeFoldKey } from '@/advanced/sidebar-state'
 
 const state = { collapsed: ['/repo/a', 'stack:/repo/a-wt'], rows: { '/repo/a': ['chat:1', 'group:g1'], '/repo/a-wt': ['terminal:t1'] } }
 
@@ -47,5 +47,30 @@ describe('pruneSidebarState', () => {
 
   test('an empty worktree order is not kept', () => {
     expect(pruneSidebarState({ collapsed: [], rows: { '/repo/a': [] } }, { collapsible: new Set(), worktrees: new Set(['/repo/a']) })).toEqual(emptySidebarState)
+  })
+})
+
+describe('worktree folds', () => {
+  const projects = [{ path: '/repo/a', worktrees: [{ path: '/repo/a' }, { path: '/repo/a-wt' }] }]
+
+  test('a folded worktree is saved and read back by its key', () => {
+    const folded = { collapsed: ['/repo/a', worktreeFoldKey('/repo/a-wt')], rows: {} }
+    expect(JSON.parse(serialiseSidebarState(folded)).collapsed).toEqual(['/repo/a', 'worktree:/repo/a-wt'])
+    expect(parseSidebarState(JSON.parse(serialiseSidebarState(folded)))).toEqual(folded)
+  })
+
+  test('state saved before worktrees folded reads with every worktree open', () => {
+    const read = parseSidebarState({ version: 1, collapsed: ['/repo/a', 'stack:/repo/a'], rows: {} })
+    expect(read.collapsed.includes(worktreeFoldKey('/repo/a'))).toBe(false)
+    expect(read.collapsed.includes(worktreeFoldKey('/repo/a-wt'))).toBe(false)
+  })
+
+  test('every project, stack and worktree of the list can fold', () => {
+    expect(foldKeys(projects)).toEqual(new Set(['/repo/a', stackFoldKey('/repo/a'), worktreeFoldKey('/repo/a'), stackFoldKey('/repo/a-wt'), worktreeFoldKey('/repo/a-wt')]))
+  })
+
+  test('a fold of a worktree that is gone is dropped, a live one kept', () => {
+    const saved = { collapsed: [worktreeFoldKey('/repo/a-wt'), worktreeFoldKey('/repo/gone')], rows: {} }
+    expect(pruneSidebarState(saved, { collapsible: foldKeys(projects), worktrees: new Set() })).toEqual({ collapsed: [worktreeFoldKey('/repo/a-wt')], rows: {} })
   })
 })

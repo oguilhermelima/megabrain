@@ -21,11 +21,20 @@ export function writeSidebarCollapsed(collapsed: boolean) {
 // What the sidebar folded and the order the person dragged each worktree's rows into, saved through
 // `megabrain settings set sidebar-state` so a restart keeps both. Folders and the top-level order of
 // projects and folders live in sidebar-folders. Projects fold by path, stacks by `stack:<worktree
-// path>`; rows are ordered by their keys, per worktree path.
+// path>`, a worktree's own rows by `worktree:<worktree path>` (state saved before worktrees folded has
+// none, so they read as open); rows are ordered by their keys, per worktree path.
 
 export interface SidebarState {
   collapsed: string[]
   rows: RowOrder
+}
+
+export const stackFoldKey = (worktreePath: string) => `stack:${worktreePath}`
+export const worktreeFoldKey = (worktreePath: string) => `worktree:${worktreePath}`
+
+/** Every fold key the projects have now: each project's path, and each worktree's stack and rows. */
+export function foldKeys(projects: readonly { path: string; worktrees: readonly { path: string }[] }[]): Set<string> {
+  return new Set(projects.flatMap((project) => [project.path, ...project.worktrees.flatMap((worktree) => [stackFoldKey(worktree.path), worktreeFoldKey(worktree.path)])]))
 }
 
 export const emptySidebarState: SidebarState = { collapsed: [], rows: {} }

@@ -1,7 +1,9 @@
 import { useState, type MouseEvent } from 'react'
 import type { NativeChat, ProjectSession, ProjectWorktree } from '@/api/schema'
 import { memberStatus, memberStatusLabel, type MemberStatus, type StackDetail, type StackPlace } from '@/advanced/stacks'
-import { Chevron, BranchIcon, PlusIcon } from '@/advanced/chrome'
+import { ActivityDot, Chevron, BranchIcon, PlusIcon } from '@/advanced/chrome'
+import { projectRowKey, worktreeActivity, worktreeActivityLabel } from '@/advanced/project-row-model'
+import { Collapse } from '@/components/Collapse'
 import { applyRowOrder, endedRows, rowToOpen, worktreeItems, type KeyedItem, type RowOrder } from '@/advanced/row-model'
 import { GroupRowView, useSplitRows } from '@/advanced/SplitRows'
 import type { GroupRow } from '@/advanced/split-rows'
@@ -75,6 +77,8 @@ export function WorktreeRow({
   detail,
   busy,
   fold,
+  folded,
+  onToggle,
   selectedSessionId,
   onSelectSession,
   menuItems,
@@ -105,6 +109,10 @@ export function WorktreeRow({
   busy: string | null
   /** Folds the branches stacked on this one; null without any. */
   fold: { open: boolean; toggle: () => void } | null
+  /** Its own rows are folded away; a worktree with no rows has nothing to fold and shows them open. */
+  folded: boolean
+  /** Folds or unfolds its rows. */
+  onToggle: () => void
   /** Terminals the app opened in this worktree. */
   terminals: AppTerminal[]
   terminalRows: TerminalRows
@@ -234,6 +242,11 @@ export function WorktreeRow({
       />
     )
   }
+  // Like a project row: the branch icon (a chevron on hover) folds, the name opens, ← → fold from the
+  // keyboard. Folded, a mark says a chat in it works or waits.
+  const foldable = ordered.length > 0 || groupsHere.length > 0
+  const open = !foldable || !folded
+  const activity = open ? null : worktreeActivity(worktree, chats)
   const name = worktree.branch === null ? `Detached HEAD at ${worktree.head ?? ''}` : worktree.branch
   const prState = worktreePullRequestState(worktree.pullRequest)
   const prColor = prState === null ? null : stateColors[prState]
@@ -253,76 +266,113 @@ export function WorktreeRow({
             <Chevron open={fold.open} />
           </button>
         )}
-        <span style={prColor === null ? undefined : { color: prColor }} className={`shrink-0 ${running ? 'text-ink-300' : 'text-ink-400'}`}>
-          <BranchIcon />
-        </span>
+        {foldable ? (
+          <button
+            type="button"
+            tabIndex={-1}
+            onClick={onToggle}
+            aria-label={`${open ? 'Fold' : 'Unfold'} ${name}`}
+            title={`${open ? 'Fold' : 'Unfold'} its chats`}
+            className="group/fold relative grid shrink-0 place-items-center"
+          >
+            <span style={prColor === null ? undefined : { color: prColor }} className={`transition-opacity duration-[120ms] group-hover/fold:opacity-0 ${running ? 'text-ink-300' : 'text-ink-400'}`}>
+              <BranchIcon />
+            </span>
+            <span aria-hidden="true" className="absolute inset-0 grid place-items-center text-ink-300 opacity-0 transition-opacity duration-[120ms] group-hover/fold:opacity-100">
+              <Chevron open={open} />
+            </span>
+          </button>
+        ) : (
+          <span style={prColor === null ? undefined : { color: prColor }} className={`shrink-0 ${running ? 'text-ink-300' : 'text-ink-400'}`}>
+            <BranchIcon />
+          </span>
+        )}
         <button
           type="button"
           onClick={openWorktree}
-          title={`${name}\n${worktree.path}`}
+          onKeyDown={(event) => {
+            const action = projectRowKey(event.key, !open, event)
+            if (action === null || (action !== 'open' && !foldable)) return
+            event.preventDefault()
+            if (action === 'open') openWorktree()
+            else onToggle()
+          }}
+          aria-expanded={foldable ? open : undefined}
+          aria-keyshortcuts={foldable ? 'Enter ArrowLeft ArrowRight' : undefined}
+          title={`${name}\n${worktree.path}${foldable ? '\nClick the branch icon or press ← → to fold' : ''}`}
           className={`min-w-0 flex-1 truncate text-left text-[13.5px] focus-visible:outline-2 focus-visible:outline-accent ${running ? 'font-medium text-ink-100' : 'text-ink-300'}`}
         >
           {name}
         </button>
+        {activity !== null && <ActivityDot state={activity.state} title={worktreeActivityLabel(activity)} />}
         {worktree.primary && <span className="shrink-0 rounded-[6px] bg-white/[0.06] px-1.5 text-[10.5px] leading-4 font-medium text-ink-400">primary</span>}
         {worktree.pullRequest !== null && prState !== null && prColor !== null && (
           <PullRequestNumber pullRequest={worktree.pullRequest} color={prColor} title={pullRequestTitle(worktree.pullRequest, prState)} onOpen={onPullRequest} />
         )}
         {place !== null && <StackMarks place={place} status={member.status} needsSync={member.needsSync} busy={busy} />}
         <RowActions gap="2">
-          <NewChatButton label={`New chat in ${name}`} onClick={() => onNewChat(worktree.path)} />
+          <NewChatButton
+            label={`New chat in ${name}`}
+            onClick={() => {
+              // The new chat's row shows here, so a folded worktree opens.
+              if (!open) onToggle()
+              onNewChat(worktree.path)
+            }}
+          />
           <CodeButton label={`Open ${name} in Code`} onClick={onCode} />
           <MoreButton label={`Manage ${name}`} onClick={(event) => onMenu(event, menuItems)} />
         </RowActions>
       </div>
-      <div data-worktree-rows={worktree.path} className="space-y-0.5">
-        {groupRowsAt(null)}
-        {ordered.map((item) => {
-          const groups = groupRowsAt(item.key)
-          if (!shown.includes(item) || endedKeys.has(item.key)) return groups
-          const key = itemOfRow(item)
-          const drag = dragOf(item)
-          const source = rowControls.drag?.source
-          const target = rowControls.drag?.target ?? null
-          return [
-            ...groups,
-            <div
-              key={item.key}
-              data-row-key={item.key}
-              data-item={key ?? undefined}
-              onClickCapture={pickRow(item)}
-              onAuxClick={middleClose(item)}
-              aria-selected={picked(item) ? 'true' : undefined}
-              className={`sidebar-row-in relative rounded-[12px] ${source?.kind === 'row' && source.key === item.key ? 'opacity-50' : ''} ${picked(item) ? 'ring-1 ring-accent/60 ring-inset' : ''}`}
-            >
-              {target?.kind === 'reorder' && target.key === item.key && <DropLine edge={target.placement} />}
-              {target?.kind === 'join' && target.at === item.key && <JoinMark />}
-              {renderItem(item, drag)}
-            </div>,
-          ]
-        })}
-        {ended.length > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={() => setEndedOpen((open) => !open)}
-              aria-expanded={endedOpen}
-              title="Conversations that ended more than a week ago"
-              className="flex h-7 w-full items-center gap-1.5 rounded-[12px] pl-[31px] text-left text-[12.5px] text-ink-400 transition-colors hover:bg-row-hover hover:text-ink-300"
-            >
-              <Chevron open={endedOpen} />
-              <span>Ended</span>
-              <span className="tabular-nums">{ended.length}</span>
-            </button>
-            {endedOpen &&
-              ended.map((item) => (
-                <div key={item.key} data-row-key={item.key} onAuxClick={middleClose(item)} className="sidebar-row-in relative rounded-[12px]">
-                  {renderItem(item, dragOf(item))}
-                </div>
-              ))}
-          </>
-        )}
-      </div>
+      <Collapse open={open}>
+        <div data-worktree-rows={worktree.path} className="space-y-0.5">
+          {groupRowsAt(null)}
+          {ordered.map((item) => {
+            const groups = groupRowsAt(item.key)
+            if (!shown.includes(item) || endedKeys.has(item.key)) return groups
+            const key = itemOfRow(item)
+            const drag = dragOf(item)
+            const source = rowControls.drag?.source
+            const target = rowControls.drag?.target ?? null
+            return [
+              ...groups,
+              <div
+                key={item.key}
+                data-row-key={item.key}
+                data-item={key ?? undefined}
+                onClickCapture={pickRow(item)}
+                onAuxClick={middleClose(item)}
+                aria-selected={picked(item) ? 'true' : undefined}
+                className={`sidebar-row-in relative rounded-[12px] ${source?.kind === 'row' && source.key === item.key ? 'opacity-50' : ''} ${picked(item) ? 'ring-1 ring-accent/60 ring-inset' : ''}`}
+              >
+                {target?.kind === 'reorder' && target.key === item.key && <DropLine edge={target.placement} />}
+                {target?.kind === 'join' && target.at === item.key && <JoinMark />}
+                {renderItem(item, drag)}
+              </div>,
+            ]
+          })}
+          {ended.length > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => setEndedOpen((open) => !open)}
+                aria-expanded={endedOpen}
+                title="Conversations that ended more than a week ago"
+                className="flex h-7 w-full items-center gap-1.5 rounded-[12px] pl-[31px] text-left text-[12.5px] text-ink-400 transition-colors hover:bg-row-hover hover:text-ink-300"
+              >
+                <Chevron open={endedOpen} />
+                <span>Ended</span>
+                <span className="tabular-nums">{ended.length}</span>
+              </button>
+              {endedOpen &&
+                ended.map((item) => (
+                  <div key={item.key} data-row-key={item.key} onAuxClick={middleClose(item)} className="sidebar-row-in relative rounded-[12px]">
+                    {renderItem(item, dragOf(item))}
+                  </div>
+                ))}
+            </>
+          )}
+        </div>
+      </Collapse>
     </div>
   )
 }

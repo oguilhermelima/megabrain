@@ -1,10 +1,11 @@
-import type { NativeChat, Project } from '@/api/schema'
+import type { NativeChat, Project, ProjectWorktree } from '@/api/schema'
 import { rowStatus } from '@/native-chat/chat-model'
 
 // A project's row in the sidebar is one button with two zones: its picture (a chevron on hover)
 // folds the project, anywhere else opens the project's page. The keyboard does both: Enter opens,
 // Left folds and Right unfolds. A mark beside the name says a chat in the project is working or
-// waiting, so a folded project still shows it.
+// waiting, so a folded project still shows it. A worktree row folds the same way, by its branch icon
+// and the same keys.
 
 /** The row's left padding (10px) and the 24px picture: the part that folds. */
 export const collapseZonePx = 34
@@ -27,7 +28,28 @@ export function projectRowKey(key: string, collapsed: boolean, modifiers: { altK
 
 /** Working when any chat or session of the project works, else waiting when one waits for approval. */
 export function projectActivity(project: Project, chats: Record<string, NativeChat[]>): 'working' | 'waiting' | null {
-  const states = project.worktrees.flatMap((worktree) => [...worktree.sessions.map((session) => session.status), ...(chats[worktree.path] ?? []).map((chat) => rowStatus(chat.state))])
-  if (states.includes('working')) return 'working'
-  return states.includes('waiting') ? 'waiting' : null
+  const hints = project.worktrees.map((worktree) => worktreeActivity(worktree, chats[worktree.path] ?? []))
+  if (hints.some((hint) => hint?.state === 'working')) return 'working'
+  return hints.some((hint) => hint !== null) ? 'waiting' : null
 }
+
+// A folded worktree shows the same mark, and how many of its chats and sessions are in that state.
+
+export interface WorktreeActivity {
+  state: 'working' | 'waiting'
+  count: number
+}
+
+/** Working when any of the worktree's chats or sessions works, else waiting when one waits; null when neither. */
+export function worktreeActivity(worktree: ProjectWorktree, chats: readonly NativeChat[]): WorktreeActivity | null {
+  const states = [...worktree.sessions.map((session) => session.status), ...chats.map((chat) => rowStatus(chat.state))]
+  for (const state of ['working', 'waiting'] as const) {
+    const count = states.filter((entry) => entry === state).length
+    if (count > 0) return { state, count }
+  }
+  return null
+}
+
+/** The folded worktree's mark's tooltip. */
+export const worktreeActivityLabel = ({ state, count }: WorktreeActivity) =>
+  `${count} ${count === 1 ? 'chat' : 'chats'} ${state === 'working' ? 'working' : 'waiting for you'}`

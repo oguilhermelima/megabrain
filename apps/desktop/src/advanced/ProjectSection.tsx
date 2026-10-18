@@ -2,6 +2,7 @@ import { memo, type ReactNode } from 'react'
 import type { NativeChat, Project, ProjectSession } from '@/api/schema'
 import { visibleTree, worktreeTree, type WorktreeNode } from '@/advanced/stacks'
 import type { StackDetails } from '@/advanced/useStackDetails'
+import { stackFoldKey, worktreeFoldKey } from '@/advanced/sidebar-state'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { displayName, projectTint } from '@/advanced/appearance-model'
 import type { PendingWorktree } from '@/advanced/new-worktree-model'
@@ -13,7 +14,7 @@ import { codeTargetFor, type CodeTarget } from '@/code/code-pane-model'
 import { githubRepository } from '@/github/github-model'
 import type { GithubKind } from '@/github/useGithubCounts'
 import type { MenuItem } from '@/components/ContextMenu'
-import { BranchIcon, Chevron } from '@/advanced/chrome'
+import { ActivityDot, BranchIcon, Chevron } from '@/advanced/chrome'
 import { noChats, noTerminals, MoreButton, RowActions, type MenuOpener, type RowDragger } from '@/advanced/SidebarRows'
 import { DropLine, type ProjectDrag } from '@/advanced/SidebarSections'
 import { WorktreeRow, type ItemRows, type TerminalRows } from '@/advanced/WorktreeRow'
@@ -154,8 +155,9 @@ export const ProjectSection = memo(function ProjectSection({
   const renderNodes = (list: WorktreeNode[]): ReactNode =>
     list.map((node, index) => {
       const { worktree } = node
-      const foldKey = `stack:${worktree.path}`
+      const foldKey = stackFoldKey(worktree.path)
       const open = !stacks.folded.has(foldKey)
+      const rowsKey = worktreeFoldKey(worktree.path)
       const last = index === list.length - 1
       return (
         <div key={worktree.path} className="relative">
@@ -173,6 +175,8 @@ export const ProjectSection = memo(function ProjectSection({
               detail={worktree.branch === null ? undefined : details?.[worktree.branch]}
               busy={stacks.busy[worktree.path] ?? null}
               fold={node.children.length === 0 ? null : { open, toggle: () => stacks.fold(foldKey) }}
+              folded={stacks.folded.has(rowsKey)}
+              onToggle={() => stacks.fold(rowsKey)}
               selectedSessionId={selectedSessionId}
               onSelectSession={onSelectSession}
               menuItems={actions.worktree(project, node, tree)}
@@ -241,9 +245,7 @@ export const ProjectSection = memo(function ProjectSection({
             </span>
           </span>
           <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{name}</h2>
-          {activity !== null && (
-            <span title={activity === 'working' ? 'A chat is working' : 'A chat is waiting for you'} className={`size-1.5 shrink-0 rounded-full ${activity === 'working' ? 'bg-ok shadow-[0_0_8px_#34d399] animate-pulse' : 'bg-warn'}`} />
-          )}
+          {activity !== null && <ActivityDot state={activity} title={activity === 'working' ? 'A chat is working' : 'A chat is waiting for you'} />}
         </button>
         <RowActions gap="0.5">
           <MoreButton label={`Manage ${name}`} onClick={(event) => onMenu(event, actions.project(project))} />
@@ -264,7 +266,7 @@ export const ProjectSection = memo(function ProjectSection({
   )
 })
 
-/** What the stacked rows need: details read from `stack show`, folds, and actions running; one object per change. */
+/** What the stacked rows need: details read from `stack show`, folds of stacks and worktrees, and actions running; one object per change. */
 export interface StackRows {
   details: StackDetails
   folded: ReadonlySet<string>

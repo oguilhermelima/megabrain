@@ -180,6 +180,11 @@ export function BranchIcon() {
   )
 }
 
+/** The mark a project or folded worktree shows while a chat in it works (pulsing) or waits for you. */
+export function ActivityDot({ state, title }: { state: 'working' | 'waiting'; title: string }) {
+  return <span title={title} className={`size-1.5 shrink-0 rounded-full ${state === 'working' ? 'bg-ok shadow-[0_0_8px_#34d399] animate-pulse' : 'bg-warn'}`} />
+}
+
 export function Chevron({ open }: { open: boolean }) {
   return (
     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`transition-transform duration-[180ms] ease-out motion-reduce:transition-none ${open ? 'rotate-90' : ''}`}>

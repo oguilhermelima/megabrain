@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { NativeChat, Project, ProjectSession } from '@/api/schema'
-import { collapseZonePx, projectActivity, projectRowClick, projectRowKey } from '@/advanced/project-row-model'
+import { collapseZonePx, projectActivity, projectRowClick, projectRowKey, worktreeActivity, worktreeActivityLabel } from '@/advanced/project-row-model'
 
 const session = (sessionId: string, status: ProjectSession['status']): ProjectSession => ({
   agent: 'claude',
@@ -104,5 +104,28 @@ describe('projectActivity', () => {
 
   test("another project's chats do not count", () => {
     expect(projectActivity(project([[]]), { '/elsewhere': [chat('a', '/elsewhere', 'working')] })).toBeNull()
+  })
+})
+
+describe('worktreeActivity', () => {
+  const worktree = (sessions: ProjectSession[]) => project([sessions]).worktrees[0]!
+
+  test('nothing working or waiting shows no mark', () => {
+    expect(worktreeActivity(worktree([session('claude:1', 'idle'), session('claude:2', 'ended')]), [chat('a', '/work/canto', 'idle')])).toBeNull()
+    expect(worktreeActivity(worktree([]), [])).toBeNull()
+  })
+
+  test('counts the working chats and sessions together', () => {
+    expect(worktreeActivity(worktree([session('claude:1', 'working')]), [chat('a', '/work/canto', 'working'), chat('b', '/work/canto', 'starting'), chat('c', '/work/canto', 'idle')])).toEqual({ state: 'working', count: 3 })
+  })
+
+  test('working wins over waiting, and waiting counts only what waits', () => {
+    expect(worktreeActivity(worktree([session('claude:1', 'waiting')]), [chat('a', '/work/canto', 'working')])).toEqual({ state: 'working', count: 1 })
+    expect(worktreeActivity(worktree([session('claude:1', 'waiting')]), [chat('a', '/work/canto', 'waiting-approval'), chat('b', '/work/canto', 'idle')])).toEqual({ state: 'waiting', count: 2 })
+  })
+
+  test('the mark says how many', () => {
+    expect(worktreeActivityLabel({ state: 'working', count: 1 })).toBe('1 chat working')
+    expect(worktreeActivityLabel({ state: 'waiting', count: 2 })).toBe('2 chats waiting for you')
   })
 })

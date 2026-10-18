@@ -9,7 +9,7 @@ const exceptions: Readonly<Record<string, number>> = {
   "apps/desktop/src/advanced/Advanced.tsx": 922,
   "apps/desktop/src-tauri/src/terminal.rs": 924,
   "src/cli/commands/projects.ts": 903,
-  "apps/desktop/src/advanced/Sidebar.tsx": 824,
+  "apps/desktop/src/advanced/Sidebar.tsx": 823,
 };
 
 function trackedSourceFiles(): string[] {

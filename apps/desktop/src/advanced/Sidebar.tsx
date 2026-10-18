@@ -10,7 +10,7 @@ import { ArtifactsIcon, Chevron, KnowledgeIcon, PlusIcon, TasksIcon } from '@/ad
 import { creationsIn, type PendingWorktree } from '@/advanced/new-worktree-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { moveRow } from '@/advanced/row-model'
-import { pruneSidebarState, type SidebarState } from '@/advanced/sidebar-state'
+import { foldKeys, pruneSidebarState, type SidebarState } from '@/advanced/sidebar-state'
 import { useSidebarState } from '@/advanced/useSidebarLayout'
 import { SpanningSplits, type SplitDrop } from '@/advanced/SplitRows'
 import { useRowDrag } from '@/advanced/useRowDrag'
@@ -203,11 +203,10 @@ export const Sidebar = memo(function Sidebar({
   const { state: savedState, change: changeSavedState, error: savedStateError, ready: savedStateReady } = useSidebarState()
   const collapsed = useMemo(() => new Set(savedState.collapsed), [savedState.collapsed])
   const ready = layoutReady && savedStateReady
-  // Every save drops what no longer exists: folds of projects and stacks gone, orders of worktrees gone.
+  // Every save drops what no longer exists: folds of projects, stacks and worktrees gone, orders of worktrees gone.
   const saveState = useStableCallback((next: SidebarState) => {
     const worktrees = projects.flatMap((project) => project.worktrees.map((worktree) => worktree.path))
-    const collapsible = new Set([...projects.map((project) => project.path), ...worktrees.map((path) => `stack:${path}`)])
-    changeSavedState(pruneSidebarState(next, { collapsible, worktrees: new Set([...projects.map((project) => project.path), ...worktrees]) }))
+    changeSavedState(pruneSidebarState(next, { collapsible: foldKeys(projects), worktrees: new Set([...projects.map((project) => project.path), ...worktrees]) }))
   })
   const [menu, setMenu] = useState<OpenMenu | null>(null)
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
@@ -241,7 +240,7 @@ export const Sidebar = memo(function Sidebar({
     setSearchOpen(true)
     searchRef.current?.focus()
   }
-  // Projects fold by path (two can share a name); stacks fold by `stack:<worktree path>`.
+  // Projects fold by path (two can share a name); stacks and worktrees by their keys (sidebar-state).
   const toggle = useStableCallback((key: string) => {
     const folded = savedState.collapsed
     saveState({ ...savedState, collapsed: folded.includes(key) ? folded.filter((entry) => entry !== key) : [...folded, key] })
