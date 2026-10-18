@@ -88,6 +88,8 @@
 - Run megabrain github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json]. — recommended when you need to close or reopen an issue.
 - Run megabrain github pr-state <repo name|path> <number> merge|close|reopen [--method merge|squash|rebase] [--json]. — recommended when you need to merge, close or reopen a pull request.
 - Run megabrain code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]. — recommended when you need the full Code editor for a registered project or worktree inside the desktop app.
+- Run megabrain app open <target> [--split right|down] [--beside <pane>] [--focus] [--json] | split <right|down> [--target <pane target>] [--json] | join <pane> --with <pane> | close-pane <pane> | layout --json | status --json. — recommended when an agent needs to open content, split, join, close or inspect panes in the desktop app.
+- Use megabrain app open <target> --split right|down instead of keyboard shortcuts to open an item in a split pane.
 - Run megabrain terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]. — recommended when you need to open a managed terminal in a worktree: a tab in Orca or Superset when the session runs there, otherwise a tmux window.
 - Run megabrain terminal list [--worktree <path>] [--json] | --app [--server <tmux -L name>] [--json]. — recommended when you need to find managed terminals and check whether they are alive.
 - Run megabrain terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json]. — recommended when you need to open a native terminal window attached to an existing tmux session, or print the attach command.

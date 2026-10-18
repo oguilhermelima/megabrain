@@ -18,6 +18,18 @@ export async function dispatchRequest(daemon: ChatDaemon, request: Request, sock
       }
       return { protocol: { version: daemon.protocol, min: CHAT_PROTOCOL_MIN_VERSION, max: daemon.protocol }, daemonVersion: daemon.version, liveChats: await daemon.liveChats(), pid: process.pid, build: daemon.build };
     }
+    case "app-connect": {
+      if (socket === undefined) throw new Error("app connection requires a socket");
+      daemon.appControl.connect(socket);
+      return { connected: true };
+    }
+    case "app-control": return await daemon.appControl.request(request.request);
+    case "app-status": return daemon.appControl.connected ? await daemon.appControl.request({ action: "status" }) : { running: false };
+    case "app-reply": {
+      if (socket === undefined) throw new Error("app reply requires a socket");
+      daemon.appControl.reply(socket, request as { id?: unknown; value?: unknown; error?: unknown });
+      return { accepted: true };
+    }
     case "daemon-status": return await daemon.daemonStatus();
     case "drain": return request.wait === false ? (void daemon.drainDaemon().catch(() => undefined), await daemon.daemonStatus()) : await daemon.drainDaemon();
     case "retire": return await daemon.retireDaemon();

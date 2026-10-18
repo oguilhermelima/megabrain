@@ -54,6 +54,7 @@ import { executeUsage } from "./commands/usage.js";
 import { executeProjects } from "./commands/projects.js";
 import { executeGithub } from "./commands/github.js";
 import { executeCode } from "./commands/code.js";
+import { executeApp } from "./commands/app.js";
 import { executePort } from "./commands/port.js";
 import { executeMaestro } from "./commands/maestro.js";
 import { runCodeServerProxy } from "../core/code-server-proxy.js";
@@ -151,7 +152,7 @@ async function routeCommand(
   if (command === "version" || command === "-V" || command === "--version") {
     return ok(`megabrain ${packageJson.version}\n`);
   }
-  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "send", "session", "commands", "chat", "agent", "sessions", "port", "usage", "maestro", "summaries", "knowledge", "artifact"]);
+  const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "app", "send", "session", "commands", "chat", "agent", "sessions", "port", "usage", "maestro", "summaries", "knowledge", "artifact"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
   const statelessCommand = command === "context" || command === "port" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "summaries" || command === "knowledge" || command === "artifact" || command === "sessions" || command === "settings" && commandArgs[0] === "set" && commandArgs[1] === "terminal-engine";
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
@@ -197,6 +198,7 @@ async function routeCommand(
   if (command === "maestro") return executeMaestro(commandArgs, dependencies.environment, dependencies.processAdapter, (text) => { process.stdout.write(text); });
   if (command === "port") return executePort(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "code") return executeCode(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "app") return executeApp(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "sessions") return executeSessions(commandArgs, dependencies.environment);
   if (command === "usage") return executeUsage(commandArgs, dependencies.environment);
   if (command === "agent") return executeAgent(commandArgs, dependencies.environment, dependencies.processAdapter);

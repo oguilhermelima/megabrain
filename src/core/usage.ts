@@ -80,6 +80,7 @@ export const USAGE_LINES = {
   "github-issue-state": "github issue-state <repo name|path> <number> open|closed [--reason completed|not planned] [--json]",
   "github-pr-state": "github pr-state <repo name|path> <number> merge|close|reopen [--method merge|squash|rebase] [--json]",
   "code": "code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]",
+  "app": "app open <target> [--split right|down] [--beside <pane>] [--focus] [--json] | split <right|down> [--target <pane target>] [--json] | join <pane> --with <pane> | close-pane <pane> | layout --json | status --json",
   "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--branch <member>] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]",
   "terminal-list": "terminal list [--worktree <path>] [--json] | --app [--server <tmux -L name>] [--json]",
@@ -251,6 +252,7 @@ Commands:
   usage stats [--days <n>] [--provider <id>] [--json] Token usage per day and provider from the agents' logs
   port who|free|kill ...                Find, free and stop port listeners
   github projects|project|project-move|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read and manage GitHub projects, pull requests, issues and Actions
+  app open <target> [--split right|down] [--beside <pane>] [--focus] Drive the desktop layout without keyboard shortcuts
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree

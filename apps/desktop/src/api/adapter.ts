@@ -29,6 +29,8 @@ export type ChatQueueChange =
 
 export interface DesktopApi {
   readonly kind: 'tauri' | 'mock'
+  appControlReply(id: string, value: unknown): Promise<void>
+  appControlError(id: string, error: string): Promise<void>
   status(): Promise<Status>
   installPlan(): Promise<InstallPlan>
   doctor(): Promise<DoctorReport>

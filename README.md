@@ -162,6 +162,16 @@ through a private Unix socket, and is reached through a localhost proxy that req
 token and an HttpOnly cookie. Each project has one reusable server; closing its Code view stops both
 processes. The existing read-only file browser remains available as Quick view.
 
+Agents can control the desktop panes over the app's chatd connection, without taking keyboard
+focus. Use `app open --split` in place of a keyboard shortcut to open an item beside the current
+pane:
+
+```sh
+megabrain app open chat:<id> --split right
+megabrain app open file:~/code/api/src/index.ts:42 --focus
+megabrain app layout --json
+```
+
 ## Install
 
 ```sh

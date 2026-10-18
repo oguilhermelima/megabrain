@@ -27,6 +27,7 @@ import { updateContext as updateContextImpl, setModel as setModelImpl, startArti
 import { requireChat as requireChatImpl, normalizeParts as normalizePartsImpl, processes as processesImpl, entryOf as entryOfImpl, track as trackImpl, dropConversation as dropConversationImpl, pruneUnused as pruneUnusedImpl, sessionOfTerminal as sessionOfTerminalImpl, save as saveImpl } from "./daemon/chat-state.js";
 import { fork as forkImpl } from "./daemon/chat-fork.js";
 import { editLast as editLastImpl } from "./daemon/chat-edit-last.js";
+import { AppControlBroker } from "./app-control.js";
 
 type Part = MessagePart;
 type Request = { operation: string; [key: string]: unknown };
@@ -124,6 +125,7 @@ export { timeoutMs };
 
 export class ChatDaemon {
   readonly store: ChatStore;
+  readonly appControl: AppControlBroker;
   // These fields are internal to src/chat and are shared with its daemon collaborators.
   readonly summarizer: ChatSummarizer;
   readonly knowledge: KnowledgePipeline;
@@ -196,7 +198,7 @@ export class ChatDaemon {
   readonly version = packageJson.version;
   superseded = false;
   exitReason = "shutdown";
-  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION, readonly build: number = chatBuild()) { this.store = new ChatStore(stateDir); this.knowledge = new KnowledgePipeline({ stateDir, environment }); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, pipeline: this.knowledge, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
+  constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION, readonly build: number = chatBuild()) { this.appControl = new AppControlBroker(timeoutMs(environment.MEGABRAIN_APP_CONTROL_TIMEOUT_MS, 5000)); this.store = new ChatStore(stateDir); this.knowledge = new KnowledgePipeline({ stateDir, environment }); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, pipeline: this.knowledge, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
 
 async start(): Promise<void> { return await startImpl(this); }
 

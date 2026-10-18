@@ -1,4 +1,5 @@
 mod app_terminals;
+mod app_control;
 pub mod cli;
 pub mod code;
 mod code_servers;
@@ -74,6 +75,16 @@ fn switch_trace_log(record: serde_json::Value) -> Result<(), String> {
 fn chat_start_trace_log(record: serde_json::Value) -> Result<(), String> {
     let state = app_terminals::state_dir().ok_or_else(|| "HOME is not set".to_string())?;
     switch_trace::append_chat_start_trace(&state, &record).map(|_| ())
+}
+
+#[tauri::command]
+fn app_control_reply(control: State<'_, app_control::AppControl>, id: String, value: serde_json::Value) -> Result<(), String> {
+    control.reply(&id, Ok(value))
+}
+
+#[tauri::command]
+fn app_control_error(control: State<'_, app_control::AppControl>, id: String, error: String) -> Result<(), String> {
+    control.reply(&id, Err(error))
 }
 
 #[tauri::command]
@@ -365,6 +376,9 @@ pub fn run() {
             app.manage(cli_stream::CliStreams::default());
             app.manage(terminal::TerminalManager::default());
             app.manage(code_servers::CodeServers::default());
+            let control = app_control::AppControl::default();
+            control.start(app.handle().clone());
+            app.manage(control);
             tray::create(app.handle())?;
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
@@ -420,14 +434,17 @@ pub fn run() {
             save_attachment,
             switch_trace_log,
             chat_start_trace_log,
-            error_log,
-            save_image
+            save_image,
+            app_control_reply,
+            app_control_error,
+            error_log
         ])
         .build(tauri::generate_context!())
         .expect("error while building megabrain desktop");
     app.run(|handle, event| {
         if matches!(&event, RunEvent::Exit) {
             handle.state::<cli_stream::CliStreams>().stop_all();
+            handle.state::<app_control::AppControl>().stop();
             handle.state::<terminal::TerminalManager>().close_all();
             stop_code_servers(handle);
             sweep_simulators(handle, true);

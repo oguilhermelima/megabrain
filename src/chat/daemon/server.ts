@@ -183,6 +183,7 @@ export function close(daemon: ChatDaemon): Promise<void> {
 
 export async function closeDaemon(daemon: ChatDaemon): Promise<void> {
     daemon.closed = true;
+    daemon.appControl.close();
     daemon.summarizer.close();
     daemon.idleTimer && clearTimeout(daemon.idleTimer);
     for (const timer of daemon.knowledgeTimers) clearTimeout(timer);
@@ -236,20 +237,25 @@ export async function listen(daemon: ChatDaemon): Promise<void> {
         socket.setEncoding("utf8");
         socket.on("data", (chunk: string) => {
           buffer += chunk;
-          const end = buffer.indexOf("\n");
-          if (end === -1) return;
-          const raw = buffer.slice(0, end); buffer = buffer.slice(end + 1);
-          let request: Request;
-          try { request = JSON.parse(raw) as Request; }
-          catch { socket.end(`${JSON.stringify({ ok: false, error: "invalid request" })}\n`); return; }
-          void daemon.handle(request, socket).then((value) => {
-            if (!socket.destroyed && !(request.operation === "events" && request.follow === true)) socket.end(`${JSON.stringify({ ok: true, value })}\n`);
-          }).catch((error: unknown) => {
-            if (socket.destroyed) return;
-            const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
-            const liveChats = typeof error === "object" && error !== null && "liveChats" in error ? Number((error as { liveChats?: unknown }).liveChats) : undefined;
-            socket.end(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error), ...(typeof code === "string" ? { code } : {}), ...(liveChats === undefined ? {} : { liveChats }) })}\n`);
-          });
+          for (;;) {
+            const end = buffer.indexOf("\n");
+            if (end === -1) break;
+            const raw = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+            let request: Request;
+            try { request = JSON.parse(raw) as Request; }
+            catch { socket.end(`${JSON.stringify({ ok: false, error: "invalid request" })}\n`); return; }
+            void daemon.handle(request, socket).then((value) => {
+              if (socket.destroyed || request.operation === "events" && request.follow === true) return;
+              const response = `${JSON.stringify({ ok: true, value })}\n`;
+              if (request.operation === "app-connect" || request.operation === "app-reply") socket.write(response);
+              else socket.end(response);
+            }).catch((error: unknown) => {
+              if (socket.destroyed) return;
+              const code = typeof error === "object" && error !== null && "code" in error ? (error as { code?: unknown }).code : undefined;
+              const liveChats = typeof error === "object" && error !== null && "liveChats" in error ? Number((error as { liveChats?: unknown }).liveChats) : undefined;
+              socket.end(`${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error), ...(typeof code === "string" ? { code } : {}), ...(liveChats === undefined ? {} : { liveChats }) })}\n`);
+            });
+          }
         });
       });
       daemon.server.once("error", reject);

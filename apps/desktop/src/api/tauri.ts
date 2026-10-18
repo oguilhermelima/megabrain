@@ -115,6 +115,8 @@ let streams = 0
 export function createTauriApi(): DesktopApi {
   return {
     kind: 'tauri',
+    appControlReply: (id, value) => invoke('app_control_reply', { id, value }),
+    appControlError: (id, error) => invoke('app_control_error', { id, error }),
     status: () => cliJson(['status', '--json'], statusSchema),
     installPlan: () => cliJson(['install', '--plan', '--json'], installPlanSchema),
     doctor: () => cliJson(['doctor', '--json'], doctorReportSchema),

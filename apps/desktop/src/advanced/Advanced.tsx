@@ -36,7 +36,6 @@ import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { SlidePanel } from '@/components/SlidePanel'
 import { runPanelLimits, sidebarLimits, sidebarSurface } from '@/lib/panel-width'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
-import { closable, closeOf } from '@/chat/session-ownership'
 import { RunContext, type RunControls } from '@/run-panel/run-context'
 import { panelFor } from '@/run-panel/run-model'
 import { RunPanel } from '@/run-panel/RunPanel'
@@ -47,10 +46,10 @@ import { useStatus } from '@/lib/useStatus'
 import { chatsByWorktree } from '@/native-chat/chat-model'
 import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
-import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
-import { addTerminal, closeCall, closeNeedsConfirm, mountsInBackground, removeTerminal, renameTerminal, terminalExited, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
+import { LaunchedTerminal } from '@/launcher/LaunchedTerminal'
+import { addTerminal, mountsInBackground, renameTerminal, terminalExited, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
 import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, spanItem, type Panes } from '@/panes/pane-model'
-import { activeGroup, changeShown, openLayoutItem, openPageItem, removeLayoutItem, shownPanes } from '@/panes/split-groups'
+import { activeGroup, changeShown, openLayoutItem, openPageItem, shownPanes } from '@/panes/split-groups'
 import { groupRows, groupsByPlace } from '@/advanced/split-rows'
 import { describeItem as describeItemIn, itemRoot, type ItemSources } from '@/advanced/item-describe'
 import { SplitRowsContext, type SplitRowsValue } from '@/advanced/SplitRows'
@@ -74,6 +73,8 @@ import { pageX } from '@/lib/page'
 import { GoneNote } from '@/advanced/GoneNote'
 import { SettingsOverlay } from '@/advanced/SettingsOverlay'
 import { readSidebarCollapsed, writeSidebarCollapsed } from '@/advanced/sidebar-state'
+import { useAppControl } from '@/advanced/useAppControl'
+import { useSidebarCloseActions } from '@/advanced/useSidebarCloseActions'
 
 // Code, the GitHub pages and settings load the first time they open,
 // so starting the app parses only the sidebar and chats.
@@ -292,67 +293,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   }, [listed, creations])
   const selectTerminal = useStableCallback((terminal: AppTerminal) => showItem(itemKey('terminal', terminal.id)))
   const stableRenameTerminal = useStableCallback((terminal: AppTerminal, name: string) => setTerminals((current) => renameTerminal(current, terminal.id, name)))
-  const closeTerminal = useStableCallback(async (terminal: AppTerminal) => {
-    const call = closeCall(terminal)
-    if (call !== null) await api.closeTerminal(call.id, call.kill ? { kill: true } : undefined)
-    forgetTerminal(terminal.id)
-    setTerminals((current) => removeTerminal(current, terminal.id))
-    setLayout((current) => removeLayoutItem(current, itemKey('terminal', terminal.id), { id: newPaneId(), item: newLauncher() }))
-  })
-  const closeChat = async (chat: NativeChat) => {
-    await api.removeChat(chat.id)
-    dropChat(chat.id)
-    if (startedChat?.id === chat.id) setStartedChat(null)
-    setLayout((current) => removeLayoutItem(current, itemKey('native', chat.id), { id: newPaneId(), item: newLauncher() }))
-  }
-  // A row's close (its x, its menu or ⌘W on its pane): what still runs is asked about first. A close
-  // that needs no question runs at once, and its refusal is the caller's to show.
-  const requestClose = useStableCallback(async (row: SidebarDrag): Promise<void> => {
-    if (row.kind === 'native') {
-      const { chat } = row
-      const title = chat.title ?? 'New chat'
-      if (chat.state !== 'working' && chat.state !== 'waiting-approval') return closeChat(chat)
-      setCloseConfirm({
-        title: `Close ${title}?`,
-        body: "A turn is running. Closing stops the agent and removes the chat from megabrain. The agent's own session stays, so Resume can still open it.",
-        action: 'Close chat',
-        run: () => closeChat(chat),
-      })
-      return
-    }
-    if (row.kind === 'terminal') {
-      const { terminal } = row
-      if (!closeNeedsConfirm(terminal)) return closeTerminal(terminal)
-      setCloseConfirm({
-        title: `Close ${terminalLabel(terminal)}?`,
-        body:
-          terminal.engine === 'tmux'
-            ? 'Closing the terminal ends its tmux session and whatever runs in it.'
-            : 'Its process may still be running. Closing the terminal ends it.',
-        action: 'Close terminal',
-        run: () => closeTerminal(terminal),
-      })
-      return
-    }
-    // A conversation listed on its own has one Close, by its owner. A chat's closes as the chat; a
-    // terminal conversation's ends its process or tmux session and drops its entry, asking first only
-    // while it still runs.
-    const { session } = row
-    const close = closeOf(session)
-    if (close === null) return
-    if (close.kind === 'chat') {
-      const chat = nativeChats.find((entry) => entry.id === close.chatId)
-      if (chat !== undefined) return requestClose({ kind: 'native', chat })
-      return api.removeChat(close.chatId).then(() => dropChat(close.chatId))
-    }
-    if (session.status === 'ended') return api.releaseSession(close.sessionId)
-    setCloseConfirm({
-      title: `Close ${session.title}?`,
-      body: "Closing ends the agent running this conversation and takes it out of the list. The agent's own session stays on disk, so Resume can still open it.",
-      action: 'Close',
-      run: () => api.releaseSession(close.sessionId),
-    })
-  })
   // A past chat megabrain already shows opens there; any other is resumed in its agent's TUI.
   const resumeChat = (launcher: string, session: HistorySession, launched: TerminalLaunch) => {
     const open = alreadyOpen(session, listed, nativeChats)
@@ -364,23 +304,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     }
   }
   const closePaneById = (paneId: string) => setPanes((current) => closePane(current, paneId))
-  // ⌘W closes what the focused pane shows, as its row's close would; anything else closes the pane.
-  const closeFocused = useStableCallback((): Promise<void> => {
-    if (focusedParsed?.kind === 'native') {
-      const chat = nativeChats.find((entry) => entry.id === focusedParsed.id) ?? (startedChat?.id === focusedParsed.id ? startedChat : null)
-      if (chat !== null) return requestClose({ kind: 'native', chat })
-    }
-    if (focusedParsed?.kind === 'terminal') {
-      const terminal = terminals.find((entry) => entry.id === focusedParsed.id)
-      if (terminal !== undefined) return requestClose({ kind: 'terminal', terminal })
-    }
-    if (focusedParsed?.kind === 'session') {
-      const found = findSession(focusedParsed.id)
-      if (found !== null && closable(found.session)) return requestClose({ kind: 'session', session: found.session })
-    }
-    closePaneById(panes.focused)
-    return Promise.resolve()
-  })
+  const { requestClose, closeFocused } = useSidebarCloseActions({ nativeChats, startedChat, setStartedChat, terminals, setTerminals, panes, setLayout, setCloseConfirm, dropChat, findSession, closePaneById })
   // Split groups in the sidebar: each member described for its group's row (see split-rows.ts).
   const itemSources: ItemSources = { status, sessionRows, findSession, nativeChats, startedChat, terminals, launcherRoots, projects, chatsInWorktrees, terminalsInWorktrees }
   const rootOf = (item: string) => itemRoot(itemSources, item)
@@ -426,6 +350,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   })
   const openArtifacts = useStableCallback(() => openArtifact(null))
   const openTasks = useStableCallback(() => showItem(tasksItem))
+  useAppControl({ paneLayout, projects, setGithubPage, setGotos, setLayout, setPaneViews, setSettingsOpen, setSettingsSection })
   /** Settings on its Knowledge page, at a project's row when given. */
   const openKnowledgeSettings = useStableCallback((repo: string | null) => {
     setSettingsProject(repo)

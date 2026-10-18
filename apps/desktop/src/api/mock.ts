@@ -118,6 +118,8 @@ export function createMockApi(): DesktopApi {
     }))
   return {
     kind: 'mock',
+    async appControlReply() {},
+    async appControlError() {},
     status: async () => {
       await wait(120)
       return { ...mockStatus, generatedAt: new Date().toISOString() }

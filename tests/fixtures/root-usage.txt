@@ -17,6 +17,7 @@ Commands:
   usage stats [--days <n>] [--provider <id>] [--json] Token usage per day and provider from the agents' logs
   port who|free|kill ...                Find, free and stop port listeners
   github projects|project|project-move|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read and manage GitHub projects, pull requests, issues and Actions
+  app open <target> [--split right|down] [--beside <pane>] [--focus] Drive the desktop layout without keyboard shortcuts
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
   worktree finish ...                  Finish a shared worktree
