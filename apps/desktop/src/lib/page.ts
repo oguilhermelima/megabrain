@@ -19,3 +19,6 @@ export const pageLeft = 'pl-6'
 
 /** The inset at the right only, for a bar whose left padding is set inline. */
 export const pageRight = 'pr-6'
+
+/** The line under a page's bar and under its filter row, one tone so every page's dividers read alike. */
+export const pageDivider = 'border-white/[0.1]'

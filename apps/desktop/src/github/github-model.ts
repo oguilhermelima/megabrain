@@ -83,6 +83,15 @@ export interface IssueFilters {
 export const emptyPullRequestFilters: PullRequestFilters = { query: '', author: null, label: null, draft: 'any' }
 export const emptyIssueFilters: IssueFilters = { query: '', author: null, label: null, assignee: null }
 
+/** The assignee filter's value for issues nobody is assigned to (github issues --no-assignee). */
+export const noAssignee = '\u0000none'
+
+/** Whether a list read asks GitHub to filter: a plain read pages the state's whole list. */
+export function filtersSet(filters: PullRequestFilters | IssueFilters): boolean {
+  if (filters.query.trim() !== '' || filters.author !== null || filters.label !== null) return true
+  return 'draft' in filters ? filters.draft !== 'any' : filters.assignee !== null
+}
+
 const newestFirst = <T extends { updatedAt: string }>(items: T[]) => [...items].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
 
 /** True when every word of the query appears in one of the haystack strings; `#12` matches number 12. */
@@ -174,8 +183,8 @@ export function avatarUrl(login: string): string | null {
   return login.startsWith('app/') ? null : `https://github.com/${login}.png?size=64`
 }
 
-/** Items per request: light enough for GitHub to answer quickly; the page asks for more on scroll. */
-export const pageSize = 30
+/** Items per request and per page of a list: light enough for GitHub to answer quickly. */
+export const pageSize = 25
 
 /**
  * Shares one request per key while it runs: callers asking for the same thing at once (the sidebar
@@ -192,8 +201,8 @@ export function shareInFlight(): <T>(key: string, run: () => Promise<T>) => Prom
   }
 }
 
-export function listRequestKey(kind: 'prs' | 'issues', root: string, state: string, limit: number, after: string | null): string {
-  return JSON.stringify([kind, root, state, limit, after])
+export function listRequestKey(kind: 'prs' | 'issues', root: string, state: string, limit: number, after: string | null, filters: PullRequestFilters | IssueFilters | null = null): string {
+  return JSON.stringify([kind, root, state, limit, after, filters])
 }
 
 /** The loaded part of one tab: its items, the cursor of the page after them, and every state's total. */

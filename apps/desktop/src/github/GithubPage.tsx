@@ -1,94 +1,115 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/api'
-import type { GithubDetail, GithubIssue, GithubPullRequest, Project } from '@/api/schema'
+import type { GithubDetail, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, Project } from '@/api/schema'
 import { DetailSkeleton } from '@/components/Skeleton'
+import type { SheetField } from '@/components/filter-sheet-model'
+import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
 import { ErrorNote } from '@/components/ui'
-import { emptyPullRequestFilters, filterPullRequests, githubRepository, includesAuthor, nextPage, otherPeople, pullRequestFilterOptions, refreshedPage, type GithubPage as Page, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
+import { emptyPullRequestFilters, githubRepository, includesAuthor, otherPeople, type IssueFilters, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
+import { firstCursors, withNext } from '@/github/pager'
 import { CloseIcon, CommentIcon, MaximiseIcon, MilestoneIcon, RefreshIcon } from '@/github/icons'
 import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
 import { Avatar, ChecksList, ConversationThread, OpenLink, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, ago, useNow } from '@/github/parts'
 import { BranchFlow, StatPill } from '@/github/ItemHero'
 import { ActionsPage } from '@/github/ActionsPage'
-import { Empty, FilterSelect, IconButton, KindSwitch, LoadMore, Meta, OwnerPicture, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass, splitDetail, splitList } from '@/github/page-parts'
+import { Empty, IconButton, KindSwitch, Meta, OwnerPicture, Pager, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass, splitDetail, splitList, useSettled } from '@/github/page-parts'
 import type { GithubKind, GithubPageKind } from '@/github/useGithubCounts'
 import { reuse } from '@/lib/reuse'
-import { pageMx, pageX } from '@/lib/page'
+import { githubLabels } from '@/tasks/search-contract-standin'
+import { pageDivider, pageMx, pageX } from '@/lib/page'
 
 // A repository's pull requests, read through `megabrain github … --json` (its issues are the Tasks
 // page's, which lists them with this page's listing, rows and detail pane): tabs with every
-// state's total, one light page of the tab at a time (the next one loads on scroll), search and
-// filters over what is loaded, and a detail pane on the right with the body, comments and, for a
+// state's total, the tab a page at a time under a pager, search and filters GitHub applies to the
+// whole repository, and a detail pane on the right with the body, comments and, for a
 // pull request, its checks, review and line counts.
 
 const refreshMs = 60_000
 
-type Listing = { kind: 'prs'; page: Page<GithubPullRequest> } | { kind: 'issues'; page: Page<GithubIssue> }
-type ListRequest = { kind: 'prs'; state: PullRequestState } | { kind: 'issues'; state: IssueState }
+type Listing = { kind: 'prs'; page: GithubPullRequestList } | { kind: 'issues'; page: GithubIssueList }
+type ListRequest = { kind: 'prs'; state: PullRequestState; filters: PullRequestFilters } | { kind: 'issues'; state: IssueState; filters: IssueFilters }
 
 async function readPage(root: string, request: ListRequest, after: string | null): Promise<Listing> {
-  if (request.kind === 'prs') return { kind: 'prs', page: await pullRequestPage(root, request.state, after) }
-  return { kind: 'issues', page: await issuePage(root, request.state, after) }
+  if (request.kind === 'prs') return { kind: 'prs', page: await pullRequestPage(root, request.state, after, request.filters) }
+  return { kind: 'issues', page: await issuePage(root, request.state, after, request.filters) }
 }
 
-/** A refresh puts the first page on top of what is loaded; more appends the next page below it. */
-function joined(loaded: Listing | null, next: Listing, how: 'refresh' | 'more'): Listing {
-  if (next.kind === 'prs') {
-    const base = loaded?.kind === 'prs' ? loaded.page : null
-    return { kind: 'prs', page: how === 'more' && base !== null ? nextPage(base, next.page) : refreshedPage(base, next.page) }
-  }
-  const base = loaded?.kind === 'issues' ? loaded.page : null
-  return { kind: 'issues', page: how === 'more' && base !== null ? nextPage(base, next.page) : refreshedPage(base, next.page) }
-}
-
-/** One tab's listing, a page at a time; switching tab or repository starts over from its first page. The Tasks page lists issues with it too. */
-export function useListing(root: string, request: ListRequest) {
-  const [listing, setListing] = useState<Listing | null>(null)
+/**
+ * One tab's listing a page at a time (github/pager): the page shown, the cursors that reach the pages
+ * before and after it, and every state's total. Another repository, tab or filter starts again from the
+ * first page; the shown page is read again every minute. The Tasks page lists issues with it too.
+ */
+export function usePagedListing(root: string, request: ListRequest) {
+  const key = JSON.stringify([root, request])
+  const [at, setAt] = useState({ key, index: 0, cursors: firstCursors })
+  const place = at.key === key ? at : { key, index: 0, cursors: firstCursors }
+  if (place !== at) setAt(place)
+  const [shown, setShown] = useState<{ key: string; index: number; listing: Listing } | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const { kind, state } = request
-  const key = `${root}\n${kind}\n${state}`
-  const current = useRef(key)
-  current.current = key
-  const listed = useRef<Listing | null>(null)
-  listed.current = listing
+  const { index } = place
+  const cursor = place.cursors[index] ?? null
+  const asked = useRef(request)
+  asked.current = request
+  const current = useRef('')
+  current.current = `${key}\n${index}`
 
-  const read = useCallback(
-    async (how: 'refresh' | 'more') => {
-      const after = how === 'more' ? (listed.current?.page.nextCursor ?? null) : null
-      if (how === 'more' && after === null) return
-      const setBusy = how === 'more' ? setLoadingMore : setLoading
-      setBusy(true)
-      try {
-        const next = await readPage(root, { kind, state } as ListRequest, after)
-        if (current.current !== key) return
-        setListing((loaded) => reuse(loaded, joined(loaded, next, how)))
-        setError(null)
-      } catch (cause: unknown) {
-        if (current.current === key) setError(cause)
-      } finally {
-        if (current.current === key) setBusy(false)
-      }
-    },
-    [root, kind, state, key],
-  )
+  const read = useCallback(async () => {
+    const reading = `${key}\n${index}`
+    setLoading(true)
+    try {
+      const listing = await readPage(root, asked.current, cursor)
+      if (current.current !== reading) return
+      setShown((loaded) => reuse(loaded, { key, index, listing }))
+      setAt((now) => (now.key === key ? { ...now, cursors: withNext(now.cursors, index, listing.page.nextCursor) } : now))
+      setError(null)
+    } catch (cause: unknown) {
+      if (current.current === reading) setError(cause)
+    } finally {
+      if (current.current === reading) setLoading(false)
+    }
+  }, [root, key, index, cursor])
 
   useEffect(() => {
-    setListing(null)
     setError(null)
-    setLoadingMore(false)
-    void read('refresh')
-    const timer = setInterval(() => void read('refresh'), refreshMs)
+    void read()
+    const timer = setInterval(() => void read(), refreshMs)
     return () => clearInterval(timer)
   }, [read])
 
-  const more = useCallback(() => {
-    if (!loadingMore) void read('more')
-  }, [read, loadingMore])
-
-  return { listing, error, loading, loadingMore, reload: () => read('refresh'), more }
+  const go = useCallback((next: number) => setAt((now) => (now.key === key && next >= 0 && next < now.cursors.length ? { ...now, index: next } : now)), [key])
+  // Another tab or filter shows nothing until its first page answers; another page of the same list keeps
+  // the rows it had, under the pager's spinner, until the new page replaces them.
+  const listing = shown?.key === key ? shown.listing : null
+  return { listing, error, loading, reload: read, index, cursors: place.cursors, go }
 }
 
+/** How long a typed search waits before GitHub is asked. */
+export const searchSettleMs = 300
+
+/**
+ * What a list's filters offer: every label of the repository and the people who can be assigned (they
+ * answer for authors too), not only those on the page shown.
+ */
+export function useFilterOptions(root: string): { labels: string[]; people: string[] } {
+  const [options, setOptions] = useState<{ root: string; labels: string[]; people: string[] } | null>(null)
+  useEffect(() => {
+    let stopped = false
+    const sorted = (values: string[]) => [...new Set(values)].sort((left, right) => left.localeCompare(right))
+    void Promise.allSettled([githubLabels(root), api.assignableReviewers(root, '')]).then(([labels, people]) => {
+      if (stopped) return
+      setOptions({
+        root,
+        labels: labels.status === 'fulfilled' ? sorted(labels.value.map((label) => label.name)) : [],
+        people: people.status === 'fulfilled' ? sorted(people.value.filter((person) => person.isTeam !== true).map((person) => person.login)) : [],
+      })
+    })
+    return () => {
+      stopped = true
+    }
+  }, [root])
+  return options?.root === root ? options : { labels: [], people: [] }
+}
 
 function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullRequest; selected: boolean; now: number; onSelect: () => void }) {
   return (
@@ -282,6 +303,12 @@ export function DetailPane({ project, kind, number, pullRequest, issue, onMaximi
   )
 }
 
+const draftOptions: { value: PullRequestFilters['draft']; label: string }[] = [
+  { value: 'any', label: 'Drafts and ready' },
+  { value: 'ready', label: 'Ready for review' },
+  { value: 'draft', label: 'Drafts only' },
+]
+
 type PageProps = { project: Project; focus: number | null; onKind: (kind: GithubKind) => void; onClose: () => void; onMaximise: (kind: 'pr' | 'issue' | 'run', number: number) => void }
 
 /** A repository's pull requests or Actions runs; the kind switch in the header moves between them, and to the Tasks page for issues. */
@@ -297,11 +324,21 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
   const [filters, setFilters] = useState<PullRequestFilters>(emptyPullRequestFilters)
   // Opened on one pull request (a worktree row's number): its detail shows at once, whichever tab lists it.
   const [selected, setSelected] = useState<number | null>(focus)
-  const { listing, error, loading, loadingMore, reload, more } = useListing(project.path, { kind: 'prs', state: tab })
+  const query = useSettled(filters.query, searchSettleMs)
+  const { listing, error, loading, reload, index, cursors, go } = usePagedListing(project.path, { kind: 'prs', state: tab, filters: { ...filters, query } })
+  const options = useFilterOptions(project.path)
+  const listRef = useRef<HTMLDivElement>(null)
+  useEffect(() => listRef.current?.scrollTo({ top: 0 }), [index])
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const closeSheet = useCallback(() => setSheetOpen(false), [])
+  const set = (patch: Partial<PullRequestFilters>) => setFilters((current) => ({ ...current, ...patch }))
+  const sheetFields: SheetField[] = [
+    { kind: 'select', label: 'Author', value: filters.author ?? anyValue, options: people('Any author', options.people), onChange: (value) => set({ author: fromAny(value) }) },
+    { kind: 'select', label: 'Label', value: filters.label ?? anyValue, options: people('Any label', options.labels), onChange: (value) => set({ label: fromAny(value) }) },
+    { kind: 'select', label: 'Draft', value: filters.draft, options: draftOptions, onChange: (value) => set({ draft: draftOptions.find((option) => option.value === value)?.value ?? 'any' }) },
+  ]
 
   const prs = useMemo(() => (listing?.kind === 'prs' ? listing.page.items : []), [listing])
-  const shown = useMemo(() => filterPullRequests(prs, filters, tab), [prs, filters, tab])
-  const options = useMemo(() => pullRequestFilterOptions(prs), [prs])
   // Every state's total travels with each page, so the tabs keep their counts while another tab loads.
   const [counts, setCounts] = useState<Record<string, number> | null>(null)
   useEffect(() => {
@@ -313,8 +350,6 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
   const selectedPr = prs.find((item) => item.number === selected) ?? null
   const known = listing !== null
   const counted = (state: string) => counts?.[state] ?? null
-  const loadedCount = listing?.page.items.length ?? 0
-  const hasMore = (listing?.page.nextCursor ?? null) !== null
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -333,7 +368,7 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <header className={`flex items-center gap-4 ${pageX} pt-6 pb-4`}>
         <OwnerPicture owner={repository.owner} />
         <div className="min-w-0 flex-1">
@@ -358,7 +393,7 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
           <CloseIcon size={14} />
         </IconButton>
       </header>
-      <div className={`flex flex-wrap items-center gap-2 ${pageX} pb-4`}>
+      <div className={`flex items-center gap-2 ${pageX} pb-4`}>
         <Tabs
           value={tab}
           onChange={setTab}
@@ -369,27 +404,12 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
             { value: 'all', label: 'All', count: counted('all') },
           ]}
         />
-        <SearchBox value={filters.query} placeholder="Search title, number, branch, author, label" onChange={(query) => setFilters({ ...filters, query })} />
-        <FilterSelect label="Author" value={filters.author ?? anyValue} options={people('Any author', options.authors)} onChange={(value) => setFilters({ ...filters, author: fromAny(value) })} />
-        <FilterSelect label="Label" value={filters.label ?? anyValue} options={people('Any label', options.labels)} onChange={(value) => setFilters({ ...filters, label: fromAny(value) })} />
-        <FilterSelect
-          label="Draft"
-          value={filters.draft}
-          options={[
-            { value: 'any', label: 'Drafts and ready' },
-            { value: 'ready', label: 'Ready for review' },
-            { value: 'draft', label: 'Drafts only' },
-          ]}
-          onChange={(draft) => setFilters({ ...filters, draft })}
-        />
-        {filtered && (
-          <button type="button" onClick={clearFilters} className="h-9 shrink-0 rounded-full px-3 text-[12.5px] font-semibold text-ink-400 hover:text-ink-100">
-            Clear
-          </button>
-        )}
+        <SearchBox value={filters.query} placeholder="Search title, number, branch, author, label" onChange={(text) => setFilters((current) => ({ ...current, query: text }))} />
+        <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="row" />
       </div>
-      <div className="flex min-h-0 flex-1 border-t border-white/[0.06]">
-        <div className={splitList(selected !== null)}>
+      <FilterChips fields={sheetFields} className={`${pageX} -mt-1.5 pb-3`} />
+      <div className={`flex min-h-0 flex-1 border-t ${pageDivider}`}>
+        <div ref={listRef} className={splitList(selected !== null)}>
           {!known && loading && <SkeletonRows />}
           {!known && !loading && error !== null && (
             <div className={`space-y-3 ${pageX} py-4`}>
@@ -404,25 +424,26 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
               <ErrorNote error={error} />
             </div>
           )}
-          {known && shown.length === 0 && !hasMore &&
+          {known && prs.length === 0 &&
             (filtered ? (
               <Empty title={`No ${tab === 'all' ? '' : `${tab} `}pull requests match`} detail="Try other words or clear the filters." action={<button type="button" onClick={clearFilters} className={pillButton}>Clear filters</button>} />
             ) : (
               <Empty title={`No ${tab === 'all' ? '' : `${tab} `}pull requests`} detail={`${repository.nameWithOwner} has none right now.`} />
             ))}
-          {known && (
+          {known && prs.length > 0 && (
             <ul className={`${pageMx} divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60`}>
-              {shown.map((item) => (
+              {prs.map((item) => (
                 <li key={item.number}>
                   <PullRequestRow item={item} selected={item.number === selected} now={now} onSelect={() => setSelected(item.number === selected ? null : item.number)} />
                 </li>
               ))}
             </ul>
           )}
-          {known && hasMore && <LoadMore onVisible={more} loading={loadingMore} loaded={loadedCount} total={counted(tab)} />}
+          {listing !== null && prs.length > 0 && <Pager index={index} cursors={cursors} total={listing.page.totalCount} shown={prs.length} loading={loading} onPage={go} />}
         </div>
         {selected !== null && <DetailPane key={selected} project={project} kind="prs" number={selected} pullRequest={selectedPr} issue={null} onMaximise={() => onMaximise('pr', selected)} onClose={() => setSelected(null)} />}
       </div>
+      <FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />
     </div>
   )
 }

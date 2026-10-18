@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import type { GithubCheck, GithubIssue, GithubPullRequest } from '@/api/schema'
 import { mockGithubIssues, mockGithubPullRequests } from '@/api/fixtures/mock'
 import {
+  filtersSet,
+  noAssignee,
   avatarUrl,
   checkSummary,
   countBadge,
@@ -343,5 +345,25 @@ describe('people beside the author', () => {
     expect(otherPeople(null, [person('ana'), person('ana')]).map((p) => p.login)).toEqual(['ana'])
     expect(includesAuthor(null, [person('ana')])).toBe(false)
     expect(otherPeople('ana', [])).toEqual([])
+  })
+})
+
+describe('filtersSet', () => {
+  test('a plain read asks GitHub for nothing', () => {
+    expect(filtersSet(emptyIssueFilters)).toBe(false)
+    expect(filtersSet(emptyPullRequestFilters)).toBe(false)
+    expect(filtersSet({ ...emptyIssueFilters, query: '   ' })).toBe(false)
+  })
+
+  test('any filter, the no-assignee choice included, makes the read a search', () => {
+    expect(filtersSet({ ...emptyIssueFilters, query: 'tmux' })).toBe(true)
+    expect(filtersSet({ ...emptyIssueFilters, label: 'bug' })).toBe(true)
+    expect(filtersSet({ ...emptyIssueFilters, assignee: noAssignee })).toBe(true)
+    expect(filtersSet({ ...emptyPullRequestFilters, author: 'operator' })).toBe(true)
+    expect(filtersSet({ ...emptyPullRequestFilters, draft: 'draft' })).toBe(true)
+  })
+
+  test('filters are part of the request key, so a filtered page never answers for the plain one', () => {
+    expect(listRequestKey('issues', '/repo', 'open', 25, null, { ...emptyIssueFilters, label: 'bug' })).not.toBe(listRequestKey('issues', '/repo', 'open', 25, null))
   })
 })

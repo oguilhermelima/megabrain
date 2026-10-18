@@ -12,7 +12,7 @@ import { RunPane } from '@/github/RunDetail'
 import { RunWorkflowDialog, type RunWorkflowRequest } from '@/github/RunWorkflowDialog'
 import type { GithubKind } from '@/github/useGithubCounts'
 import { useRuns } from '@/github/useRuns'
-import { pageMx, pageX } from '@/lib/page'
+import { pageDivider, pageMx, pageX } from '@/lib/page'
 
 // A repository's GitHub Actions in the pull request page's language: the workflows down the left
 // (each one filters the runs, through the CLI), the runs a page at a time with a branch filter (also
@@ -196,7 +196,7 @@ export function ActionsPage({ project, focus, onKind, onClose, onMaximise }: { p
           </button>
         )}
       </div>
-      <div className="flex min-h-0 flex-1 border-t border-white/[0.06]">
+      <div className={`flex min-h-0 flex-1 border-t ${pageDivider}`}>
         {/* The run's detail takes the rail's room; the rail comes back when it closes. */}
         {selectedRun === null && <WorkflowRail workflows={workflows} value={workflow} onChange={setWorkflow} />}
         <div className={splitList(selectedRun !== null)}>

@@ -3,12 +3,14 @@ import { Spinner } from '@/components/ui'
 import { Tooltip } from '@/components/Tooltip'
 import { ActionsIcon, IssueIcon, PullRequestIcon } from '@/github/icons'
 import { Avatar } from '@/github/parts'
+import { pageSize } from '@/github/github-model'
+import { pageCount, pageRange, pageWindow, type Cursors } from '@/github/pager'
 import type { GithubKind } from '@/github/useGithubCounts'
-import { pageMx } from '@/lib/page'
+import { pageMx, pageX } from '@/lib/page'
 
 // The pieces the pull request, issue and Actions pages share: the header's owner picture, icon
 // buttons and kind switch, the tabs, search and filter pills over a list, its empty state, rows and
-// the sentinel that asks for the next page.
+// the sentinel that asks for the next page, and the pager under a list read a page at a time.
 
 /** Asks for the next page when the end of the list scrolls into view. */
 export function LoadMore({ onVisible, loading, loaded, total }: { onVisible: () => void; loading: boolean; loaded: number; total: number | null }) {
@@ -32,6 +34,48 @@ export function LoadMore({ onVisible, loading, loaded, total }: { onVisible: () 
       </button>
     </div>
   )
+}
+
+const pagerButton = 'h-7 min-w-7 rounded-full px-2.5 font-semibold tabular-nums text-ink-300 hover:bg-white/[0.06] hover:text-ink-100 disabled:pointer-events-none disabled:opacity-40'
+
+/** Under a paged list: the range it shows, previous and next, and the pages around this one that can be opened (github/pager). */
+export function Pager({ index, cursors, total, shown, loading, onPage }: { index: number; cursors: Cursors; total: number; shown: number; loading: boolean; onPage: (index: number) => void }) {
+  const count = pageCount(total, pageSize)
+  const pages = pageWindow(index, cursors, count)
+  return (
+    <nav aria-label="Pages" className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${pageX} pt-3 text-[12px] text-ink-500`}>
+      <span className="flex items-center gap-2 tabular-nums">
+        {loading && <Spinner />}
+        {pageRange(index, pageSize, shown, total)}
+      </span>
+      {count > 1 && (
+        <span className="ml-auto flex items-center gap-0.5">
+          <button type="button" onClick={() => onPage(index - 1)} disabled={index === 0} className={pagerButton}>
+            Previous
+          </button>
+          {pages.map((page) => (
+            <button key={page} type="button" onClick={() => onPage(page)} aria-current={page === index ? 'page' : undefined} aria-label={`Page ${page + 1}`} className={page === index ? `${pagerButton} bg-white/[0.08] text-ink-100` : pagerButton}>
+              {page + 1}
+            </button>
+          ))}
+          {(pages.at(-1) ?? 0) < count - 1 && <span className="px-1 tabular-nums">of {count}</span>}
+          <button type="button" onClick={() => onPage(index + 1)} disabled={index + 1 >= cursors.length} className={pagerButton}>
+            Next
+          </button>
+        </span>
+      )}
+    </nav>
+  )
+}
+
+/** The value once it has stopped changing for `ms`: a search typed into a box asks GitHub once the typing pauses. */
+export function useSettled<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value)
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), ms)
+    return () => clearTimeout(timer)
+  }, [value, ms])
+  return settled
 }
 
 export function OwnerPicture({ owner }: { owner: string }) {

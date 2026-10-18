@@ -3,7 +3,7 @@ import { SearchIcon } from '@/advanced/SidebarTools'
 import { readPanelOpen, wikiPanelLimits, wikiPanelSurface, wikiShellLayout, writePanelOpen, type WikiPanel } from '@/advanced/wiki-shell-model'
 import { ResizeHandle, usePanelWidth } from '@/components/ResizeHandle'
 import { SlidePanel } from '@/components/SlidePanel'
-import { pageX } from '@/lib/page'
+import { pageDivider, pageX } from '@/lib/page'
 import { sidePanelButton, sidePanelHeader, sidePanelHeaderRow, sidePanelList, sidePanelTitle } from '@/lib/side-panel'
 
 // The shell the Knowledge, Artifacts and Tasks pages share: the page's navigation in a panel on the right that
@@ -62,6 +62,7 @@ export function WikiShell({
   panelLabel,
   panelCount,
   panel,
+  sheet,
   children,
 }: {
   /** Where this page remembers its panel. */
@@ -74,6 +75,8 @@ export function WikiShell({
   panelLabel: string | null
   panelCount?: number | null
   panel: ReactNode
+  /** The page's filter sheet (components/FilterSheet), over the whole page, panel included. */
+  sheet?: ReactNode
   children: ReactNode
 }) {
   const width = usePanelWidth(keys.width, wikiPanelLimits)
@@ -82,10 +85,10 @@ export function WikiShell({
   const toggleTitle = (shown: boolean) => `${shown ? 'Hide' : 'Show'} ${(panelLabel ?? '').toLowerCase()}`
   return (
     // A container, so the panel's 50% cap reads the same for its frame and its body.
-    <div className="@container flex h-full min-h-0">
+    <div className="@container relative flex h-full min-h-0">
       {/* The column paints the black itself: the pane under the panel is see-through (styles.css). */}
       <div className="flex min-w-0 flex-1 flex-col bg-ink-950">
-        <header data-tauri-drag-region className={`@container/header flex shrink-0 items-center gap-2 border-b border-white/[0.06] pt-3 pb-2.5 ${pageX}`}>
+        <header data-tauri-drag-region className={`@container/header flex shrink-0 items-center gap-2 border-b ${pageDivider} pt-3 pb-2.5 ${pageX}`}>
           <div data-tauri-drag-region className="flex h-9 min-w-0 flex-1 items-center gap-2">
             {crumb}
           </div>
@@ -120,6 +123,7 @@ export function WikiShell({
           </nav>
         </SlidePanel>
       )}
+      {sheet}
     </div>
   )
 }

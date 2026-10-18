@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { Artifact, KnowledgeChat, KnowledgeKind, KnowledgeList, KnowledgeRef, KnowledgeStatus, KnowledgeTopic, KnowledgeTopicSummary, Project } from '@/api/schema'
 import { ArtifactStrip } from '@/advanced/ArtifactStrip'
@@ -12,6 +12,9 @@ import { wikiPanels } from '@/advanced/wiki-shell-model'
 import { chatCards, decisionsOf, groupTopics, kindColors, kindGroups, refLabel, refNumber, statusLabels, type KnowledgeView } from '@/advanced/knowledge-model'
 import { branchGroups, githubRefGroups, readTopicTab, shownTopicTab, topicTabs, writeTopicTab, type GithubRefRow as GithubRefRowData, type TopicTab } from '@/advanced/topic-tabs-model'
 import { displayName } from '@/advanced/appearance-model'
+import { emptyTopicFilters, filterTopics, topicSheetFields, type TopicFilters } from '@/advanced/page-filters'
+import { activeCount } from '@/components/filter-sheet-model'
+import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
 import { AgentIcon } from '@/components/agent-icons'
@@ -48,7 +51,7 @@ function pickProject(projects: readonly KnowledgeProject[], repo: string | null)
  * What the page had when it last showed. Its item changes with every topic picked, which mounts the
  * page afresh; this keeps the list, the search and the folds from flashing back to their start.
  */
-const memory: { list: KnowledgeList | null; settings: KnowledgeSettings | null; query: string; folded: ReadonlySet<KnowledgeKind> } = { list: null, settings: null, query: '', folded: new Set() }
+const memory: { list: KnowledgeList | null; settings: KnowledgeSettings | null; query: string; folded: ReadonlySet<KnowledgeKind>; filters: TopicFilters } = { list: null, settings: null, query: '', folded: new Set(), filters: emptyTopicFilters }
 
 function useKnowledgeList() {
   const [list, setList] = useState<KnowledgeList | null>(memory.list)
@@ -656,10 +659,15 @@ export function KnowledgePage({
   const now = useNow(30_000)
   const [query, setQuery] = useState(memory.query)
   const [folded, setFolded] = useState<ReadonlySet<KnowledgeKind>>(memory.folded)
+  const [filters, setFilters] = useState(memory.filters)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const closeSheet = useCallback(() => setSheetOpen(false), [])
+  const sheetFields = topicSheetFields(filters, (patch) => setFilters((current) => ({ ...current, ...patch })))
   useEffect(() => {
     memory.query = query
     memory.folded = folded
-  }, [query, folded])
+    memory.filters = filters
+  }, [query, folded, filters])
   const toggle = (kind: KnowledgeKind) =>
     setFolded((current) => {
       const next = new Set(current)
@@ -677,8 +685,8 @@ export function KnowledgePage({
     return known === undefined ? entry.project : displayName(known)
   }
   const searching = query.trim() !== ''
-  const topics = project?.topics ?? []
-  const shown = searching ? (results === null ? null : groupTopics(results)) : groupTopics(topics)
+  const topics = filterTopics(project?.topics ?? [], filters, now)
+  const shown = searching ? (results === null ? null : groupTopics(filterTopics(results, filters, now))) : groupTopics(topics)
   const selectedId = view.topic ?? groupTopics(topics)[0]?.topics[0]?.id ?? null
   // A project is read when its summaries are on; the settings say so, else the list does.
   const projectOn = (entry: KnowledgeProject) => (settings === null ? entry.enabled : inEffect(effectiveToggles(settings, entry.repo), 'summaries'))
@@ -747,14 +755,17 @@ export function KnowledgePage({
               {/* A narrow bar keeps the icon alone; its title still names it. */}
               <span className="@max-[420px]/header:hidden">Map</span>
             </button>
+            {on && <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="bar" />}
           </>
         )
       }
       panelLabel={on ? 'Topics' : null}
       panelCount={shownCount}
+      sheet={<FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />}
       panel={
         <>
-          {searching && shown?.length === 0 && <p className={sidePanelNote}>No topic matches “{query.trim()}”.</p>}
+          <FilterChips fields={sheetFields} className="px-1 pb-2" />
+          {shown?.length === 0 && (searching || activeCount(sheetFields) > 0) && <p className={sidePanelNote}>{searching ? `No topic matches “${query.trim()}”.` : 'No topic matches the filters.'}</p>}
           {shown?.map((group) => (
             <NavKind key={group.kind} label={group.label} kind={group.kind} topics={group.topics} open={searching || !folded.has(group.kind)} onToggle={toggle} selectedId={selectedId} now={now} onPick={pickTopic} />
           ))}

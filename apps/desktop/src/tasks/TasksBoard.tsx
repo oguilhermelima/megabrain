@@ -2,16 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { api } from '@/api'
 import type { GithubProject, GithubProjectItem } from '@/api/schema'
 import { ContextMenu, openMenuFromKeyboard, useContextMenu, type MenuRow } from '@/components/ContextMenu'
+import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
 import { Toast, type ToastMessage } from '@/components/Toast'
 import { ErrorNote } from '@/components/ui'
 import { stateColors } from '@/github/github-model'
 import { ClosedIssueIcon, ClosedPullRequestIcon, IssueIcon, MergedIcon, MoreIcon, PullRequestIcon, RefreshIcon } from '@/github/icons'
 import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts'
 import { Avatar, LabelChip, OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
-import { pageX } from '@/lib/page'
+import { pageDivider, pageX } from '@/lib/page'
 import { answeredItems, boardColumns, movesItem, otherRepository, shownItems, withoutMove, type BoardColumn, type PendingMove } from '@/tasks/board-model'
 import { boardKey, distinctItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache, type BoardCache } from '@/tasks/board-cache'
-import { BoardFilterBar } from '@/tasks/BoardFilterBar'
+import { BoardSearch, boardSheetFields } from '@/tasks/BoardFilterBar'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
 
@@ -303,16 +304,21 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   const field = board.statusField
   const key = boardKey(board)
   const [filters, setFilters] = useState<BoardFilters>(() => readBoardPrefs(browserStorage).filters[key] ?? emptyBoardFilters)
-  const filter = (next: BoardFilters) => {
-    setFilters(next)
-    const prefs = readBoardPrefs(browserStorage)
-    writeBoardPrefs(browserStorage, { ...prefs, filters: { ...prefs.filters, [key]: next } })
-  }
+  // Applied to the latest filters, so the sheet's Clear can reset several in a row.
+  const filter = (patch: Partial<BoardFilters>) =>
+    setFilters((current) => {
+      const next = { ...current, ...patch }
+      const prefs = readBoardPrefs(browserStorage)
+      writeBoardPrefs(browserStorage, { ...prefs, filters: { ...prefs.filters, [key]: next } })
+      return next
+    })
   const [showNoStatus, setShowNoStatus] = useState(() => readBoardPrefs(browserStorage).showNoStatus)
-  const toggleNoStatus = () => {
-    setShowNoStatus(!showNoStatus)
-    writeBoardPrefs(browserStorage, { ...readBoardPrefs(browserStorage), showNoStatus: !showNoStatus })
+  const setNoStatus = (on: boolean) => {
+    setShowNoStatus(on)
+    writeBoardPrefs(browserStorage, { ...readBoardPrefs(browserStorage), showNoStatus: on })
   }
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const closeSheet = useCallback(() => setSheetOpen(false), [])
   const options = useMemo(() => boardFilterOptions(items ?? [], filters), [items, filters])
 
   const move = (item: GithubProjectItem, status: string) => {
@@ -354,23 +360,19 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   const shown = items === null ? null : filterBoardItems(shownItems(items, pending), filters)
   const columns = shown === null || field === null ? [] : boardColumns(field, shown)
   const noStatus = columns.find((column) => column.id === null)?.items.length ?? 0
+  const sheetFields = boardSheetFields(filters, options, filter, field === null ? null : { on: showNoStatus, count: noStatus, onChange: setNoStatus })
   const moving = new Set(pending.map((entry) => entry.itemId))
   const card = (item: GithubProjectItem) => (
     <Card key={item.id} item={item} repo={repo} moving={moving.has(item.id) || drag?.item.id === item.id} onPointerDown={(event) => start(event, item)} onOpen={opener(item)} onMenu={(event) => menuFor(event, item, item.status)} />
   )
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className={`flex flex-wrap items-center gap-2 ${pageX} pt-4 pb-4`}>
+    <div className="relative flex h-full min-h-0 flex-col">
+      {/* One row: the project and the search on the left; Refresh, Filter and Open on GitHub on the right. */}
+      <div className={`flex items-center gap-2 ${pageX} pt-4 pb-4`}>
         <FilterSelect label="Project" value={String(board.number)} options={boards.map((entry) => ({ value: String(entry.number), label: entry.closed ? `${entry.title} (closed)` : entry.title }))} onChange={(value) => onPick(Number(value))} />
-        <BoardFilterBar filters={filters} options={options} onChange={filter} />
+        <BoardSearch query={filters.query} onChange={(query) => filter({ query })} />
         <span className="ml-auto" />
-        {field !== null && (
-          <button type="button" onClick={toggleNoStatus} aria-pressed={showNoStatus} className={`h-9 shrink-0 rounded-full border px-3.5 text-[13px] font-semibold ${showNoStatus ? 'border-accent/50 bg-accent/[0.16] text-ink-100' : 'border-white/[0.08] bg-white/[0.05] text-ink-300 hover:text-ink-100'}`}>
-            Show No status{noStatus > 0 && <span className="ml-1.5 font-normal text-ink-400 tabular-nums">{noStatus}</span>}
-          </button>
-        )}
-        <OpenLink url={board.url} />
         <IconButton
           label="Refresh"
           onClick={() => {
@@ -380,7 +382,10 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
           spinning={loading && items !== null}>
           <RefreshIcon size={15} />
         </IconButton>
+        <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="row" />
+        <OpenLink url={board.url} />
       </div>
+      <FilterChips fields={sheetFields} className={`${pageX} -mt-1.5 pb-3`} />
       {error !== null && (
         <div className={`${pageX} pb-3`}>
           <ErrorNote error={error} />
@@ -389,14 +394,14 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
       {shown === null ? (
         error === null && <SkeletonRows count={4} />
       ) : field === null ? (
-        <div className="min-h-0 flex-1 overflow-y-auto border-t border-white/[0.06] pt-3 pb-5">
+        <div className={`min-h-0 flex-1 overflow-y-auto border-t ${pageDivider} pt-3 pb-5`}>
           <p className={`${pageX} pb-3 text-[13px] text-ink-400`}>{board.title} has no Status field, so its items show as a list. Add a Status field on GitHub to see them as a board.</p>
           <ul onKeyDown={openMenuFromKeyboard} className={`${pageX} grid max-w-[720px] gap-2`}>
             {shown.map(card)}
           </ul>
         </div>
       ) : (
-        <div className={`flex min-h-0 flex-1 items-start gap-3 overflow-x-auto border-t border-white/[0.06] ${pageX} pt-3 pb-5`}>
+        <div className={`flex min-h-0 flex-1 items-start gap-3 overflow-x-auto border-t ${pageDivider} ${pageX} pt-3 pb-5`}>
           {columns.filter((column) => showNoStatus || column.id !== null).map((column) => (
             <Column key={column.id ?? ''} column={column} droppable={column.id !== null} over={drag !== null && drag.over !== null && drag.over === column.id} count={column.items.length}>
               <ul onKeyDown={openMenuFromKeyboard} className="min-h-12 space-y-2 overflow-y-auto px-2.5 pb-2.5">
@@ -413,6 +418,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
         </div>
       )}
       <ContextMenu menu={menu} onClose={closeMenu} />
+      <FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />
       <Toast toast={toast} onClose={closeToast} />
     </div>
   )

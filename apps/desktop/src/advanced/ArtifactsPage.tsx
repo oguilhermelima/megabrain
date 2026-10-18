@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Components } from 'react-markdown'
 import { api } from '@/api'
 import type { Artifact, ArtifactContent, ArtifactKind, NativeChat, Project } from '@/api/schema'
@@ -12,7 +12,10 @@ import { displayName } from '@/advanced/appearance-model'
 import { relativeAge } from '@/advanced/projects-model'
 import { ArtifactFrame } from '@/advanced/ArtifactFrame'
 import { artifactKindLabel, artifactKinds, artifactOfItem, artifactRevisionEntries, artifactTabs, artifactView, filterArtifactProject, groupArtifacts, newestArtifact, readArtifactTab, revisionRows, shownArtifactProject, shownArtifactTab, writeArtifactTab, type ArtifactProject, type ArtifactTab, type ArtifactView } from '@/advanced/artifacts-model'
+import { artifactFilterOptions, artifactSheetFields, emptyArtifactFilters, filterArtifacts, type ArtifactFilters } from '@/advanced/page-filters'
 import { MarkdownText } from '@/chat/markdown'
+import { activeCount } from '@/components/filter-sheet-model'
+import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
 import { Collapse } from '@/components/Collapse'
 import { SegmentedTabs } from '@/components/SegmentedTabs'
 import { TextSkeleton } from '@/components/Skeleton'
@@ -38,7 +41,7 @@ import { OldRevisionNote, RevisionPicker } from '@/native-chat/RevisionPicker'
  * What the page had when it last showed. Its item changes with every artifact picked, which mounts
  * the page afresh; this keeps the list, the search and the folds from flashing back to their start.
  */
-const memory: { list: Artifact[] | null; query: string; folded: ReadonlySet<ArtifactKind> } = { list: null, query: '', folded: new Set() }
+const memory: { list: Artifact[] | null; query: string; folded: ReadonlySet<ArtifactKind>; filters: ArtifactFilters } = { list: null, query: '', folded: new Set(), filters: emptyArtifactFilters }
 
 function useArtifacts() {
   const [list, setList] = useState<Artifact[] | null>(memory.list)
@@ -298,10 +301,14 @@ export function ArtifactsPage({
   const now = useNow(30_000)
   const [query, setQuery] = useState(memory.query)
   const [folded, setFolded] = useState<ReadonlySet<ArtifactKind>>(memory.folded)
+  const [filters, setFilters] = useState(memory.filters)
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const closeSheet = useCallback(() => setSheetOpen(false), [])
   useEffect(() => {
     memory.query = query
     memory.folded = folded
-  }, [query, folded])
+    memory.filters = filters
+  }, [query, folded, filters])
   const toggle = (kind: ArtifactKind) =>
     setFolded((current) => {
       const next = new Set(current)
@@ -329,7 +336,11 @@ export function ArtifactsPage({
   // Tabs come from the listed artifact, so they show before its content has read.
   const tabs = selectedId === null ? null : artifactTabs(selected ?? ready ?? { revision: 1 })
   const tab = shownArtifactTab(tabs ?? [], view.tab)
-  const shown = project === null ? null : filterArtifactProject(project, query)
+  const options = project === null ? { topics: [], chats: [] } : artifactFilterOptions(project)
+  const topicTitles = useTopicTitles(project?.project ?? '', options.topics.length > 0)
+  const chatTitle = (id: string) => chats.find((chat) => chat.id === id)?.title ?? id
+  const sheetFields = artifactSheetFields(filters, options, { topic: (id) => topicTitles.get(id) ?? id, chat: chatTitle }, (patch) => setFilters((current) => ({ ...current, ...patch })))
+  const shown = project === null ? null : filterArtifacts(filterArtifactProject(project, query), filters, now)
   const searching = query.trim() !== ''
   const none = list !== null && list.length === 0
   const pickProject = (entry: ArtifactProject) => {
@@ -386,20 +397,23 @@ export function ArtifactsPage({
           <>
             {revisions !== null && entries.length > 1 && ready !== null && <RevisionPicker entries={entries} shown={revisions.shown} old={revisions.old} title={ready.title} now={now} onPick={(pick) => setKept({ ...view, pick })} />}
             <BarSearch value={query} onChange={setQuery} label="Search artifacts" />
+            <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="bar" />
           </>
         )
       }
       panelLabel={none ? null : 'Artifacts'}
       panelCount={shownCount}
+      sheet={<FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />}
       panel={
         <>
+          <FilterChips fields={sheetFields} className="px-1 pb-2" />
           {error !== null && list === null && (
             <div className="px-1">
               <ErrorNote error={error} />
             </div>
           )}
           {list === null && error === null && <p className={sidePanelNote}>Loading artifacts…</p>}
-          {searching && shown?.kinds.length === 0 && <p className={sidePanelNote}>No artifact title matches “{query.trim()}”.</p>}
+          {shown?.kinds.length === 0 && (searching || activeCount(sheetFields) > 0) && <p className={sidePanelNote}>{searching ? `No artifact title matches “${query.trim()}”.` : 'No artifact matches the filters.'}</p>}
           {shown?.kinds.map((group) => (
             <NavKind key={group.kind} kind={group.kind} artifacts={group.artifacts} open={searching || !folded.has(group.kind)} onToggle={toggle} selectedId={selectedId} now={now} onPick={onPick} />
           ))}
