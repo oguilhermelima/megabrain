@@ -1,3 +1,4 @@
+import type { SimulatorKind } from '@/api/schema'
 import { isActive, type RunState } from '@/device/device-model'
 
 // The Device tab's live screen: which frames to fetch, and how a pointer or a key on the rendered
@@ -121,3 +122,20 @@ export function zoomOut(zoom: Zoom, fit: number): number {
 }
 
 export const zoomPercent = (zoom: Zoom, fit: number) => Math.round(effective(zoom, fit) * 100)
+
+/** The zoom bar's readout: the percent, or a dash before the device's size is known (fit 0), as the Fit button beside it already says Fit. */
+export const zoomLabel = (zoom: Zoom, fit: number) => (fit > 0 ? `${zoomPercent(zoom, fit)}%` : '–')
+
+// The frame drawn around the screen. A TV is a 16:9 screen with a thin bezel whatever image it
+// shows, so it never borrows a phone's shape while its first frame is on the way; a phone or a
+// tablet takes its screen's aspect, rounded like a handset upright and less so on its side.
+
+export const tvAspect = 16 / 9
+
+export type FrameShape = 'tv' | 'landscape' | 'portrait'
+
+/** The frame for a device of `kind` whose screen is `aspect` wide per unit of height, and the screen's ratio to draw. */
+export function deviceFrame(kind: SimulatorKind | null, aspect: number): { shape: FrameShape; ratio: number } {
+  if (kind === 'tv') return { shape: 'tv', ratio: tvAspect }
+  return { shape: aspect > 1 ? 'landscape' : 'portrait', ratio: aspect }
+}

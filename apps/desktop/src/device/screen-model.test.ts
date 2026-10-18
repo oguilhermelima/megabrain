@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { idleRun, reduceRun } from '@/device/device-model'
-import { blurGraceMs, fitZoom, frameDelay, frameMs, gestureOf, inputPaused, keyAction, pausedNote, pointSize, screenPoint, tapSlop, zoomedSize, zoomIn, zoomOut, zoomPercent, zoomSteps } from '@/device/screen-model'
+import { blurGraceMs, deviceFrame, fitZoom, frameDelay, frameMs, gestureOf, inputPaused, keyAction, pausedNote, pointSize, screenPoint, tapSlop, tvAspect, zoomedSize, zoomIn, zoomLabel, zoomOut, zoomPercent, zoomSteps } from '@/device/screen-model'
 
 const UDID = '401F3DA8-E4C1-48B7-9BB9-2C8416115E1A'
 const OTHER = '110E1BF2-99F9-4475-916E-32FBA7CED248'
@@ -205,5 +205,33 @@ describe('zooming the device screen', () => {
     const at200 = { left: -300, top: -500, ...zoomedSize(points, 2) }
     expect(screenPoint({ x: -300 + 402, y: -500 + 874 }, at200, phone, 3)).toEqual({ x: 201, y: 437 })
     expect(screenPoint({ x: -300 + 20, y: -500 + 40 }, at200, phone, 3)).toEqual({ x: 10, y: 20 })
+  })
+})
+
+describe('the frame follows the device kind', () => {
+  test('a TV is a 16:9 screen, even before its first frame or with a phone-shaped image', () => {
+    expect(deviceFrame('tv', 1206 / 2622)).toEqual({ shape: 'tv', ratio: tvAspect })
+    expect(deviceFrame('tv', 1920 / 1080)).toEqual({ shape: 'tv', ratio: 16 / 9 })
+  })
+
+  test('a phone or tablet keeps its screen’s aspect: upright is portrait, on its side landscape', () => {
+    expect(deviceFrame('phone', 1206 / 2622)).toEqual({ shape: 'portrait', ratio: 1206 / 2622 })
+    expect(deviceFrame('phone', 2732 / 2048)).toEqual({ shape: 'landscape', ratio: 2732 / 2048 })
+  })
+
+  test('no device yet frames like a phone', () => {
+    expect(deviceFrame(null, 1206 / 2622).shape).toBe('portrait')
+  })
+})
+
+describe('the zoom bar says Fit once', () => {
+  test('the readout is the percent once the size is known, at fit or a step', () => {
+    expect(zoomLabel('fit', 0.5)).toBe('50%')
+    expect(zoomLabel(1.25, 0.5)).toBe('125%')
+  })
+
+  test('before the size is known it is a dash, never a second Fit', () => {
+    expect(zoomLabel('fit', 0)).toBe('–')
+    expect(zoomLabel(1, 0)).not.toBe('Fit')
   })
 })

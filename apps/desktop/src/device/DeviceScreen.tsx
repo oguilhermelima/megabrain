@@ -2,9 +2,10 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react'
 import { api } from '@/api'
 import type { OpenDevice } from '@/device/device-model'
+import { FloatingRemote } from '@/device/FloatingRemote'
 import { PanelIcon } from '@/advanced/WikiShell'
 import { createInputSessions, elapsedLabel, failureDetail, preparingNote, type InputView } from '@/device/input-session'
-import { fitZoom, frameDelay, gestureOf, keyAction, pausedNote, phoneButtons, pointSize, pointsPerPixel, screenPoint, zoomedSize, zoomIn, zoomOut, zoomPercent, type Point, type Zoom } from '@/device/screen-model'
+import { deviceFrame, fitZoom, frameDelay, gestureOf, keyAction, pausedNote, phoneButtons, pointSize, pointsPerPixel, screenPoint, zoomedSize, zoomIn, zoomLabel, zoomOut, type Point, type Zoom } from '@/device/screen-model'
 import { onVisibility, windowShows } from '@/lib/app-events'
 import { sidePanelButton } from '@/lib/side-panel'
 import { native } from '@/lib/surface'
@@ -215,10 +216,10 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
   const shown = pinned ?? (liveFrame === null ? still : { src: liveFrame.src, step: null })
   const step = shown?.step ?? null
   const frameAspect = liveFrame === null ? null : liveFrame.width / liveFrame.height
-  const ratio = frameAspect ?? aspect
+  const { shape, ratio } = deviceFrame(device?.kind ?? null, frameAspect ?? aspect)
+  const look = frameLooks[shape]
   const frame = liveFrame
-  // The frame's border and padding around the screen, on each axis.
-  const chrome = ratio > 1 ? 18 : 22
+  const chrome = look.chrome
   // Zoom needs the device's points, known once a live frame came; until then the screen fits.
   const points = live.frame === null ? null : pointSize(live.frame)
   const fit = points === null ? 0 : fitZoom({ width: stageSize.width - chrome, height: stageSize.height - chrome }, points)
@@ -359,7 +360,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
         <div
           data-device-frame=""
           style={zoomed === null ? { aspectRatio: String(ratio), width: `min(100cqw, calc(100cqh * ${ratio}))` } : { width: zoomed.width + chrome, height: zoomed.height + chrome }}
-          className={`border border-white/[0.14] bg-black shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] ${zoomed === null ? '' : 'm-auto shrink-0'} ${ratio > 1 ? 'rounded-[20px] p-[8px]' : 'rounded-[44px] p-[10px]'}`}
+          className={`border border-white/[0.14] bg-black shadow-[0_24px_60px_-20px_rgba(0,0,0,0.8)] ${zoomed === null ? '' : 'm-auto shrink-0'} ${look.frame}`}
         >
           <div
             ref={surface}
@@ -374,7 +375,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
             onWheel={onWheel}
             onKeyDown={onKeyDown}
             onDragStart={(event) => event.preventDefault()}
-            className={`relative flex h-full w-full touch-none items-center justify-center overflow-hidden bg-ink-900 outline-none select-none ${takesInput ? 'cursor-pointer focus:ring-2 focus:ring-accent/80 focus:ring-offset-2 focus:ring-offset-black' : ''} ${ratio > 1 ? 'rounded-[12px]' : 'rounded-[34px]'}`}
+            className={`relative flex h-full w-full touch-none items-center justify-center overflow-hidden bg-ink-900 outline-none select-none ${takesInput ? 'cursor-pointer focus:ring-2 focus:ring-accent/80 focus:ring-offset-2 focus:ring-offset-black' : ''} ${look.screen}`}
           >
             {shown !== null ? (
               <img
@@ -408,7 +409,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
         </div>
       </div>
       <div className="mb-4 flex flex-col items-center gap-1.5 px-4">
-        {device !== null && booted && pinned === null && <HardwareButtons kind={device.kind} disabled={!takesInput} onPress={press} />}
+        {device !== null && device.kind !== 'tv' && booted && pinned === null && <HardwareButtons kind={device.kind} disabled={!takesInput} onPress={press} />}
         {/* Always one line tall, so a note coming and going never resizes the device. */}
         <p role="status" className="flex min-h-6 items-center gap-2 text-center text-[12px] leading-5 text-ink-400">
           <span className={problem !== null ? 'text-bad-soft' : ''}>{problem ?? status ?? (shown !== null ? note : null)}</span>
@@ -419,10 +420,22 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
           )}
         </p>
       </div>
+      {device?.kind === 'tv' && booted && pinned === null && (
+        <FloatingRemote>
+          <HardwareButtons kind="tv" disabled={!takesInput} onPress={press} />
+        </FloatingRemote>
+      )}
       {device !== null && <ViewControls zoom={zoom} fit={fit} canZoom={points !== null && fit > 0} full={full} onZoom={setZoom} onFull={setFull} />}
     </div>
   )
 }
+
+// Each frame shape's bezel and the screen's corners; chrome is the bezel's border and padding on each axis.
+const frameLooks = {
+  tv: { frame: 'rounded-[14px] p-[6px]', screen: 'rounded-[8px]', chrome: 14 },
+  landscape: { frame: 'rounded-[20px] p-[8px]', screen: 'rounded-[12px]', chrome: 18 },
+  portrait: { frame: 'rounded-[44px] p-[10px]', screen: 'rounded-[34px]', chrome: 22 },
+} as const
 
 /** Zoom out, the zoom shown, zoom in, fit and 100 percent, and full screen, in the screen's corner. */
 function ViewControls({ zoom, fit, canZoom, full, onZoom, onFull }: { zoom: Zoom; fit: number; canZoom: boolean; full: boolean; onZoom: (zoom: Zoom) => void; onFull: (full: boolean) => void }) {
@@ -432,7 +445,7 @@ function ViewControls({ zoom, fit, canZoom, full, onZoom, onFull }: { zoom: Zoom
       <button type="button" aria-label="Zoom out" title="Zoom out" disabled={!canZoom} onClick={() => onZoom(zoomOut(zoom, fit))} className={toolButton}>
         {glyphs['zoom-out']}
       </button>
-      <span className="min-w-10 text-center text-[11.5px] text-ink-300 tabular-nums">{canZoom ? `${zoomPercent(zoom, fit)}%` : 'Fit'}</span>
+      <span className="min-w-10 text-center text-[11.5px] text-ink-300 tabular-nums">{zoomLabel(zoom, canZoom ? fit : 0)}</span>
       <button type="button" aria-label="Zoom in" title="Zoom in" disabled={!canZoom} onClick={() => onZoom(zoomIn(zoom, fit))} className={toolButton}>
         {glyphs['zoom-in']}
       </button>
@@ -514,7 +527,7 @@ const glyphs: Record<string, ReturnType<typeof glyph>> = {
   'exit-full': glyph('M6 3v3H3M13 6h-3V3M10 13v-3h3M3 10h3v3'),
 }
 
-/** The device's hardware: a phone's side buttons, or an Apple TV remote's pad and keys. */
+/** The device's hardware: a phone's side buttons, or an Apple TV remote's pad and keys (inside FloatingRemote). */
 function HardwareButtons({ kind, disabled, onPress }: { kind: OpenDevice['kind']; disabled: boolean; onPress: (name: string) => void }) {
   const button = (name: string, label: string, extra = '') => (
     <button key={name} type="button" aria-label={label} title={label} disabled={disabled} onClick={() => onPress(name)} className={`${toolButton} ${extra}`}>
@@ -523,7 +536,7 @@ function HardwareButtons({ kind, disabled, onPress }: { kind: OpenDevice['kind']
   )
   if (kind === 'tv')
     return (
-      <div role="toolbar" aria-label="Remote" className="flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-1">
+      <div role="toolbar" aria-label="Remote" className="flex items-center gap-2 px-2 pb-2">
         <div className="grid grid-cols-3 grid-rows-3 place-items-center">
           <span />
           {button('up', 'Up')}
