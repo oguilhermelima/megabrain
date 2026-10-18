@@ -126,7 +126,10 @@ function patchFiles(patch: string): FileEdit[] {
     lines: DiffLine[]
   } | null = null
   const close = () => {
-    if (current !== null) files.push(fileEdit(current.path, current.status, current.lines))
+    if (current !== null) {
+      const file = fileEdit(current.path, current.status, current.lines)
+      if (file.status !== 'modified' || file.added > 0 || file.removed > 0) files.push(file)
+    }
     current = null
   }
   for (const raw of patch.split('\n')) {

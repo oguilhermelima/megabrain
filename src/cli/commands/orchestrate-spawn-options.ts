@@ -35,6 +35,7 @@ import { decideAdmission, DEFAULT_AGENT_COST_BYTES } from "../../core/admission.
 import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/state-db.js";
 import { readMachineResources } from "../../core/resources.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
+import type { AgentUpdateRuntime } from "../../core/agent-update.js";
 
 export const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 export const TERMINAL_CREATE_DEADLINE_MS = 2000;
@@ -74,6 +75,7 @@ export type SpawnWorktree = Readonly<{
 export type SpawnDependencies = Readonly<{
   readonly resolveWorktree?: (target: string | undefined, options: SpawnOptions, environment: SpawnEnvironment, process: ProcessAdapter) => Promise<Result<SpawnWorktree>>;
   readonly removeWorktree?: (path: string, process: ProcessAdapter) => Promise<Result<void>>;
+  readonly agentUpdates?: AgentUpdateRuntime;
 }>;
 
 export type SpawnOptions = Readonly<{

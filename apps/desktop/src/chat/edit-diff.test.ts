@@ -111,6 +111,11 @@ describe('editDiffs', () => {
     expect(editDiffs('Edit', undefined)).toBeNull()
     expect(editDiffs('Edit', 'not json')).toBeNull()
   })
+
+  test('an unreadable Codex patch has no file diff or line counts', () => {
+    const files = editDiffs('apply_patch', json({ input: '*** Begin Patch\n*** Update File: src/a.ts\n*** End Patch\n' }))
+    expect(files).toBeNull()
+  })
 })
 
 describe('collapseContext', () => {

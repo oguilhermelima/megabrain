@@ -118,7 +118,7 @@ export async function runComposerSpawn(
       ["--worktree", "/work/tree", "--agent", pane.agent, "--prompt", "do the task\nsecond line", "--tmux", "true", ...extraArgs],
       spawnEnvironment(root, dispatchId, environmentExtra),
       process,
-      { resolveWorktree: async () => ok(existingWorktree), ...dependencies },
+      { resolveWorktree: async () => ok(existingWorktree), agentUpdates: { startAgentUpdate: async () => {} }, ...dependencies },
     );
     return { result, pane: composer, events, root, dispatchId, process };
   } finally {

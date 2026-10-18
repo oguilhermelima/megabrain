@@ -463,7 +463,7 @@ describe("settings agents-update", () => {
       if (result.kind !== "ok") throw new Error(result.kind === "failed" ? result.error : "unexpected result");
       return JSON.parse(result.value) as unknown;
     };
-    expect(await read()).toEqual({ enabled: false, perAgent: {} });
+    expect(await read()).toEqual({ enabled: true, perAgent: {} });
     const policy = { enabled: false, perAgent: { codex: true, claude: false } };
     expect(await run(["settings", "set", "agents-update", JSON.stringify(policy)], env)).toEqual({ kind: "ok", value: "agent auto-update: off; 2 overrides\n" });
     expect(await read()).toEqual(policy);

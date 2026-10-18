@@ -64,16 +64,19 @@ describe("agent update", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  test("auto update defaults off in a fresh state directory", async () => {
+  test("auto update defaults on and launches only through the injected process adapter", async () => {
     const root = await mkdtemp(join(tmpdir(), "megabrain-agent-update-"));
     const starts: string[][] = [];
+    const calls: string[][] = [];
     const process: ProcessAdapter = {
-      ...fakeProcess("/bin/codex", "/bin/codex", "codex-cli 1.0.0"),
+      ...fakeProcess("/bin/codex", "/bin/codex", "codex-cli 1.0.0", calls),
       startDetached: async (_command, args) => { starts.push([...args]); return ok({ pid: 42 }); },
     };
     try {
       await scheduleAgentAutoUpdate("codex", { MEGABRAIN_STATE_DIR: root }, process);
-      expect(starts).toHaveLength(0);
+      expect(starts).toHaveLength(1);
+      expect(starts[0]).toContain("--background");
+      expect(calls.some((call) => call[1] === "update")).toBe(false);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

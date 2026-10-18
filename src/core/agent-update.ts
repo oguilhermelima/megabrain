@@ -5,6 +5,8 @@ import type { Result } from "./result.js";
 import { selfInvocation } from "./self-invocation.js";
 
 export type AgentUpdateId = "codex" | "claude" | "grok" | "agy";
+export type AgentUpdateStarter = (agent: AgentUpdateId, environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter) => Promise<void>;
+export type AgentUpdateRuntime = Readonly<{ startAgentUpdate?: AgentUpdateStarter; now?: () => number }>;
 export type AgentInstallKind = "standalone" | "npm" | "brew" | "native" | "unknown";
 export type AgentUpdateStatus = "up-to-date" | "update-available" | "updating" | "updated" | "latest-unknown" | "failed";
 export type AgentUpdateReport = Readonly<{
@@ -17,7 +19,7 @@ export type AgentUpdateReport = Readonly<{
   lastAttempt?: Readonly<{ at: string; ok: boolean; error?: string }>;
 }>;
 export type AgentAutoUpdateSettings = Readonly<{ enabled: boolean; perAgent: Partial<Record<AgentUpdateId, boolean>> }>;
-export const defaultAgentAutoUpdateSettings: AgentAutoUpdateSettings = { enabled: false, perAgent: {} };
+export const defaultAgentAutoUpdateSettings: AgentAutoUpdateSettings = { enabled: true, perAgent: {} };
 
 export type AgentVersionSource = (agent: AgentUpdateId, installKind: AgentInstallKind, process: ProcessAdapter) => Promise<string | null>;
 
@@ -228,28 +230,36 @@ async function writeAgentReport(report: AgentUpdateReport, environment: Readonly
   await rename(temporary, file);
 }
 
+async function startAgentUpdate(agent: AgentUpdateId, environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<void> {
+  const invocation = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["agent", "update", agent, "--background"]);
+  const launched = await process.startDetached(invocation.command, invocation.args, { env: { MEGABRAIN_STATE_DIR: environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? globalThis.process.cwd(), ".megabrain") } });
+  if (launched.kind !== "ok") throw new Error(launched.error);
+}
+
 /** Reserves one six-hour update slot and starts its worker without delaying the agent launch. */
-export async function scheduleAgentAutoUpdate(agent: AgentUpdateId, environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<void> {
+export async function scheduleAgentAutoUpdate(agent: AgentUpdateId, environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter, runtime: AgentUpdateRuntime = {}): Promise<void> {
   if (environment.MEGABRAIN_STATE_DIR === undefined && environment.HOME === undefined) return;
+  const now = runtime.now ?? Date.now;
   const settings = await readAgentAutoUpdateSettings(environment);
   if (!(settings.perAgent[agent] ?? settings.enabled)) return;
   const previous = await readAgentReport(environment, agent);
-  if (previous !== undefined && Date.now() - Date.parse(previous.checkedAt) < UPDATE_INTERVAL_MS) return;
+  if (previous !== undefined && now() - Date.parse(previous.checkedAt) < UPDATE_INTERVAL_MS) return;
   const lock = stateFile(environment, ".agent-update-" + agent + ".lock");
   try {
     const existing = await stat(lock);
-    if (Date.now() - existing.mtimeMs < LOCK_MAX_AGE_MS) return;
+    if (now() - existing.mtimeMs < LOCK_MAX_AGE_MS) return;
     await rm(lock, { force: true });
   } catch { /* no lock */ }
   let handle;
   try { handle = await open(lock, "wx", 0o600); } catch { return; }
   await handle.close();
-  const invocation = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["agent", "update", agent, "--background"]);
-  const launched = await process.startDetached(invocation.command, invocation.args, { env: { MEGABRAIN_STATE_DIR: environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? globalThis.process.cwd(), ".megabrain") } });
-  if (launched.kind !== "ok") {
+  try {
+    await (runtime.startAgentUpdate ?? startAgentUpdate)(agent, environment, process);
+  } catch (cause) {
     await rm(lock, { force: true });
     const at = new Date().toISOString();
-    await recordAgentUpdate({ agent, installed: null, latest: null, installKind: "unknown", status: "failed", checkedAt: at, lastAttempt: { at, ok: false, error: launched.error } }, environment).catch(() => undefined);
+    const error = cause instanceof Error ? cause.message : String(cause);
+    await recordAgentUpdate({ agent, installed: null, latest: null, installKind: "unknown", status: "failed", checkedAt: at, lastAttempt: { at, ok: false, error } }, environment).catch(() => undefined);
   }
 }
 

@@ -59,7 +59,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   trace.json = options.json;
   const agent = getAgent(options.agent);
   if (agent === undefined) return unknown(`agent cannot be determined: ${options.agent}`);
-  void scheduleAgentAutoUpdate(options.agent as "codex" | "claude" | "grok" | "agy", environment, process).catch(() => undefined);
+  void scheduleAgentAutoUpdate(options.agent as "codex" | "claude" | "grok" | "agy", environment, process, dependencies.agentUpdates).catch(() => undefined);
   if (options.contextPolicy !== undefined) {
     if (hasCompactThreshold(options.contextPolicy) && agent.compactCommand === undefined) return failed(`${options.agent} has no measured context compact command`);
     if (agent.contextSource === undefined) return failed(`${options.agent} has no measured context meter`);
