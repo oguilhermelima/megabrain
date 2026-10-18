@@ -290,7 +290,7 @@ export function ConversationList({
   const failed = (caught: unknown) => setMenuError(caught instanceof Error ? caught.message : String(caught))
 
   const messageActions = useConversationActions({ items, list, busy, onEditLast, onBranch, shareTitle: shareTitle ?? null, renderCard: (events, agent, title, width) => <ShareCard events={events} agent={agent} title={title} width={width} />, setFlash, failed })
-  const { actions, selecting, selection, shareImage, stopSelecting, chosen, contextMenu } = messageActions
+  const { actions, selecting, selection, shareImage, shareMenu, stopSelecting, chosen, contextMenu } = messageActions
 
   const onContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     const marked = markedParts(event)
@@ -439,7 +439,7 @@ export function ConversationList({
           </div>
         </div>
         {rail && <NavigatorRail turns={turns} virtualizer={virtualizer} scroller={list} marked={marked} />}
-        <ConversationActionBars search={search} closeSearch={closeSearch} selecting={selecting} selection={selection} shareImage={shareImage} chosen={chosen} stopSelecting={stopSelecting} failed={failed} setFlash={setFlash} pinned={pinned} onJumpToLatest={() => { setPinned(true); scrollToLatest() }} />
+        <ConversationActionBars search={search} closeSearch={closeSearch} selecting={selecting} selection={selection} shareImage={shareImage} shareMenu={shareMenu} chosen={chosen} stopSelecting={stopSelecting} failed={failed} setFlash={setFlash} pinned={pinned} onJumpToLatest={() => { setPinned(true); scrollToLatest() }} />
         {flash !== null && (
           <p role="status" className={`absolute bottom-14 left-1/2 z-20 max-w-[80%] -translate-x-1/2 truncate rounded-full border bg-ink-900/95 px-4 py-1.5 text-chat-small shadow-lg ${flash.bad ? 'border-bad/30 text-bad' : 'border-white/15 text-ink-100'}`}>
             {flash.text}

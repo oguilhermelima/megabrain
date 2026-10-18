@@ -131,25 +131,36 @@ export function SelectTarget({ event }: { event: TranscriptEvent }) {
   )
 }
 
-const barButton = 'h-7 shrink-0 rounded-full px-3 text-[12.5px] font-semibold text-ink-100 transition-colors duration-100 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none'
+/**
+ * The surface of a bar floating over the transcript: an opaque fill, so no message reads through it
+ * whether or not the webview applies a backdrop blur, above the rows (a hovered or focused row rises to z-10).
+ */
+export const floatingBar = 'z-20 rounded-full border border-white/15 bg-ink-850 shadow-lg shadow-black/50'
+
+// The bar's buttons take the message row's height and glyphs, with their labels beside them.
+const barButton = 'flex h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold text-ink-100 transition-colors duration-100 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none'
 
 /** The bar while selecting: how many, and what can be done with them. */
-export function SelectionBar({ count, onCopyImage, onDownload, onCopyText, onCancel }: { count: number; onCopyImage: () => void; onDownload: () => void; onCopyText: () => void; onCancel: () => void }) {
+export function SelectionBar({ count, onCopyImage, onShare, onCopyText, onCancel }: { count: number; onCopyImage: () => void; onShare: (trigger: ReactMouseEvent<HTMLElement>) => void; onCopyText: () => void; onCancel: () => void }) {
   return (
-    <div role="toolbar" aria-label="Selected messages" className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/[0.1] bg-ink-900/95 py-1 pr-1 pl-4 shadow-lg backdrop-blur">
+    <div role="toolbar" aria-label="Selected messages" className={`absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 py-1 pr-1 pl-4 ${floatingBar}`}>
       <span role="status" className="mr-2 shrink-0 text-[12.5px] text-ink-300 tabular-nums">
         {count} selected
       </span>
       <button type="button" disabled={count === 0} onClick={onCopyImage} className={barButton}>
+        <MenuIconGlyph icon="image" />
         Copy image
       </button>
-      <button type="button" disabled={count === 0} onClick={onDownload} className={barButton}>
-        Download PNG
+      <button type="button" aria-haspopup="menu" disabled={count === 0} onClick={onShare} className={`${barButton} aria-expanded:bg-white/[0.08]`}>
+        <MenuIconGlyph icon="share" />
+        Share as image
       </button>
       <button type="button" disabled={count === 0} onClick={onCopyText} className={barButton}>
+        <MenuIconGlyph icon="copy" />
         Copy text
       </button>
-      <button type="button" onClick={onCancel} className={`${barButton} text-ink-300`}>
+      <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-white/[0.1]" />
+      <button type="button" onClick={onCancel} className={`${barButton} font-medium text-ink-400 hover:text-ink-100`}>
         Cancel
       </button>
     </div>

@@ -1,22 +1,23 @@
-import { useContext, useMemo, useState, type RefObject, type ReactNode } from 'react'
+import { useContext, useMemo, useState, type MouseEvent as ReactMouseEvent, type RefObject, type ReactNode } from 'react'
 import type { TranscriptEvent } from '@/api/schema'
 import { api } from '@/api'
 import type { NoticeDisplayItem } from '@/chat/notice-model'
 import type { TranscriptSearch } from '@/native-chat/TranscriptSearch'
 import { useContextMenu } from '@/components/ContextMenu'
 import { ConversationAgent } from '@/components/agent-icons'
-import { SelectionBar, type MessageActionsValue } from '@/native-chat/MessageActions'
+import { floatingBar, SelectionBar, type MessageActionsValue } from '@/native-chat/MessageActions'
 import { SearchBar } from '@/native-chat/TranscriptSearch'
 import { keepShareFooter, messageCopyText, messageRoles, readShareFooter, selectionCopyText, shareFileName } from '@/native-chat/message-actions'
 import { emptySelection, selectableIds, selectedInOrder, toggleMessage, type MessageSelection } from '@/native-chat/message-selection'
 import { renderPng } from '@/native-chat/share-image'
 
-export function ConversationActionBars({ search, closeSearch, selecting, selection, shareImage, chosen, stopSelecting, failed, setFlash, pinned, onJumpToLatest }: {
+export function ConversationActionBars({ search, closeSearch, selecting, selection, shareImage, shareMenu, chosen, stopSelecting, failed, setFlash, pinned, onJumpToLatest }: {
   search: TranscriptSearch
   closeSearch: () => void
   selecting: boolean
   selection: MessageSelection
   shareImage: (events: TranscriptEvent[], how: 'copy' | 'save') => Promise<void>
+  shareMenu: (events: TranscriptEvent[], trigger: ReactMouseEvent<HTMLElement>) => void
   chosen: () => TranscriptEvent[]
   stopSelecting: () => void
   failed: (caught: unknown) => void
@@ -31,13 +32,13 @@ export function ConversationActionBars({ search, closeSearch, selecting, selecti
         <SelectionBar
           count={selection.ids.length}
           onCopyImage={() => void shareImage(chosen(), 'copy')}
-          onDownload={() => void shareImage(chosen(), 'save')}
+          onShare={(trigger) => shareMenu(chosen(), trigger)}
           onCopyText={() => void api.copyText(selectionCopyText(chosen())).then(() => setFlash({ text: 'Text copied', bad: false }), failed)}
           onCancel={stopSelecting}
         />
       )}
       {!pinned && !selecting && (
-        <button type="button" onClick={onJumpToLatest} className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-ink-900/95 px-4 py-1.5 text-chat-small font-semibold text-ink-100 shadow-lg backdrop-blur">
+        <button type="button" onClick={onJumpToLatest} className={`absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-1.5 text-chat-small font-semibold text-ink-100 ${floatingBar}`}>
           Jump to latest
         </button>
       )}
@@ -85,6 +86,24 @@ export function useConversationActions({
         } else if (await api.saveImageAs(png, shareFileName(shareTitle, events.length))) setFlash({ text: 'Image saved', bad: false })
       })
       .catch(failed)
+  // The share menu for these messages: the image copied or saved, and whether it carries the chat title.
+  const shareMenu = (events: TranscriptEvent[], trigger: ReactMouseEvent<HTMLElement>) =>
+    contextMenu.open(trigger, [
+      [
+        { label: 'Copy image', icon: 'copy', onSelect: () => void shareImage(events, 'copy') },
+        { label: 'Download PNG', icon: 'save', onSelect: () => void shareImage(events, 'save') },
+      ],
+      [
+        {
+          label: shareFooter ? 'Leave out the chat title' : 'Show the chat title',
+          icon: 'chat',
+          onSelect: () => {
+            setShareFooter(!shareFooter)
+            keepShareFooter(!shareFooter)
+          },
+        },
+      ],
+    ])
   const stopSelecting = () => {
     setSelecting(false)
     setSelection(emptySelection)
@@ -98,23 +117,7 @@ export function useConversationActions({
       }),
       copyText: (text) => api.copyText(text).then(() => setFlash({ text: 'Text copied', bad: false }), failed),
       menu: (trigger, sections) => contextMenu.open(trigger, sections),
-      share: (event, trigger) =>
-        contextMenu.open(trigger, [
-          [
-            { label: 'Copy image', icon: 'copy', onSelect: () => void shareImage([event], 'copy') },
-            { label: 'Download PNG', icon: 'save', onSelect: () => void shareImage([event], 'save') },
-          ],
-          [
-            {
-              label: shareFooter ? 'Leave out the chat title' : 'Show the chat title',
-              icon: 'chat',
-              onSelect: () => {
-                setShareFooter(!shareFooter)
-                keepShareFooter(!shareFooter)
-              },
-            },
-          ],
-        ]),
+      share: (event, trigger) => shareMenu([event], trigger),
       select: (event) => {
         setSelecting(true)
         setSelection(toggleMessage(emptySelection, event.id, order, false))
@@ -132,5 +135,5 @@ export function useConversationActions({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [selecting, selection, order, roles, busy, onEditLast, onBranch, shareFooter, agent, shareTitle],
   )
-  return { actions, selecting, selection, shareImage, stopSelecting, chosen, contextMenu }
+  return { actions, selecting, selection, shareImage, shareMenu, stopSelecting, chosen, contextMenu }
 }
