@@ -57,18 +57,24 @@ async function turn(h: Awaited<ReturnType<typeof harness>>, chat: Chat, user: st
 
 describe("summary settings", () => {
   test("defaults are off and validated", () => {
-    expect(defaultSummarySettings).toMatchObject({ enabled: false, everyMessages: 6, everyMinutes: 10, retitle: true });
+    expect(defaultSummarySettings).toMatchObject({ enabled: false, idleMinutes: 20, minNewTurns: 3, maxTurns: 40, curatorEveryMinutes: 60, dailyCallLimit: 100, retitle: true });
     expect(parseSummarySettings("{}").kind).toBe("ok");
-    for (const bad of ["not json", `{"agent":"gpt"}`, `{"everyMessages":0}`, `{"everyMinutes":-1}`, `{"enabled":"yes"}`, `{"model":3}`, `{"extra":1}`]) expect(parseSummarySettings(bad).kind).toBe("failed");
+    for (const bad of ["not json", `{"agent":"gpt"}`, `{"enabled":"yes"}`, `{"model":3}`, `{"extra":1}`]) expect(parseSummarySettings(bad).kind).toBe("failed");
   });
 
-  test("settings get and set chat-summaries round trip through the state dir", async () => {
+  test("legacy cadence keys are dropped while personal settings survive migration and writes", async () => {
     const h = await harness();
     const environment = { MEGABRAIN_STATE_DIR: h.state, HOME: h.root };
-    const set = await executeSettings(["set", "chat-summaries", JSON.stringify({ enabled: true, agent: "agy", model: "flash", effort: "low", everyMessages: 3 })], environment, undefined as never);
-    expect(set.kind).toBe("ok");
+    writeFileSync(join(h.state, "chat-summaries.json"), JSON.stringify({ enabled: true, agent: "agy", model: "flash", effort: "low", retitle: false, everyMessages: 3, everyMinutes: 10 }));
     const got = await executeSettings(["get", "chat-summaries"], environment, undefined as never);
-    expect(got.kind === "ok" && JSON.parse(got.value)).toMatchObject({ enabled: true, agent: "agy", model: "flash", effort: "low", everyMessages: 3, everyMinutes: 10, retitle: true });
+    expect(got.kind === "ok" && JSON.parse(got.value)).toMatchObject({ enabled: true, agent: "agy", model: "flash", effort: "low", retitle: false });
+    expect(got.kind === "ok" ? JSON.parse(got.value) : {}).not.toHaveProperty("everyMessages");
+    expect(got.kind === "ok" ? JSON.parse(got.value) : {}).not.toHaveProperty("everyMinutes");
+    const set = await executeSettings(["set", "chat-summaries", JSON.stringify({ enabled: true, agent: "agy", model: "flash", effort: "low", retitle: false })], environment, undefined as never);
+    expect(set.kind).toBe("ok");
+    const persisted = readFileSync(join(h.state, "chat-summaries.json"), "utf8");
+    expect(persisted).not.toContain("everyMessages");
+    expect(persisted).not.toContain("everyMinutes");
   });
 });
 
@@ -81,43 +87,50 @@ describe("summary triggers", () => {
     expect(h.calls()).toHaveLength(0);
   });
 
-  test("everyMessages user turns trigger a summary, fewer do not", async () => {
-    const h = await harness({ everyMessages: 3, everyMinutes: 1000 });
+  test("three new turns trigger only after the chat has been idle for twenty minutes", async () => {
+    const h = await harness({ minNewTurns: 3, idleMinutes: 20 });
     const chat = await seedChat(h);
     await turn(h, chat, "one"); await turn(h, chat, "two");
     await h.summarizer.turnEnded(chat.id);
     expect(h.calls()).toHaveLength(0);
     await turn(h, chat, "three");
     await h.summarizer.turnEnded(chat.id);
-    expect(h.calls()).toHaveLength(1);
-    // Counting restarts from the summary: two more turns are not enough.
-    await turn(h, chat, "four"); await turn(h, chat, "five");
-    await h.summarizer.turnEnded(chat.id);
+    expect(h.calls()).toHaveLength(0);
+  });
+
+  test("one turn after an hour is not enough and forty new turns cap a busy chat", async () => {
+    const h = await harness({ minNewTurns: 3, maxTurns: 40, idleMinutes: 20 });
+    const old = await seedChat(h, { createdAt: new Date(Date.now() - 60 * 60_000).toISOString() });
+    await turn(h, old, "hello");
+    await h.summarizer.turnEnded(old.id);
+    expect(h.calls()).toHaveLength(0);
+    const busy = await seedChat(h);
+    for (let index = 0; index < 40; index += 1) await turn(h, busy, `message ${index}`);
+    await h.summarizer.turnEnded(busy.id);
     expect(h.calls()).toHaveLength(1);
   });
 
-  test("everyMinutes triggers on one new turn once enough time passed since the chat or last summary", async () => {
-    const h = await harness({ everyMessages: 100, everyMinutes: 10 });
-    const fresh = await seedChat(h);
-    await turn(h, fresh, "hello");
-    await h.summarizer.turnEnded(fresh.id);
-    expect(h.calls()).toHaveLength(0);
-    const old = await seedChat(h, { createdAt: new Date(Date.now() - 11 * 60_000).toISOString() });
-    await turn(h, old, "hello");
-    await h.summarizer.turnEnded(old.id);
-    expect(h.calls()).toHaveLength(1);
-    // No new user turn since the summary: time alone never triggers.
-    await h.summarizer.turnEnded(old.id);
-    expect(h.calls()).toHaveLength(1);
+  test("removing a chat clears its scheduled idle summary", async () => {
+    const h = await harness({ enabled: true, minNewTurns: 3, idleMinutes: 20 });
+    const daemon = new ChatDaemon(h.state, h.environment);
+    await daemon.start();
+    const chat = await seedChat(h);
+    await turn(h, chat, "one"); await turn(h, chat, "two"); await turn(h, chat, "three");
+    await daemon.summarizer.turnEnded(chat.id);
+    const originalClear = globalThis.clearTimeout;
+    let cleared = 0;
+    globalThis.clearTimeout = ((timer: ReturnType<typeof setTimeout>) => { cleared += 1; return originalClear(timer); }) as typeof clearTimeout;
+    try { await daemon.remove(chat.id); } finally { globalThis.clearTimeout = originalClear; await daemon.close(); }
+    expect(cleared).toBeGreaterThan(0);
   });
 });
 
 describe("summary job", () => {
   test("runs the configured agent in an empty directory with tools off, and stores the summary", async () => {
-    const h = await harness({ everyMessages: 1, model: "haiku", effort: "low" });
+    const h = await harness({ minNewTurns: 1, idleMinutes: 0.01, model: "haiku", effort: "low" });
     const chat = await seedChat(h);
     await turn(h, chat, "please fix the login redirect", "I changed the redirect handler");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     const [call] = h.calls();
     expect(call?.args).toContain("-p");
     expect(call?.args.join(" ")).toContain("--model haiku");
@@ -136,12 +149,12 @@ describe("summary job", () => {
   });
 
   test("the second summary is incremental: previous summary in, already-summarised turns out", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness({ minNewTurns: 1, idleMinutes: 0.01 });
     const chat = await seedChat(h);
     await turn(h, chat, "alpha topic request");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     await turn(h, chat, "beta follow up request");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     const [first, second] = h.calls();
     expect(first?.stdin).not.toContain("Previous summary");
     expect(second?.stdin).toContain("Summary number 1 about login.");
@@ -151,51 +164,51 @@ describe("summary job", () => {
   });
 
   test("only one job runs per chat at a time", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness({ minNewTurns: 1, idleMinutes: 0.01 });
     h.setMode("slow");
     const chat = await seedChat(h);
     await turn(h, chat, "one");
-    await Promise.all([h.summarizer.turnEnded(chat.id), h.summarizer.turnEnded(chat.id), h.summarizer.turnEnded(chat.id)]);
+    await Promise.allSettled([h.summarizer.summarize(chat.id), h.summarizer.summarize(chat.id), h.summarizer.summarize(chat.id)]);
     expect(h.calls()).toHaveLength(1);
   });
 
   test("an agent failure leaves the chat alone and the next trigger retries", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness();
     const chat = await seedChat(h);
     await turn(h, chat, "one");
     h.setMode("fail");
-    await expect(h.summarizer.turnEnded(chat.id)).resolves.toBeUndefined();
+    await expect(h.summarizer.summarize(chat.id)).rejects.toThrow();
     expect(await h.store.get(chat.id)).toEqual(chat);
     expect(h.emitted).toHaveLength(0);
     h.setMode("ok");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     expect(h.calls()).toHaveLength(2);
     expect((await h.store.get(chat.id))?.summary?.text).toBe("Summary number 2 about login.");
   });
 
   test("a hung agent is killed at the timeout and the chat is untouched", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness();
     h.setMode("hang");
     h.environment.MEGABRAIN_CHAT_SUMMARY_TIMEOUT_MS = "1500";
     const chat = await seedChat(h);
     await turn(h, chat, "one");
     const started = Date.now();
-    await h.summarizer.turnEnded(chat.id);
+    await expect(h.summarizer.summarize(chat.id)).rejects.toThrow();
     expect(Date.now() - started).toBeLessThan(5000);
     expect((await h.store.get(chat.id))?.summary).toBeNull();
   });
 
   test("a missing agent binary is a logged failure, not a throw", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness();
     const missing = new ChatSummarizer({ store: h.store, stateDir: h.state, environment: { ...h.environment, PATH: "/nonexistent" }, emit: async () => {} });
     const chat = await seedChat(h);
     await turn(h, chat, "one");
-    await expect(missing.turnEnded(chat.id)).resolves.toBeUndefined();
+    await expect(missing.summarize(chat.id)).rejects.toThrow();
     expect((await h.store.get(chat.id))?.summary).toBeNull();
   });
 
   test("summarize on demand ignores the thresholds and reports failure", async () => {
-    const h = await harness({ everyMessages: 100, everyMinutes: 1000 });
+    const h = await harness({ minNewTurns: 100, idleMinutes: 1000 });
     const chat = await seedChat(h);
     await turn(h, chat, "one");
     const summary = await h.summarizer.summarize(chat.id);
@@ -208,29 +221,29 @@ describe("summary job", () => {
 
 describe("automatic titles", () => {
   test("the summary becomes the title, short, and titleSource moves to summary", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness();
     const chat = await seedChat(h);
     await turn(h, chat, "one");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     const stored = await h.store.get(chat.id);
     expect(stored).toMatchObject({ title: "Fix login redirect 1", titleSource: "summary" });
     expect(h.emitted.some((entry) => entry.event.kind === "state")).toBe(true);
   });
 
   test("a title over 60 characters is cut", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness();
     h.setMode("long");
     const chat = await seedChat(h);
     await turn(h, chat, "one");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     expect(((await h.store.get(chat.id))?.title ?? "").length).toBeLessThanOrEqual(60);
   });
 
   test("a person-set title is never replaced, though the summary is still stored", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness();
     const chat = await seedChat(h, { title: "My own name", titleSource: "person" });
     await turn(h, chat, "one");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     const stored = await h.store.get(chat.id);
     expect(stored).toMatchObject({ title: "My own name", titleSource: "person" });
     expect(stored?.summary?.text).toBe("Summary number 1 about login.");
@@ -238,10 +251,10 @@ describe("automatic titles", () => {
   });
 
   test("retitle off keeps the title", async () => {
-    const h = await harness({ everyMessages: 1, retitle: false });
+    const h = await harness({ retitle: false });
     const chat = await seedChat(h);
     await turn(h, chat, "one");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     expect(await h.store.get(chat.id)).toMatchObject({ title: "first message", titleSource: "first-message" });
   });
 
@@ -258,14 +271,14 @@ describe("automatic titles", () => {
 
 describe("search and cli", () => {
   test("the index finds past chats by project, branch, title and summary", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness();
     const chat = await seedChat(h);
     await turn(h, chat, "one");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     const other = await seedChat(h);
     h.setMode("ok");
     await turn(h, other, "two");
-    await h.summarizer.turnEnded(other.id);
+    await h.summarizer.summarize(other.id);
     const hits = searchSummaries(h.state, "LOGIN");
     expect(hits.map((hit) => hit.chatId).sort()).toEqual([chat.id, other.id].sort());
     expect(hits[0]).toMatchObject({ project: "project", branch: null, summary: expect.stringContaining("login"), title: expect.any(String) });
@@ -274,10 +287,10 @@ describe("search and cli", () => {
   });
 
   test("chat summaries and chat search answer from the files without a daemon", async () => {
-    const h = await harness({ everyMessages: 1 });
+    const h = await harness();
     const chat = await seedChat(h);
     await turn(h, chat, "one");
-    await h.summarizer.turnEnded(chat.id);
+    await h.summarizer.summarize(chat.id);
     const listed = await executeChat(["summaries", chat.id, "--json"], h.environment, undefined as never);
     expect(listed.kind === "ok" && JSON.parse(listed.value)).toHaveLength(1);
     const found = await executeChat(["search", "login", "--json"], h.environment, undefined as never);

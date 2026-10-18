@@ -37,7 +37,7 @@ function harness() {
 type Harness = ReturnType<typeof harness>;
 
 /** A Claude session log whose last activity (the file's mtime) is the given date. */
-function claudeLog(h: Harness, id: string, last: Date, texts: string[] = ["make summaries a wiki", "and add a map"], assistantChars = 0): void {
+function claudeLog(h: Harness, id: string, last: Date, texts: string[] = ["make summaries a wiki", "and add a map", "include an index"], assistantChars = 0): void {
   const directory = join(h.home, ".claude", "projects", h.repo.replace(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(directory, { recursive: true });
   const path = join(directory, `${id}.jsonl`);
@@ -187,7 +187,7 @@ describe("scan cap", () => {
     mkdirSync(otherDirectory, { recursive: true });
     for (let index = 0; index < 3; index += 1) {
       const path = join(otherDirectory, `B${index}.jsonl`);
-      writeFileSync(path, [{ type: "user", uuid: "u", timestamp: ago(1).toISOString(), message: { content: "work" } }, { type: "user", uuid: "u2", timestamp: ago(1).toISOString(), message: { content: "more" } }].map((row) => JSON.stringify(row)).join("\n") + "\n");
+      writeFileSync(path, ["work", "more", "finish"].map((text, turn) => ({ type: "user", uuid: `u${turn}`, timestamp: ago(1).toISOString(), message: { content: text } })).map((row) => JSON.stringify(row)).join("\n") + "\n");
       utimesSync(path, ago(1), ago(1));
     }
     const result = await h.scan({ projects: [h.repo, other], maxSessions: 4 });

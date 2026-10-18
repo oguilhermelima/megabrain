@@ -9,11 +9,13 @@ import { registeredProjects, scanProjects } from "../../knowledge/scanner.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { Topic } from "../../knowledge/types.js";
 import { usageMessage, usageText } from "../../core/usage.js";
+import { modelUsage } from "../../knowledge/model-usage.js";
+import { readSummarySettings } from "../../chat/summaries.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
-type Flags = { positional: string[]; values: Record<string, string>; json: boolean; dryRun: boolean };
+type Flags = { positional: string[]; values: Record<string, string>; json: boolean; dryRun: boolean; force: boolean };
 
-const VALUE_FLAGS = ["--repo", "--limit", "--cwd", "--since"];
+const VALUE_FLAGS = ["--repo", "--limit", "--cwd", "--since", "--days"];
 
 function stateDir(environment: Environment): string { return environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? homedir(), ".megabrain"); }
 function print(value: unknown): Result<string> { return ok(`${JSON.stringify(value, null, 2)}\n`); }
@@ -26,11 +28,12 @@ function parseSince(value: string, now: Date): Date | null {
 }
 
 function parse(args: readonly string[]): Flags | null {
-  const flags: Flags = { positional: [], values: {}, json: false, dryRun: false };
+  const flags: Flags = { positional: [], values: {}, json: false, dryRun: false, force: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
     if (arg === "--json") flags.json = true;
     else if (arg === "--dry-run") flags.dryRun = true;
+    else if (arg === "--force") flags.force = true;
     else if (VALUE_FLAGS.includes(arg)) {
       const value = args[index + 1];
       if (value === undefined || value.startsWith("--")) return null;
@@ -53,6 +56,14 @@ export async function executeKnowledge(args: readonly string[], environment: Env
   const repo = flags.values["--repo"];
   const limit = flags.values["--limit"] === undefined ? undefined : Number(flags.values["--limit"]);
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) return usage();
+
+  if (verb === "usage" && flags.positional.length === 0 && flags.json) {
+    const days = flags.values["--days"] === undefined ? 7 : Number(flags.values["--days"]);
+    if (!Number.isInteger(days) || days < 1) return usage();
+    const settings = readSummarySettings(dir);
+    const report = modelUsage(dir, days);
+    return print({ ...report, budgetLimit: settings.dailyCallLimit, budgetLeft: Math.max(0, settings.dailyCallLimit - report.budgetUsed) });
+  }
 
   if (verb === "list" && flags.positional.length === 0) {
     const { projects } = listKnowledge(dir, repo === undefined ? {} : { repo });
@@ -101,14 +112,14 @@ export async function executeKnowledge(args: readonly string[], environment: Env
     const projects = repo === undefined ? registered : registered.filter((path) => path === repo || basename(path) === repo);
     if (repo !== undefined && projects.length === 0 && isAbsolute(repo)) projects.push(resolve(repo));
     if (repo !== undefined && projects.length === 0) return failed(`unknown project: ${repo}`, 1);
-    const pipeline = new KnowledgePipeline({ stateDir: dir, environment });
-    const outcome = await scanProjects({ stateDir: dir, home: environment.HOME ?? homedir(), environment, pipeline, projects, ...(since === undefined ? {} : { since }), ...(limit === undefined ? {} : { maxSessions: limit }), dryRun: flags.dryRun });
+    const pipeline = new KnowledgePipeline({ stateDir: dir, environment, forceBudget: flags.force });
+    const outcome = await scanProjects({ stateDir: dir, home: environment.HOME ?? homedir(), environment, pipeline, projects, ...(since === undefined ? {} : { since }), ...(limit === undefined ? {} : { maxSessions: limit }), dryRun: flags.dryRun, manual: true });
     if (flags.json) return print(outcome);
     const lines = outcome.projects.map((plan) => `${plan.repo}: ${plan.inHorizon} sessions in range, ${plan.older} older, about ${plan.estimatedCalls} model calls`);
     return ok(`${[...lines, ...(flags.dryRun ? [] : [`processed ${outcome.processed}`])].join("\n")}\n`);
   }
   if (verb === "backfill" && flags.positional.length === 0 && !flags.dryRun && flags.values["--since"] === undefined) {
-    const outcome = await backfillSummaries({ stateDir: dir, pipeline: new KnowledgePipeline({ stateDir: dir, environment }) });
+    const outcome = await backfillSummaries({ stateDir: dir, pipeline: new KnowledgePipeline({ stateDir: dir, environment, forceBudget: flags.force }) });
     return flags.json ? print(outcome) : ok(`${JSON.stringify(outcome)}\n`);
   }
   if (verb === "repair-refs" && flags.positional.length === 0 && flags.values["--since"] === undefined && flags.values["--limit"] === undefined && flags.values["--cwd"] === undefined) {

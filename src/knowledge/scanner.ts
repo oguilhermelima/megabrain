@@ -35,6 +35,8 @@ export type ScanOptions = {
   maxSessions?: number;
   /** Count what a scan would do and call no model, write no knowledge and store no horizon. */
   dryRun?: boolean;
+  /** Explicit CLI scan bypasses work-block thresholds; daemon scans do not. */
+  manual?: boolean;
 };
 
 export type ScanProjectPlan = { repo: string; inHorizon: number; older: number; estimatedCalls: number };
@@ -158,9 +160,11 @@ export async function scanProjects(options: ScanOptions): Promise<ScanResult> {
     const outcome = await pipeline.processSession({
       sessionKeys: [key], agent: session.agent, model: null, repo, cwd, branch: location.branch, worktree: location.worktree,
       startedAt: session.startedAt ?? last, endedAt: last, title: session.title, turns: turns.map((turn) => ({ kind: turn.kind, text: turn.text, at: turn.at, ...(turn.tool === undefined ? {} : { tool: turn.tool }) })),
+      manual: options.manual === true, deferCurator: true,
       ...(parent === undefined ? {} : { parentSessionKey: parent }),
     });
     if (outcome.status === "curated" || outcome.status === "worker") result.processed += 1;
   }
+  await pipeline.flushCurators(result.scanned);
   return result;
 }

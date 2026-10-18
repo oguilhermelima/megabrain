@@ -39,6 +39,7 @@ export async function rename(daemon: ChatDaemon, id: string, title: string): Pro
 export async function remove(daemon: ChatDaemon, id: string): Promise<{ removed: string }> {
     await daemon.requireChat(id);
     daemon.removed.add(id);
+    daemon.summarizer.removeChat(id);
     const child = daemon.children.get(id);
     daemon.children.delete(id);
     daemon.clearStartTimer(id);

@@ -181,9 +181,10 @@ export async function executeChat(args: readonly string[], environment: Environm
     }
     if (verb === "summarize") {
       const [id, ...tail] = rest;
-      if (!id || tail.some((arg) => arg !== "--json") || tail.length > 1) throw new Error("Usage: megabrain chat summarize <id> [--json]");
-      value = await callChatd(dir, { operation: "summarize", id }, environment, processAdapter);
-      return ok(tail.length ? argsJson(value) : `${(value as { text: string }).text}\n`);
+      const force = tail.includes("--force"), json = tail.includes("--json");
+      if (!id || tail.some((arg) => arg !== "--json" && arg !== "--force") || new Set(tail).size !== tail.length) throw new Error("Usage: megabrain chat summarize <id> [--force] [--json]");
+      value = await callChatd(dir, { operation: "summarize", id, force }, environment, processAdapter);
+      return ok(json ? argsJson(value) : `${(value as { text: string }).text}\n`);
     }
     if (verb === "summaries") {
       const [id, ...tail] = rest;

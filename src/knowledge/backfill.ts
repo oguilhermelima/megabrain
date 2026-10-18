@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { allEntries } from "../chat/summary-library.js";
 import type { KnowledgePipeline } from "./pipeline.js";
 import { extractRefs, mergeRefs } from "./refs.js";
-import { knowledgeRoot } from "./store.js";
+import { knowledgeRoot, openProject } from "./store.js";
 
 export type BackfillResult = { curated: number; failed: number; skipped: number };
 
@@ -30,16 +30,23 @@ export async function backfillSummaries(options: { stateDir: string; pipeline: K
   const done = readDone(stateDir);
   const result: BackfillResult = { curated: 0, failed: 0, skipped: 0 };
   const entries = (await allEntries(stateDir)).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const queued: typeof entries = [];
   for (const entry of entries) {
     if (done.has(entry.id) || pipeline.blocked(entry.repo) !== null) { result.skipped += 1; continue; }
     const outcome = await pipeline.curateSummary({
-      sessionKeys: [`chat:${entry.chatId}`], chatId: entry.chatId, agent: entry.agent, model: null, repo: entry.repo, cwd: entry.worktree, branch: entry.branch,
+      sessionKeys: [`chat:${entry.chatId}`], chatId: entry.chatId, agent: entry.agent, model: null, repo: entry.repo, cwd: entry.worktree, branch: entry.branch, deferCurator: true,
       worktree: entry.worktree, startedAt: entry.createdAt, endedAt: entry.createdAt, title: entry.title, turns: [],
     }, { title: entry.title, text: entry.text, refs: mergeRefs(extractRefs(entry.text), entry.refs ?? []), keys: [], userTurns: entry.userTurns });
     if (outcome.status !== "curated") { result.failed += 1; break; }
-    done.add(entry.id);
-    writeDone(stateDir, done);
-    result.curated += 1;
+    queued.push(entry);
   }
+  const deferred = await pipeline.flushCurators([...new Set(queued.map((entry) => entry.repo))]);
+  for (const entry of queued) {
+    const chat = openProject(stateDir, entry.repo).chat(entry.chatId);
+    if (chat?.curated === true) { done.add(entry.id); result.curated += 1; }
+    else if (deferred.has(entry.repo)) result.skipped += 1;
+    else result.failed += 1;
+  }
+  if (queued.length > 0) writeDone(stateDir, done);
   return result;
 }

@@ -12,10 +12,12 @@ import { distill, linesAfter, rawText, type DistillTurn } from "../knowledge/dis
 import { extractRefs, isWellFormedRef, mergeRefs } from "../knowledge/refs.js";
 import { togglesFor } from "../knowledge/settings.js";
 import type { KnowledgePipeline } from "../knowledge/pipeline.js";
+import { summaryDue } from "../knowledge/summary-trigger.js";
+import { modelUsage, trackedModelCall } from "../knowledge/model-usage.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 export type SummaryAgent = "claude" | "codex" | "grok" | "agy";
-export type SummarySettings = { enabled: boolean; agent: SummaryAgent; model: string; effort: string | null; everyMessages: number; everyMinutes: number; retitle: boolean };
+export type SummarySettings = { enabled: boolean; agent: SummaryAgent; model: string; effort: string | null; idleMinutes: number; minNewTurns: number; maxTurns: number; curatorEveryMinutes: number; dailyCallLimit: number; retitle: boolean };
 /** A line of the transcript the summary marked as setting direction or deciding something, with why. */
 export type SummaryKey = { cursor: string; why: string };
 /** What a chat record keeps: the latest summary. The history lives in the chat's summaries.jsonl. */
@@ -23,7 +25,7 @@ export type ChatSummary = { text: string; updatedAt: string; model: string };
 /** One line of summaries.jsonl: the summary plus the user-turn count it covered, which is where the next one counts from. */
 export type SummaryEntry = ChatSummary & { refs?: Ref[]; keys?: SummaryKey[]; title: string | null; userTurns: number; id: string; chatId: string; repo: string; project: string; worktree: string; branch: string; agent: SummaryAgent; createdAt: string };
 
-export const defaultSummarySettings: SummarySettings = { enabled: false, agent: "claude", model: "claude-haiku-5-5", effort: null, everyMessages: 6, everyMinutes: 10, retitle: true };
+export const defaultSummarySettings: SummarySettings = { enabled: false, agent: "claude", model: "claude-haiku-5-5", effort: null, idleMinutes: 20, minNewTurns: 3, maxTurns: 40, curatorEveryMinutes: 60, dailyCallLimit: 100, retitle: true };
 const AGENTS: readonly string[] = ["claude", "codex", "grok", "agy"];
 const DEFAULT_TIMEOUT_MS = 120_000;
 const EVENT_CHARS = 1500;
@@ -36,15 +38,18 @@ export function parseSummarySettings(raw: string): Result<SummarySettings> {
   try { value = JSON.parse(raw); } catch { return failed("chat-summaries: not valid JSON", 2); }
   if (typeof value !== "object" || value === null || Array.isArray(value)) return failed("chat-summaries: expected a JSON object", 2);
   const input = value as Record<string, unknown>;
-  const unknown = Object.keys(input).find((key) => !Object.hasOwn(defaultSummarySettings, key));
+  const legacy = new Set(["everyMessages", "everyMinutes"]);
+  const unknown = Object.keys(input).find((key) => !Object.hasOwn(defaultSummarySettings, key) && !legacy.has(key));
   if (unknown !== undefined) return failed(`chat-summaries: unknown key ${unknown}`, 2);
-  const merged = { ...defaultSummarySettings, ...input };
+  const { everyMessages: _everyMessages, everyMinutes: _everyMinutes, ...current } = input;
+  const merged = { ...defaultSummarySettings, ...current };
   const positive = (number: unknown): number is number => typeof number === "number" && Number.isFinite(number) && number > 0;
   if (typeof merged.enabled !== "boolean" || typeof merged.retitle !== "boolean") return failed("chat-summaries: enabled and retitle must be booleans", 2);
   if (typeof merged.agent !== "string" || !AGENTS.includes(merged.agent)) return failed("chat-summaries: agent must be claude, codex, grok or agy", 2);
   if (typeof merged.model !== "string") return failed("chat-summaries: model must be a string", 2);
   if (merged.effort !== null && typeof merged.effort !== "string") return failed("chat-summaries: effort must be a string or null", 2);
-  if (!positive(merged.everyMessages) || !positive(merged.everyMinutes)) return failed("chat-summaries: everyMessages and everyMinutes must be positive numbers", 2);
+  if (![merged.idleMinutes, merged.minNewTurns, merged.maxTurns, merged.curatorEveryMinutes, merged.dailyCallLimit].every(positive)) return failed("chat-summaries: summary cadence and budget settings must be positive numbers", 2);
+  if (![merged.minNewTurns, merged.maxTurns, merged.dailyCallLimit].every(Number.isInteger)) return failed("chat-summaries: minNewTurns, maxTurns and dailyCallLimit must be whole numbers", 2);
   return ok(merged as SummarySettings);
 }
 
@@ -191,8 +196,22 @@ export type SummarizerOptions = { store: ChatStore; stateDir: string; environmen
 
 export class ChatSummarizer {
   private readonly running = new Map<string, Promise<ChatSummary | null>>();
+  private readonly idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private indexing: Promise<unknown> = Promise.resolve();
   constructor(private readonly options: SummarizerOptions) {}
+
+  /** Drops a chat's scheduled work when its record is removed. */
+  removeChat(id: string): void {
+    const timer = this.idleTimers.get(id);
+    if (timer !== undefined) clearTimeout(timer);
+    this.idleTimers.delete(id);
+  }
+
+  /** Releases all scheduled work when the daemon shuts down. */
+  close(): void {
+    for (const timer of this.idleTimers.values()) clearTimeout(timer);
+    this.idleTimers.clear();
+  }
 
   /** After a turn ends: summarise when enough user turns or minutes passed. A failure is logged and retried at the next turn end. */
   async turnEnded(id: string): Promise<void> {
@@ -205,19 +224,35 @@ export class ChatSummarizer {
       const turns = (await this.options.store.events(id)).filter((line) => line.event?.kind === "user").length;
       if (turns <= covered) return;
       if (!await this.allowed(chat)) return;
-      const since = Date.parse(chat.summary?.updatedAt ?? chat.createdAt);
-      const due = turns - covered >= settings.everyMessages || Date.now() - since >= settings.everyMinutes * 60_000;
-      if (due) await this.job(chat, settings, true);
+      const events = (await this.options.store.events(id)).filter((line) => line.event !== undefined);
+      const lastActivityAt = events.at(-1)?.event?.at ?? chat.createdAt;
+      const due = summaryDue({ newTurns: turns - covered, totalTurns: turns, lastActivityAt, now: new Date(), idleMinutes: settings.idleMinutes, minNewTurns: settings.minNewTurns, maxTurns: settings.maxTurns });
+      if (due) {
+        const result = await this.job(chat, settings, true);
+        if (result === null && modelUsage(this.options.stateDir, 1).budgetUsed >= settings.dailyCallLimit) {
+          const retryAt = new Date(); retryAt.setHours(24, 0, 0, 0);
+          const timer = setTimeout(() => { this.idleTimers.delete(id); void this.turnEnded(id); }, Math.max(1, retryAt.getTime() - Date.now()));
+          timer.unref?.();
+          this.idleTimers.set(id, timer);
+        }
+      }
+      else if (turns - covered >= settings.minNewTurns && turns - covered < settings.maxTurns) {
+        const previous = this.idleTimers.get(id);
+        if (previous !== undefined) clearTimeout(previous);
+        const timer = setTimeout(() => { this.idleTimers.delete(id); void this.turnEnded(id); }, settings.idleMinutes * 60_000);
+        timer.unref?.();
+        this.idleTimers.set(id, timer);
+      }
     } catch (error) { this.log(id, error); }
   }
 
   /** On demand: ignores the thresholds and the enabled switch, and reports a failure to the caller. */
-  async summarize(id: string): Promise<ChatSummary> {
+  async summarize(id: string, force = false): Promise<ChatSummary> {
     const chat = await this.options.store.get(id);
     if (chat === null) throw new Error(`unknown chat: ${id}`);
     if (!await this.allowed(chat)) throw new Error("knowledge is turned off for this project, so its chats are not sent to a model");
     const settings = readSummarySettings(this.options.stateDir);
-    const summary = await this.job(chat, settings, false);
+    const summary = await this.job(chat, settings, false, force);
     if (summary === null) throw new Error("a summary is already being written for this chat");
     return summary;
   }
@@ -228,14 +263,14 @@ export class ChatSummarizer {
   }
 
   /** One job per chat: a second request while one runs gets null. */
-  private job(chat: Chat, settings: SummarySettings, swallow: boolean): Promise<ChatSummary | null> {
+  private job(chat: Chat, settings: SummarySettings, swallow: boolean, force = false): Promise<ChatSummary | null> {
     if (this.running.has(chat.id)) return Promise.resolve(null);
-    const promise = this.write(chat.id, settings).catch((error) => { if (!swallow) throw error; this.log(chat.id, error); return null; }).finally(() => this.running.delete(chat.id));
+    const promise = this.write(chat.id, settings, force).catch((error) => { if (!swallow) throw error; if (error?.name !== "ModelBudgetExceeded") this.log(chat.id, error); return null; }).finally(() => this.running.delete(chat.id));
     this.running.set(chat.id, promise);
     return promise;
   }
 
-  private async write(id: string, settings: SummarySettings): Promise<ChatSummary> {
+  private async write(id: string, settings: SummarySettings, force = false): Promise<ChatSummary> {
     const { store, stateDir, environment } = this.options;
     const lines = await store.events(id);
     const turns = lines.filter((line) => line.event?.kind === "user").length;
@@ -248,7 +283,7 @@ export class ChatSummarizer {
     });
     // Incremental: everything up to the previous summary is already in it.
     const prompt = buildSummaryPrompt(previous?.text ?? null, linesAfter(distill(conversation), previous?.userTurns ?? 0));
-    const output = await askModel(settings, prompt, environment);
+    const output = await trackedModelCall({ stateDir, dailyLimit: settings.dailyCallLimit, force, kind: "summary", project: chat?.cwd ?? "", session: id, agent: settings.agent, model: settings.model, prompt, call: () => askModel(settings, prompt, environment) });
     if (this.options.alive?.(id) === false) throw new Error("chat was removed");
     const answer = parseSummaryAnswer(output);
     if (answer.text === "") throw new Error("summary agent answered with nothing");
@@ -260,19 +295,19 @@ export class ChatSummarizer {
     appendFileSync(summariesPath(stateDir, id), `${JSON.stringify({ ...summary, title: answer.title, refs, keys: answer.keys, userTurns: turns, id: crypto.randomUUID(), chatId: id, ...location, agent: (current ?? chat)?.agent ?? "claude", createdAt: summary.updatedAt } satisfies SummaryEntry)}\n`, { mode: 0o600 });
     if (current === null) return summary;
     await this.apply(current, summary, togglesFor(stateDir, location.repo).retitle ? answer.title : null);
-    await this.curate(current, location, summary, answer, conversation, turns);
+    await this.curate(current, location, summary, answer, conversation, turns, force);
     return summary;
   }
 
   /** Files the summary into the project's topics; the summary stands even when this fails, and the next pass retries it. */
-  private async curate(chat: Chat, location: Awaited<ReturnType<typeof resolveLocation>>, summary: ChatSummary, answer: ReturnType<typeof parseSummaryAnswer>, turns: DistillTurn[], userTurns: number): Promise<void> {
+  private async curate(chat: Chat, location: Awaited<ReturnType<typeof resolveLocation>>, summary: ChatSummary, answer: ReturnType<typeof parseSummaryAnswer>, turns: DistillTurn[], userTurns: number, forceBudget = false): Promise<void> {
     const { pipeline } = this.options;
     if (pipeline === undefined) return;
     try {
       await pipeline.curateSummary({
         sessionKeys: [`chat:${chat.id}`, ...(chat.agentSessionId === null ? [] : [`${chat.agent}:${chat.agentSessionId}`])],
         chatId: chat.id, agent: chat.agent, model: chat.model, repo: location.repo, cwd: chat.cwd, branch: location.branch, worktree: location.worktree,
-        startedAt: chat.createdAt, endedAt: summary.updatedAt, title: answer.title, turns,
+        startedAt: chat.createdAt, endedAt: summary.updatedAt, title: answer.title, turns, forceBudget,
       }, { title: answer.title, text: answer.text, refs: answer.refs, keys: answer.keys, userTurns });
     } catch (error) { this.log(chat.id, error); }
   }

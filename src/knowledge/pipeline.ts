@@ -5,6 +5,10 @@ import { askModel, buildSummaryPrompt, parseSummaryAnswer, readSummarySettings, 
 import { openProject } from "./store.js";
 import { togglesFor } from "./settings.js";
 import type { ChatRecord, Ref, TranscriptLine } from "./types.js";
+import { summaryDue } from "./summary-trigger.js";
+import { ModelBudgetExceeded, trackedModelCall } from "./model-usage.js";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -28,15 +32,19 @@ export type SessionInput = {
   title?: string | null;
   turns: DistillTurn[];
   parentSessionKey?: string | undefined;
+  /** Explicit knowledge scan: bypasses work-block thresholds but remains subject to the daily budget. */
+  manual?: boolean;
+  deferCurator?: boolean;
+  forceBudget?: boolean;
 };
 
 export type SummaryResult = { title: string | null; text: string; refs: Ref[]; keys: SummaryKey[]; userTurns: number };
 
 export type ProcessResult =
   | { status: "disabled" | "nothing-new" | "summary-failed"; error?: string }
-  | { status: "worker" | "curated" | "curator-failed"; chatId: string; topicId?: string; error?: string };
+  | { status: "queued" | "worker" | "curated" | "curator-failed"; chatId: string; topicId?: string; error?: string };
 
-export type PipelineOptions = { stateDir: string; environment: Environment; ask?: Ask; now?: () => Date };
+export type PipelineOptions = { stateDir: string; environment: Environment; ask?: Ask; now?: () => Date; forceBudget?: boolean };
 
 function commandSource(command: string): Ref["source"] | undefined {
   const segments = command.split(/&&|\|\||[;|]/).map((segment) => segment.trim());
@@ -56,6 +64,8 @@ function userTurnCount(turns: readonly DistillTurn[]): number { return turns.fil
 export class KnowledgePipeline {
   private readonly ask: Ask;
   private readonly now: () => Date;
+  private readonly curatorTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly curatorRuns = new Map<string, Promise<Set<string>>>();
   constructor(private readonly options: PipelineOptions) {
     this.now = options.now ?? (() => new Date());
     this.ask = options.ask ?? (async (prompt) => askModel(readSummarySettings(options.stateDir), prompt, options.environment));
@@ -87,17 +97,28 @@ export class KnowledgePipeline {
     }
 
     if (users === 0) return { status: "nothing-new" };
+    const settings = readSummarySettings(stateDir);
+    if (users < settings.minNewTurns) return { status: "nothing-new" };
     if (users <= covered) {
-      if (existing !== null && !existing.curated && existing.summary !== "") return this.curate(input, existing, lines);
+      if (existing !== null && !existing.curated && existing.summary !== "") {
+        if (input.deferCurator === true) return { status: "curated", chatId: existing.id };
+        const deferred = await this.flushCurators([input.repo], input.forceBudget);
+        const refreshed = openProject(stateDir, input.repo).chat(existing.id);
+        if (refreshed?.curated === true) return { status: "curated", chatId: existing.id, topicId: refreshed.topics.at(-1) };
+        const last = this.lastCuratorAt(project.dir);
+        return deferred.has(input.repo) || last > 0 && this.now().getTime() - last < readSummarySettings(stateDir).curatorEveryMinutes * 60_000 ? { status: "queued", chatId: existing.id } : { status: "curator-failed", chatId: existing.id };
+      }
       return { status: "nothing-new" };
     }
-    const settings = readSummarySettings(stateDir);
-    const since = Date.parse(existing?.summarizedAt ?? input.startedAt);
-    if (users - covered < settings.everyMessages && this.now().getTime() - since < settings.everyMinutes * 60_000) return { status: "nothing-new" };
+    const lastActivityAt = input.endedAt || input.turns.at(-1)?.at || input.startedAt;
+    if (input.manual !== true && !summaryDue({ newTurns: users - covered, totalTurns: users, lastActivityAt, now: this.now(), idleMinutes: settings.idleMinutes, minNewTurns: settings.minNewTurns, maxTurns: settings.maxTurns })) return { status: "nothing-new" };
 
     let output: string;
-    try { output = await this.ask(buildSummaryPrompt(existing?.summary ?? null, linesAfter(lines, covered)), "summary"); }
-    catch (error) { return { status: "summary-failed", error: error instanceof Error ? error.message : String(error) }; }
+    try {
+      const prompt = buildSummaryPrompt(existing?.summary ?? null, linesAfter(lines, covered));
+      output = await trackedModelCall({ stateDir, dailyLimit: settings.dailyCallLimit, force: this.options.forceBudget || input.forceBudget, kind: "summary", project: input.repo, session: input.chatId ?? input.sessionKeys[0] ?? "session", agent: input.agent, model: input.model ?? settings.model, prompt, now: this.now, call: () => this.ask(prompt, "summary") });
+    }
+    catch (error) { if (error instanceof ModelBudgetExceeded) return { status: "nothing-new" }; return { status: "summary-failed", error: error instanceof Error ? error.message : String(error) }; }
     const answer = parseSummaryAnswer(output);
     if (answer.text === "") return { status: "summary-failed", error: "summary agent answered with nothing" };
     return this.curateSummary(input, { ...answer, userTurns: users });
@@ -132,7 +153,120 @@ export class KnowledgePipeline {
     };
     project.saveChat(record);
     if (lines.length > 0) project.writeTranscript(id, lines);
-    return this.curate(input, record, lines.length > 0 ? lines : project.transcript(id));
+    if (input.deferCurator === true) return { status: "curated", chatId: id };
+    const deferred = await this.flushCurators([input.repo], input.forceBudget);
+    const updated = project.chat(id);
+    if (updated?.curated === true) return { status: "curated", chatId: id, topicId: updated.topics.at(-1) };
+    const last = this.lastCuratorAt(project.dir);
+    if (deferred.has(input.repo) || last > 0 && this.now().getTime() - last < readSummarySettings(this.options.stateDir).curatorEveryMinutes * 60_000) return { status: "queued", chatId: id };
+    return { status: "curator-failed", chatId: id };
+  }
+
+  private lastCuratorAt(projectDir: string): number {
+    try { return Date.parse((JSON.parse(readFileSync(join(projectDir, "curator.json"), "utf8")) as { at: string }).at) || 0; } catch { return 0; }
+  }
+
+  private scheduleCurator(repo: string, delay: number): void {
+    const current = this.curatorTimers.get(repo);
+    if (current !== undefined) clearTimeout(current);
+    const timer = setTimeout(() => { this.curatorTimers.delete(repo); void this.flushCurators([repo]); }, Math.max(1, delay));
+    timer.unref?.();
+    this.curatorTimers.set(repo, timer);
+  }
+
+  /** Runs one curator call for all pending summaries in each due project. Invalid or omitted items stay pending. */
+  async flushCurators(repos: readonly string[], forceBudget = false): Promise<Set<string>> {
+    const deferred = new Set<string>();
+    await Promise.all([...new Set(repos)].map(async (repo) => {
+      const active = this.curatorRuns.get(repo);
+      if (active !== undefined) { for (const item of await active) deferred.add(item); return; }
+      const running = this.flushCuratorsUnlocked([repo], forceBudget);
+      this.curatorRuns.set(repo, running);
+      try { for (const item of await running) deferred.add(item); }
+      finally { this.curatorRuns.delete(repo); }
+    }));
+    return deferred;
+  }
+
+  private async flushCuratorsUnlocked(repos: readonly string[], forceBudget = false): Promise<Set<string>> {
+    const deferred = new Set<string>();
+    const settings = readSummarySettings(this.options.stateDir);
+    for (const repo of new Set(repos)) {
+      const project = openProject(this.options.stateDir, repo);
+      const marker = join(project.dir, "curator.json");
+      let last = 0;
+      try { last = Date.parse((JSON.parse(readFileSync(marker, "utf8")) as { at: string }).at) || 0; } catch { /* first curator run */ }
+      if (last > 0 && this.now().getTime() - last < settings.curatorEveryMinutes * 60_000) {
+        deferred.add(repo);
+        this.scheduleCurator(repo, last + settings.curatorEveryMinutes * 60_000 - this.now().getTime());
+        continue;
+      }
+      const pending = project.chats().filter((record) => !record.curated && record.summary !== "").sort((a, b) => a.summarizedAt.localeCompare(b.summarizedAt));
+      if (pending.length === 0) continue;
+      const linesById = new Map(pending.map((record) => [record.id, project.transcript(record.id)]));
+      const promptFor = (record: ChatRecord): string => {
+        const lines = linesById.get(record.id) ?? [];
+        const keys = record.pendingKeys ?? [];
+        return buildCuratorPrompt({ title: record.title, summary: record.summary, branch: record.branch, refs: (record.verifiedRefs ?? record.refs).filter((ref) => ref.kind !== "file"), keys: keys.flatMap((key) => { const line = lines.find((candidate) => candidate.cursor === key.cursor); return line === undefined ? [] : [{ ...key, text: line.text }]; }), topics: project.topics(), candidates: candidateTopics(project.topics(), { branch: record.branch, refs: record.verifiedRefs ?? record.refs, text: `${record.title ?? ""} ${record.summary}` }) }).slice(0, 24_000);
+      };
+      const records: ChatRecord[] = [];
+      let inputChars = 0;
+      for (const record of [...pending].reverse()) {
+        const size = promptFor(record).length;
+        if (inputChars + size > 24_000) break;
+        records.unshift(record);
+        inputChars += size;
+      }
+      const agent = records[0]?.agent ?? "claude";
+      const model = records[0]?.model ?? settings.model;
+      const prompt = records.length === 1 ? promptFor(records[0] as ChatRecord) : ["Curate every chat independently. Reply with one JSON object: {\"results\":[{\"chatId\":\"...\", ...curator fields}]}. Include each input chatId once. Use the same topic/sections/decisions/refs/status fields accepted by the single-summary curator. Never include unknown chat ids.", ...records.map((record) => `CHAT ${record.id}\n${promptFor(record)}`)].join("\n\n---\n\n");
+      let output: string;
+      try { output = await trackedModelCall({ stateDir: this.options.stateDir, dailyLimit: settings.dailyCallLimit, force: this.options.forceBudget || forceBudget, kind: "curator", project: repo, session: records.map((record) => record.id).join(","), agent, model, prompt, now: this.now, call: () => this.ask(prompt, "curator") }); }
+      catch (error) {
+        if (error instanceof ModelBudgetExceeded) {
+          deferred.add(repo);
+          const nextDay = new Date(this.now()); nextDay.setHours(24, 0, 0, 0);
+          this.scheduleCurator(repo, nextDay.getTime() - this.now().getTime());
+        } else process.stderr.write(`knowledge: curator batch for ${repo} failed: ${error instanceof Error ? error.message : String(error)}\n`);
+        continue;
+      }
+      const outputs = new Map<string, string>();
+      if (records.length === 1) outputs.set((records[0] as ChatRecord).id, output);
+      else {
+        try {
+          const parsed = JSON.parse(output) as { results?: unknown };
+          if (Array.isArray(parsed.results)) for (const item of parsed.results) {
+            if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+            const value = item as Record<string, unknown>;
+            if (typeof value.chatId !== "string" || !records.some((record) => record.id === value.chatId) || outputs.has(value.chatId)) continue;
+            const { chatId, ...answer } = value;
+            outputs.set(chatId, JSON.stringify(answer));
+          }
+        } catch { /* every item remains pending for the next run */ }
+      }
+      const newTopics = new Map<string, string>();
+      for (const record of records) {
+        const answer = outputs.get(record.id);
+        if (answer === undefined) continue;
+        const lines = linesById.get(record.id) ?? [];
+        let normalized = answer;
+        try {
+          const value = JSON.parse(answer) as { topic?: { new?: { title?: string } } };
+          const title = value.topic?.new?.title;
+          if (title !== undefined && newTopics.has(title)) normalized = JSON.stringify({ ...(value as object), topic: { assign: newTopics.get(title) } });
+        } catch { /* validator below reports invalid output */ }
+        const applied = applyCuratorOutput(project, normalized, { chatId: record.id, at: this.now().toISOString(), branch: record.branch, refs: record.verifiedRefs ?? record.refs, proposedRefs: record.pendingRefs ?? [], lines, keyMessages: record.pendingKeys ?? [] });
+        if (applied.kind !== "ok") { process.stderr.write(`knowledge: curator answer for ${record.id} rejected: ${applied.error}\n`); continue; }
+        if (record.pendingKeys !== undefined || record.pendingRefs !== undefined) newTopics.set(applied.value.title, applied.value.id);
+        const { pendingKeys: _keys, pendingRefs: _refs, ...rest } = record;
+        project.saveChat({ ...rest, topics: [...new Set([...record.topics, applied.value.id])], curated: true });
+      }
+      mkdirSync(project.dir, { recursive: true, mode: 0o700 });
+      const temporary = `${marker}.${process.pid}.tmp`;
+      writeFileSync(temporary, `${JSON.stringify({ at: this.now().toISOString() })}\n`, { mode: 0o600 });
+      renameSync(temporary, marker);
+    }
+    return deferred;
   }
 
   private blank(input: SessionInput, id: string): ChatRecord {
@@ -181,7 +315,10 @@ export class KnowledgePipeline {
       candidates: candidateTopics(project.topics(), { branch: record.branch, refs: record.verifiedRefs ?? record.refs, text: `${record.title ?? ""} ${record.summary}` }),
     });
     let output: string;
-    try { output = await this.ask(prompt, "curator"); }
+    try {
+      const settings = readSummarySettings(this.options.stateDir);
+      output = await trackedModelCall({ stateDir: this.options.stateDir, dailyLimit: settings.dailyCallLimit, force: this.options.forceBudget || input.forceBudget, kind: "curator", project: input.repo, session: record.id, agent: input.agent, model: input.model ?? settings.model, prompt, now: this.now, call: () => this.ask(prompt, "curator") });
+    }
     catch (error) { return { status: "curator-failed", chatId: record.id, error: error instanceof Error ? error.message : String(error) }; }
     const applied = applyCuratorOutput(project, output, { chatId: record.id, at: this.now().toISOString(), branch: record.branch, refs: record.verifiedRefs ?? record.refs, proposedRefs: record.pendingRefs ?? [], lines, keyMessages: keys });
     if (applied.kind !== "ok") {

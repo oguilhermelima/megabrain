@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { backfillSummaries } from "../../src/knowledge/backfill.js";
@@ -30,7 +30,7 @@ function harness(options: { summariesOn?: boolean } = {}) {
   directories.push(root);
   const state = join(root, "state"), home = join(root, "home"), repo = join(root, "repo");
   for (const directory of [state, home, repo]) mkdirSync(directory, { recursive: true });
-  writeFileSync(join(state, "chat-summaries.json"), JSON.stringify({ ...defaultSummarySettings, enabled: options.summariesOn ?? true, model: "stub" }));
+  writeFileSync(join(state, "chat-summaries.json"), JSON.stringify({ ...defaultSummarySettings, enabled: options.summariesOn ?? true, model: "stub", minNewTurns: 2, idleMinutes: 0.01 }));
   const calls: Call[] = [];
   const curator: string[] = [];
   let counter = 0;
@@ -153,7 +153,7 @@ describe("a project with summaries off sends nothing to any model", () => {
     expect(existsSync(log)).toBe(false);
     await expect(summarizer.summarize(A)).rejects.toThrow();
     expect((await store.get(A))?.title).toBe("first message");
-    await summarizer.turnEnded(B);
+    await summarizer.summarize(B);
     expect(existsSync(log)).toBe(true);
     expect((await store.get(B))?.title).toBe("New title");
   });
@@ -171,7 +171,7 @@ describe("a project with summaries off sends nothing to any model", () => {
     await store.put({ id, agent: "claude", model: null, cwd: h.repo, title: "first message", state: "idle", mode: "chat", agentSessionId: null, createdAt: "2020-01-01T00:00:00.000Z", lastActivityAt: null, summary: null, titleSource: "first-message" });
     await store.append(id, { id: "e1", at: NOW, kind: "user", text: "hello" });
     writeFileSync(join(h.state, "knowledge-settings.json"), JSON.stringify({ projects: { [h.repo]: { retitle: false } } }));
-    await new ChatSummarizer({ store, stateDir: h.state, environment, emit: async () => {} }).turnEnded(id);
+    await new ChatSummarizer({ store, stateDir: h.state, environment, emit: async () => {} }).summarize(id);
     const chat = await store.get(id);
     expect(chat?.summary?.text).toBe("Done.");
     expect(chat?.title).toBe("first message");
@@ -179,6 +179,30 @@ describe("a project with summaries off sends nothing to any model", () => {
 });
 
 describe("pipeline", () => {
+  test("work-block trigger waits for quiet and three new user turns, while long sessions cap at forty", async () => {
+    const h = harness();
+    writeFileSync(join(h.state, "chat-summaries.json"), JSON.stringify({ ...defaultSummarySettings, enabled: true, model: "stub", idleMinutes: 20, minNewTurns: 3, maxTurns: 40 }));
+    const fresh = session(h, { startedAt: NOW, endedAt: NOW }, 3);
+    expect((await h.pipeline.processSession(fresh)).status).toBe("nothing-new");
+    expect(h.calls).toHaveLength(0);
+    h.advance(21);
+    expect((await h.pipeline.processSession(fresh)).status).toBe("curated");
+    h.calls.length = 0;
+    const many = session(h, { startedAt: NOW, endedAt: NOW }, 43);
+    expect((await h.pipeline.processSession(many)).status).toBe("queued");
+    h.advance(60);
+    expect((await h.pipeline.processSession(many)).status).toBe("curated");
+    expect(h.purposes()).toEqual(["summary", "curator"]);
+  });
+
+  test("a session with fewer than three user turns is never summarized, even after it goes quiet", async () => {
+    const h = harness();
+    writeFileSync(join(h.state, "chat-summaries.json"), JSON.stringify({ ...defaultSummarySettings, enabled: true, model: "stub", idleMinutes: 20, minNewTurns: 3, maxTurns: 40 }));
+    h.advance(120);
+    expect((await h.pipeline.processSession(session(h, { startedAt: NOW, endedAt: NOW }, 2))).status).toBe("nothing-new");
+    expect(h.calls).toHaveLength(0);
+  });
+
   test("a session becomes a summary, a topic, a chat record with mechanical refs and a distilled transcript", async () => {
     const h = harness();
     const result = await h.pipeline.processSession(session(h));
@@ -202,21 +226,25 @@ describe("pipeline", () => {
     expect(h.calls).toHaveLength(0);
   });
 
-  test("a little new content waits for the cadence; enough messages or minutes make exactly one summary and one curator call", async () => {
+  test("a little new content waits for the cadence; summaries queue while curator calls batch by the hour", async () => {
     const h = harness();
     await h.pipeline.processSession(session(h));
+    writeFileSync(join(h.state, "chat-summaries.json"), JSON.stringify({ ...defaultSummarySettings, enabled: true, model: "stub", idleMinutes: 20, minNewTurns: 3, maxTurns: 40, curatorEveryMinutes: 60 }));
     h.calls.length = 0;
     expect((await h.pipeline.processSession(session(h, {}, 4))).status).toBe("nothing-new");
     expect(h.calls).toHaveLength(0);
     const assign = JSON.stringify({ topic: { assign: h.project.topics()[0]?.id } });
     h.curator.push(assign, assign);
     h.advance(11);
+    expect((await h.pipeline.processSession(session(h, {}, 5))).status).toBe("queued");
+    expect(h.purposes()).toEqual(["summary"]);
+    expect(h.calls[0]?.prompt).toContain("This feature groups summaries by topic (summary 1)");
+    expect(h.project.transcript("c1").filter((line) => line.role === "person")).toHaveLength(5);
+    h.advance(60);
     expect((await h.pipeline.processSession(session(h, {}, 4))).status).toBe("curated");
     expect(h.purposes()).toEqual(["summary", "curator"]);
-    expect(h.calls[0]?.prompt).toContain("This feature groups summaries by topic (summary 1)");
-    expect(h.project.transcript("c1").filter((line) => line.role === "person")).toHaveLength(4);
     h.calls.length = 0;
-    expect((await h.pipeline.processSession(session(h, {}, 10))).status).toBe("curated");
+    expect((await h.pipeline.processSession(session(h, {}, 10))).status).toBe("queued");
     expect(h.project.topics()).toHaveLength(1);
     expect(readdirSync(join(h.project.dir, "chats")).filter((name) => name.endsWith(".json"))).toEqual(["c1.json"]);
   });
@@ -238,10 +266,11 @@ describe("pipeline", () => {
   test("a bad curator answer writes no topic and is retried at the next pass without asking for the summary again", async () => {
     const h = harness();
     h.curator.push("I would put this under summaries.");
-    expect((await h.pipeline.processSession(session(h))).status).toBe("curator-failed");
+    expect((await h.pipeline.processSession(session(h))).status).toBe("queued");
     expect(h.project.topics()).toHaveLength(0);
     expect(h.project.chat("c1")).toMatchObject({ curated: false, topics: [] });
     h.calls.length = 0;
+    h.advance(60);
     expect((await h.pipeline.processSession(session(h))).status).toBe("curated");
     expect(h.purposes()).toEqual(["curator"]);
     expect(h.project.topics()).toHaveLength(1);
@@ -271,7 +300,9 @@ describe("pipeline", () => {
     await h.pipeline.processSession(session(h, { branch: "feat/summaries-by-branch" }));
     const first = h.project.topics()[0] as Topic;
     h.curator.push(JSON.stringify({ topic: { assign: first.id }, sections: { state: "Now a wiki." } }));
-    await h.pipeline.processSession(session(h, { sessionKeys: ["chat:c2"], chatId: "c2", branch: "feat/summaries-wiki" }));
+    await h.pipeline.processSession(session(h, { sessionKeys: ["chat:c2"], chatId: "c2", branch: "feat/summaries-wiki" }, 3));
+    h.advance(60);
+    await h.pipeline.processSession(session(h, { sessionKeys: ["chat:c2"], chatId: "c2", branch: "feat/summaries-wiki" }, 3));
     expect(h.calls.at(-1)?.prompt).toContain(first.id);
     expect(h.calls.at(-1)?.prompt).toContain("Summaries of chats.");
     const topics = h.project.topics();
@@ -291,6 +322,8 @@ function claudeLog(h: ReturnType<typeof harness>, id: string, cwd: string, texts
     { type: "assistant", uuid: `a${index}`, timestamp: "2026-10-17T10:01:00.000Z", message: { id: `m${index}`, content: [{ type: "text", text: `reply ${index}` }] } },
   ]);
   writeFileSync(path, rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
+  const endedAt = new Date("2026-10-17T10:02:00.000Z");
+  utimesSync(path, endedAt, endedAt);
   return path;
 }
 
@@ -302,14 +335,14 @@ function tree(directory: string): string[] {
 describe("scanner", () => {
   test("it reads sessions of an enabled project from the agents' logs, once each, without writing to them", async () => {
     const h = harness();
-    claudeLog(h, "S1", h.repo, ["make summaries a wiki", "and add a map"]);
+    claudeLog(h, "S1", h.repo, ["make summaries a wiki", "and add a map", "include an index"]);
     const before = tree(join(h.home, ".claude"));
-    const first = await scanProjects({ stateDir: h.state, home: h.home, environment: h.environment, pipeline: h.pipeline, projects: [h.repo], dispatchLinks: new Map() });
+    const first = await scanProjects({ stateDir: h.state, home: h.home, environment: h.environment, pipeline: h.pipeline, projects: [h.repo], dispatchLinks: new Map(), now: () => new Date(NOW) });
     expect(first.scanned).toEqual([h.repo]);
     expect(h.purposes()).toEqual(["summary", "curator"]);
-    expect(h.project.chatBySession("claude:S1")?.userTurns).toBe(2);
+    expect(h.project.chatBySession("claude:S1")?.userTurns).toBe(3);
     h.calls.length = 0;
-    await scanProjects({ stateDir: h.state, home: h.home, environment: h.environment, pipeline: h.pipeline, projects: [h.repo], dispatchLinks: new Map() });
+    await scanProjects({ stateDir: h.state, home: h.home, environment: h.environment, pipeline: h.pipeline, projects: [h.repo], dispatchLinks: new Map(), now: () => new Date(NOW) });
     expect(h.calls).toHaveLength(0);
     expect(tree(join(h.home, ".claude"))).toEqual(before);
   });
@@ -326,9 +359,9 @@ describe("scanner", () => {
 
   test("a dispatch worker's session is linked to its parent's chat and shown under it", async () => {
     const h = harness();
-    claudeLog(h, "S1", h.repo, ["lead the work", "second"]);
+    claudeLog(h, "S1", h.repo, ["lead the work", "second", "third"]);
     claudeLog(h, "S2", h.repo, ["do lane 1"]);
-    await scanProjects({ stateDir: h.state, home: h.home, environment: h.environment, pipeline: h.pipeline, projects: [h.repo], dispatchLinks: new Map([["claude:S2", "claude:S1"]]) });
+    await scanProjects({ stateDir: h.state, home: h.home, environment: h.environment, pipeline: h.pipeline, projects: [h.repo], dispatchLinks: new Map([["claude:S2", "claude:S1"]]), now: () => new Date(NOW) });
     expect(h.calls.filter((call) => call.purpose === "summary")).toHaveLength(1);
     const parent = h.project.chatBySession("claude:S1");
     const worker = h.project.chatBySession("claude:S2");
@@ -374,11 +407,17 @@ describe("backfill", () => {
   test("existing summaries are curated oldest first, once, and a second run asks nothing", async () => {
     const h = harness();
     seedSummaries(h, [{ chatId: B, createdAt: "2026-10-02T10:00:00.000Z", branch: "feat/two" }, { chatId: A, createdAt: "2026-10-01T10:00:00.000Z", branch: "feat/one" }, { chatId: C, createdAt: "2026-10-03T10:00:00.000Z", branch: "feat/three" }]);
+    h.curator.push(JSON.stringify({ results: [
+      { chatId: A, topic: { new: { kind: "feat", title: "One" } }, sections: { overview: "One." } },
+      { chatId: B, topic: { new: { kind: "feat", title: "Two" } }, sections: { overview: "Two." } },
+      { chatId: C, topic: { new: { kind: "feat", title: "Three" } }, sections: { overview: "Three." } },
+    ] }));
     const first = await backfillSummaries({ stateDir: h.state, pipeline: h.pipeline });
     expect(first).toMatchObject({ curated: 3, failed: 0 });
-    expect(h.calls.map((call) => call.purpose)).toEqual(["curator", "curator", "curator"]);
+    expect(h.calls.map((call) => call.purpose)).toEqual(["curator"]);
     expect(h.calls[0]?.prompt).toContain("Summary for feat/one");
-    expect(h.calls[2]?.prompt).toContain("Summary for feat/three");
+    expect(h.calls[0]?.prompt).toContain("Summary for feat/two");
+    expect(h.calls[0]?.prompt).toContain("Summary for feat/three");
     h.calls.length = 0;
     expect(await backfillSummaries({ stateDir: h.state, pipeline: h.pipeline })).toMatchObject({ curated: 0, skipped: 3 });
     expect(h.calls).toHaveLength(0);
@@ -387,14 +426,21 @@ describe("backfill", () => {
   test("it is resumable: a failure leaves the rest for the next run and never repeats what is done", async () => {
     const h = harness();
     seedSummaries(h, [{ chatId: A, createdAt: "2026-10-01T10:00:00.000Z", branch: "feat/one" }, { chatId: B, createdAt: "2026-10-02T10:00:00.000Z", branch: "feat/two" }, { chatId: C, createdAt: "2026-10-03T10:00:00.000Z", branch: "feat/three" }]);
-    h.curator.push(CURATE_NEW, "garbage");
+    h.curator.push(JSON.stringify({ results: [
+      { chatId: A, topic: { new: { kind: "feat", title: "Chat summaries" } }, sections: { overview: "Summaries of chats." } },
+      { chatId: B, malformed: true },
+      { chatId: C, topic: { new: { kind: "feat", title: "Other work" } }, sections: { overview: "Other work." } },
+    ] }));
     const first = await backfillSummaries({ stateDir: h.state, pipeline: h.pipeline });
-    expect(first).toMatchObject({ curated: 1, failed: 1 });
+    expect(first).toMatchObject({ curated: 2, failed: 1 });
     h.calls.length = 0;
+    h.advance(60);
+    h.curator.push(CURATE_NEW);
     const second = await backfillSummaries({ stateDir: h.state, pipeline: h.pipeline });
-    expect(second.curated).toBe(2);
+    expect(second.curated).toBe(1);
+    expect(h.calls).toHaveLength(1);
     expect(h.calls[0]?.prompt).toContain("Summary for feat/two");
-    expect(h.calls.some((call) => call.prompt.includes("Summary for feat/one"))).toBe(false);
+    expect(h.calls[0]?.prompt).not.toContain("Summary for feat/one");
   });
 
   test("a disabled project's summaries are not sent to a model", async () => {

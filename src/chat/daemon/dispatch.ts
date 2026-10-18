@@ -37,7 +37,7 @@ export async function dispatchRequest(daemon: ChatDaemon, request: Request, sock
     case "take-over": return await daemon.takeOver(text(request.id));
     case "model": return await daemon.setModel(text(request.id), text(request.model), text(request.effort) || null);
     case "rename": return await daemon.rename(text(request.id), text(request.title));
-    case "summarize": return await daemon.summarizer.summarize(text(request.id));
+    case "summarize": return await daemon.summarizer.summarize(text(request.id), request.force === true);
     case "terminal-command": return await daemon.terminalCommand(text(request.id));
     case "permission": return await daemon.permission(text(request.id), object(request.request));
     default: throw new Error("unknown chat operation");

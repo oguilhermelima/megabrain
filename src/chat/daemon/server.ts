@@ -183,6 +183,7 @@ export function close(daemon: ChatDaemon): Promise<void> {
 
 export async function closeDaemon(daemon: ChatDaemon): Promise<void> {
     daemon.closed = true;
+    daemon.summarizer.close();
     daemon.idleTimer && clearTimeout(daemon.idleTimer);
     for (const timer of daemon.knowledgeTimers) clearTimeout(timer);
     daemon.knowledgeTimers.length = 0;
