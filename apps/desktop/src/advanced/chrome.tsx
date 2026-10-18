@@ -13,6 +13,8 @@ import { comboLabel, type ShortcutId } from '@/lib/shortcuts'
 
 /** The traffic lights' band: everything in it is vertically centred on the lights. */
 export const lightsRow = 'h-[44px]'
+/** The band's height in pixels, which a panel hung from below stays under so it never covers the lights. */
+export const lightsHeight = 44
 
 /** tauri.conf.json trafficLightPosition.x: the close button's left edge. */
 const lightsX = 18

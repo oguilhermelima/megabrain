@@ -18,6 +18,7 @@ export function Popover({
   focus,
   closeWhenMoved = false,
   gap = 6,
+  maxHeight,
   className,
   children,
 }: {
@@ -34,6 +35,8 @@ export function Popover({
   closeWhenMoved?: boolean
   /** Space between the trigger and the panel, in pixels. */
   gap?: number
+  /** The tallest the panel grows, in pixels, past which it scrolls; the className caps it otherwise. */
+  maxHeight?: number
   /** Size, padding and overflow of the panel. */
   className: string
   children: ReactNode
@@ -98,7 +101,7 @@ export function Popover({
       aria-label={label}
       data-leaving={leaving || undefined}
       inert={leaving}
-      style={position === null ? { left: 0, top: 0, visibility: 'hidden' } : position}
+      style={{ ...(position === null ? { left: 0, top: 0, visibility: 'hidden' } : position), maxHeight }}
       className={`popover fixed z-[100] ${className}`}
     >
       {children}

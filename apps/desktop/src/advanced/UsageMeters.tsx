@@ -1,5 +1,7 @@
 import type { KeyboardEvent, PointerEvent } from 'react'
-import { closestToLimit, fillClass, percentClass, type AgentUsage, type MeterTone, type UsageMeter } from '@/advanced/usage-limits'
+import { Chevron } from '@/advanced/chrome'
+import { mostUsed } from '@/advanced/usage-collapse'
+import { closestToLimit, fillClass, percentClass, type AgentUsage, type MeterTone, type UsageMeter, type UsagePool } from '@/advanced/usage-limits'
 import { agentColor } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
 import { agentLabel } from '@/native-chat/empty-chat'
@@ -60,6 +62,21 @@ function MeterRow({ meter }: { meter: UsageMeter }) {
   )
 }
 
+/** A folded row's window: its share as a figure beside a short meter, and in words for a screen reader. */
+function MeterSummary({ meter }: { meter: UsageMeter }) {
+  return (
+    <span className="flex shrink-0 items-center gap-2">
+      <span className="sr-only">{`, ${meter.label} ${percent(meter.usedPercent)} used${meter.tone === 'stale' ? ', last known' : ''}`}</span>
+      <span aria-hidden="true" className="block h-1.5 w-12 overflow-hidden rounded-full bg-white/[0.1]">
+        <span className={`block h-full rounded-full ${fillClass(meter.tone)}`} style={{ width: `${Math.max(4, Math.min(100, Math.round(meter.usedPercent)))}%` }} />
+      </span>
+      <span aria-hidden="true" className={`w-9 text-right text-[12px] font-semibold tabular-nums ${valueClass(meter.tone)}`}>
+        {percent(meter.usedPercent)}
+      </span>
+    </span>
+  )
+}
+
 function GripIcon() {
   return (
     <svg viewBox="0 0 16 16" className="size-3.5" fill="currentColor" aria-hidden="true">
@@ -87,22 +104,34 @@ export interface RowEdit {
   }
 }
 
+/** What the popover folds: the provider to one row, and each of its named pools to its name. */
+export interface RowFold {
+  collapsed: boolean
+  onToggle: () => void
+  poolCollapsed: (pool: UsagePool) => boolean
+  onTogglePool: (pool: UsagePool) => void
+}
+
+const foldButton = 'flex min-w-0 flex-1 items-center gap-2 self-stretch rounded-[6px] text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
+
 const smallButton = 'flex size-6 shrink-0 items-center justify-center rounded-[6px] text-ink-500 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:bg-white/[0.06] focus-visible:text-ink-100 focus-visible:outline-none'
 
 /**
  * One agent in the popover: its mark and name, then a meter per window, each pool nested under its name
  * when it has several. A reading that is not fresh says when it was updated beside the name; one that is
  * only the last known says why and what to do, under the meters. Editing, a grip moves it and an eye hides it.
+ * Folded, it is one row with its most used window; a folded pool is its name and its own most used one.
  */
-export function AgentUsageRow({ usage, focused, edit }: { usage: AgentUsage; focused: boolean; edit: RowEdit | null }) {
+export function AgentUsageRow({ usage, focused, edit, fold }: { usage: AgentUsage; focused: boolean; edit: RowEdit | null; fold: RowFold }) {
   const name = agentLabel(usage.agent)
   const hidden = edit?.hidden === true
+  const collapsed = fold.collapsed
   return (
     <section
       data-provider-limits={usage.agent}
       data-hidden={hidden || undefined}
       aria-label={name}
-      className={`rounded-[8px] px-3 py-2 transition-[background-color,opacity] motion-reduce:transition-none ${edit?.dragging === true ? 'bg-white/[0.08]' : focused ? 'bg-row-hover' : ''} ${hidden ? 'opacity-50' : ''}`}
+      className={`rounded-[8px] px-3 ${collapsed ? 'py-1' : 'py-2'} transition-[background-color,opacity] motion-reduce:transition-none ${edit?.dragging === true ? 'bg-white/[0.08]' : focused ? 'bg-row-hover' : ''} ${hidden ? 'opacity-50' : ''}`}
     >
       <div className="flex h-6 items-center gap-2">
         {edit !== null && (
@@ -110,29 +139,53 @@ export function AgentUsageRow({ usage, focused, edit }: { usage: AgentUsage; foc
             <GripIcon />
           </button>
         )}
-        <span className={`flex ${usage.lapse === null ? '' : 'opacity-60'}`} style={{ color: usage.color }}>
-          <AgentIcon agent={usage.agent} size={14} />
-        </span>
-        <h3 className={`min-w-0 flex-1 truncate text-[13px] font-semibold ${usage.lapse === null ? 'text-ink-100' : 'text-ink-300'}`}>{name}</h3>
-        {edit === null && usage.age !== null && <span className="shrink-0 text-[10.5px] text-ink-500">{`Updated ${usage.age}`}</span>}
+        <h3 className="flex min-w-0 flex-1 self-stretch">
+          <button type="button" aria-expanded={!collapsed} onClick={fold.onToggle} className={foldButton}>
+            <span className="-ml-1 flex shrink-0 text-ink-500">
+              <Chevron open={!collapsed} />
+            </span>
+            <span className={`flex ${usage.lapse === null ? '' : 'opacity-60'}`} style={{ color: usage.color }}>
+              <AgentIcon agent={usage.agent} size={14} />
+            </span>
+            <span className={`min-w-0 flex-1 truncate text-[13px] font-semibold ${usage.lapse === null ? 'text-ink-100' : 'text-ink-300'}`}>{name}</span>
+            {collapsed ? <MeterSummary meter={usage.lead} /> : edit === null && usage.age !== null && <span className="shrink-0 text-[10.5px] font-normal text-ink-500">{`Updated ${usage.age}`}</span>}
+          </button>
+        </h3>
         {edit !== null && (
           <button type="button" aria-pressed={!hidden} aria-label={`Show ${name} in the sidebar`} onClick={edit.onToggle} className={`${smallButton} -mr-2`}>
             <EyeIcon hidden={hidden} />
           </button>
         )}
       </div>
-      {usage.pools.map((pool) => (
-        // A pool of several hangs off the agent on a rule, so it reads as part of it rather than a provider.
-        <div key={pool.bucket ?? ''} className={pool.bucket === null ? '' : 'mt-1.5 ml-[6px] border-l border-white/[0.1] pl-3'}>
-          {pool.bucket !== null && <p className="truncate text-[11px] font-medium text-ink-400">{pool.bucket}</p>}
-          <ul>
-            {pool.meters.map((meter) => (
-              <MeterRow key={meter.window} meter={meter} />
-            ))}
-          </ul>
-        </div>
-      ))}
-      {usage.lapse !== null && (
+      {!collapsed &&
+        usage.pools.map((pool) => {
+          const folded = fold.poolCollapsed(pool)
+          const lead = mostUsed(pool.meters)
+          return (
+            // A pool of several hangs off the agent on a rule, so it reads as part of it rather than a provider.
+            <div key={pool.bucket ?? ''} className={pool.bucket === null ? '' : 'mt-1.5 ml-[6px] border-l border-white/[0.1] pl-3'}>
+              {pool.bucket !== null && (
+                <h4 className="flex h-5">
+                  <button type="button" aria-expanded={!folded} onClick={() => fold.onTogglePool(pool)} className={foldButton}>
+                    <span className="-ml-1 flex shrink-0 text-ink-500">
+                      <Chevron open={!folded} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-ink-400">{pool.bucket}</span>
+                    {folded && lead !== null && <MeterSummary meter={lead} />}
+                  </button>
+                </h4>
+              )}
+              {!folded && (
+                <ul>
+                  {pool.meters.map((meter) => (
+                    <MeterRow key={meter.window} meter={meter} />
+                  ))}
+                </ul>
+              )}
+            </div>
+          )
+        })}
+      {!collapsed && usage.lapse !== null && (
         <p className="truncate pt-0.5 text-[11px] text-ink-500">
           {usage.lapse.cause}
           {usage.lapse.action !== null && <span className="text-ink-400">{` · ${usage.lapse.action}`}</span>}
