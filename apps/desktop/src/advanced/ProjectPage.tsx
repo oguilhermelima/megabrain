@@ -31,7 +31,7 @@ import { pageX } from '@/lib/page'
 // A project's page in a pane. A hero says who it is (picture, name, and one line with the remote, the
 // main checkout's branch and its path) and, on a row of its own under that, its actions: New chat as the
 // one primary beside quiet buttons and a more menu, so they never squeeze the identity. Below, one
-// titled group under another: its worktrees, open pull requests and issues, recent chats and commands,
+// titled group under another: its recent chats, worktrees, open pull requests and issues, and commands,
 // each a card of rows of one height with their facts muted at the end. Every list comes from a
 // call the app already makes; each section shows its skeleton until its call answers.
 
@@ -210,6 +210,16 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
         </header>
 
         <div className="flex flex-col gap-8">
+          <Section title="Recent chats" action={chatsShown.length === 0 ? undefined : { label: 'New chat', onClick: () => actions.newChat(project.path) }}>
+            {chatsShown.length === 0 ? (
+              <EmptyState text="No chats in this project yet." action={{ label: 'New chat', onClick: () => actions.newChat(project.path) }} />
+            ) : (
+              <Expandable items={chatsShown} noun="recent chats">
+                {(shown) => shown.map((chat) => <ChatRow key={chat.key} chat={chat} now={now} onClick={() => actions.open(chat.open, chat.path)} />)}
+              </Expandable>
+            )}
+          </Section>
+
           <Section title="Worktrees" count={worktrees.length} action={{ label: 'New worktree', onClick: () => setNewWorktree(true) }}>
             <Expandable items={worktrees} noun="worktrees">
               {(shown) =>
@@ -279,16 +289,6 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
               />
             </Section>
           )}
-
-          <Section title="Recent chats" action={chatsShown.length === 0 ? undefined : { label: 'New chat', onClick: () => actions.newChat(project.path) }}>
-            {chatsShown.length === 0 ? (
-              <EmptyState text="No chats in this project yet." action={{ label: 'New chat', onClick: () => actions.newChat(project.path) }} />
-            ) : (
-              <Expandable items={chatsShown} noun="recent chats">
-                {(shown) => shown.map((chat) => <ChatRow key={chat.key} chat={chat} now={now} onClick={() => actions.open(chat.open, chat.path)} />)}
-              </Expandable>
-            )}
-          </Section>
 
           <Section title="Scripts" action={{ label: 'Edit commands', onClick: editCommands }}>
             {scripts.state === 'failed' && (
