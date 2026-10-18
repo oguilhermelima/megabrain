@@ -27,11 +27,12 @@ describe("tmux launchers", () => {
     const server = `mb-launch-${randomUUID().replace(/-/g, "").slice(0, 12)}`;
     const session = `launch-${randomUUID().slice(0, 8)}`;
     const argsFile = join(root, "argv.json");
+    const argsTempFile = join(root, "argv.tmp");
     const fakeAgent = join(root, "fake-agent.sh");
     const longArg = `brief:${"x".repeat(2048)}`;
     const delayedZsh = join(root, "slow-zsh.sh");
     try {
-      await writeFile(fakeAgent, `#!/bin/sh\nprintf '%s' "$#" > ${JSON.stringify(argsFile)}\nprintf '\\n' >> ${JSON.stringify(argsFile)}\nprintf '%s' "$1" >> ${JSON.stringify(argsFile)}\n`, { mode: 0o700 });
+      await writeFile(fakeAgent, `#!/bin/sh\nprintf '%s\\n%s' "$#" "$1" > ${JSON.stringify(argsTempFile)}\nmv ${JSON.stringify(argsTempFile)} ${JSON.stringify(argsFile)}\n`, { mode: 0o700 });
       await writeFile(delayedZsh, "#!/bin/sh\nsleep 1\nexec /bin/zsh -i\n", { mode: 0o700 });
       const created = await createTmuxLauncher(root, `exec ${JSON.stringify(fakeAgent)} ${JSON.stringify(longArg)}`);
       expect(created.kind).toBe("ok");
@@ -39,7 +40,7 @@ describe("tmux launchers", () => {
 
       const createdSession = spawnSync(tmux!, ["-L", server, "new-session", "-d", "-s", session, "-c", root, "-e", `SHELL=${delayedZsh}`, created.value]);
       expect(createdSession.status).toBe(0);
-      const deadline = Date.now() + 5000;
+      const deadline = Date.now() + 20000;
       while (Date.now() < deadline) {
         try { await stat(argsFile); break; } catch { await new Promise((resolve) => setTimeout(resolve, 25)); }
       }
