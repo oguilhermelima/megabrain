@@ -17,7 +17,7 @@ export function focusPaneInput(paneId: string) {
 
 export function worktreeChoices(projects: Project[]) {
   return partitionHidden(projects).visible.flatMap((project) =>
-    project.missing ? [] : project.worktrees.map((worktree) => ({ path: worktree.path, project: displayName(project), label: `${displayName(project)} · ${worktree.branch ?? worktree.path.split('/').at(-1) ?? worktree.path}` })),
+    project.missing ? [] : project.worktrees.map((worktree) => ({ path: worktree.path, label: `${displayName(project)} · ${worktree.branch ?? worktree.path.split('/').at(-1) ?? worktree.path}` })),
   )
 }
 
