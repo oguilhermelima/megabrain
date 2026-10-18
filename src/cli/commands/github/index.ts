@@ -69,12 +69,14 @@ export type { FlowSpec, FlowOptions } from "./flow.js";
 import { GITHUB_REMOTE, githubNameWithOwner, registered, resolveRepository, cacheDirectory, cachePath, readCache, writeCache, dropCached, TRANSIENT, Attempt, attempt, gh, GraphqlAnswer, repositoryVariables, graphqlCall } from "./client.js";
 export { GITHUB_REMOTE, githubNameWithOwner, registered, resolveRepository, cacheDirectory, cachePath, readCache, writeCache, dropCached, TRANSIENT, attempt, gh, repositoryVariables, graphqlCall } from "./client.js";
 export type { Attempt, GraphqlAnswer } from "./client.js";
-import { VIEWED_QUERY, AUTHOR, LABELS, PR_QUERY, ISSUE_QUERY, PR_VIEW_FIELDS, ISSUE_VIEW_FIELDS, STATES, record, text, nullableText, count, list, person, labels, assignees, lowerState, reviewDecision, checkState, checks, milestone, pullRequest, issue, detail, page, graphqlError, listCommand, Options, parseOptions, listingText, detailText } from "./views.js";
-export { VIEWED_QUERY, AUTHOR, LABELS, PR_QUERY, ISSUE_QUERY, PR_VIEW_FIELDS, ISSUE_VIEW_FIELDS, STATES, record, text, nullableText, count, list, person, labels, assignees, lowerState, reviewDecision, checkState, checks, milestone, pullRequest, issue, detail, page, graphqlError, listCommand, parseOptions, listingText, detailText } from "./views.js";
+import { VIEWED_QUERY, AUTHOR, LABELS, PR_QUERY, ISSUE_QUERY, PR_VIEW_FIELDS, ISSUE_VIEW_FIELDS, STATES, record, text, nullableText, count, list, person, labels, assignees, lowerState, reviewDecision, checkState, checks, milestone, pullRequest, issue, detail, page, graphqlError, listCommand, searchQuery, searchPage, Options, parseOptions, listingText, detailText } from "./views.js";
+export { VIEWED_QUERY, AUTHOR, LABELS, PR_QUERY, ISSUE_QUERY, PR_VIEW_FIELDS, ISSUE_VIEW_FIELDS, STATES, record, text, nullableText, count, list, person, labels, assignees, lowerState, reviewDecision, checkState, checks, milestone, pullRequest, issue, detail, page, graphqlError, listCommand, searchQuery, searchPage, parseOptions, listingText, detailText } from "./views.js";
 export type { Options } from "./views.js";
+import { executeGithubLabels } from "./labels.js";
 
 export async function executeGithub(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter(), now: Clock = Date.now): Promise<Result<string>> {
   const [verbArgument, ...rest] = args;
+  if (verbArgument === "labels") return executeGithubLabels(rest, environment, process);
   if (verbArgument !== undefined && PROJECT_VERBS.includes(verbArgument as (typeof PROJECT_VERBS)[number])) {
     const projectVerb = verbArgument as (typeof PROJECT_VERBS)[number];
     if (projectVerb === "project-move") return executeProjectMove(rest, environment, process);
@@ -103,18 +105,27 @@ export async function executeGithub(args: readonly string[], environment: Enviro
   const repository = await resolveRepository(selector, environment, process);
   if (repository.kind !== "ok") return repository;
   const { nameWithOwner } = repository.value;
-  const key = JSON.stringify([verb, nameWithOwner, repository.value.path, state, limit, after, number]);
+  const filters = options.value;
+  const filtered = (filters.labels?.length ?? 0) > 0 || filters.assignee !== undefined || filters.author !== undefined || filters.draft !== undefined || filters.search !== undefined;
+  const key = JSON.stringify([verb, nameWithOwner, repository.value.path, state, limit, after, number, filtered ? filters : null]);
   const started = now();
   let output = readCache(environment, key, started);
   if (output === undefined) {
     const command = verb === "prs" || verb === "issues" ? listCommand(verb, nameWithOwner, state, limit, after)
       : verb === "pr" ? ["pr", "view", String(number), "-R", nameWithOwner, "--json", PR_VIEW_FIELDS]
         : ["issue", "view", String(number), "-R", nameWithOwner, "--json", ISSUE_VIEW_FIELDS];
-    const fetched = await gh(process, command);
+    const search = filtered && (verb === "prs" || verb === "issues") ? searchQuery(verb, nameWithOwner, filters) : undefined;
+    const fetched = search === undefined
+      ? await gh(process, command)
+      : await graphqlCall(process, "gh api graphql", search.query, search.variables);
     if (fetched.kind !== "ok") return fetched;
     if (verb === "prs" || verb === "issues") {
-      const found = page(verb, fetched.value);
-      if (found === undefined) return failed(`gh api graphql failed: ${graphqlError(fetched.value) ?? "the answer has an unexpected shape"}`);
+      if (search !== undefined && typeof fetched.value === "object" && fetched.value !== null && "error" in fetched.value && typeof fetched.value.error === "string") return failed(`gh api graphql failed: ${fetched.value.error}`);
+      const found = filtered ? searchPage(verb, fetched.value) : page(verb, fetched.value);
+      if (found === undefined) {
+        const searchError = search !== undefined && typeof fetched.value === "object" && fetched.value !== null && "error" in fetched.value && typeof fetched.value.error === "string" ? fetched.value.error : undefined;
+        return failed(`gh api graphql failed: ${searchError ?? graphqlError(fetched.value) ?? "the answer has an unexpected shape"}`);
+      }
       output = { repository: repository.value, state, limit, after, fetchedAt: new Date(started).toISOString(), ...found };
     } else {
       const entry = record(fetched.value);

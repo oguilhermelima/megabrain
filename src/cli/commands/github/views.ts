@@ -212,7 +212,39 @@ export function listCommand(verb: "prs" | "issues", nameWithOwner: string, state
   return ["api", "graphql", "-f", `query=${verb === "prs" ? PR_QUERY : ISSUE_QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`, "-F", `first=${limit}`, ...states, ...cursor];
 }
 
-export type Options = Readonly<{ selector: string; state: string; limit: number; after: string | null; number: number; json: boolean }>;
+export function searchQuery(verb: "prs" | "issues", nameWithOwner: string, options: Options) {
+  const kind = verb === "prs" ? "pr" : "issue";
+  const stateTerm = (state: string) => state === "all" ? [] : [`is:${state === "merged" ? "merged" : state}`];
+  const queryFilters = [...(options.labels ?? []).map((label) => `label:${/\s/.test(label) ? `"${label.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"` : label}`),
+    ...(verb === "issues" ? options.assignee === undefined ? [] : options.assignee === null ? ["no:assignee"] : [`assignee:${options.assignee}`] : []),
+    ...(verb === "prs" && options.author !== undefined ? [`author:${options.author}`] : []),
+    ...(verb === "prs" && options.draft !== undefined ? [`draft:${options.draft}`] : []),
+    ...(options.search === undefined ? [] : [options.search, "in:title,body"])];
+  const queryFor = (state: string) => [`repo:${nameWithOwner}`, `is:${kind}`, ...stateTerm(state), ...queryFilters].join(" ");
+  const nodeFields = verb === "prs"
+    ? `... on PullRequest { number title state isDraft url createdAt updatedAt headRefName baseRefName ${AUTHOR} ${LABELS} comments { totalCount } }`
+    : `... on Issue { number title state url createdAt updatedAt ${AUTHOR} ${LABELS} assignees(first: 10) { nodes { login name } } comments { totalCount } milestone { title dueOn } }`;
+  const query = `query($first: Int!, $after: String) { open: search(type: ISSUE, query: ${JSON.stringify(queryFor("open"))}) { issueCount } closed: search(type: ISSUE, query: ${JSON.stringify(queryFor("closed"))}) { issueCount } all: search(type: ISSUE, query: ${JSON.stringify(queryFor("all"))}) { issueCount } ${verb === "prs" ? `merged: search(type: ISSUE, query: ${JSON.stringify(queryFor("merged"))}) { issueCount }` : ""} items: search(type: ISSUE, query: ${JSON.stringify(queryFor(options.state))}, first: $first, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ${nodeFields} } } }`;
+  const filters = { first: options.limit, ...(options.after === null ? {} : { after: options.after }) };
+  return { query, variables: filters };
+}
+
+export function searchPage(verb: "prs" | "issues", value: unknown) {
+  const found = record(record(value)?.data);
+  const items = record(found?.items);
+  if (found === undefined || items === undefined) return undefined;
+  const searchCount = (value: unknown) => count(record(value)?.issueCount);
+  const counts = verb === "prs"
+    ? { open: searchCount(found.open), merged: searchCount(found.merged), closed: searchCount(found.closed), all: searchCount(found.all) }
+    : { open: searchCount(found.open), closed: searchCount(found.closed), all: searchCount(found.all) };
+  const info = record(items.pageInfo);
+  const next = info?.hasNextPage === true ? nullableText(info.endCursor) : null;
+  const total = count(items.issueCount);
+  const normalized = verb === "prs" ? list(items.nodes).map(pullRequest) : list(items.nodes).map(issue);
+  return { counts, totalCount: total, nextCursor: next, total, next, items: normalized };
+}
+
+export type Options = Readonly<{ selector: string; state: string; limit: number; after: string | null; number: number; json: boolean; labels?: string[]; assignee?: string | null; author?: string; draft?: boolean; search?: string }>;
 
 export function parseOptions(verb: Verb, args: readonly string[]): Result<Options> {
   const usage = failed(usageMessage(USAGE[verb]), 2);
@@ -221,9 +253,37 @@ export function parseOptions(verb: Verb, args: readonly string[]): Result<Option
   let limit = DEFAULT_LIMIT;
   let after: string | null = null;
   let json = false;
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  let assignee: string | null | undefined;
+  let author: string | undefined;
+  let draft: boolean | undefined;
+  let search: string | undefined;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index] ?? "";
     if (argument === "--json") json = true;
+    else if ((verb === "prs" || verb === "issues") && argument === "--label") {
+      const value = args[index + 1] ?? "";
+      if (value === "" || value.startsWith("--")) return failed("--label needs a label name", 2);
+      labels.push(value); index += 1;
+    } else if ((verb === "issues" && argument === "--assignee") || (verb === "prs" && ["--author", "--draft"].includes(argument)) || ((verb === "prs" || verb === "issues") && argument === "--search")) {
+      const flag = argument;
+      const value = args[index + 1] ?? "";
+      if (seen.has(flag)) return failed(`${flag} may only be supplied once`, 2);
+      if (value === "" || value.startsWith("--")) return failed(`${flag} needs a value`, 2);
+      seen.add(flag); index += 1;
+      if (flag === "--assignee") {
+        if (assignee === null) return failed("--assignee and --no-assignee cannot be combined", 2);
+        assignee = value;
+      }
+      else if (flag === "--author") author = value;
+      else if (flag === "--search") search = value;
+      else if (value === "true" || value === "false") draft = value === "true";
+      else return failed("--draft must be true or false", 2);
+    } else if (verb === "issues" && argument === "--no-assignee") {
+      if (assignee !== undefined || seen.has("--assignee")) return failed("--assignee and --no-assignee cannot be combined", 2);
+      assignee = null;
+    }
     else if ((verb === "prs" || verb === "issues") && argument === "--state") {
       const value = args[index + 1] ?? "";
       if (!STATES[verb].includes(value)) return failed(`--state must be one of ${STATES[verb].join(", ")}`, 2);
@@ -245,7 +305,7 @@ export function parseOptions(verb: Verb, args: readonly string[]): Result<Option
   }
   const [selector, numberText] = positional;
   if (selector === undefined || selector === "") return usage;
-  if (verb === "prs" || verb === "issues") return positional.length === 1 ? ok({ selector, state, limit, after, number: 0, json }) : usage;
+  if (verb === "prs" || verb === "issues") return positional.length === 1 ? ok({ selector, state, limit, after, number: 0, json, ...(labels.length === 0 ? {} : { labels }), ...(assignee === undefined ? {} : { assignee }), ...(author === undefined ? {} : { author }), ...(draft === undefined ? {} : { draft }), ...(search === undefined ? {} : { search }) }) : usage;
   if (positional.length !== 2 || numberText === undefined || !/^[1-9]\d*$/.test(numberText)) return usage;
   return ok({ selector, state, limit, after: null, number: Number(numberText), json });
 }

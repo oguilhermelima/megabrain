@@ -475,14 +475,15 @@ describe("github cache", () => {
 
 describe("github routing and usage", () => {
   const usage = {
-    "github": "github projects|project|project-move|prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
+    "github": "github projects|project|project-move|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
     "github-runs": "github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json]",
     "github-run": "github run <repo name|path> <run id> [--json]",
     "github-run-log": "github run-log <repo name|path> <run id> --job <job id> [--json]",
     "github-run-action": "github run-action <repo name|path> <run id> rerun|rerun-failed|cancel [--json]",
     "github-workflow-dispatch": "github workflow-dispatch <repo name|path> <workflow> --ref <ref> [--inputs <json>] [--json]",
-    "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]",
-    "github-issues": "github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]",
+    "github-prs": "github prs <repo name|path> [--state open|closed|merged|all] [--label <name>]... [--author <login>] [--draft true|false] [--search <text>] [--limit <n>] [--after <cursor>] [--json]",
+    "github-issues": "github issues <repo name|path> [--state open|closed|all] [--label <name>]... [--assignee <login>|--no-assignee] [--search <text>] [--limit <n>] [--after <cursor>] [--json]",
+    "github-labels": "github labels <repo name|path> [--json]",
     "github-pr": "github pr <repo name|path> <number> [--json]",
     "github-issue": "github issue <repo name|path> <number> [--json]",
   };

@@ -1,6 +1,6 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
 import type { DispatchMessage, OrchestrationGraph, OrchestrationTarget } from '@/api/schema'
-import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, HistorySession, GithubIssueList, GithubPullRequestList, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame } from '@/api/schema'
+import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, HistorySession, GithubIssueList, GithubPullRequestList, GithubLabel, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -192,9 +192,11 @@ export interface DesktopApi {
   /** The person's home folder. */
   homeDir(): Promise<string>
   /** One page of a repository's pull requests through gh (`github prs`), after a cursor; the CLI caches each answer for 60 s. */
-  githubPullRequests(root: string, state: 'open' | 'closed' | 'merged' | 'all', limit: number, after: string | null): Promise<GithubPullRequestList>
+  githubPullRequests(root: string, state: 'open' | 'closed' | 'merged' | 'all', limit: number, after: string | null, filters?: { labels?: string[]; author?: string; draft?: boolean; search?: string }): Promise<GithubPullRequestList>
   /** One page of a repository's issues through gh (`github issues`). */
-  githubIssues(root: string, state: 'open' | 'closed' | 'all', limit: number, after: string | null): Promise<GithubIssueList>
+  githubIssues(root: string, state: 'open' | 'closed' | 'all', limit: number, after: string | null, filters?: { labels?: string[]; assignee?: string | null; search?: string }): Promise<GithubIssueList>
+  /** Every label in the repository, paged by the CLI until complete. */
+  githubLabels(root: string): Promise<GithubLabel[]>
   /** GitHub Projects v2 boards linked to this repository or containing one of its items. */
   githubProjects(root: string): Promise<GithubProjects>
   /** One page of a GitHub Project v2 board's items. */

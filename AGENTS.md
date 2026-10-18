@@ -56,14 +56,14 @@
 - Run megabrain port free [--from <port>] [--json]. — recommended when you need the next port nothing listens on.
 - Run megabrain port kill <port> [--json]. — recommended when you need to stop your own process tree that holds a port.
 - Run megabrain projects [--json]. — recommended when you need to list registered projects, their Git worktrees, and agent sessions.
-- Run megabrain github projects|project|project-move|prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image .... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions.
+- Run megabrain github projects|project|project-move|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image .... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions.
 - Run megabrain github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need a page of workflow runs, workflows, dispatch support and declared inputs.
 - Run megabrain github run <repo name|path> <run id> [--json]. — recommended when you need one workflow run and its jobs.
 - Run megabrain github run-log <repo name|path> <run id> --job <job id> [--json]. — recommended when you need a job's log.
 - Run megabrain github run-action <repo name|path> <run id> rerun|rerun-failed|cancel [--json]. — recommended when you need to rerun or cancel a workflow run.
 - Run megabrain github workflow-dispatch <repo name|path> <workflow> --ref <ref> [--inputs <json>] [--json]. — recommended when you need to dispatch a workflow.
-- Run megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list a repository's pull requests a page at a time, with labels and every state's total.
-- Run megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list a repository's issues with labels, assignees, and milestones.
+- Run megabrain github prs <repo name|path> [--state open|closed|merged|all] [--label <name>]... [--author <login>] [--draft true|false] [--search <text>] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list and filter a repository's pull requests a page at a time, with every state's total.
+- Run megabrain github issues <repo name|path> [--state open|closed|all] [--label <name>]... [--assignee <login>|--no-assignee] [--search <text>] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need to list and filter a repository's issues a page at a time, with labels, assignees, and milestones.
 - Run megabrain github projects <repo name|path> [--json]. — recommended when you need the GitHub Projects v2 boards linked to a repository or containing one of its items.
 - Run megabrain github project <repo name|path> <project number> [--owner <login>] [--after <cursor>] [--json]. — recommended when you need one page of a GitHub Project v2 board's issues, pull requests and draft items.
 - Run megabrain github project-move <repo name|path> <project number> <item id> --status <option id> [--owner <login>] [--json]. — recommended when you need to move a GitHub Project v2 item to a status option.
@@ -80,6 +80,7 @@
 - Run megabrain github auto-merge <repo name|path> <number> --method merge|squash|rebase [--disable] [--json]. — recommended when you need to turn auto-merge on for a pull request, or off with --disable.
 - Run megabrain github rerun-checks <repo name|path> <number> [--failed] [--json]. — recommended when you need to rerun a pull request's finished workflow runs, or only the failed jobs with --failed.
 - Run megabrain github file-viewed <repo name|path> <number> <path> [--unviewed] [--json]. — recommended when you need to mark a changed file viewed in a pull request, or clear the mark with --unviewed.
+- Run megabrain github labels <repo name|path> [--json]. — recommended when you need every label in a repository for filter options.
 - Run megabrain github assignable <repo name|path> [--query <text>] [--json]. — recommended when you need the people and organization teams a repository can assign or ask for review, optionally filtered by text.
 - Run megabrain github image <repo name|path> <url> [--json]. — recommended when you need a picture a pull request or issue shows from a private repository, as base64 with its content type.
 - Run megabrain github review <repo name|path> <number> --event approve|request-changes|comment --body <text> [--comments <json>] [--json]. — recommended when you need to submit a pull request review, optionally with inline comments.

@@ -37,6 +37,7 @@ export const discoveredRepositorySchema = z.looseObject({
 // Lists are light pages; checks, review decision and line counts come with one pull request's detail.
 const githubPersonSchema = z.looseObject({ login: z.string(), name: z.string().nullable(), isBot: z.boolean() })
 const githubLabelSchema = z.looseObject({ name: z.string(), color: z.string(), description: z.string() })
+export const githubRepositoryLabelSchema = githubLabelSchema
 const githubRepositoryRefSchema = z.looseObject({ nameWithOwner: z.string(), url: z.string(), path: z.string() })
 
 export const githubCheckSchema = z.looseObject({
@@ -85,11 +86,15 @@ const githubListing = <T extends z.ZodType>(item: T) =>
     counts: z.record(z.string(), z.number()),
     totalCount: z.number(),
     nextCursor: z.string().nullable(),
+    /** Explicit filter-search aliases, retained alongside the original names. */
+    total: z.number().optional(),
+    next: z.string().nullable().optional(),
     items: z.array(item),
   })
 
 export const githubPullRequestListSchema = githubListing(githubPullRequestSchema)
 export const githubIssueListSchema = githubListing(githubIssueSchema)
+export const githubRepositoryLabelsSchema = z.looseObject({ labels: z.array(githubLabelSchema) })
 
 // `megabrain github projects|project|project-move --json`: GitHub Projects v2 boards.
 export const githubProjectStatusFieldSchema = z.looseObject({
@@ -243,6 +248,7 @@ export type DiscoveredRepository = z.infer<typeof discoveredRepositorySchema>
 export type GithubCheck = z.infer<typeof githubCheckSchema>
 export type GithubPullRequest = z.infer<typeof githubPullRequestSchema>
 export type GithubIssue = z.infer<typeof githubIssueSchema>
+export type GithubLabel = z.infer<typeof githubLabelSchema>
 export type GithubPullRequestList = z.infer<typeof githubPullRequestListSchema>
 export type GithubIssueList = z.infer<typeof githubIssueListSchema>
 export type GithubDetail = z.infer<typeof githubDetailSchema>

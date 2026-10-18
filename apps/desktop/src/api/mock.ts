@@ -350,13 +350,21 @@ export function createMockApi(): DesktopApi {
       return mockDiscovered
     },
     homeDir: async () => '/Users/operator',
-    githubPullRequests: async (_root, state, limit, after) => {
+    githubPullRequests: async (_root, state, limit, after, filters = {}) => {
       await wait(450)
-      return { ...mockGithubPullRequests, ...mockPage(mockGithubPullRequests.items, state, limit, after) }
+      const matching = mockGithubPullRequests.items.filter((item) => (filters.labels ?? []).every((label) => item.labels.some((entry) => entry.name === label)) && (filters.author === undefined || item.author?.login === filters.author) && (filters.draft === undefined || item.isDraft === filters.draft) && (filters.search === undefined || item.title.toLowerCase().includes(filters.search.toLowerCase())))
+      const page = mockPage(matching, state, limit, after)
+      return { ...mockGithubPullRequests, ...page, counts: Object.fromEntries(['open', 'closed', 'merged', 'all'].map((key) => [key, matching.filter((item) => key === 'all' || item.state === key).length])) }
     },
-    githubIssues: async (_root, state, limit, after) => {
+    githubIssues: async (_root, state, limit, after, filters = {}) => {
       await wait(400)
-      return { ...mockGithubIssues, ...mockPage(mockGithubIssues.items, state, limit, after) }
+      const matching = mockGithubIssues.items.filter((item) => (filters.labels ?? []).every((label) => item.labels.some((entry) => entry.name === label)) && (filters.assignee === undefined || (filters.assignee === null ? item.assignees.length === 0 : item.assignees.some((entry) => entry.login === filters.assignee))) && (filters.search === undefined || item.title.toLowerCase().includes(filters.search.toLowerCase())))
+      const page = mockPage(matching, state, limit, after)
+      return { ...mockGithubIssues, ...page, counts: Object.fromEntries(['open', 'closed', 'all'].map((key) => [key, matching.filter((item) => key === 'all' || item.state === key).length])) }
+    },
+    githubLabels: async () => {
+      const labels = [...mockGithubIssues.items, ...mockGithubPullRequests.items].flatMap((item) => item.labels)
+      return [...new Map(labels.map((label) => [label.name, label])).values()]
     },
     githubProjects: async () => ({ projects: structuredClone(mockGithubProjects) }),
     githubProject: async (_root, number, owner, after) => {
