@@ -4,7 +4,7 @@ import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js";
-import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
+import { appendMessage, getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, listOutboxPeerVerifications, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { acquireSupervisorLease, agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
@@ -13,7 +13,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
-import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
+import { readDeliveryScreen } from "./delivery-screen.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
 import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
 import { collectResources } from "./resources.js";
@@ -289,9 +289,7 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   return blocked.cause === "dialog-waiting" ? blocked : { cause: "unknown" };
 }
 
-async function retryIdleChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, frame: string, process: ProcessAdapter): Promise<void> {
-  const agent = string(meta.agent) ?? "";
-  if (classifyLiveness(agent, frame).status !== "idle" || deliveryComposer(agent, frame) !== "") return;
+async function retryPendingChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, process: ProcessAdapter): Promise<void> {
   const outbox = listOutbox(database);
   const deliveries = listDeliveries(database, dispatch);
   const messages = listMessages(database, dispatch);
@@ -310,11 +308,20 @@ async function retryIdleChildReplies(root: string, database: Parameters<typeof g
 }
 
 export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
+  const peerVerifications = listOutboxPeerVerifications(database);
+  const pendingPeerVerifications = peerVerifications.kind === "ok" && peerVerifications.value.some((item) => item.record.state === "pending");
+  if (peerVerifications.kind === "ok") {
+    for (const item of peerVerifications.value) {
+      if (item.record.state !== "pending" || now - item.record.acceptedAt < 5 * 60 * 1000) continue;
+      const verifier = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["__peer-verify", item.id]);
+      await process.startDetached(verifier.command, verifier.args);
+    }
+  }
   const listed = listDispatches(database);
   if (listed.kind !== "ok") return { open: false, findings: 0 };
   await sweepGrokLeaders(root, ownedGrokLeaders(listed.value), process);
   const openDispatches = listed.value.filter((record) => ["queued", "spawning", "running", "waiting_for_reply", "orphaned"].includes(String(record.state)));
-  if (!hasOpenDispatches(openDispatches.map((record) => String(record.state)))) return { open: false, findings: 0 };
+  if (!hasOpenDispatches(openDispatches.map((record) => String(record.state)))) return { open: pendingPeerVerifications, findings: 0 };
   let findings = 0;
   for (const queued of openDispatches.filter((record) => (record.state === "queued" || record.state === "spawning") && record.admissionQueueEntry === true)) {
     const dispatch = queued.dispatchId;
@@ -345,7 +352,7 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now);
     const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
     const running = screen?.kind === "ok" ? backgroundTasks(screen.value) : undefined;
-    if (screen?.kind === "ok") await retryIdleChildReplies(root, database, dispatch, meta, screen.value, process);
+    if (screen?.kind === "ok") await retryPendingChildReplies(root, database, dispatch, meta, process);
     const recordedPrevious = previousFinding(meta);
     const recovered = recordedPrevious !== undefined && await recoveredSince(database, dispatch, meta, environment, recordedPrevious.notifiedAt);
     const previous = recovered ? undefined : recordedPrevious;
@@ -380,7 +387,9 @@ export async function startSupervisorWorker(root: string, environment: Environme
   if (database.kind !== "ok") return "failed";
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return "failed";
-  if (!hasOpenDispatches(listed.value.map((record) => String(record.state)))) return "no-open-dispatches";
+  const peerVerifications = listOutboxPeerVerifications(database.value);
+  const hasPendingPeerVerification = peerVerifications.kind === "ok" && peerVerifications.value.some((item) => item.record.state === "pending");
+  if (!hasOpenDispatches(listed.value.map((record) => String(record.state))) && !hasPendingPeerVerification) return "no-open-dispatches";
   const holder = `${globalThis.process.pid}-${randomUUID()}`;
   const lease = acquireSupervisorLease(database.value, holder, leaseSeconds(intervalSeconds(environment)));
   if (lease.kind !== "ok") return "failed";

@@ -70,14 +70,14 @@ export const superset: HostProvider = {
     const target = workspace(workspaceId);
     return target.kind === "ok" ? ok({ command: "superset", args: ["terminals", "close", "--workspace", target.value, "--terminal", terminalId, "--json"] }) : target;
   },
-  send: ({ workspaceId, terminalId, text, interrupt }) => {
+  send: ({ workspaceId, terminalId, text, interrupt, enter }) => {
     if (interrupt === true) return unavailable("superset", "interrupt a terminal");
     const target = workspace(workspaceId);
     return target.kind !== "ok"
       ? target
       : text === undefined
         ? unavailable("superset", "send terminal text")
-        : ok({ command: "superset", args: ["terminals", "send", "--workspace", target.value, "--terminal", terminalId, "--text", text, "--json"] });
+        : ok({ command: "superset", args: ["terminals", "send", "--workspace", target.value, "--terminal", terminalId, "--text", `${text}${enter === true ? "\n" : ""}`, "--json"] });
   },
   workspaces: () => ok({ command: "superset", args: ["workspaces", "list", "--local", "--json"] }),
 };

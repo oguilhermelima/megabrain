@@ -41,7 +41,7 @@ import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
 import { executeHookPreTool } from "./commands/hook-pre-tool.js";
 import { usageTable, usageText } from "../core/usage.js";
 import { ensureAutomaticCutover } from "../db/cutover.js";
-import { executeDeliveryWorker } from "./commands/delivery-worker.js";
+import { executeDeliveryWorker, executePeerVerificationWorker } from "./commands/delivery-worker.js";
 import { executeStack } from "./commands/stack.js";
 import { executeSupervise, executeSupervisorWorker } from "./commands/supervise.js";
 import { executeStatus } from "./commands/status.js";
@@ -142,6 +142,7 @@ async function routeCommand(
   if (command === "__code-server-proxy") return runCodeServerProxy(commandArgs, dependencies.environment);
   if (command === "__code-extensions") return runCodeExtensionsSync(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__delivery-worker") return executeDeliveryWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "__peer-verify") return executePeerVerificationWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__supervise-worker") return executeSupervisorWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__usage-table") return Promise.resolve(ok(usageTable()));
   if (command === undefined || command === "help" || command === "-h" || command === "--help") {

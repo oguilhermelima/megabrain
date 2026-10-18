@@ -159,7 +159,7 @@ describe("supervisor lifecycle decisions", () => {
 });
 
 describe("supervisor queued child answers", () => {
-  test("delivers a queued reply after the child is observed idle", async () => {
+  test("delivers a queued reply while the child is busy at an empty composer", async () => {
     const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-answer-`);
     const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
     const opened = openDatabase(environment);
@@ -196,7 +196,7 @@ describe("supervisor queued child answers", () => {
       async run(command: string, args: readonly string[]) {
         calls.push(`${command} ${args.join(" ")}`);
         if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal" }] } }), stderr: "", exitCode: 0 });
-        if (command === "orca" && args[1] === "read") return ok({ stdout: JSON.stringify({ result: { terminal: { tail: ["› Ask Codex to do anything"] } } }), stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "read") return ok({ stdout: JSON.stringify({ result: { terminal: { tail: ["Working (1s)", "esc to interrupt", "› Ask Codex to do anything"] } } }), stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       },
       async startDetached(command: string, args: readonly string[]) {

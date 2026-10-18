@@ -35,6 +35,10 @@ export {
   listDeliveries,
   listLeases,
   markOutboxPeerSent,
+  getOutboxPeerVerification,
+  listOutboxPeerVerifications,
+  finishOutboxPeerVerification,
+  requeueOutboxPeerFallback,
   setDeliveryTransport,
   listMessages,
   listNudges,
@@ -51,6 +55,7 @@ export {
   type NudgeInput,
   type OutboxDetails,
   type OutboxInput,
+  type PeerVerificationRecord,
   type WaiterRecord,
 } from "./state/mailbox.js";
 export {

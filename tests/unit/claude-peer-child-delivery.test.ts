@@ -6,6 +6,8 @@ import { appendMessage, createDelivery, createDispatch, getDeliveryChannel, list
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { claudeSessionPermissionClass } from "../../src/agents/claude-peer.js";
 import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { executeOrchestrateChange } from "../../src/cli/commands/orchestrate-reply.js";
+import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { failed, ok } from "../../src/core/result.js";
 
 // A reply from the parent to a Claude child goes through the child's peer socket, the same channel
@@ -124,9 +126,47 @@ describe("parent permission class", () => {
   });
 });
 
+describe("orchestrate change peer delivery", () => {
+  test("interrupts once and sends a Claude change through the peer socket without typing", async () => {
+    const current = await scene("busy", ["bypassPermissions"], "bypassPermissions");
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const db = stateDatabase({ HOME: current.root, MEGABRAIN_STATE_DIR: current.root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    const child = { agent: "claude", agentPid: 41414, agentSessionId: current.session.sessionId, runtime: "host", childHost: "orca", workspaceId: "workspace", terminalId: "child-terminal", parentAgent: "claude", parentAgentSessionId: PARENT_SESSION, parentHost: "orca", parentSessionId: "parent-terminal", parentTerminalId: "parent-terminal", parentAgentPid: 52525 };
+    createDispatch(db.value, { dispatchId: "d-change-peer", state: "running", ...child });
+    const screen = JSON.stringify({ result: { terminal: { tail: ["✳ Working", "❯"] } } });
+    const calls: string[] = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push(`${command} ${args.join(" ")}`);
+        if (command === "orca" && args[1] === "list") return ok<ProcessOutput>({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal" }] } }), stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "read") return ok<ProcessOutput>({ stdout: screen, stderr: "", exitCode: 0 });
+        return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    const originalTmux = getTmux();
+    registerTmux({ ...originalTmux });
+    try {
+      const result = await executeOrchestrateChange(["d-change-peer", "--text", "Use the peer channel", "--idle-timeout", "2", "--json"], {
+        HOME: current.root, MEGABRAIN_STATE_DIR: current.root, ORCA_TERMINAL_HANDLE: "parent-terminal",
+      }, process);
+      expect(result.kind).toBe("ok");
+      expect(inbox.connections).toBe(1);
+      expect(calls.some((call) => call.includes("--interrupt"))).toBe(true);
+      expect(calls.some((call) => call.includes("--text"))).toBe(false);
+      expect(inbox.frames.flat().some((frame) => frame.type === "user" && String((frame.message as Frame | undefined)?.content).includes("Use the peer channel"))).toBe(true);
+    } finally {
+      registerTmux(originalTmux);
+      db.value.close();
+    }
+  });
+});
+
 describe("reply to a Claude child", () => {
   test("goes through the child's peer socket attesting the bypass parent, and never types", async () => {
-    const current = await scene("idle", ["bypassPermissions"]);
+    const current = await scene("idle", ["bypassPermissions"], "bypassPermissions");
     const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
     const run = await runReply(current);
     expect(inbox.connections).toBe(1);
@@ -135,8 +175,8 @@ describe("reply to a Claude child", () => {
     expect(content).toContain("use the second option");
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
-    expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
-    expect(run.channel).toMatchObject({ status: "working", failures: 0 });
+    expect(run.deliveries[0]).toMatchObject({ transport: "ack-verifying" });
+    expect(run.channel).toBeUndefined();
   });
 
   test("reaches a busy child without waiting for it to go idle", async () => {
@@ -148,7 +188,7 @@ describe("reply to a Claude child", () => {
     await startInbox(String(current.session.messagingSocketPath), late);
     const run = await runReply(current);
     expect(run.sends).toHaveLength(0);
-    expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
+    expect(run.deliveries[0]).toMatchObject({ transport: "ack-verifying" });
   });
 
   test("a parent outside bypass is never attested: the socket is skipped and the reply is typed", async () => {
@@ -191,33 +231,33 @@ describe("reply to a Claude child", () => {
     expect(inbox.connections).toBe(1);
     expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain" from-mode="prompting">');
     expect(run.sends).toHaveLength(0);
-    expect(run.deliveries[0]).toMatchObject({ transport: "socket" });
+    expect(run.deliveries[0]).toMatchObject({ transport: "ack-verifying" });
   });
 
-  test("a child that left bypass takes a bypass parent's reply through the socket with no class attested", async () => {
+  test("a child that left bypass gets a typed reply when the socket would hold it", async () => {
     const current = await scene("idle", ["bypassPermissions"], "default");
     const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
     const run = await runReply(current);
-    expect(inbox.connections).toBe(1);
-    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain">\n');
-    expect(run.sends).toHaveLength(0);
+    expect(inbox.connections).toBe(0);
+    expect(run.sends).toHaveLength(1);
+    expect(run.deliveries[0]).toMatchObject({ transport: "typed" });
   });
 
-  test("a child that prompts takes a reply from a parent that is not Claude with no class attested", async () => {
+  test("a child whose sender class is unknown gets a typed reply", async () => {
     const current = await scene("idle", undefined, "default");
     const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
     const run = await runReply(current, "codex");
-    expect(inbox.connections).toBe(1);
-    expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain">\n');
-    expect(run.sends).toHaveLength(0);
-  });
-
-  test("a child that drops the message falls back to typing and marks the channel broken", async () => {
-    const current = await scene("idle", ["bypassPermissions"]);
-    await startInbox(String(current.session.messagingSocketPath));
-    const run = await runReply(current);
+    expect(inbox.connections).toBe(0);
     expect(run.sends).toHaveLength(1);
     expect(run.deliveries[0]).toMatchObject({ transport: "typed" });
-    expect(run.channel).toMatchObject({ status: "broken", failures: 1 });
+  });
+
+  test("a child that does not consume the accepted peer message is not sent a duplicate", async () => {
+    const current = await scene("idle", ["bypassPermissions"], "bypassPermissions");
+    await startInbox(String(current.session.messagingSocketPath));
+    const run = await runReply(current);
+    expect(run.sends).toHaveLength(0);
+    expect(run.deliveries[0]).toMatchObject({ transport: "ack-verifying" });
+    expect(run.channel).toBeUndefined();
   });
 });

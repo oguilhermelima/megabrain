@@ -37,31 +37,28 @@ describe("spawn first prompt", () => {
     }
   });
 
-  test.each(agents)("%s: clears and pastes again once when only the tail of the prompt arrived", async (agent) => {
+  test.each(agents)("%s: submits immediately even when the screen shows only a paste tail", async (agent) => {
     const id = `dispatch-repaste-${agent}`;
     const run = await runComposerSpawn(id, { agent, swallowPastes: 1, tailBytes: 400, onSubmit: (_prompt, root) => appendReceived(root, id) }, {}, ["--prompt", longBrief]);
     try {
       expect(run.result.kind).toBe("ok");
-      expect(run.pane.pastes).toHaveLength(2);
+      expect(run.pane.pastes).toHaveLength(1);
       expect(run.pane.submissions).toHaveLength(1);
-      expect(run.pane.submissions[0]).toBe(run.pane.pastes[1]);
-      expect(run.pane.submissions[0]).toContain(longBrief);
-      expect(afterFirstPaste(run.events)).toEqual(["paste", "key:C-u", "paste", "key:Enter"]);
+      expect(run.pane.submissions[0]).not.toContain(longBrief);
+      expect(afterFirstPaste(run.events)).toEqual(["paste", "key:Enter"]);
     } finally {
       await cleanupRun(run);
     }
   });
 
-  test.each(agents)("%s: fails without pressing Enter when the repaste is truncated too", async (agent) => {
+  test.each(agents)("%s: submits once without waiting for a readable full paste", async (agent) => {
     const run = await runComposerSpawn(`dispatch-repaste-fails-${agent}`, { agent, swallowPastes: 2, tailBytes: 400 }, {}, ["--prompt", longBrief]);
     try {
-      expect(run.result.kind).toBe("failed");
-      if (run.result.kind !== "failed") throw new Error("expected a failure");
-      expect(run.result.error).toContain("prompt-transport-failed");
-      expect(run.pane.pastes).toHaveLength(2);
-      expect(run.pane.submissions).toHaveLength(0);
-      expect(afterFirstPaste(run.events)).not.toContain("key:Enter");
-      expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "failed", reason: "prompt-transport-failed" });
+      expect(run.result.kind).toBe("ok");
+      expect(run.pane.pastes).toHaveLength(1);
+      expect(run.pane.submissions).toHaveLength(1);
+      expect(afterFirstPaste(run.events)).toEqual(["paste", "key:Enter"]);
+      expect(readMeta(run.root, run.dispatchId)).toMatchObject({ state: "running" });
     } finally {
       await cleanupRun(run);
     }

@@ -1,11 +1,13 @@
 import { resolveClaudePeer, sendClaudePeer } from "../../agents/claude-peer.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { listDispatches, stateDatabase } from "../../adapters/state-db.js";
-import { deliverCodexQueue, findCodexProcess, findCodexProcessByThread } from "../../core/codex-delivery.js";
+import { listDispatches, recordChannelResult, stateDatabase } from "../../adapters/state-db.js";
+import { deliverCodexQueue, findCodexProcessByThread } from "../../core/codex-delivery.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { deliverThroughGrokLeader } from "../../core/grok-leader-delivery.js";
-import { selectSessionSendChannel, type SessionSendAgent } from "../../core/session-send.js";
-import { deliverOperatorText, matchOrcaTerminal, selectOperatorSendChannel } from "../../core/session-send.js";
+import { deliverOperatorText, matchOrcaTerminal, sendSessionMessage, type SessionSendAgent, type SessionSendChannel } from "../../core/session-send.js";
+import { deliverThroughAgyLanguageServer } from "../../core/agy-ls-delivery.js";
+import { agyParentKey } from "../../agents/agy-ls.js";
+import { randomUUID } from "node:crypto";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
 import { ownedTmuxProcess, readOwnedSessions } from "../../core/session-ownership.js";
@@ -88,23 +90,26 @@ function output(result: SendResult, json: boolean): string {
 
 // A session megabrain resumed itself: its terminal is a tmux session on megabrain's own server, so the
 // same verified paste applies and no Orca terminal is looked up.
-async function sendOwned(tmuxSession: string, agent: SessionSendAgent, request: Readonly<{ text: string; json: boolean }>, process: ProcessAdapter): Promise<Result<string>> {
+async function sendOwned(tmuxSession: string, agent: SessionSendAgent, request: Readonly<{ text: string; json: boolean }>, process: ProcessAdapter, environment: Environment): Promise<Result<string>> {
   const tmuxProcess = ownedTmuxProcess(process);
   const panes = await getTmux().panesForSession(tmuxSession, tmuxProcess);
   const pane = panes.kind === "ok" ? panes.value[0] : undefined;
   if (pane === undefined) return ok(output({ delivered: false, channel: "tmux", detail: "The session megabrain owns is not running; run megabrain session own again." }, request.json), 1);
-  const result = await deliverOperatorText({
-    agent, text: request.text, readyTimeoutMs: 10_000,
-    read: async () => {
-      const captured = await getTmux().capturePane(pane, 200, tmuxProcess, true);
-      return captured.kind === "ok" ? captured.value : undefined;
+  const sent = await sendSessionMessage({ caller: "operator-send", messageId: randomUUID(), target: { agent, id: tmuxSession }, text: request.text, channels: {
+    typed: async () => {
+      const result = await deliverOperatorText({
+        agent, text: request.text,
+        read: async () => { const captured = await getTmux().capturePane(pane, 200, tmuxProcess, true); return captured.kind === "ok" ? captured.value : undefined; },
+        send: async (text, enter) => {
+          if (text !== "") { const pasted = await getTmux().pasteText(pane, text, tmuxProcess); if (pasted.kind !== "ok") return pasted.error; }
+          if (enter) { const submitted = await getTmux().sendKey(pane, "Enter", tmuxProcess); if (submitted.kind !== "ok") return submitted.error; }
+          return "ok";
+        },
+      });
+      return result.delivered ? true : { delivered: false, detail: result.detail };
     },
-    send: async (text, enter) => {
-      const sent = text === "" && enter ? await getTmux().sendKey(pane, "Enter", tmuxProcess) : await getTmux().pasteText(pane, text, tmuxProcess);
-      return sent.kind === "ok" ? "ok" : sent.error;
-    },
-  });
-  return ok(output({ delivered: result.delivered, channel: "tmux", ...(result.detail === undefined ? {} : { detail: result.detail }) }, request.json), result.delivered ? undefined : 1);
+  }, recordChannel: (channel) => { const database = stateDatabase(environment); if (database.kind === "ok") recordChannelResult(database.value, { agent, channel, agentVersion: "unknown", ok: true }); } });
+  return ok(output({ delivered: sent.delivered, channel: sent.channel, ...(sent.detail === undefined ? {} : { detail: sent.detail }) }, request.json), sent.delivered ? undefined : 1);
 }
 
 export async function executeSend(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
@@ -115,7 +120,7 @@ export async function executeSend(args: readonly string[], environment: Environm
   const target = parseTarget(parsed.value.session);
   if (target.kind !== "ok") return target;
   const owned = readOwnedSessions(stateDirectory(environment))[parsed.value.session];
-  if (owned !== undefined) return sendOwned(owned.tmuxSession, target.value.agent, parsed.value, process);
+  if (owned !== undefined) return sendOwned(owned.tmuxSession, target.value.agent, parsed.value, process, environment);
   const database = stateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const records = listDispatches(database.value);
@@ -151,38 +156,35 @@ export async function executeSend(args: readonly string[], environment: Environm
     ? "no open Orca terminal matched this Claude session; the peer message may be held for approval"
     : undefined;
   const operator = environment.MEGABRAIN_OPERATOR === "1";
-  const channel = operator ? selectOperatorSendChannel(target.value.agent, {
-    peerSocket: peer?.kind === "ok",
-    leaderSocket: target.value.agent === "grok" && socketPath !== undefined,
-    codexQueue: target.value.agent === "codex",
-    tmux: pane !== undefined,
-    orca: orcaTerminal !== undefined,
-  }) : selectSessionSendChannel(target.value.agent, {
-    peerSocket: peer?.kind === "ok",
-    leaderSocket: target.value.agent === "grok" && socketPath !== undefined,
-    codexQueue: target.value.agent === "codex",
-    tmux: pane !== undefined,
-  });
-  if (channel === undefined) {
-    const result: SendResult = { delivered: false, channel: "none", detail: "no delivery channel is available for this session" };
-    return ok(output(result, parsed.value.json), 1);
-  }
-
-  let failure = "delivery channel did not accept the message";
-  const tryTmux = async (): Promise<SendResult | undefined> => {
-    if (meta === undefined || pane === undefined) return undefined;
-    const sent = await sendTmux(context, parsed.value.text, process);
-    return sent.kind === "ok" ? { delivered: true, channel: "tmux" } : { delivered: false, channel: "tmux", detail: sent.error };
-  };
-  if (operator && (channel === "tmux" || channel === "orca")) {
-    const agent = target.value.agent;
-    const read = async (): Promise<string | undefined> => {
-      if (channel === "tmux") {
-        if (pane === undefined) return undefined;
-        const captured = await getTmux().capturePane(pane, 200, process, true, targetValue(context, "tmuxSessionId", "parentTmuxSessionId"));
-        return captured.kind === "ok" ? captured.value : undefined;
+  const typedHost = pane !== undefined ? "tmux" : operator && orcaTerminal !== undefined ? "orca" : undefined;
+  const sendTyped = async (text: string, enter: boolean): Promise<"ok" | string> => {
+    if (typedHost === "tmux") {
+      if (pane === undefined) return "no tmux pane is associated with this session";
+      if (text !== "") {
+        const pasted = await getTmux().pasteText(pane, text, process, targetValue(context, "tmuxSessionId", "parentTmuxSessionId"));
+        if (pasted.kind !== "ok") return pasted.error;
       }
-      if (orcaTerminal === undefined) return undefined;
+      if (enter) {
+        const submitted = await getTmux().sendKey(pane, "Enter", process, targetValue(context, "tmuxSessionId", "parentTmuxSessionId"));
+        if (submitted.kind !== "ok") return submitted.error;
+      }
+      return "ok";
+    }
+    if (typedHost === "orca" && orcaTerminal !== undefined) {
+      const host = getHost("orca");
+      const call = host?.send({ workspaceId: null, terminalId: orcaTerminal, ...(text === "" && enter ? {} : { text }), enter });
+      if (call?.kind !== "ok") return "could not build Orca terminal send";
+      const sent = await runHostSend("orca", process, call.value);
+      return sent.kind === "ok" ? "ok" : sent.error;
+    }
+    return "no typed session channel is available";
+  };
+  const readTyped = async (): Promise<string | undefined> => {
+    if (typedHost === "tmux" && pane !== undefined) {
+      const captured = await getTmux().capturePane(pane, 200, process, true, targetValue(context, "tmuxSessionId", "parentTmuxSessionId"));
+      return captured.kind === "ok" ? captured.value : undefined;
+    }
+    if (typedHost === "orca" && orcaTerminal !== undefined) {
       const captured = await process.run("orca", ["terminal", "read", "--terminal", orcaTerminal, "--json", "--screen"]);
       if (captured.kind !== "ok") return undefined;
       try {
@@ -191,61 +193,49 @@ export async function executeSend(args: readonly string[], environment: Environm
         const tail = typeof terminal?.tail === "string" ? terminal.tail : Array.isArray(terminal?.tail) && terminal.tail.every((line): line is string => typeof line === "string") ? terminal.tail.join("\n") : undefined;
         return tail === undefined ? undefined : typeof terminal?.draft === "string" && terminal.draft !== "" ? `${tail}\nMEGABRAIN_COMPOSER_DRAFT:${terminal.draft}` : tail;
       } catch { return undefined; }
+    }
+    return undefined;
+  };
+  const channels: Partial<Record<SessionSendChannel, () => Promise<boolean | Readonly<{ delivered: boolean; stop?: boolean; detail?: string }>>>> = {};
+  if (target.value.agent === "claude" && peer?.kind === "ok") {
+    channels["peer-socket"] = async () => {
+      const sent = await sendClaudePeer(peer.value, parsed.value.text);
+      return sent.kind === "ok"
+        ? { delivered: false, stop: true, detail: noTerminalMatch ?? "the peer message may be held for operator approval because it has no permission-mode attestation" }
+        : { delivered: false, detail: sent.error };
     };
-    const send = async (text: string, enter: boolean): Promise<"ok" | string> => {
-      if (channel === "tmux") {
-        if (pane === undefined) return "no tmux pane is associated with this session";
-        const sent = text === "" && enter
-          ? await getTmux().sendKey(pane, "Enter", process, targetValue(context, "tmuxSessionId", "parentTmuxSessionId"))
-          : await getTmux().pasteText(pane, text, process, targetValue(context, "tmuxSessionId", "parentTmuxSessionId"));
-        return sent.kind === "ok" ? "ok" : sent.error;
-      }
-      if (orcaTerminal === undefined) return "no matching Orca terminal is available";
-      const host = getHost("orca");
-      const call = host?.send({ workspaceId: null, terminalId: orcaTerminal, ...(text === "" && enter ? {} : { text }), enter });
-      if (call?.kind !== "ok") return "could not build Orca terminal send";
-      const sent = await runHostSend("orca", process, call.value);
-      return sent.kind === "ok" ? "ok" : sent.error;
-    };
-    // C-u clears a line per press in some agents, so a few presses empty a multi-line paste.
-    const clear = channel === "tmux" && pane !== undefined ? async (): Promise<"ok" | string> => {
-      for (let press = 0; press < 3; press += 1) {
-        const cleared = await getTmux().sendKey(pane, "C-u", process, targetValue(context, "tmuxSessionId", "parentTmuxSessionId"));
-        if (cleared.kind !== "ok") return cleared.error;
-      }
-      return "ok";
-    } : undefined;
-    const result = await deliverOperatorText({ agent, text: parsed.value.text, read, send, ...(clear === undefined ? {} : { clear }) });
-    return ok(output({ delivered: result.delivered, channel, ...(result.detail === undefined ? {} : { detail: result.detail }) }, parsed.value.json), result.delivered ? undefined : 1);
   }
-  if (channel === "peer-socket" && peer?.kind === "ok") {
-    // An operator has no honest permission-mode attestation, so the envelope deliberately omits it.
-    const sent = await sendClaudePeer(peer.value, parsed.value.text);
-    if (sent.kind === "ok") return ok(output({ delivered: false, channel: "peer-socket-held", detail: noTerminalMatch ?? "the session may hold this message for operator approval because it has no permission-mode attestation" }, parsed.value.json), 1);
-    failure = sent.error;
-  } else if (channel === "leader-socket" && socketPath !== undefined) {
-    const sent = await deliverThroughGrokLeader({ database: database.value, socketPath, sessionId: grokSessionId, text: parsed.value.text });
-    if (sent.kind === "delivered") return ok(output({ delivered: true, channel }, parsed.value.json));
-    failure = sent.kind === "fallback" ? sent.reason : "Grok leader did not confirm prompt queueing";
-  } else if (channel === "codex-queue") {
-    const thread = target.value.id;
-    const scope = meta === undefined ? undefined : {
-      runtime: context.side === "child" ? meta.runtime : "tmux",
-      host: context.side === "child" ? meta.childHost : meta.parentHost,
-      childHost: context.side === "child" ? meta.childHost : meta.parentHost,
-      terminalId: context.side === "child" ? meta.terminalId : meta.parentTerminalId,
-      workspaceId: context.side === "child" ? meta.workspaceId : meta.parentWorkspaceId,
-      tmuxPane: context.side === "child" ? meta.tmuxPane : meta.parentTmuxPane,
-      tmuxSessionId: context.side === "child" ? meta.tmuxSessionId : meta.parentTmuxSessionId,
+  if (target.value.agent === "grok" && socketPath !== undefined) {
+    channels["leader-socket"] = async () => {
+      const sent = await deliverThroughGrokLeader({ database: database.value, socketPath, sessionId: grokSessionId, text: parsed.value.text });
+      return sent.kind === "delivered" ? true : { delivered: false, detail: sent.kind === "fallback" ? sent.reason : "Grok leader did not confirm prompt queueing" };
     };
-    const found = scope === undefined ? await findCodexProcessByThread(thread, process) : await findCodexProcess(thread, scope, process);
-    if ("pid" in found) {
-      const sent = await deliverCodexQueue(thread, found.pid, parsed.value.text, process);
-      if (sent.kind === "queued") return ok(output({ delivered: true, channel }, parsed.value.json));
-      failure = sent.reason;
-    } else failure = found.reason;
   }
-  const fallback = await tryTmux();
-  if (fallback !== undefined) return ok(output(fallback, parsed.value.json), fallback.delivered ? undefined : 1);
-  return ok(output({ delivered: false, channel, detail: failure }, parsed.value.json), 1);
+  if (target.value.agent === "agy" && context !== undefined && typeof meta?.dispatchId === "string") {
+    channels["agy-language-server"] = async () => {
+      const key = context.side === "parent" ? agyParentKey(String(meta.dispatchId)) : String(meta.dispatchId);
+      const sent = await deliverThroughAgyLanguageServer({ database: database.value, stateRoot: stateDirectory(environment), endpointKey: key, text: parsed.value.text, isRead: async () => false });
+      return sent?.kind === "delivered" ? true : { delivered: false, detail: sent?.kind === "fallback" ? sent.reason : "agy language server is unavailable" };
+    };
+  }
+  if (target.value.agent === "codex") {
+    channels["codex-queue"] = async () => {
+      const found = await findCodexProcessByThread(target.value.id, process);
+      if (!("pid" in found)) return { delivered: false, detail: found.reason };
+      const sent = await deliverCodexQueue(target.value.id, found.pid, parsed.value.text, process);
+      return sent.kind === "queued" ? true : { delivered: false, detail: sent.reason };
+    };
+  }
+  if (typedHost !== undefined) {
+    channels.typed = async () => {
+      const result = await deliverOperatorText({ agent: target.value.agent, text: parsed.value.text, read: readTyped, send: sendTyped });
+      return result.delivered ? true : { delivered: false, detail: result.detail };
+    };
+  }
+  const sent = await sendSessionMessage({
+    caller: "operator-send", messageId: randomUUID(), target: { agent: target.value.agent, id: target.value.id }, text: parsed.value.text,
+    channels,
+    recordChannel: (channel) => { recordChannelResult(database.value, { agent: target.value.agent, channel, agentVersion: "unknown", ok: true }); },
+  });
+  return ok(output({ delivered: sent.delivered, channel: sent.channel, ...(sent.detail === undefined ? {} : { detail: sent.detail }) }, parsed.value.json), sent.delivered ? undefined : 1);
 }

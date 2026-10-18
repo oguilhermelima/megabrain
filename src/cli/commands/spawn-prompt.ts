@@ -1,15 +1,17 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
+import { createHash } from "node:crypto";
+import { recordChannelResult, stateDatabase } from "../../adapters/state-db.js";
 import { composerHoldsText } from "../../core/composer-proof.js";
 import { classifyLiveness } from "../../core/liveness.js";
+import { sendSessionMessage } from "../../core/session-send.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { SpawnStepOutcome } from "../../core/spawn-plan.js";
 import { getTmux, withTmuxPaneLock, type TmuxSendEnvironment } from "../../hosts/tmux.js";
 
 const POLL_MS = 100;
-const CLEAR_ATTEMPTS = 5;
-const MAX_CLEAR_PRESSES = 400;
-const DEFAULT_VERIFY_TIMEOUT_MS = 2000;
-const DEFAULT_SUBMIT_TIMEOUT_MS = 3000;
+const PASTE_END_MARKER = "\u001b[201~";
+const MAX_CLEAR_PRESSES = 40;
+const CLEAR_ATTEMPTS = 3;
 // Codex shows an idle composer for about four seconds while its MCP servers start before it
 // submits an argv prompt (measured 2026-10-14), so an idle pane is no proof the brief was dropped.
 const DEFAULT_ARGV_GRACE_MS = 30_000;
@@ -50,32 +52,9 @@ async function readScreen(target: PromptTarget): Promise<string | undefined> {
   return captured.kind === "ok" ? captured.value : undefined;
 }
 
-async function composerShowsPrompt(target: PromptTarget): Promise<boolean> {
-  const deadline = Date.now() + milliseconds(target.environment.MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS, DEFAULT_VERIFY_TIMEOUT_MS);
-  let last: string | undefined;
-  while (true) {
-    const screen = await readScreen(target);
-    last = screen ?? last;
-    if (screen !== undefined && composerHoldsText(target.agent, screen, target.prompt)) return true;
-    if (Date.now() >= deadline) {
-      if (last !== undefined) target.rejectedFrame?.(last);
-      return false;
-    }
-    await sleep(POLL_MS);
-  }
-}
-
-// Whether the pane is running a turn right now. A pane that cannot be read proves nothing.
-export async function paneShowsTurn(target: Pick<PromptTarget, "pane" | "agent" | "process">): Promise<boolean> {
-  const captured = await getTmux().capturePane(target.pane, 200, target.process, true);
-  if (captured.kind !== "ok") return false;
-  const status = classifyLiveness(target.agent, captured.value).status;
-  return status === "working" || status === "pending-check";
-}
-
-// An empty composer is the one the agent's classifier calls idle: its placeholder and nothing typed.
-// C-u may clear only one line per press (Antigravity empties a line, then joins it to the one above),
-// so presses continue while each one changes the screen and give up only once they stop helping.
+// Clear only after identifying the current composer as our own prior prompt. Each C-u can remove
+// one line (Antigravity first empties a line, then joins it to the one above), so stop when the
+// screen stops changing rather than sending an unbounded stream of keys.
 export async function clearComposer(target: Pick<PromptTarget, "pane" | "agent" | "process">): Promise<Result<void>> {
   let previous: string | undefined;
   let stalled = 0;
@@ -92,58 +71,49 @@ export async function clearComposer(target: Pick<PromptTarget, "pane" | "agent" 
   return failed(`could not clear the ${target.agent} composer in ${target.pane}`);
 }
 
-async function placePrompt(target: PromptTarget): Promise<Result<void>> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (attempt > 0) {
-      const cleared = await clearComposer(target);
-      if (cleared.kind !== "ok") return cleared;
-    }
-    const pasted = await getTmux().pasteText(target.pane, target.prompt, target.process);
-    if (pasted.kind !== "ok") return pasted;
-    if (await composerShowsPrompt(target)) return ok(undefined);
-  }
-  return failed(`the prompt did not arrive whole in the ${target.agent} composer of ${target.pane}, even after clearing it and pasting again`);
-}
-
-// A turn started when the agent reports one running, or when the prompt has left the composer.
-async function turnStartedWithin(target: PromptTarget): Promise<boolean> {
-  const deadline = Date.now() + milliseconds(target.environment.MEGABRAIN_PROMPT_SUBMIT_TIMEOUT_MS, DEFAULT_SUBMIT_TIMEOUT_MS);
-  while (true) {
-    const screen = await readScreen(target);
-    if (screen !== undefined) {
-      const status = classifyLiveness(target.agent, screen).status;
-      if (status === "working" || status === "pending-check" || !composerHoldsText(target.agent, screen, target.prompt)) return true;
-    }
-    if (Date.now() >= deadline) return false;
-    await sleep(POLL_MS);
-  }
-}
-
-// A composer left inside an unterminated bracketed paste takes every Enter as a newline. Sending
-// the paste end marker closes it, and the next Enter submits.
-const PASTE_END_MARKER = "\u001b[201~";
-
-async function submitPrompt(target: PromptTarget): Promise<Result<boolean>> {
-  for (let press = 0; press < 2; press += 1) {
-    const sent = await getTmux().sendKey(target.pane, "Enter", target.process);
-    if (sent.kind !== "ok") return sent;
-    if (await turnStartedWithin(target)) return ok(true);
-  }
-  const closed = await getTmux().sendText(target.pane, PASTE_END_MARKER, target.process);
-  if (closed.kind !== "ok") return closed;
-  const sent = await getTmux().sendKey(target.pane, "Enter", target.process);
-  if (sent.kind !== "ok") return sent;
-  return ok(await turnStartedWithin(target));
+// Whether the pane is running a turn right now. A pane that cannot be read proves nothing.
+export async function paneShowsTurn(target: Pick<PromptTarget, "pane" | "agent" | "process">): Promise<boolean> {
+  const captured = await getTmux().capturePane(target.pane, 200, target.process, true);
+  if (captured.kind !== "ok") return false;
+  const status = classifyLiveness(target.agent, captured.value).status;
+  return status === "working" || status === "pending-check";
 }
 
 // Pastes the prompt, proves the composer holds all of it before submitting (one clear and repaste
 // on a mismatch), submits, and confirms the agent started a turn. The result says whether it did.
 export async function deliverPrompt(target: PromptTarget): Promise<Result<boolean>> {
-  return withTmuxPaneLock(target.root, target.pane, target.environment, async () => {
-    const placed = await placePrompt(target);
-    if (placed.kind !== "ok") return placed;
-    return submitPrompt(target);
+  const messageId = `spawn:${createHash("sha256").update(`${target.pane}\0${target.prompt}`).digest("hex")}`;
+  const sent = await sendSessionMessage({
+    caller: "spawn-fallback", messageId, target: { agent: target.agent, id: target.pane }, text: target.prompt,
+    channels: { typed: async () => {
+      const delivered = await withTmuxPaneLock(target.root, target.pane, target.environment, async () => {
+      const pasted = await getTmux().pasteText(target.pane, target.prompt, target.process);
+      if (pasted.kind !== "ok") return failed(pasted.error);
+      const submitted = await getTmux().sendKey(target.pane, "Enter", target.process);
+      if (submitted.kind !== "ok") return failed(submitted.error);
+      let screen = await readScreen(target);
+      if (screen === undefined) return ok(true);
+      const started = () => {
+        const status = classifyLiveness(target.agent, screen!).status;
+        return status === "working" || status === "pending-check" || !composerHoldsText(target.agent, screen!, target.prompt);
+      };
+      if (started()) return ok(true);
+      const resubmitted = await getTmux().sendKey(target.pane, "Enter", target.process);
+      if (resubmitted.kind !== "ok") return failed(resubmitted.error);
+      screen = await readScreen(target);
+      if (screen === undefined || classifyLiveness(target.agent, screen).status === "working" || classifyLiveness(target.agent, screen).status === "pending-check" || !composerHoldsText(target.agent, screen, target.prompt)) return ok(true);
+      const closed = await getTmux().sendText(target.pane, PASTE_END_MARKER, target.process);
+      if (closed.kind !== "ok") return failed(closed.error);
+      const finalSubmit = await getTmux().sendKey(target.pane, "Enter", target.process);
+      if (finalSubmit.kind !== "ok") return failed(finalSubmit.error);
+      screen = await readScreen(target);
+      return screen === undefined || classifyLiveness(target.agent, screen).status === "working" || classifyLiveness(target.agent, screen).status === "pending-check" || !composerHoldsText(target.agent, screen, target.prompt) ? ok(true) : failed("prompt submit was not confirmed");
+      });
+      return delivered.kind === "ok" && delivered.value ? true : { delivered: false, detail: delivered.kind === "failed" ? delivered.error : "prompt submit was not confirmed" };
+    } },
+    recordChannel: (channel) => { const database = stateDatabase({ MEGABRAIN_STATE_DIR: target.root }); if (database.kind === "ok") recordChannelResult(database.value, { agent: target.agent, channel, agentVersion: "unknown", ok: true }); },
   });
+  return sent.delivered ? ok(true) : ok(false);
 }
 
 function transportFailure(target: PromptTarget, detail: string): PromptTransportOutcome {
