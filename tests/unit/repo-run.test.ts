@@ -20,13 +20,13 @@ type Sandbox = { env: Record<string, string | undefined>; repo: string };
 
 async function sandbox(runCommand: string | null = "sleep 300"): Promise<Sandbox> {
   const root = await mkdtemp(join(tmpdir(), "mb-repo-run-"));
-  const socket = join(root, "tmux.sock");
+  const server = `mb-test-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   const repo = join(root, "project");
   const env = {
     PATH: process.env.PATH,
     HOME: root,
     MEGABRAIN_STATE_DIR: join(root, "state"),
-    MEGABRAIN_TMUX_SOCKET: socket,
+    MEGABRAIN_TMUX_SERVER: server,
     CLAUDE_CODE_SESSION_ID: "repo-run-owner",
   };
   await adapter.run("git", ["init", "-q", repo]);
@@ -36,7 +36,7 @@ async function sandbox(runCommand: string | null = "sleep 300"): Promise<Sandbox
   }
   cleanups.push(async () => {
     await executeRepository(["stop", repo, "--force"], env, adapter);
-    await adapter.run("tmux", ["-S", socket, "kill-server"]);
+    await adapter.run("tmux", ["-L", server, "kill-server"]);
     await rm(root, { recursive: true, force: true });
   });
   return { env, repo };
@@ -72,6 +72,46 @@ describe("repo run", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ name: "repo-run", state: "running" });
     expect(rows[0]?.pid).toBe(body.pid);
+  }, 30000);
+
+  test("streams early ANSI output to the run pane and keeps it in proc.log", async () => {
+    const { env, repo } = await sandbox("printf '\033[32mEARLY_RUN_OUTPUT\033[0m\\n'; sleep 300");
+    const started = await executeRepository(["run", repo, "--json"], env, adapter);
+    expect(started.kind).toBe("ok");
+    const record = JSON.parse(started.kind === "ok" ? started.value : "{}") as { session: string };
+    const pane = async () => await adapter.run("tmux", ["-L", env.MEGABRAIN_TMUX_SERVER!, "capture-pane", "-p", "-e", "-t", record.session]);
+    expect(await waitFor(async () => {
+      const captured = await pane();
+      return captured.kind === "ok" && captured.value.stdout.includes("EARLY_RUN_OUTPUT") ? true : undefined;
+    })).toBe(true);
+    const captured = await pane();
+    expect(captured.kind === "ok" ? captured.value.stdout : "").toContain(`${String.fromCharCode(27)}[32m`);
+    const logs = await executeProc(["logs", "repo-run", "--grep", "EARLY_RUN_OUTPUT"], { ...env, MEGABRAIN_WORKTREE: repo }, adapter);
+    expect(logs.kind).toBe("ok");
+    expect(logs.kind === "ok" ? logs.value : "").toContain("EARLY_RUN_OUTPUT");
+  }, 30000);
+
+  test("enables color for commands whose output is piped", async () => {
+    const { env, repo } = await sandbox("if [ \"$FORCE_COLOR\" = 1 ]; then printf '\\033[35mFORCED_COLOR_OUTPUT\\033[0m\\n'; else printf 'NO_FORCED_COLOR\\n'; fi; sleep 300");
+    const started = await executeRepository(["run", repo, "--json"], env, adapter);
+    expect(started.kind).toBe("ok");
+    const record = JSON.parse(started.kind === "ok" ? started.value : "{}") as { session: string };
+    const pane = async () => await adapter.run("tmux", ["-L", env.MEGABRAIN_TMUX_SERVER!, "capture-pane", "-p", "-e", "-t", record.session]);
+    expect(await waitFor(async () => {
+      const captured = await pane();
+      return captured.kind === "ok" && captured.value.stdout.includes("FORCED_COLOR_OUTPUT") ? true : undefined;
+    })).toBe(true);
+    const captured = await pane();
+    expect(captured.kind === "ok" ? captured.value.stdout : "").toContain(`${String.fromCharCode(27)}[35m`);
+  }, 30000);
+
+  test("proc logs resolves a listed name without requiring its worktree selector", async () => {
+    const { env, repo } = await sandbox("printf 'NAMED_PROC_LOG_OUTPUT\\n'; sleep 300");
+    expect((await executeRepository(["run", repo, "--json"], env, adapter)).kind).toBe("ok");
+    expect(await waitFor(async () => {
+      const result = await executeProc(["logs", "repo-run", "--grep", "NAMED_PROC_LOG_OUTPUT"], { ...env, MEGABRAIN_WORKTREE: undefined }, adapter);
+      return result.kind === "ok" && result.value.includes("NAMED_PROC_LOG_OUTPUT") ? true : undefined;
+    })).toBe(true);
   }, 30000);
 
   test("a second run reports the running one instead of stacking", async () => {

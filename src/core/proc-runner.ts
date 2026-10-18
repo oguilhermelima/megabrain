@@ -72,16 +72,20 @@ async function callerWorktree(environment: Readonly<Record<string, string | unde
 }
 
 function root(environment: Readonly<Record<string, string | undefined>>): string { return join(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? homedir(), ".megabrain"), "procs"); }
-function tmuxArgs(environment: Readonly<Record<string, string | undefined>>, args: readonly string[]): string[] { const socket = environment.MEGABRAIN_TMUX_SOCKET; return [...(socket ? ["-S", socket] : []), ...args]; }
+function tmuxArgs(environment: Readonly<Record<string, string | undefined>>, args: readonly string[]): string[] {
+  const socket = environment.MEGABRAIN_TMUX_SOCKET;
+  const server = environment.MEGABRAIN_TMUX_SERVER;
+  return [...(socket ? ["-S", socket] : server ? ["-L", server] : []), ...args];
+}
 function key(worktree: string): string { return createHash("sha256").update(worktree).digest("hex").slice(0, 16); }
 function recordPath(env: Readonly<Record<string, string | undefined>>, worktree: string, name: string): string { return join(root(env), key(worktree), `${name}.json`); }
 function logDir(env: Readonly<Record<string, string | undefined>>, record: ProcRecord): string { return join(root(env), key(record.worktree), record.name); }
 function sessionName(record: Pick<ProcRecord, "worktree" | "name">): string { return `mb-proc-${key(record.worktree)}-${record.name}`; }
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
-function commandFor(record: ProcRecord, state: string): string {
-  const script = `const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');const c=JSON.parse(Buffer.from(process.argv[1],'base64').toString());const d=c.dir;fs.mkdirSync(d,{recursive:true});let f=path.join(d,'proc.log');const child=cp.spawn(c.cmd[0],c.cmd.slice(1),{cwd:c.cwd,env:{...process.env,BUN_BE_BUN:undefined,...c.env},stdio:['ignore','pipe','pipe']});for(const sig of ['SIGTERM','SIGHUP','SIGINT'])process.on(sig,()=>{try{child.kill(sig)}catch{}});let pending='';function out(x){pending+=x.toString();let a=pending.split(/\\r?\\n/);pending=a.pop()||'';for(const line of a)write(line)}function write(line){let b=Buffer.byteLength(line+'\\n');try{if(fs.existsSync(f)&&fs.statSync(f).size+b>${MAX_LOG}){for(let i=${LOG_FILES - 1};i>=1;i--){let from=f+'.'+i,to=f+'.'+(i+1);if(fs.existsSync(from)){if(i+1>=${LOG_FILES})fs.unlinkSync(from);else fs.renameSync(from,to)}}if(fs.existsSync(f))fs.renameSync(f,f+'.1')}}catch{}fs.appendFileSync(f,new Date().toISOString()+' '+line+'\\n')}child.stdout.on('data',out);child.stderr.on('data',out);child.on('close',code=>{if(pending)write(pending);write('process exited with code '+(code??1));fs.writeFileSync(${JSON.stringify(state)},JSON.stringify({...c.record,state:'exited',exitCode:code??1},null,2)+'\\n')});`;
+function commandFor(record: ProcRecord, state: string, callerEnvironment: Readonly<Record<string, string | undefined>>): string {
+  const script = `const fs=require('node:fs'),cp=require('node:child_process'),path=require('node:path');const c=JSON.parse(Buffer.from(process.argv[1],'base64').toString());const d=c.dir;fs.mkdirSync(d,{recursive:true});let f=path.join(d,'proc.log');const env={...process.env,BUN_BE_BUN:undefined,...c.env};if(c.callerColor.NO_COLOR!==undefined)env.NO_COLOR=c.callerColor.NO_COLOR;else delete env.NO_COLOR;if(c.callerColor.FORCE_COLOR!==undefined)env.FORCE_COLOR=c.callerColor.FORCE_COLOR;else if(c.callerColor.NO_COLOR===undefined)env.FORCE_COLOR='1';const child=cp.spawn(c.cmd[0],c.cmd.slice(1),{cwd:c.cwd,env,stdio:['ignore','pipe','pipe']});for(const sig of ['SIGTERM','SIGHUP','SIGINT'])process.on(sig,()=>{try{child.kill(sig)}catch{}});let pending='';function out(x){try{fs.writeSync(1,x)}catch{}pending+=x.toString();let a=pending.split(/\\r?\\n/);pending=a.pop()||'';for(const line of a)write(line)}function write(line){let b=Buffer.byteLength(line+'\\n');try{if(fs.existsSync(f)&&fs.statSync(f).size+b>${MAX_LOG}){for(let i=${LOG_FILES - 1};i>=1;i--){let from=f+'.'+i,to=f+'.'+(i+1);if(fs.existsSync(from)){if(i+1>=${LOG_FILES})fs.unlinkSync(from);else fs.renameSync(from,to)}}if(fs.existsSync(f))fs.renameSync(f,f+'.1')}}catch{}fs.appendFileSync(f,new Date().toISOString()+' '+line+'\\n')}child.stdout.on('data',out);child.stderr.on('data',out);child.on('close',code=>{if(pending)write(pending);write('process exited with code '+(code??1));fs.writeFileSync(${JSON.stringify(state)},JSON.stringify({...c.record,state:'exited',exitCode:code??1},null,2)+'\\n')});`;
   const stateRoot = dirname(dirname(state));
-  const payload = Buffer.from(JSON.stringify({ cmd: record.shell === undefined ? record.command : ["/bin/sh", "-lc", record.shell], cwd: record.cwd, env: record.env, dir: join(stateRoot, key(record.worktree), record.name), record, state })).toString("base64");
+  const payload = Buffer.from(JSON.stringify({ cmd: record.shell === undefined ? record.command : ["/bin/sh", "-lc", record.shell], cwd: record.cwd, env: record.env, dir: join(stateRoot, key(record.worktree), record.name), record, state, callerColor: { FORCE_COLOR: callerEnvironment.FORCE_COLOR, NO_COLOR: callerEnvironment.NO_COLOR } })).toString("base64");
   const runner = runtimeScript(process.execPath, script, payload);
   const assignments = Object.entries(runner.env).map(([name, value]) => `${name}=${quote(value)}`);
   return [...assignments, quote(runner.command), ...runner.args.map(quote)].join(" ");
@@ -139,7 +143,7 @@ async function startProc(args: readonly string[], environment: Readonly<Record<s
     const session = sessionName({ worktree: spec.worktree, name: spec.name });
     let record: ProcRecord = { ...spec, owner: await procOwner(environment, process), session, pid: 0, startedAt: new Date().toISOString(), state: "running" };
     await mkdir(logDir(environment, record), { recursive: true });
-    const command = commandFor(record, path);
+    const command = commandFor(record, path, environment);
     const started = await process.run("tmux", tmuxArgs(environment, ["new-session", "-d", "-s", session, "-c", spec.cwd, command]));
     if (started.kind !== "ok") return failed(started.error);
     const pane = await process.run("tmux", tmuxArgs(environment, ["display-message", "-p", "-t", `${session}:0.0`, "#{pane_pid}"]));
@@ -276,7 +280,17 @@ async function stopRecord(record: ProcRecord, process: ProcessAdapter, env: Read
   return stillExists.kind !== "ok" ? ok(undefined) : failed(result.error);
 }
 async function procLogs(args: readonly string[], env: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<string>> {
-  const name = args[0]; const found = await procPath(args, env, process); if (!name || !found) return failed(`proc not found: ${name ?? ""}`);
+  const name = args[0]; let found = await procPath(args, env, process);
+  if (name && !found && !args.includes("--worktree")) {
+    const matches = (await readProcRecords(env)).filter((record) => record.name === name);
+    if (matches.length === 1) {
+      const record = matches[0]!;
+      found = { record, path: recordPath(env, record.worktree, record.name) };
+    } else if (matches.length > 1) {
+      return failed(`proc ${name} exists in multiple worktrees; specify --worktree <path>`);
+    }
+  }
+  if (!name || !found) return failed(`proc not found: ${name ?? ""}`);
   const options: { tail?: number; since?: string; grep?: string; errors?: boolean; full?: boolean } = {}; let json = false;
   for (let i = 1; i < args.length; i += 1) { const arg = args[i] ?? ""; if (arg === "--errors" || arg === "--full" || arg === "--follow" || arg === "--json") { if (arg === "--errors") options.errors = true; if (arg === "--full") options.full = true; if (arg === "--json") json = true; } else if (["--tail", "--since", "--grep"].includes(arg)) { const value = args[++i]; if (!value) return failed(`${arg} requires a value`, 2); if (arg === "--tail") { const n = Number(value); if (!Number.isInteger(n) || n < 0) return failed("--tail must be a non-negative integer", 2); options.tail = n; } else if (arg === "--since") options.since = value; else options.grep = value; } else return failed(`unknown proc logs option: ${arg}`, 2); }
   if (options.since !== undefined && sinceMillis(options.since) === undefined) return failed("--since must be a duration such as 5m or an ISO date", 2);
