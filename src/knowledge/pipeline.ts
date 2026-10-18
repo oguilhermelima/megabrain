@@ -4,7 +4,7 @@ import { extractRefs, mergeRefs } from "./refs.js";
 import { askModel, buildSummaryPrompt, parseSummaryAnswer, readSummarySettings, type SummaryKey } from "../chat/summaries.js";
 import { openProject } from "./store.js";
 import { togglesFor } from "./settings.js";
-import type { ChatRecord, Ref, TranscriptLine } from "./types.js";
+import type { ChatRecord, Ref } from "./types.js";
 import { summaryDue } from "./summary-trigger.js";
 import { ModelBudgetExceeded, trackedModelCall } from "./model-usage.js";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -302,31 +302,4 @@ export class KnowledgePipeline {
     return mergeRefs(refs, editedFiles(input.turns, input.cwd));
   }
 
-  private async curate(input: SessionInput, record: ChatRecord, lines: readonly TranscriptLine[]): Promise<ProcessResult> {
-    const project = openProject(this.options.stateDir, input.repo);
-    const keys = record.pendingKeys ?? [];
-    const prompt = buildCuratorPrompt({
-      title: record.title,
-      summary: record.summary,
-      branch: record.branch,
-      refs: (record.verifiedRefs ?? record.refs).filter((ref) => ref.kind !== "file"),
-      keys: keys.flatMap((key) => { const line = lines.find((candidate) => candidate.cursor === key.cursor); return line === undefined ? [] : [{ ...key, text: line.text }]; }),
-      topics: project.topics(),
-      candidates: candidateTopics(project.topics(), { branch: record.branch, refs: record.verifiedRefs ?? record.refs, text: `${record.title ?? ""} ${record.summary}` }),
-    });
-    let output: string;
-    try {
-      const settings = readSummarySettings(this.options.stateDir);
-      output = await trackedModelCall({ stateDir: this.options.stateDir, dailyLimit: settings.dailyCallLimit, force: this.options.forceBudget || input.forceBudget, kind: "curator", project: input.repo, session: record.id, agent: input.agent, model: input.model ?? settings.model, prompt, now: this.now, call: () => this.ask(prompt, "curator") });
-    }
-    catch (error) { return { status: "curator-failed", chatId: record.id, error: error instanceof Error ? error.message : String(error) }; }
-    const applied = applyCuratorOutput(project, output, { chatId: record.id, at: this.now().toISOString(), branch: record.branch, refs: record.verifiedRefs ?? record.refs, proposedRefs: record.pendingRefs ?? [], lines, keyMessages: keys });
-    if (applied.kind !== "ok") {
-      process.stderr.write(`knowledge: curator answer for ${record.id} rejected: ${applied.error}\n`);
-      return { status: "curator-failed", chatId: record.id, error: applied.error };
-    }
-    const { pendingKeys: _pending, pendingRefs: _pendingRefs, ...rest } = record;
-    project.saveChat({ ...rest, topics: [...new Set([...record.topics, applied.value.id])], curated: true });
-    return { status: "curated", chatId: record.id, topicId: applied.value.id };
-  }
 }
