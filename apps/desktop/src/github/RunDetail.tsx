@@ -8,7 +8,7 @@ import { BranchChip, RunGlyph, RunStatePill, RunStatusIcon, eventName, runTone }
 import { ChevronIcon, CloseIcon, CopyIcon, MaximiseIcon, RefreshIcon } from '@/github/icons'
 import { ActionButton, StatPill, type HeroButton } from '@/github/ItemHero'
 import { LogViewer } from '@/github/LogViewer'
-import { IconButton, dot } from '@/github/page-parts'
+import { IconButton, dot, splitDetail } from '@/github/page-parts'
 import { Avatar, OpenLink, ago, useNow } from '@/github/parts'
 import { actionsLivePolicy, actionsPolicy } from '@/lib/poll-model'
 import { pageX } from '@/lib/page'
@@ -242,7 +242,7 @@ export function RunPane({ root, run, onMaximise, onClose, onChanged }: { root: s
     onChanged()
   })
   return (
-    <aside className="flex min-h-0 w-[min(580px,50%)] shrink-0 flex-col border-l border-white/[0.06] bg-ink-950">
+    <aside className={splitDetail}>
       <header className={`space-y-3.5 ${pageX} pt-6 pb-5`}>
         <div className="flex items-center gap-2">
           <RunStatePill item={shown} />

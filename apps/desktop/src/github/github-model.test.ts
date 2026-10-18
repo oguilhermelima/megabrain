@@ -10,9 +10,11 @@ import {
   filterIssues,
   filterPullRequests,
   githubRepository,
+  includesAuthor,
   isRepositoryFileLink,
   issueFilterOptions,
   labelStyle,
+  otherPeople,
   listRequestKey,
   mergeItems,
   nextPage,
@@ -316,5 +318,30 @@ describe('isRepositoryFileLink', () => {
     expect(isRepositoryFileLink('http://github.com/operator/sample/blob/main/a.png')).toBe(false)
     expect(isRepositoryFileLink('https://example.com/a.png')).toBe(false)
     expect(isRepositoryFileLink('docs/a.png')).toBe(false)
+  })
+})
+
+describe('people beside the author', () => {
+  const person = (login: string) => ({ login, name: null })
+
+  test('the author assigned to their own issue is left out and still known as assigned', () => {
+    expect(otherPeople('thiagoadsix', [person('thiagoadsix')])).toEqual([])
+    expect(includesAuthor('thiagoadsix', [person('thiagoadsix')])).toBe(true)
+  })
+
+  test('someone else stays, in order, with the author removed from among them', () => {
+    expect(otherPeople('octo', [person('ana'), person('octo'), person('bo')]).map((p) => p.login)).toEqual(['ana', 'bo'])
+    expect(includesAuthor('octo', [person('ana'), person('bo')])).toBe(false)
+  })
+
+  test('logins match without regard to case, and each appears once', () => {
+    expect(otherPeople('Octo', [person('octo'), person('Ana'), person('ana')]).map((p) => p.login)).toEqual(['Ana'])
+    expect(includesAuthor('Octo', [person('OCTO')])).toBe(true)
+  })
+
+  test('with no author (a deleted account) nobody is removed and nobody is the author', () => {
+    expect(otherPeople(null, [person('ana'), person('ana')]).map((p) => p.login)).toEqual(['ana'])
+    expect(includesAuthor(null, [person('ana')])).toBe(false)
+    expect(otherPeople('ana', [])).toEqual([])
   })
 })

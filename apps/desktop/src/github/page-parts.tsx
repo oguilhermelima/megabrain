@@ -157,6 +157,11 @@ export function Meta({ children }: { children: ReactNode }) {
 
 export const dot = <span className="text-ink-600">·</span>
 
+// A list with an open item beside it: the list keeps about a third of the row (300 to 440 px) and the
+// item takes the rest. Below 600 px the 50% cap wins, so a narrow window still splits evenly.
+export const splitList = (open: boolean) => `min-h-0 min-w-0 overflow-y-auto py-5 ${open ? 'w-[min(50%,clamp(300px,35%,440px))] shrink-0' : 'flex-1'}`
+export const splitDetail = 'flex min-h-0 min-w-0 flex-1 flex-col border-l border-white/[0.06] bg-ink-950'
+
 export function rowClass(selected: boolean) {
   return `grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3.5 px-5 py-4 text-left transition-colors duration-[var(--motion-enter)] ${selected ? 'bg-accent/[0.10]' : 'hover:bg-white/[0.03]'}`
 }

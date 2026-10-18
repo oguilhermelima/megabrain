@@ -6,7 +6,7 @@ import { formatDuration, isLive, runDuration, runFilterOptions, runVisual, type 
 import { BranchChip, RunStatusIcon, eventName } from '@/github/actions-parts'
 import { githubRepository } from '@/github/github-model'
 import { ActionsIcon, CloseIcon, RefreshIcon } from '@/github/icons'
-import { Empty, FilterSelect, IconButton, KindSwitch, LoadMore, OwnerPicture, SearchBox, anyValue, dot, fromAny, people, pillButton, rowClass } from '@/github/page-parts'
+import { Empty, FilterSelect, IconButton, KindSwitch, LoadMore, OwnerPicture, SearchBox, anyValue, dot, fromAny, people, pillButton, rowClass, splitList } from '@/github/page-parts'
 import { Avatar, SkeletonRows, ago, useNow } from '@/github/parts'
 import { RunPane } from '@/github/RunDetail'
 import { RunWorkflowDialog, type RunWorkflowRequest } from '@/github/RunWorkflowDialog'
@@ -199,7 +199,7 @@ export function ActionsPage({ project, focus, onKind, onClose, onMaximise }: { p
       <div className="flex min-h-0 flex-1 border-t border-white/[0.06]">
         {/* The run's detail takes the rail's room; the rail comes back when it closes. */}
         {selectedRun === null && <WorkflowRail workflows={workflows} value={workflow} onChange={setWorkflow} />}
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto py-5">
+        <div className={splitList(selectedRun !== null)}>
           {!known && loading && <SkeletonRows />}
           {!known && !loading && error !== null && (
             <div className={`space-y-3 ${pageX} py-4`}>

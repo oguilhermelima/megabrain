@@ -3,7 +3,7 @@ import type { Project } from '@/api/schema'
 import { ErrorNote } from '@/components/ui'
 import { emptyIssueFilters, filterIssues, issueFilterOptions, type IssueFilters, type IssueTab } from '@/github/github-model'
 import { DetailPane, IssueRow, useListing } from '@/github/GithubPage'
-import { Empty, FilterSelect, LoadMore, Tabs, anyValue, fromAny, people, pillButton } from '@/github/page-parts'
+import { Empty, FilterSelect, LoadMore, Tabs, anyValue, fromAny, people, pillButton, splitList } from '@/github/page-parts'
 import { SkeletonRows, useNow } from '@/github/parts'
 import { pageMx, pageX } from '@/lib/page'
 
@@ -84,7 +84,7 @@ export function TasksList({
         )}
       </div>
       <div className="flex min-h-0 flex-1 border-t border-white/[0.06]">
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto py-5">
+        <div className={splitList(selected !== null)}>
           {!known && loading && <SkeletonRows />}
           {!known && !loading && error !== null && (
             <div className={`space-y-3 ${pageX} py-4`}>

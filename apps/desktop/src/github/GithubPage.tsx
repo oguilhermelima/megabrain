@@ -3,13 +3,13 @@ import { api } from '@/api'
 import type { GithubDetail, GithubIssue, GithubPullRequest, Project } from '@/api/schema'
 import { DetailSkeleton } from '@/components/Skeleton'
 import { ErrorNote } from '@/components/ui'
-import { emptyPullRequestFilters, filterPullRequests, githubRepository, nextPage, pullRequestFilterOptions, refreshedPage, type GithubPage as Page, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
+import { emptyPullRequestFilters, filterPullRequests, githubRepository, includesAuthor, nextPage, otherPeople, pullRequestFilterOptions, refreshedPage, type GithubPage as Page, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
 import { CloseIcon, CommentIcon, MaximiseIcon, MilestoneIcon, RefreshIcon } from '@/github/icons'
 import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
 import { Avatar, ChecksList, ConversationThread, OpenLink, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, ago, useNow } from '@/github/parts'
 import { BranchFlow, StatPill } from '@/github/ItemHero'
 import { ActionsPage } from '@/github/ActionsPage'
-import { Empty, FilterSelect, IconButton, KindSwitch, LoadMore, Meta, OwnerPicture, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass } from '@/github/page-parts'
+import { Empty, FilterSelect, IconButton, KindSwitch, LoadMore, Meta, OwnerPicture, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass, splitDetail, splitList } from '@/github/page-parts'
 import type { GithubKind, GithubPageKind } from '@/github/useGithubCounts'
 import { reuse } from '@/lib/reuse'
 import { pageMx, pageX } from '@/lib/page'
@@ -127,6 +127,8 @@ function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullReq
 }
 
 export function IssueRow({ item, selected, now, onSelect }: { item: GithubIssue; selected: boolean; now: number; onSelect: () => void }) {
+  // The meta line already names the author; an avatar on the right is only for someone else.
+  const assignees = otherPeople(item.author?.login ?? null, item.assignees)
   return (
     <button type="button" onClick={onSelect} aria-current={selected ? 'true' : undefined} className={rowClass(selected)}>
       <span className="pt-0.5">
@@ -158,9 +160,9 @@ export function IssueRow({ item, selected, now, onSelect }: { item: GithubIssue;
         </Meta>
       </span>
       <span className="flex items-center gap-3 pt-0.5 text-[12px] text-ink-400">
-        {item.assignees.length > 0 && (
-          <span className="flex -space-x-1.5" title={`Assigned to ${item.assignees.map((assignee) => assignee.login).join(', ')}`}>
-            {item.assignees.slice(0, 3).map((assignee) => (
+        {assignees.length > 0 && (
+          <span className="flex -space-x-1.5" title={`Assigned to ${assignees.map((assignee) => assignee.login).join(', ')}`}>
+            {assignees.slice(0, 3).map((assignee) => (
               <span key={assignee.login} className="rounded-full ring-2 ring-ink-950">
                 <Avatar login={assignee.login} size={20} />
               </span>
@@ -202,9 +204,13 @@ export function DetailPane({ project, kind, number, pullRequest, issue, onMaximi
   const state = pullRequest?.state ?? issue?.state ?? detail?.state ?? 'open'
   const labels = pullRequest?.labels ?? issue?.labels ?? []
   const review = detail?.reviewDecision ?? null
+  // The byline shows the author once; an author assigned to their own issue is said there, and only
+  // other assignees get chips, under a label.
+  const assignees = issue === null ? [] : otherPeople(author?.login ?? null, issue.assignees)
+  const selfAssigned = issue !== null && includesAuthor(author?.login ?? null, issue.assignees)
 
   return (
-    <aside className="flex min-h-0 w-[min(580px,50%)] shrink-0 flex-col border-l border-white/[0.06] bg-ink-950">
+    <aside className={splitDetail}>
       <header className={`space-y-3.5 ${pageX} pt-6 pb-5`}>
         <div className="flex items-center gap-2">
           <StatePill kind={kind === 'prs' ? 'pr' : 'issue'} state={state} draft={pullRequest?.isDraft ?? detail?.isDraft ?? false} />
@@ -223,7 +229,10 @@ export function DetailPane({ project, kind, number, pullRequest, issue, onMaximi
           <span className="flex items-center gap-2">
             <Avatar login={author?.login ?? null} size={20} />
             <span className="font-semibold text-ink-200">{author?.login ?? 'ghost'}</span>
-            <span>opened {ago(pullRequest?.createdAt ?? issue?.createdAt ?? detail?.createdAt ?? null, now)}</span>
+            <span>
+              opened {ago(pullRequest?.createdAt ?? issue?.createdAt ?? detail?.createdAt ?? null, now)}
+              {selfAssigned && ', assigned to themselves'}
+            </span>
           </span>
           {pullRequest !== null && (
             <>
@@ -239,7 +248,7 @@ export function DetailPane({ project, kind, number, pullRequest, issue, onMaximi
             </StatPill>
           </div>
         )}
-        {(labels.length > 0 || review !== null || (issue !== null && (issue.assignees.length > 0 || issue.milestone !== null))) && (
+        {(labels.length > 0 || review !== null || (issue !== null && (assignees.length > 0 || issue.milestone !== null))) && (
           <div className="flex flex-wrap items-center gap-1.5">
             <ReviewChip decision={review} />
             {labels.map((label) => (
@@ -251,7 +260,8 @@ export function DetailPane({ project, kind, number, pullRequest, issue, onMaximi
                 {issue.milestone.title}
               </span>
             )}
-            {issue?.assignees.map((assignee) => (
+            {assignees.length > 0 && <span className="ml-1 text-[11.5px] text-ink-500">{assignees.length === 1 ? 'Assignee' : 'Assignees'}</span>}
+            {assignees.map((assignee) => (
               <span key={assignee.login} className="inline-flex h-[20px] items-center gap-1 rounded-full bg-white/[0.07] pr-2 pl-0.5 text-[11.5px] font-semibold text-ink-300">
                 <Avatar login={assignee.login} size={16} />
                 {assignee.login}
@@ -266,7 +276,7 @@ export function DetailPane({ project, kind, number, pullRequest, issue, onMaximi
         {detail === null && error === null && (
           <DetailSkeleton />
         )}
-        {detail !== null && <ConversationThread detail={detail} now={now} />}
+        {detail !== null && <ConversationThread detail={detail} now={now} bylineShown />}
       </div>
     </aside>
   )
@@ -379,7 +389,7 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
         )}
       </div>
       <div className="flex min-h-0 flex-1 border-t border-white/[0.06]">
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto py-5">
+        <div className={splitList(selected !== null)}>
           {!known && loading && <SkeletonRows />}
           {!known && !loading && error !== null && (
             <div className={`space-y-3 ${pageX} py-4`}>

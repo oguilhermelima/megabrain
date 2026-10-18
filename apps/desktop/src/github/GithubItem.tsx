@@ -537,7 +537,7 @@ function ItemView({ root, kind, number }: { root: string; kind: 'pr' | 'issue'; 
             {detail === null && error === null && <DetailSkeleton />}
             {detail !== null && tab === 'conversation' && (
               <>
-                <ConversationThread detail={detail} reviews={reviewers.reviewers?.reviews} now={now} />
+                <ConversationThread detail={detail} reviews={reviewers.reviewers?.reviews} now={now} bylineShown />
                 {kind === 'pr' && (
                   <>
                     <MergeBox ref={mergeBoxRef} box={box} method={method} onMethod={setMethod} running={boxRunning} onPrimary={onBoxPrimary} onSecondary={onBoxSecondary} />

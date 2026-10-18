@@ -141,6 +141,7 @@ export function ReviewersSummary({ root, reviewers, error, canRequest, onRequest
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+      {reviews.length > 0 && <span className="text-[12.5px] text-ink-500">Reviewers</span>}
       {reviews.map((review) => {
         const tone = reviewTone[review.state] ?? { label: review.state, className: 'text-ink-300' }
         return (

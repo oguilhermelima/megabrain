@@ -241,3 +241,20 @@ export function isRepositoryFileLink(url: string): boolean {
   if (parsed.hostname === 'github.com') return (segments[2] === 'blob' || segments[2] === 'raw') && segments.length >= 5
   return parsed.hostname === 'raw.githubusercontent.com' && segments.length >= 4
 }
+
+const sameLogin = (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
+
+/** Whether the author is among these people; GitHub logins ignore case. */
+export function includesAuthor(author: string | null, people: { login: string }[]): boolean {
+  return author !== null && people.some((person) => sameLogin(person.login, author))
+}
+
+/** These people as the byline does not already show them: each login once, the author left out. */
+export function otherPeople<T extends { login: string }>(author: string | null, people: T[]): T[] {
+  const seen: string[] = author === null ? [] : [author]
+  return people.filter((person) => {
+    if (seen.some((login) => sameLogin(login, person.login))) return false
+    seen.push(person.login)
+    return true
+  })
+}

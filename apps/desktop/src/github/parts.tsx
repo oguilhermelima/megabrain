@@ -342,14 +342,16 @@ const bodyElements: Components = { pre: CodeBlock, table: Table }
 
 const reviewTone = { ok: 'bg-ok/[0.14] text-ok', bad: 'bg-bad/[0.14] text-bad', muted: 'bg-white/[0.07] text-ink-300' } as const
 
-function TimelineCard({ author, verb, at, now, children }: { author: string; verb: string; at: string | null; now: number; children: ReactNode }) {
+function TimelineCard({ author, verb, at, now, header, children }: { author: string; verb: string; at: string | null; now: number; header: boolean; children: ReactNode }) {
   return (
     <div className="min-w-0 flex-1 overflow-hidden rounded-[18px] border border-white/[0.07] bg-ink-900">
-      <p className="flex flex-wrap items-center gap-x-1.5 border-b border-white/[0.05] bg-white/[0.015] px-5 py-2.5 text-[13px]">
-        <span className="font-semibold text-ink-100">{author}</span>
-        <span className="text-ink-400">{verb}</span>
-        <span className="text-ink-500">{ago(at, now)}</span>
-      </p>
+      {header && (
+        <p className="flex flex-wrap items-center gap-x-1.5 border-b border-white/[0.05] bg-white/[0.015] px-5 py-2.5 text-[13px]">
+          <span className="font-semibold text-ink-100">{author}</span>
+          <span className="text-ink-400">{verb}</span>
+          <span className="text-ink-500">{ago(at, now)}</span>
+        </p>
+      )}
       <div className="px-5 py-4 select-text">{children}</div>
     </div>
   )
@@ -357,9 +359,10 @@ function TimelineCard({ author, verb, at, now, children }: { author: string; ver
 
 /**
  * The description, the comments and (for a pull request) the reviews as one timeline: each entry
- * with its author's picture on a thin line that joins them, in the order they happened.
+ * with its author's picture on a thin line that joins them, in the order they happened. With
+ * bylineShown the header above already says who opened it and when, so the description drops its own.
  */
-export function ConversationThread({ detail, reviews, now }: { detail: Pick<GithubDetail, 'body' | 'comments' | 'repository' | 'author' | 'createdAt'>; reviews?: GithubReviewers['reviews']; now: number }) {
+export function ConversationThread({ detail, reviews, now, bylineShown = false }: { detail: Pick<GithubDetail, 'body' | 'comments' | 'repository' | 'author' | 'createdAt'>; reviews?: GithubReviewers['reviews']; now: number; bylineShown?: boolean }) {
   const root = detail.repository.path
   const picture = useCallback((props: ImgHTMLAttributes<HTMLImageElement>) => <GithubPicture root={root} picture={props} />, [root])
   const entries = useMemo(() => timeline(detail, reviews), [detail, reviews])
@@ -390,7 +393,7 @@ export function ConversationThread({ detail, reviews, now }: { detail: Pick<Gith
             <span className="relative shrink-0 rounded-full ring-4 ring-ink-950">
               <Avatar login={login} size={36} />
             </span>
-            <TimelineCard author={name} verb={entry.kind === 'opened' ? 'opened this' : 'commented'} at={entry.at} now={now}>
+            <TimelineCard author={name} verb={entry.kind === 'opened' ? 'opened this' : 'commented'} at={entry.at} now={now} header={entry.kind !== 'opened' || !bylineShown}>
               {entry.body.trim() === '' ? <p className="text-[13.5px] text-ink-400 italic">No description provided.</p> : <MarkdownText text={entry.body} className={bodyText} picture={picture} elements={bodyElements} />}
             </TimelineCard>
           </li>
