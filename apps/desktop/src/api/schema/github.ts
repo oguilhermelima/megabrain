@@ -91,6 +91,26 @@ const githubListing = <T extends z.ZodType>(item: T) =>
 export const githubPullRequestListSchema = githubListing(githubPullRequestSchema)
 export const githubIssueListSchema = githubListing(githubIssueSchema)
 
+// `megabrain github projects|project|project-move --json`: GitHub Projects v2 boards.
+export const githubProjectStatusFieldSchema = z.looseObject({
+  id: z.string(), name: z.string(), options: z.array(z.looseObject({ id: z.string(), name: z.string(), color: z.enum(['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE']) })),
+})
+export const githubProjectSchema = z.looseObject({
+  id: z.string(), number: z.number(), title: z.string(), url: z.string(), owner: z.string(), closed: z.boolean(), statusField: githubProjectStatusFieldSchema.nullable(),
+})
+export const githubProjectItemSchema = z.looseObject({
+  id: z.string(), type: z.enum(['ISSUE', 'PULL_REQUEST', 'DRAFT_ISSUE']), number: z.number().nullable(), title: z.string(), url: z.string().nullable(),
+  state: z.enum(['OPEN', 'CLOSED', 'MERGED']).nullable(), repository: z.string().nullable(), status: z.string().nullable(),
+  assignees: z.array(z.looseObject({ login: z.string(), avatarUrl: z.string() })), labels: z.array(z.looseObject({ name: z.string(), color: z.string() })), updatedAt: z.string(),
+})
+export const githubProjectsSchema = z.looseObject({ projects: z.array(githubProjectSchema) })
+export const githubProjectPageSchema = z.looseObject({ project: githubProjectSchema, items: z.array(githubProjectItemSchema), next: z.string().nullable() })
+export const githubProjectMoveSchema = z.looseObject({ item: githubProjectItemSchema })
+export type GithubProject = z.infer<typeof githubProjectSchema>
+export type GithubProjectItem = z.infer<typeof githubProjectItemSchema>
+export type GithubProjects = z.infer<typeof githubProjectsSchema>
+export type GithubProjectPage = z.infer<typeof githubProjectPageSchema>
+
 // `megabrain github runs|run --json`: workflow runs and their jobs/steps.
 export const githubActionRunSchema = z.looseObject({
   id: z.number(), name: z.string(), title: z.string(), event: z.string(), branch: z.string(), sha: z.string(),

@@ -46,6 +46,11 @@ export const USAGE: Readonly<Record<Verb | ReviewVerb | FlowVerb, UsageKey>> = {
   "rerun-checks": "github-rerun-checks", "file-viewed": "github-file-viewed", "assignable": "github-assignable", "image": "github-image", "review": "github-review", "comment": "github-comment", "issue-state": "github-issue-state", "pr-state": "github-pr-state",
 };
 import { executeActions } from "./actions.js";
+import { executeProjects, PROJECT_VERBS } from "./projects.js";
+import { executeProjectMove } from "./project-move.js";
+export { executeProjects, PROJECTS_QUERY, PROJECT_QUERY } from "./projects.js";
+export { executeProjectMove, PROJECT_METADATA_QUERY, PROJECT_MOVE_QUERY } from "./project-move.js";
+export type { Project, ProjectItem, ProjectStatusField, ProjectStatusOption } from "./projects.js";
 
 const ACTION_VERBS: readonly ActionVerb[] = ["runs", "run", "run-log", "run-action", "workflow-dispatch"];
 import { REVIEW_VERBS, REVIEW_EVENTS, ISSUE_REASONS, MERGE_METHODS, ReviewOptions, parseComments, parseReviewOptions, executeReview } from "./review-command.js";
@@ -70,6 +75,11 @@ export type { Options } from "./views.js";
 
 export async function executeGithub(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter(), now: Clock = Date.now): Promise<Result<string>> {
   const [verbArgument, ...rest] = args;
+  if (verbArgument !== undefined && PROJECT_VERBS.includes(verbArgument as (typeof PROJECT_VERBS)[number])) {
+    const projectVerb = verbArgument as (typeof PROJECT_VERBS)[number];
+    if (projectVerb === "project-move") return executeProjectMove(rest, environment, process);
+    return executeProjects(projectVerb, rest, environment, process);
+  }
   if (verbArgument !== undefined && ACTION_VERBS.includes(verbArgument as ActionVerb)) {
     if (rest.includes("-h") || rest.includes("--help")) return ok(usageText(`github-${verbArgument}` as UsageKey));
     return executeActions(verbArgument, rest, environment, process);

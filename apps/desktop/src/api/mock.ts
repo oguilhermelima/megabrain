@@ -13,6 +13,7 @@ import { mockKnowledgeList, mockKnowledgeSearch, mockKnowledgeTopics, mockKnowle
 import { mockArtifact, mockArtifactList } from '@/api/fixtures/artifacts'
 import { createMockReviewApi } from '@/api/fixtures/github-review'
 import { createMockActionsApi } from '@/api/fixtures/github-actions'
+import { mockGithubProjectItems, mockGithubProjects } from '@/api/fixtures/github-projects'
 import { validateRule } from '@/settings/chain-rules'
 import { effectiveToggles, inEffect, parseKnowledgeSettings } from '@/settings/knowledge-model'
 
@@ -59,6 +60,7 @@ export function createMockApi(): DesktopApi {
   // What the GitHub writes changed: added comments and new states, by kind and number.
   const githubComments = new Map<string, GithubDetail['comments']>()
   const githubStates = new Map<string, string>()
+  const githubProjectItems = structuredClone(mockGithubProjectItems)
   // Files, threads, reviewers and readiness (fixtures/github-review); a draft change shows in the detail.
   const { draftOf, ...reviewApi } = createMockReviewApi()
   const githubComment = (kind: 'pr' | 'issue', number: number, body: string) => {
@@ -355,6 +357,26 @@ export function createMockApi(): DesktopApi {
     githubIssues: async (_root, state, limit, after) => {
       await wait(400)
       return { ...mockGithubIssues, ...mockPage(mockGithubIssues.items, state, limit, after) }
+    },
+    githubProjects: async () => ({ projects: structuredClone(mockGithubProjects) }),
+    githubProject: async (_root, number, owner, after) => {
+      await wait(300)
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      if (!project) throw new CliError(`GitHub project ${number} was not found`, 1)
+      const items = githubProjectItems[number] ?? []
+      const offset = after === null || after === undefined ? 0 : Number(after) || 0
+      const page = items.slice(offset, offset + 100)
+      return { project: structuredClone(project), items: structuredClone(page), next: offset + page.length < items.length ? String(offset + page.length) : null }
+    },
+    githubProjectMove: async (_root, number, itemId, status, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      if (!project) throw new CliError(`GitHub project ${number} was not found`, 1)
+      const items = githubProjectItems[number] ?? []
+      const index = items.findIndex((item) => item.id === itemId)
+      if (index < 0) throw new CliError(`GitHub project item ${itemId} was not found`, 1)
+      const updated = { ...items[index]!, status, updatedAt: new Date().toISOString() }
+      items[index] = updated
+      return structuredClone(updated)
     },
     githubPullRequest: async (_root, number) => {
       await wait(300)

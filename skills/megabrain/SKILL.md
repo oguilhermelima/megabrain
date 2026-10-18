@@ -77,7 +77,7 @@ megabrain port who <port> [--json] — recommended when you need to see which pr
 megabrain port free [--from <port>] [--json] — recommended when you need the next port nothing listens on.
 megabrain port kill <port> [--json] — recommended when you need to stop your own process tree that holds a port; another user's process is refused.
 megabrain projects [--json] — recommended when you need to view projects, their worktrees, and agent sessions.
-megabrain github prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... — recommended when you need to read, review and manage a repository's pull requests, issues and Actions (through authenticated gh).
+megabrain github projects|project|project-move|prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions (through authenticated gh).
 megabrain github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json] — recommended when you need one page of workflow runs, workflows, dispatch support and declared inputs.
 megabrain github run <repo name|path> <run id> [--json] — recommended when you need one workflow run with its jobs and steps.
 megabrain github run-log <repo name|path> <run id> --job <job id> [--json] — recommended when you need a job's log.
@@ -85,6 +85,9 @@ megabrain github run-action <repo name|path> <run id> rerun|rerun-failed|cancel 
 megabrain github workflow-dispatch <repo name|path> <workflow> --ref <ref> [--inputs <json>] [--json] — recommended when you need to dispatch a workflow.
 megabrain github prs <repo name|path> [--state open|closed|merged|all] [--limit <n>] [--after <cursor>] [--json] — recommended when you need a repository's pull requests, a page at a time, with labels and every state's total (checks, review and line counts come from github pr).
 megabrain github issues <repo name|path> [--state open|closed|all] [--limit <n>] [--after <cursor>] [--json] — recommended when you need a repository's issues with labels, assignees, and milestones.
+megabrain github projects <repo name|path> [--json] — recommended when you need the GitHub Projects v2 boards linked to a repository or containing one of its items (`github-projects`).
+megabrain github project <repo name|path> <project number> [--owner <login>] [--after <cursor>] [--json] — recommended when you need one page of a project's issues, pull requests and draft items (`github-project`).
+megabrain github project-move <repo name|path> <project number> <item id> --status <option id> [--owner <login>] [--json] — recommended when you need to move a project item to a Status option after validating the option belongs to the project (`github-project-move`).
 megabrain github pr <repo name|path> <number> [--json] — recommended when you need one pull request's description, comments, checks, review decision and line counts.
 megabrain github issue <repo name|path> <number> [--json] — recommended when you need one issue's description and comments.
 megabrain github pr-files <repo name|path> <number> [--page <k>] [--per-page <m>] [--no-patch] [--json] — recommended when you need a page of a pull request's changed files (100 by default), with or without their patches.
