@@ -441,7 +441,7 @@ export const replyResultSchema = z.looseObject({ dispatchId: z.string(), status:
 // `megabrain db show <dispatch-id-or-suffix> --json`: the dispatch record with its message history,
 // oldest first; `from` is "child" for what the child sent (received, ask, done, stalled, ...).
 export const dispatchMessagesSchema = z.looseObject({
-  messages: z.array(z.looseObject({ from: z.string(), type: z.string(), text: z.string() })),
+  messages: z.array(z.looseObject({ from: z.string(), type: z.string(), text: z.string(), createdAt: z.string().optional() })),
 })
 
 // `megabrain orchestrate graph --json` (src/cli/commands/orchestrate-graph.ts): a coordinator and every
@@ -503,6 +503,7 @@ export type CodeDiff = z.infer<typeof codeDiffSchema>
 export type BranchChanges = z.infer<typeof branchChangesSchema>
 export type ChatRead = z.infer<typeof chatReadSchema>
 export type ReplyResult = z.infer<typeof replyResultSchema>
+export type DispatchMessage = z.infer<typeof dispatchMessagesSchema>['messages'][number]
 export type OrchestrationState = z.infer<typeof orchestrationStateSchema>
 export type OrchestrationNode = z.infer<typeof orchestrationNodeSchema>
 export type OrchestrationEvent = z.infer<typeof orchestrationEventSchema>

@@ -17,13 +17,13 @@ import { closedGroups, visibleGraph } from '@/native-chat/orchestration/orchestr
 
 // How long a pulse stays on screen: its dot's run plus the glow fading after it (styles.css).
 const PULSE_MS = 1_400
-// Below this width the detail lies over the bottom of the diagram instead of beside it.
-const SIDE_DETAIL_WIDTH = 760
+// Below this width the node's chat lies over the bottom of the diagram instead of beside it.
+const SIDE_DETAIL_WIDTH = 860
 
 /**
  * The orchestration tree a chat belongs to, with that chat highlighted, followed live over its
  * session log. A click on another app chat's card opens that chat here, in this same view; any other
- * card is selected and its detail shows. A double click on an app chat opens its conversation. A big
+ * card is selected and its chat shows beside the diagram. A double click on an app chat opens its conversation. A big
  * tree draws its live lanes and only the latest closed ones; the rest wait behind a toggle.
  */
 export function OrchestrationView({ target, onOpenChat, onOpenNativeChat }: { target: OrchestrationTarget; onOpenChat?: OpenChat; onOpenNativeChat?: (chat: NativeChat) => void }) {
@@ -170,8 +170,8 @@ export function OrchestrationView({ target, onOpenChat, onOpenNativeChat }: { ta
           <OrchestrationClosed groups={groups} count={visible.hidden.length} selected={selected} now={now} onSelect={setSelected} />
         </div>
         {detail !== undefined && (
-          <div className={beside ? 'flex w-[320px] shrink-0 flex-col border-l border-white/[0.07]' : 'absolute inset-x-0 bottom-0 flex max-h-[60%] flex-col border-t border-white/[0.07] shadow-[0_-12px_32px_rgb(0_0_0/0.5)]'}>
-            <OrchestrationDetail node={detail} onOpen={openerOf(detail)} onClose={() => setSelected(null)} />
+          <div className={beside ? 'flex w-[420px] shrink-0 flex-col border-l border-white/[0.07]' : 'absolute inset-x-0 bottom-0 flex h-[70%] flex-col border-t border-white/[0.07] shadow-[0_-12px_32px_rgb(0_0_0/0.5)]'}>
+            <OrchestrationDetail node={detail} onOpen={openerOf(detail)} onOpenChat={onOpenChat} onClose={() => setSelected(null)} />
           </div>
         )}
       </div>

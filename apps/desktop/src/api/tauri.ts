@@ -163,6 +163,7 @@ export function createTauriApi(): DesktopApi {
       const record = await cliJson(['db', 'show', dispatchId, '--json'], dispatchMessagesSchema)
       return record.messages.filter((message) => message.from === 'child').at(-1)?.text ?? null
     },
+    dispatchMessages: async (dispatchId) => (await cliJson(['db', 'show', dispatchId, '--json'], dispatchMessagesSchema)).messages,
     transcript: (target, since) =>
       cliJson(
         ['orchestrate', 'transcript', ...('dispatchId' in target ? [target.dispatchId] : ['--session', target.sessionId]), ...(since === undefined ? [] : ['--since', since]), '--operator', '--json'],

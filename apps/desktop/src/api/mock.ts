@@ -157,6 +157,14 @@ export function createMockApi(): DesktopApi {
       await wait(200)
       return mockDispatchReport
     },
+    dispatchMessages: async () => {
+      await wait(200)
+      return [
+        { from: 'parent', type: 'prompt', text: 'Tidy the orchestration board.', createdAt: '2026-10-18T17:42:23.249Z' },
+        { from: 'child', type: 'received', text: 'received', createdAt: '2026-10-18T17:42:35.375Z' },
+        { from: 'child', type: 'done', text: mockDispatchReport, createdAt: '2026-10-18T18:10:02.000Z' },
+      ]
+    },
     transcript: async (target) => ({ ...mockTranscript, dispatchId: 'dispatchId' in target ? target.dispatchId : null, sessionId: 'sessionId' in target ? target.sessionId : mockTranscript.sessionId }),
     setHidden: async () => {},
     removeProject: async () => {},
