@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { GithubCheck, GithubIssue, GithubPullRequest } from '@/api/schema'
 import { mockGithubIssues, mockGithubPullRequests } from '@/api/fixtures/mock'
+import { createMockApi } from '@/api/mock'
 import {
   filtersSet,
   noAssignee,
@@ -15,6 +16,7 @@ import {
   includesAuthor,
   isRepositoryFileLink,
   issueFilterOptions,
+  issueSearch,
   labelStyle,
   otherPeople,
   listRequestKey,
@@ -24,6 +26,7 @@ import {
   shareInFlight,
   type GithubPage,
   pullRequestFilterOptions,
+  pullRequestSearch,
   pullRequestVisualState,
   stateColors,
   worktreePullRequestState,
@@ -365,5 +368,31 @@ describe('filtersSet', () => {
 
   test('filters are part of the request key, so a filtered page never answers for the plain one', () => {
     expect(listRequestKey('issues', '/repo', 'open', 25, null, { ...emptyIssueFilters, label: 'bug' })).not.toBe(listRequestKey('issues', '/repo', 'open', 25, null))
+  })
+})
+
+describe('the filters a list read sends', () => {
+  test('an issue read names label, assignee and a trimmed search, and leaves unset filters out', () => {
+    expect(issueSearch({ ...emptyIssueFilters, label: 'enhancement', assignee: 'operator', query: ' tmux line ' })).toEqual({ labels: ['enhancement'], assignee: 'operator', search: 'tmux line' })
+    expect(issueSearch(emptyIssueFilters)).toEqual({})
+  })
+
+  test('the no-assignee choice asks for unassigned issues', () => {
+    expect(issueSearch({ ...emptyIssueFilters, assignee: noAssignee })).toEqual({ assignee: null })
+  })
+
+  test('a pull request read names author and draft', () => {
+    expect(pullRequestSearch({ ...emptyPullRequestFilters, author: 'operator', draft: 'ready' })).toEqual({ author: 'operator', draft: false })
+    expect(pullRequestSearch({ ...emptyPullRequestFilters, draft: 'draft', label: 'bug' })).toEqual({ labels: ['bug'], draft: true })
+    expect(pullRequestSearch(emptyPullRequestFilters)).toEqual({})
+  })
+
+  test('the mock filters on what the app sends', async () => {
+    const api = createMockApi()
+    const unassigned = await api.githubIssues('/repo', 'open', 25, null, issueSearch({ ...emptyIssueFilters, assignee: noAssignee, label: 'bug' }))
+    expect(unassigned.items.map((item) => item.number)).toEqual([116])
+    expect(unassigned.totalCount).toBe(1)
+    const drafts = await api.githubPullRequests('/repo', 'all', 25, null, pullRequestSearch({ ...emptyPullRequestFilters, draft: 'draft', author: 'operator' }))
+    expect(drafts.items.map((item) => item.number)).toEqual([109, 84, 83])
   })
 })

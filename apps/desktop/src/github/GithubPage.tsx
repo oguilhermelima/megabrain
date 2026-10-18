@@ -15,7 +15,6 @@ import { ActionsPage } from '@/github/ActionsPage'
 import { Empty, IconButton, KindSwitch, Meta, OwnerPicture, Pager, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass, splitDetail, splitList, useSettled } from '@/github/page-parts'
 import type { GithubKind, GithubPageKind } from '@/github/useGithubCounts'
 import { reuse } from '@/lib/reuse'
-import { githubLabels } from '@/tasks/search-contract-standin'
 import { pageDivider, pageMx, pageX } from '@/lib/page'
 
 // A repository's pull requests, read through `megabrain github … --json` (its issues are the Tasks
@@ -96,7 +95,7 @@ export function useFilterOptions(root: string): { labels: string[]; people: stri
   useEffect(() => {
     let stopped = false
     const sorted = (values: string[]) => [...new Set(values)].sort((left, right) => left.localeCompare(right))
-    void Promise.allSettled([githubLabels(root), api.assignableReviewers(root, '')]).then(([labels, people]) => {
+    void Promise.allSettled([api.githubLabels(root), api.assignableReviewers(root, '')]).then(([labels, people]) => {
       if (stopped) return
       setOptions({
         root,

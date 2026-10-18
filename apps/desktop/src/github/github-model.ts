@@ -1,3 +1,4 @@
+import type { DesktopApi } from '@/api/adapter'
 import type { GithubCheck, GithubIssue, GithubPullRequest } from '@/api/schema'
 
 // What the pull request and issue pages compute from `megabrain github prs|issues --json`: the
@@ -90,6 +91,22 @@ export const noAssignee = '\u0000none'
 export function filtersSet(filters: PullRequestFilters | IssueFilters): boolean {
   if (filters.query.trim() !== '' || filters.author !== null || filters.label !== null) return true
   return 'draft' in filters ? filters.draft !== 'any' : filters.assignee !== null
+}
+
+const searched = (query: string) => (query.trim() === '' ? {} : { search: query.trim() })
+const labelled = (label: string | null) => (label === null ? {} : { labels: [label] })
+
+/** The filters a GitHub issue read sends (github issues --label, --assignee or --no-assignee, --search). */
+export function issueSearch(filters: IssueFilters): NonNullable<Parameters<DesktopApi['githubIssues']>[4]> {
+  const assignee = filters.assignee === null ? {} : { assignee: filters.assignee === noAssignee ? null : filters.assignee }
+  return { ...labelled(filters.label), ...assignee, ...searched(filters.query) }
+}
+
+/** The filters a GitHub pull request read sends (github prs --label, --author, --draft, --search). */
+export function pullRequestSearch(filters: PullRequestFilters): NonNullable<Parameters<DesktopApi['githubPullRequests']>[4]> {
+  const author = filters.author === null ? {} : { author: filters.author }
+  const draft = filters.draft === 'any' ? {} : { draft: filters.draft === 'draft' }
+  return { ...labelled(filters.label), ...author, ...draft, ...searched(filters.query) }
 }
 
 const newestFirst = <T extends { updatedAt: string }>(items: T[]) => [...items].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
