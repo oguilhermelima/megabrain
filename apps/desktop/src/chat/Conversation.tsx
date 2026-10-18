@@ -133,6 +133,8 @@ export function ConversationList({
   onEditLast,
   onBranch,
   shareTitle = null,
+  divider = null,
+  onAtLatest,
 }: {
   events: TranscriptEvent[]
   onOpenChat?: OpenChat
@@ -158,6 +160,10 @@ export function ConversationList({
   onBranch?: (event: TranscriptEvent) => void
   /** The chat's title, under a shared image. */
   shareTitle?: string | null
+  /** The event a New divider goes above: where the messages the person has not seen begin. */
+  divider?: string | null
+  /** Told whether the list shows its newest row, as it changes. */
+  onAtLatest?: (atLatest: boolean) => void
 }) {
   const [pinned, setPinned] = useState(true)
   const list = useRef<HTMLDivElement>(null)
@@ -245,6 +251,8 @@ export function ConversationList({
     if (pinned) scrollToLatest()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, hasFooter, pinned])
+
+  useEffect(() => onAtLatest?.(pinned), [onAtLatest, pinned])
 
   const onScroll = () => {
     const element = list.current
@@ -397,6 +405,7 @@ export function ConversationList({
                 <ol key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="absolute top-0 left-0 w-full focus-within:z-10 hover:z-10" style={{ transform: `translateY(${row.start}px)` }}>
                   <WriteBasesContext.Provider value={bases}>
                     <LatestCommandContext.Provider value={latestCommand}>
+                      {divider !== null && item.type === 'message' && item.event.id === divider && <NewDivider />}
                       <Item item={item} onOpenChat={onOpenChat} />
                     </LatestCommandContext.Provider>
                   </WriteBasesContext.Provider>
@@ -417,5 +426,15 @@ export function ConversationList({
       </MessageActionsContext.Provider>
       </BackgroundTasksContext.Provider>
     </PathLinksContext.Provider>
+  )
+}
+
+/** A thin labelled line above the first message the person has not seen. */
+function NewDivider() {
+  return (
+    <li role="separator" aria-label="New messages" className="mb-3 flex items-center gap-2 text-chat-small font-medium text-accent">
+      <span aria-hidden="true" className="h-px flex-1 bg-accent/40" />
+      <span aria-hidden="true">New</span>
+    </li>
   )
 }

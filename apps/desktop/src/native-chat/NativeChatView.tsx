@@ -21,6 +21,7 @@ import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
 import { useFollowChat } from '@/native-chat/useFollowChat'
+import { useUnseenDivider } from '@/native-chat/useUnseenDivider'
 import { changeChatQueue } from '@/native-chat/chat-sync'
 import { backToChat, chatChanged, requestTerminal, stopAndOpen, TERMINAL_WAIT_NOTICE, type DeferredStep } from '@/native-chat/deferred-switch'
 import { beginSwitch, endSwitch, switchEngine, switchStep } from '@/native-chat/switch-trace'
@@ -102,6 +103,9 @@ export function NativeChatView({
   const controls = chatControls(chat)
   const pending = controls.approvals ? pendingApproval(state) : null
   const live = useMemo(() => liveTail(state), [state])
+  // Where the messages the person has not seen begin, marked until they send or come back with nothing new.
+  const [atLatest, setAtLatest] = useState(true)
+  const unseen = useUnseenDivider(chat.id, state.events, atLatest)
   const working = workingStatus(state)
   // Nothing said yet: the agent waits for the first message, so suggestions replace any spinner.
   const fresh = chat.title === null && state.outgoing.length === 0 && !state.events.some((event) => event.kind === 'user')
@@ -175,6 +179,7 @@ export function NativeChatView({
         return keepDraft(caught)
       }
     }
+    unseen.dismiss()
     const id = crypto.randomUUID()
     const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
     const images = parts.flatMap((part) => (part.type === 'image' ? [{ path: part.path }] : []))
@@ -408,6 +413,8 @@ export function NativeChatView({
             shareTitle={title}
             onEditLast={requestEdit}
             onBranch={onOpenNativeChat === undefined ? undefined : branch}
+            divider={unseen.divider}
+            onAtLatest={setAtLatest}
           />
         )}
       </ApprovalRendererContext.Provider>

@@ -37,7 +37,7 @@ export function ConversationActionBars({ search, closeSearch, selecting, selecti
         />
       )}
       {!pinned && !selecting && (
-        <button type="button" onClick={onJumpToLatest} className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-ink-900/90 px-4 py-1.5 text-chat-small font-semibold text-ink-100 shadow-lg">
+        <button type="button" onClick={onJumpToLatest} className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-ink-900/95 px-4 py-1.5 text-chat-small font-semibold text-ink-100 shadow-lg backdrop-blur">
           Jump to latest
         </button>
       )}

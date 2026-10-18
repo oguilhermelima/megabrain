@@ -90,7 +90,8 @@ export const chatPanelLimits: WidthLimits = { min: 320, max: 1200, initial: 520 
 
 const closed = (): ChatPanel => ({ artifactId: null, width: chatPanelLimits.initial })
 
-function readAll(storage: () => WidthStorage, key: string): Record<string, unknown> {
+/** Every chat's entry under `key`; storage that is blocked or holds something else reads empty. */
+export function readAll(storage: () => WidthStorage, key: string): Record<string, unknown> {
   try {
     const value: unknown = JSON.parse(storage().getItem(key) ?? '{}')
     return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -116,7 +117,7 @@ export function writeChatPanel(storage: () => WidthStorage, chatId: string, pane
 }
 
 /** Writes one chat's entry under `key`, the most recent chats only; not remembering it is fine. */
-function writeChat(storage: () => WidthStorage, key: string, chatId: string, value: unknown) {
+export function writeChat(storage: () => WidthStorage, key: string, chatId: string, value: unknown) {
   const { [chatId]: _previous, ...rest } = readAll(storage, key)
   const entries = Object.entries(rest).slice(-(keptChats - 1))
   try {

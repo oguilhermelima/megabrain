@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { MessagePart } from '@/api/schema'
-import { deleteRange, draftLength, draftText, insertText, insertToken, isAttachmentPath, messagePartsFromText, messagePartsToText, moveToken, oneTokenEach, tokenBefore, tokenLabels, toMessageParts, type Draft } from '@/chat/composer-parts'
+import { deleteRange, draftLength, draftText, insertText, insertToken, isAttachmentPath, messagePartsFromText, messagePartsToText, middleTruncate, moveToken, oneTokenEach, tokenBefore, tokenLabels, toMessageParts, type Draft } from '@/chat/composer-parts'
 
 const text = (value: string) => ({ type: 'text' as const, text: value })
 const token = (id: string) => ({ type: 'token' as const, id })
@@ -225,5 +225,62 @@ describe('tokenLabels', () => {
   test('PDFs are numbered on their own', () => {
     const mixed = insertToken(insertToken(base, 3, 'p'), 0, 'q')
     expect(labels(mixed)).toEqual({ q: 'PDF 1', p: 'PDF 2', a: 'Image 1', b: 'Image 2' })
+  })
+})
+
+describe('tokenLabels with file names', () => {
+  const kinds: Record<string, 'image' | 'pdf'> = { shot: 'image', a: 'image', b: 'image', doc: 'pdf' }
+  const names: Record<string, string> = { shot: 'screenshot.png', doc: 'Quarterly report 2026 final version for review.pdf' }
+  const labels = (draft: Draft) => Object.fromEntries(tokenLabels(draft, (id) => kinds[id] ?? 'image', (id) => names[id] ?? null))
+
+  test('a named file shows its name', () => {
+    expect(labels(insertToken([], 0, 'shot'))).toEqual({ shot: 'screenshot.png' })
+  })
+
+  test('a long name is shortened in the middle, keeping its extension', () => {
+    const label = labels(insertToken([], 0, 'doc')).doc ?? ''
+    expect(label).toBe(middleTruncate(names.doc ?? '', 28))
+    expect(label.endsWith('.pdf')).toBe(true)
+  })
+
+  test('pasted images with no name keep Image N, counted among themselves', () => {
+    const draft = insertToken(insertToken(insertToken([], 0, 'a'), 1, 'shot'), 2, 'b')
+    expect(labels(draft)).toEqual({ a: 'Image 1', shot: 'screenshot.png', b: 'Image 2' })
+  })
+
+  test('an empty name counts as no name', () => {
+    expect(Object.fromEntries(tokenLabels(insertToken([], 0, 'a'), () => 'image', () => ''))).toEqual({ a: 'Image 1' })
+  })
+})
+
+describe('middleTruncate', () => {
+  test('a name that fits is left whole', () => {
+    expect(middleTruncate('photo.jpg', 28)).toBe('photo.jpg')
+    expect(middleTruncate('a'.repeat(28), 28)).toBe('a'.repeat(28))
+  })
+
+  test('a long name is cut to the limit with one ellipsis in the middle', () => {
+    const cut = middleTruncate('a-very-long-screenshot-name-from-yesterday.png', 28)
+    expect(Array.from(cut)).toHaveLength(28)
+    expect(cut.split('…')).toHaveLength(2)
+    expect(cut.startsWith('a-very-long')).toBe(true)
+    expect(cut.endsWith('.png')).toBe(true)
+  })
+
+  test('keeps a few characters before the extension', () => {
+    expect(middleTruncate('abcdefghijklmnopqrstuvwxyz0123456789.pdf', 20)).toMatch(/^.+…\w{3,}\.pdf$/)
+  })
+
+  test('a name with no extension keeps its end too', () => {
+    const cut = middleTruncate('Makefile-for-the-whole-monorepo-and-friends', 20)
+    expect(Array.from(cut)).toHaveLength(20)
+    expect(cut.endsWith('friends'.slice(-4))).toBe(true)
+  })
+
+  test('counts characters, not code units, so an emoji is never split', () => {
+    const cut = middleTruncate(`${'😀'.repeat(30)}.png`, 12)
+    expect(Array.from(cut)).toHaveLength(12)
+    expect(cut).not.toContain('\uFFFD')
+    expect(cut.endsWith('.png')).toBe(true)
   })
 })

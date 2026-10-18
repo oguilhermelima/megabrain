@@ -2,11 +2,12 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import { useMemo, useRef, useState, type AnchorHTMLAttributes, type ImgHTMLAttributes, type ReactNode } from 'react'
+import { Children, Fragment, isValidElement, useMemo, useRef, useState, type AnchorHTMLAttributes, type ImgHTMLAttributes, type ReactNode } from 'react'
 import { MenuIconGlyph } from '@/components/menu-icons'
 import { api } from '@/api'
 import { Linked } from '@/chat/path-links'
 import { openableUrl } from '@/lib/external'
+import { isShellFence, shellLines, type ShellToken, type ShellTokenKind } from '@/chat/shell-tokens'
 
 // A web or mail link opens in the system's default app; any other target stays inert text that only
 // shows where it points on hover. Either way the transcript's right-click menu reads data-link.
@@ -48,11 +49,51 @@ function fenceLanguage(node: unknown): string | null {
   return found === undefined ? null : found.slice('language-'.length)
 }
 
-/** A fenced block: mono at the chat's code size on its own surface, scrolling sideways, with its language and a copy button. */
+// The fence's text, from the code element react-markdown puts inside its pre.
+function fenceText(children: ReactNode): string | null {
+  const code = Children.toArray(children)[0]
+  if (!isValidElement<{ children?: ReactNode }>(code)) return null
+  const parts = Children.toArray(code.props.children)
+  return parts.every((part) => typeof part === 'string') ? parts.join('') : null
+}
+
+// The editors' One Dark colours, so a command reads the same here as in Code.
+const shellColour: Record<Exclude<ShellTokenKind, 'text'>, string> = {
+  prompt: 'text-ink-400',
+  command: 'text-[#61afef]',
+  flag: 'text-[#d19a66]',
+  string: 'text-[#98c379]',
+  variable: 'text-[#e06c75]',
+  operator: 'text-[#56b6c2]',
+  comment: 'text-[#7d8799] italic',
+}
+
+/** A shell block's lines, coloured token by token; its text is the fence's, character for character. */
+function ShellCode({ lines }: { lines: ShellToken[][] }) {
+  return (
+    <code className="font-mono text-ink-100">
+      {lines.map((tokens, row) => (
+        <Fragment key={row}>
+          {row > 0 && '\n'}
+          {tokens.map((token, index) => (token.kind === 'text' ? <Fragment key={index}>{token.text}</Fragment> : <span key={index} className={shellColour[token.kind]}>{token.text}</span>))}
+        </Fragment>
+      ))}
+    </code>
+  )
+}
+
+/**
+ * A fenced block: mono at the chat's code size on its own surface, long lines wrapped, with its language and a
+ * copy button. A shell block colours its commands.
+ */
 function CodeBlock({ node, children, ...props }: React.ComponentPropsWithoutRef<'pre'> & { node?: unknown }) {
   const pre = useRef<HTMLPreElement>(null)
   const [copied, setCopied] = useState(false)
   const language = fenceLanguage(node)
+  const shell = useMemo(() => {
+    const text = fenceText(children)
+    return text !== null && isShellFence(language, text) ? shellLines(text) : null
+  }, [children, language])
   const copy = () => {
     const text = pre.current?.textContent ?? ''
     void navigator.clipboard.writeText(text.replace(/\n$/, '')).then(() => {
@@ -69,8 +110,8 @@ function CodeBlock({ node, children, ...props }: React.ComponentPropsWithoutRef<
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre ref={pre} className="overflow-x-auto px-4 py-3 font-mono text-chat-code" {...props}>
-        {children}
+      <pre ref={pre} className="px-4 py-3 font-mono text-chat-code whitespace-pre-wrap [overflow-wrap:anywhere]" {...props}>
+        {shell === null ? children : <ShellCode lines={shell} />}
       </pre>
     </div>
   )

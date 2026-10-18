@@ -12,7 +12,7 @@ import { Tooltip } from '@/components/Tooltip'
 
 // An image or PDF going with the next message. Pasted and picked files are saved through
 // saveAttachment when the message is sent; a file dropped on the window already has a path.
-export type Attachment = { id: string; kind: 'image' | 'pdf'; name: string } & (
+export type Attachment = { id: string; kind: 'image' | 'pdf'; name: string; named: boolean } & (
   | { source: 'file'; file: File; extension: string; preview: string | null }
   | { source: 'path'; path: string }
 )
@@ -24,7 +24,7 @@ export function fromFile(file: File): Attachment | null {
   if (accepted === null) return null
   attachmentSequence += 1
   const preview = accepted.kind === 'image' ? URL.createObjectURL(file) : null
-  return { id: `a${attachmentSequence}`, kind: accepted.kind, name: file.name === '' ? `pasted.${accepted.extension}` : file.name, source: 'file', file, extension: accepted.extension, preview }
+  return { id: `a${attachmentSequence}`, kind: accepted.kind, name: file.name === '' ? `pasted.${accepted.extension}` : file.name, named: file.name !== '', source: 'file', file, extension: accepted.extension, preview }
 }
 
 export function fromPath(path: string): Attachment | null {
@@ -32,7 +32,7 @@ export function fromPath(path: string): Attachment | null {
   const accepted = attachmentKind('', name)
   if (accepted === null) return null
   attachmentSequence += 1
-  return { id: `a${attachmentSequence}`, kind: accepted.kind, name, source: 'path', path }
+  return { id: `a${attachmentSequence}`, kind: accepted.kind, name, named: true, source: 'path', path }
 }
 
 /** What a thumbnail shows: the object URL of a pasted or picked image, or a local file through the asset protocol. */

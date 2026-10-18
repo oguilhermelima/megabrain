@@ -150,18 +150,16 @@ export function Composer({
   const [sentCount, setSentCount] = useState(0)
   const [dispatchQueue, queueDispatch] = useChatQueue(dispatchId, sentCount)
 
-  const kindOf = (id: string) => attachments.current.get(id)?.kind ?? 'image'
-
   const view = (id: string): TokenView => {
     const attachment = attachments.current.get(id)
-    return attachment === undefined ? { kind: 'image', name: 'missing' } : { kind: attachment.kind, name: attachment.name }
+    return attachment === undefined ? { kind: 'image', name: 'missing', named: false } : { kind: attachment.kind, name: attachment.name, named: attachment.named }
   }
 
   /** The draft as the box holds it right now; state can trail the DOM by a render. */
   const current = (): Draft => (editor.current === null ? draft : readDraft(editor.current))
 
   const changed = (next: Draft) => {
-    if (editor.current !== null) relabel(editor.current, next, kindOf)
+    if (editor.current !== null) relabel(editor.current, next, view)
     setDraft(next)
     setActive(0)
     queueDispatch({ type: 'typed' })

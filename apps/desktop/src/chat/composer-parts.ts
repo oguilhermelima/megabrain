@@ -127,16 +127,40 @@ export function oneTokenEach(draft: Draft): Draft {
 
 const kindLabels = { image: 'Image', pdf: 'PDF' }
 
-/** Each token's label by its place in the draft: images as Image 1, Image 2, and PDFs counted on their own. */
-export function tokenLabels(draft: Draft, kindOf: (id: string) => 'image' | 'pdf'): Map<string, string> {
+/**
+ * Each token's label: its file name, shortened in the middle, when it has one (`nameOf`). A token with no
+ * name (a pasted image) is labelled by its place among those: Image 1, Image 2, and PDFs counted on their own.
+ */
+export function tokenLabels(draft: Draft, kindOf: (id: string) => 'image' | 'pdf', nameOf: (id: string) => string | null = () => null): Map<string, string> {
   const counts = { image: 0, pdf: 0 }
   const labels = new Map<string, string>()
   for (const id of tokenIds(draft)) {
+    const name = nameOf(id)
+    if (name !== null && name !== '') {
+      labels.set(id, middleTruncate(name, chipNameLength))
+      continue
+    }
     const kind = kindOf(id)
     counts[kind] += 1
     labels.set(id, `${kindLabels[kind]} ${counts[kind]}`)
   }
   return labels
+}
+
+/** The most characters a chip shows of a file name. */
+export const chipNameLength = 28
+
+/**
+ * A name cut to `max` characters with an ellipsis in the middle, keeping the end, so the extension stays
+ * visible: a-very-long-screenshot-name.png reads a-very-long…name.png. A name that fits is left whole.
+ */
+export function middleTruncate(name: string, max: number): string {
+  const characters = Array.from(name)
+  if (characters.length <= max) return name
+  const extension = /\.[^./\s]{1,8}$/.exec(name)?.[0].length ?? 0
+  const room = max - 1
+  const tail = Math.min(room - 1, Math.max(extension + 4, Math.floor(room / 3)))
+  return `${characters.slice(0, room - tail).join('')}…${characters.slice(characters.length - tail).join('')}`
 }
 
 /** Moves a token to where it was dropped; `offset` is a caret position in the draft as it stood. */

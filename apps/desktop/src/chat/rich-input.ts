@@ -8,6 +8,39 @@ import { oneTokenEach, tokenLabels, type Draft } from '@/chat/composer-parts'
 export interface TokenView {
   kind: 'image' | 'pdf'
   name: string
+  /** The file came with a name; a pasted image did not, and its chip says Image N instead. */
+  named: boolean
+}
+
+const nameOfView = (view: (id: string) => TokenView) => (id: string) => {
+  const token = view(id)
+  return token.named ? token.name : null
+}
+
+const svgNamespace = 'http://www.w3.org/2000/svg'
+// A picture frame for an image, a folded page for a PDF.
+const kindPaths = {
+  image: ['M2.5 3.5h11v9h-11z', 'M2.5 10.5l3-3 3 3 2-2 3 3', 'M10.5 6.2a.7.7 0 1 0 0-.01'],
+  pdf: ['M4 1.5h5.5l3 3v10H4z', 'M9.5 1.5v3h3'],
+}
+
+function kindIcon(kind: TokenView['kind']): SVGSVGElement {
+  const svg = document.createElementNS(svgNamespace, 'svg')
+  svg.setAttribute('viewBox', '0 0 16 16')
+  svg.setAttribute('width', '12')
+  svg.setAttribute('height', '12')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '1.4')
+  svg.setAttribute('stroke-linejoin', 'round')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('class', 'mr-0.5 shrink-0 text-ink-400')
+  for (const d of kindPaths[kind]) {
+    const path = document.createElementNS(svgNamespace, 'path')
+    path.setAttribute('d', d)
+    svg.append(path)
+  }
+  return svg
 }
 
 // A zero-width space after a token that has no text after it, so the caret can stand there: WebKit
@@ -41,6 +74,8 @@ function tokenElement(id: string, view: TokenView, label: string): HTMLElement {
   token.contentEditable = 'false'
   token.draggable = false
   token.title = view.name
+  // A shortened name is read whole; a pasted image's chip reads its label.
+  if (view.named) token.ariaLabel = view.name
   token.className = `${chipClass} cursor-grab pr-0.5 pl-1.5 data-[dragging]:opacity-40`
   const text = document.createElement('span')
   text.dataset.label = ''
@@ -49,15 +84,15 @@ function tokenElement(id: string, view: TokenView, label: string): HTMLElement {
   remove.type = 'button'
   remove.dataset.remove = ''
   remove.tabIndex = -1
-  remove.ariaLabel = `Remove ${label}`
+  remove.ariaLabel = `Remove ${view.named ? view.name : label}`
   remove.textContent = '×'
   remove.className = 'grid size-4 cursor-pointer place-items-center rounded text-[13px] leading-none text-ink-400 hover:bg-white/[0.12] hover:text-ink-100'
-  token.append(text, remove)
+  token.append(kindIcon(view.kind), text, remove)
   return token
 }
 
 export function renderDraft(root: HTMLElement, draft: Draft, view: (id: string) => TokenView): void {
-  const labels = tokenLabels(draft, (id) => view(id).kind)
+  const labels = tokenLabels(draft, (id) => view(id).kind, nameOfView(view))
   const nodes: Node[] = []
   draft.forEach((part, index) => {
     if (part.type === 'text') {
@@ -74,8 +109,8 @@ export function renderDraft(root: HTMLElement, draft: Draft, view: (id: string) 
 }
 
 /** Brings the chips' labels in line with their order after the browser edited the box in place. */
-export function relabel(root: HTMLElement, draft: Draft, kindOf: (id: string) => 'image' | 'pdf'): void {
-  const labels = tokenLabels(draft, kindOf)
+export function relabel(root: HTMLElement, draft: Draft, view: (id: string) => TokenView): void {
+  const labels = tokenLabels(draft, (id) => view(id).kind, nameOfView(view))
   root.querySelectorAll<HTMLElement>('[data-token]').forEach((token) => {
     const label = labels.get(token.dataset.token ?? '')
     const text = token.querySelector<HTMLElement>('[data-label]')
