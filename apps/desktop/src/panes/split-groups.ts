@@ -215,6 +215,13 @@ export function splitItems(layout: Layout, items: string[], groupId: string, pan
   return { groups: [...groups, { id: groupId, name: null, panes, strip: emptyStrip }], active: groupId, single: layout.single }
 }
 
+/** What a split right or down opens, `item` or `launcher` (see splitBeside), and the item of the pane it opens beside. */
+export function splitOpens(layout: Layout, item: string, launcher: string): { opened: string; beside: string | null } {
+  const shown = shownPanes(layout)
+  const beside = paneList(shown.root).find((leaf) => leaf.id === shown.focused)?.item ?? null
+  return { opened: beside === item ? launcher : item, beside }
+}
+
 /**
  * Split right or down from the focused pane: `item` opens as a new column right of the focused
  * pane's column, or under the pane in its column, or `launcher` does when the focused pane already
@@ -222,8 +229,7 @@ export function splitItems(layout: Layout, items: string[], groupId: string, pan
  */
 export function splitBeside(layout: Layout, item: string, edge: Extract<Edge, 'right' | 'bottom'>, launcher: string, ids: { pane: string; group: string }): Layout | null {
   const shown = shownPanes(layout)
-  const focusedItem = paneList(shown.root).find((leaf) => leaf.id === shown.focused)?.item
-  const opened = focusedItem === item ? launcher : item
+  const { opened } = splitOpens(layout, item, launcher)
   let next: Panes
   if (edge === 'bottom') next = dropItem(shown, opened, shown.focused, 'bottom', ids.pane)
   else {

@@ -17,7 +17,8 @@ import type { MenuItem } from '@/components/ContextMenu'
 import { ActivityDot, BranchIcon, Chevron } from '@/advanced/chrome'
 import { noChats, noTerminals, MoreButton, RowActions, type MenuOpener, type RowDragger } from '@/advanced/SidebarRows'
 import { DropLine, type ProjectDrag } from '@/advanced/SidebarSections'
-import { WorktreeRow, type ItemRows, type TerminalRows } from '@/advanced/WorktreeRow'
+import { noGroups, WorktreeRow, type ItemRows, type TerminalRows } from '@/advanced/WorktreeRow'
+import { GroupRowView, useSplitRows } from '@/advanced/SplitRows'
 import type { AppTerminal } from '@/terminal/terminal-list'
 import type { DropPlacement } from '@/advanced/sidebar-folders'
 
@@ -127,6 +128,7 @@ export const ProjectSection = memo(function ProjectSection({
   actions: SidebarActions
   onMenu: MenuOpener
 }) {
+  const splits = useSplitRows()
   if (project.missing) {
     return (
       <section
@@ -255,6 +257,12 @@ export const ProjectSection = memo(function ProjectSection({
         {/* The project's colour reaches only the agent marks of its chats and sessions. */}
         <AgentTint.Provider value={projectTint(project)}>
           <div className="space-y-1 pt-1">
+            {/* A split across this project's worktrees sits above them. */}
+            {(splits?.byProject.get(project.path) ?? noGroups).map((row) => (
+              <div key={row.id} className="sidebar-row-in relative">
+                <GroupRowView row={row} indent="top" onMenu={onMenu} drag={itemRows} end={(items) => <MoreButton label={`Manage ${row.title}`} onClick={(event) => onMenu(event, items)} />} />
+              </div>
+            ))}
             {renderNodes(nodes)}
             {creations.map((creation) => (
               <PendingWorktreeRow key={creation.id} creation={creation} rows={creationRows} />

@@ -11,8 +11,8 @@ import { arrangePane, type ArrangeTarget } from '@/panes/arrange'
 import { focusDirection, paneRects, resizeSplit, type Direction, type Divider, type Edge, type Panes, type Rect } from '@/panes/pane-model'
 import { TerminalIcon } from '@/terminal/TerminalIcon'
 
-// Split groups in the sidebar (see split-rows.ts): one row per group under its worktree, or under a
-// Splits header when its members span worktrees. Advanced owns the layout and provides this context;
+// Split groups in the sidebar (see split-rows.ts): one row per group under its worktree, above its
+// project's worktrees when its members span them, or under a Splits header when they span projects. Advanced owns the layout and provides this context;
 // the rows read it, so the memoised sidebar does not re-render for it.
 
 /** A change to the groups from the sidebar: a row or group joined, a member leaving, or the layout edited on the hover's map. */
@@ -34,6 +34,8 @@ export interface GroupDrag {
 
 export interface SplitRowsValue {
   byWorktree: ReadonlyMap<string, GroupRow[]>
+  /** Groups whose members work in several worktrees of one project, by the project's path. */
+  byProject: ReadonlyMap<string, GroupRow[]>
   spanning: readonly GroupRow[]
   /** Items some group holds: their own rows hide while they are in it. */
   members: ReadonlySet<string>
@@ -480,7 +482,7 @@ function MapDivider({ divider, panes, onResize }: { divider: Divider; panes: Pan
   )
 }
 
-/** The Splits header and the groups whose members span worktrees; nothing when there are none. */
+/** The Splits header and the groups whose members span projects; nothing when there are none. */
 export function SpanningSplits({ onMenu, end, drag }: { onMenu: (event: MouseEvent<HTMLElement>, items: MenuItem[]) => void; end: (items: MenuItem[]) => ReactNode; drag: GroupDrag }) {
   const splits = useSplitRows()
   if (splits === null || splits.spanning.length === 0) return null

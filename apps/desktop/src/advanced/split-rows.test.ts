@@ -8,7 +8,14 @@ const info: Record<string, MemberInfo> = {
   'native:2': { title: 'New chat', mark: { kind: 'agent', agent: 'codex' }, state: 'working', worktree: '/wt/main' },
   'terminal:3': { title: 'zsh', mark: { kind: 'terminal' }, state: 'idle', worktree: '/wt/other' },
   'launcher:4': { title: 'New chat', mark: { kind: 'launcher' }, state: 'idle', worktree: null },
+  'native:5': { title: 'Triagem', mark: { kind: 'agent', agent: 'codex' }, state: 'working', worktree: '/wt/lane' },
+  'native:6': { title: 'Elsewhere', mark: { kind: 'agent', agent: 'claude' }, state: 'idle', worktree: '/other/main' },
 }
+/** Two projects as the sidebar lists them: the main checkout and its worktrees. */
+const projects = [
+  { path: '/wt/main', worktrees: [{ path: '/wt/main' }, { path: '/wt/other' }, { path: '/wt/lane' }] },
+  { path: '/other/main', worktrees: [{ path: '/other/main' }] },
+]
 const describeItem = (item: string): MemberInfo => info[item] ?? { title: item, mark: { kind: 'launcher' }, state: 'idle', worktree: null }
 
 /** teste teste and New chat side by side. */
@@ -66,22 +73,41 @@ describe('one row per group', () => {
 })
 
 describe('where a group row sits', () => {
-  test('under the one worktree its members work in; members without one do not count', () => {
-    const layout = splitItems(layoutOf(singlePane('native:1', 'p1'), 'g0'), ['native:1', 'launcher:4'], 'g2', ['q1', 'q2'])
-    const rows = groupRows(layout, describeItem)
-    expect(rows[0]?.worktree).toBe('/wt/main')
-    const placed = groupsByPlace(rows)
-    expect(placed.byWorktree.get('/wt/main')?.map((row) => row.id)).toEqual(['g2'])
+  const placeOf = (items: string[]) => groupsByPlace(groupRows(splitItems(layoutOf(singlePane(items[0] ?? 'x', 'p1'), 'g0'), items, 'g9', items.map((_, index) => `q${index}`)), describeItem), projects)
+
+  test('under the one worktree its members share', () => {
+    const placed = placeOf(['native:1', 'native:2'])
+    expect(placed.byWorktree.get('/wt/main')?.map((row) => row.id)).toEqual(['g9'])
+    expect(placed.byProject.size).toBe(0)
     expect(placed.spanning).toEqual([])
   })
 
-  test('under Splits when its members span worktrees, or none has one', () => {
-    const spanning = splitItems(layoutOf(singlePane('native:1', 'p1'), 'g0'), ['native:1', 'terminal:3'], 'g3', ['q1', 'q2'])
-    const rows = groupRows(spanning, describeItem)
-    expect(rows[0]?.worktree).toBeNull()
-    expect(groupsByPlace(rows).spanning.map((row) => row.id)).toEqual(['g3'])
-    const nowhere = splitItems(layoutOf(singlePane('launcher:4', 'p1'), 'g0'), ['launcher:4', 'launcher:5'], 'g4', ['q1', 'q2'])
-    expect(groupRows(nowhere, describeItem)[0]?.worktree).toBeNull()
+  test('under the project when its members work in two of its worktrees', () => {
+    const placed = placeOf(['native:1', 'native:5'])
+    expect(placed.byWorktree.size).toBe(0)
+    expect(placed.byProject.get('/wt/main')?.map((row) => row.id)).toEqual(['g9'])
+    expect(placed.spanning).toEqual([])
+  })
+
+  test('a member without a worktree yet does not count', () => {
+    expect(placeOf(['native:1', 'launcher:4']).byWorktree.get('/wt/main')?.map((row) => row.id)).toEqual(['g9'])
+    const project = placeOf(['native:1', 'launcher:4', 'terminal:3'])
+    expect(project.byProject.get('/wt/main')?.map((row) => row.id)).toEqual(['g9'])
+    expect(project.spanning).toEqual([])
+  })
+
+  test('under Splits when its members span two projects', () => {
+    const placed = placeOf(['native:1', 'native:6'])
+    expect(placed.byWorktree.size).toBe(0)
+    expect(placed.byProject.size).toBe(0)
+    expect(placed.spanning.map((row) => row.id)).toEqual(['g9'])
+  })
+
+  test('under Splits when no member has a place', () => {
+    const placed = placeOf(['launcher:4', 'launcher:5'])
+    expect(placed.byWorktree.size).toBe(0)
+    expect(placed.byProject.size).toBe(0)
+    expect(placed.spanning.map((row) => row.id)).toEqual(['g9'])
   })
 })
 

@@ -26,10 +26,12 @@ import {
   shownPanes,
   splitBeside,
   splitItems,
+  splitOpens,
   unsplitGroup,
   type Layout,
 } from '@/panes/split-groups'
 import { emptyStrip, stripColumns } from '@/panes/strip'
+import { launchWorktree } from '@/launcher/launch-model'
 
 const pane = (id: string, item: string): PaneNode => ({ type: 'pane', id, item })
 
@@ -262,6 +264,17 @@ describe('minimum pane size', () => {
     const self = splitBeside(start(), 'a', 'bottom', 'launch', { pane: 'p2', group: 'g1' })
     expect(self === null ? null : shape(shownPanes(self).root)).toEqual({ column: ['a', 'launch'] })
     expect(self === null ? null : shownPanes(self).focused).toBe('p2')
+  })
+
+  test('a split launcher starts in the worktree of the pane it splits, not the remembered one', () => {
+    const roots: Record<string, string> = { a: '/wt/a' }
+    const { opened, beside } = splitOpens(start(), 'launch', 'launch')
+    expect(opened).toBe('launch')
+    expect(beside).toBe('a')
+    const clicked = beside === null ? null : (roots[beside] ?? null)
+    expect(launchWorktree(clicked, '/wt/b', ['/wt/a', '/wt/b'])).toBe('/wt/a')
+    expect(splitOpens(start(), 'a', 'launch')).toEqual({ opened: 'launch', beside: 'a' })
+    expect(splitOpens(start(), 'b', 'launch')).toEqual({ opened: 'b', beside: 'a' })
   })
 
   test('a split is never refused for room: the strip scrolls instead', () => {

@@ -386,7 +386,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const rootOf = (item: string) => itemRoot(itemSources, item)
   const describeItem = (item: string) => describeItemIn(itemSources, item)
   const splitRowsValue = groupRows(paneLayout, describeItem)
-  const { shownGroupId, changeStrip, stripScrolls, setStripScrolls, focusSplit, focusSplitMember, renameSplit, splitGroupMenu, splitItemOf, splitWith, picks, splitRowMenu, dropSplit, pickSplitRow } = useSplitInteractions({ paneLayout, setLayout, setGithubPage, newPaneId, newGroupId, newLauncher, focusPaneInput, sessionItem, splitRowsValue, describeItem, presetNames, presetIcons })
+  const { shownGroupId, changeStrip, stripScrolls, setStripScrolls, focusSplit, focusSplitMember, renameSplit, splitGroupMenu, splitItemOf, splitWith, picks, splitRowMenu, dropSplit, pickSplitRow } = useSplitInteractions({ paneLayout, setLayout, setGithubPage, newPaneId, newGroupId, newLauncher, focusPaneInput, sessionItem, splitRowsValue, describeItem, rootOf, setLauncherClicked, presetNames, presetIcons })
 
   // A sidebar item dropped on a pane splits it or replaces its item; a pane dragged by its header
   // splits beside the pane or swaps with it. Either one dropped on an edge of the split spans that side.
@@ -653,10 +653,8 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 
   const splitRowsSignature = JSON.stringify(splitRowsValue)
   const splitRows = useMemo<SplitRowsValue>(() => {
-    const placed = groupsByPlace(splitRowsValue)
     return {
-      byWorktree: placed.byWorktree,
-      spanning: placed.spanning,
+      ...groupsByPlace(splitRowsValue, listed),
       members: new Set(splitRowsValue.flatMap((row) => row.members.map((member) => member.item))),
       itemOf: splitItemOf,
       focusGroup: focusSplit,
@@ -668,7 +666,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       pick: pickSplitRow,
       drop: dropSplit,
     }
-  }, [splitRowsSignature, picks])
+  }, [splitRowsSignature, picks, listed])
 
   // A strip that scrolls moves its top-left pane away from the lights, so then they keep a row of their own.
   // A shared bar sits above the strip, so it joins the row whether the strip scrolls or not.

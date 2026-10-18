@@ -89,15 +89,33 @@ export function groupRows(layout: Layout, describe: (item: string) => MemberInfo
   })
 }
 
-/** The rows under each worktree, and the ones under the Splits header. */
-export function groupsByPlace(rows: readonly GroupRow[]): { byWorktree: Map<string, GroupRow[]>; spanning: GroupRow[] } {
+/** The projects as the sidebar lists them: each one's worktrees by path. */
+export interface PlaceProject {
+  path: string
+  worktrees: readonly { path: string }[]
+}
+
+/**
+ * Where each row sits: the narrowest place holding every member that has one. Under the one worktree
+ * they share; else under the project when all their worktrees are its; else, across projects or with
+ * no member placed, under the Splits header. Members without a worktree yet do not count.
+ */
+export function groupsByPlace(rows: readonly GroupRow[], projects: readonly PlaceProject[]): { byWorktree: Map<string, GroupRow[]>; byProject: Map<string, GroupRow[]>; spanning: GroupRow[] } {
+  const projectOf = new Map(projects.flatMap((project) => project.worktrees.map((worktree) => [worktree.path, project.path] as const)))
   const byWorktree = new Map<string, GroupRow[]>()
+  const byProject = new Map<string, GroupRow[]>()
   const spanning: GroupRow[] = []
   for (const row of rows) {
-    if (row.worktree === null) spanning.push(row)
-    else byWorktree.set(row.worktree, [...(byWorktree.get(row.worktree) ?? []), row])
+    if (row.worktree !== null) {
+      byWorktree.set(row.worktree, [...(byWorktree.get(row.worktree) ?? []), row])
+      continue
+    }
+    const owners = new Set(row.members.flatMap((member) => (member.worktree === null ? [] : [projectOf.get(member.worktree) ?? null])))
+    const [only] = owners
+    if (owners.size === 1 && only !== undefined && only !== null) byProject.set(only, [...(byProject.get(only) ?? []), row])
+    else spanning.push(row)
   }
-  return { byWorktree, spanning }
+  return { byWorktree, byProject, spanning }
 }
 
 /**

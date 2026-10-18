@@ -2,7 +2,7 @@ import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type { ProjectSession } from '@/api/schema'
 import type { Layout, Preset } from '@/panes/split-groups'
 import { itemKey, paneList } from '@/panes/pane-model'
-import { arrangeGroup, arrangeMember, addToGroup, changeGroupPanes, changeGroupStrip, closeGroup, focusGroup, groupOfItem, joinItems, leaveGroup, presetsFor, renameGroup, shiftMember, shownPanes, splitBeside, splitItems, unsplitGroup } from '@/panes/split-groups'
+import { arrangeGroup, arrangeMember, addToGroup, changeGroupPanes, changeGroupStrip, closeGroup, focusGroup, groupOfItem, joinItems, leaveGroup, presetsFor, renameGroup, shiftMember, shownPanes, splitBeside, splitItems, splitOpens, unsplitGroup } from '@/panes/split-groups'
 import type { GroupRow, MemberInfo } from '@/advanced/split-rows'
 import type { SplitDrop } from '@/advanced/SplitRows'
 import type { JoinTarget } from '@/advanced/useRowDrag'
@@ -17,7 +17,7 @@ type GithubPage = { path: string; kind: GithubPageKind; focus: number | null } |
 
 export function useSplitInteractions({
   paneLayout, setLayout, setGithubPage, newPaneId, newGroupId, newLauncher,
-  focusPaneInput, sessionItem, splitRowsValue, describeItem, presetNames, presetIcons,
+  focusPaneInput, sessionItem, splitRowsValue, describeItem, rootOf, setLauncherClicked, presetNames, presetIcons,
 }: {
   paneLayout: Layout
   setLayout: Dispatch<SetStateAction<Layout>>
@@ -29,6 +29,10 @@ export function useSplitInteractions({
   sessionItem: (session: ProjectSession) => string
   splitRowsValue: GroupRow[]
   describeItem: (item: string) => MemberInfo
+  /** The worktree an item works in, if any. */
+  rootOf: (item: string) => string | null
+  /** Each launcher's clicked worktree, the one it starts in. */
+  setLauncherClicked: Dispatch<SetStateAction<Record<string, string>>>
   presetNames: Record<Preset, string>
   presetIcons: Record<Preset, MenuItem['icon']>
 }) {
@@ -60,6 +64,10 @@ export function useSplitInteractions({
     const launcher = newLauncher()
     const next = splitBeside(paneLayout, item ?? launcher, edge, launcher, { pane: newPaneId(), group: newGroupId() })
     if (next === null) return
+    // A launcher opened by a split starts in the worktree of the pane it splits, not the last one used.
+    const { opened, beside } = splitOpens(paneLayout, item ?? launcher, launcher)
+    const root = opened === launcher && beside !== null ? rootOf(beside) : null
+    if (root !== null) setLauncherClicked((current) => ({ ...current, [launcher]: root }))
     setGithubPage(null)
     setLayout(next)
     focusPaneInput(shownPanes(next).focused)
