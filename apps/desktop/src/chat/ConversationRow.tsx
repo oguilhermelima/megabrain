@@ -1,5 +1,6 @@
 import { createContext, memo, useContext, useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import type { TranscriptEvent } from '@/api/schema'
+import { Chevron } from '@/advanced/chrome'
 import { AgentIcon, ConversationAgent } from '@/components/agent-icons'
 import { NoticeCard } from '@/chat/NoticeCard'
 import { relayedPreview, relayedTarget, thoughtLabel, type ConversationItem, type ToolStatus } from '@/chat/conversation-model'
@@ -166,7 +167,10 @@ function WorkMark({ size, working }: { size: number; working: boolean }) {
   )
 }
 
-/** Collapsed to how long the agent thought; opened, what it thought. Thinking still running has no row of its own. */
+/**
+ * Collapsed to how long the agent thought, with the same chevron the live thinking opens by; opened, what it thought,
+ * whole. Thinking still running has no row of its own: the working indicator shows its tail.
+ */
 function ThinkingMessage({ event, thoughtMs }: { event: TranscriptEvent; thoughtMs?: number }) {
   const [open, setOpen] = useState(false)
   return (
@@ -174,6 +178,7 @@ function ThinkingMessage({ event, thoughtMs }: { event: TranscriptEvent; thought
       <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex max-w-[80%] items-center gap-2 text-left text-[13px] text-ink-400 hover:text-ink-300">
         <WorkMark size={10} working={false} />
         {thoughtLabel(thoughtMs)}
+        <Chevron open={open} />
       </button>
       {open && (
         <p onContextMenu={markMessage(event.text)} className="mt-1 max-w-[80%] whitespace-pre-wrap text-[13px] text-ink-400 italic">

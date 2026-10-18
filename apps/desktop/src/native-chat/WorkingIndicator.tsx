@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { Chevron } from '@/advanced/chrome'
 import { ToolIcon } from '@/chat/ToolIcon'
+import { thinkingTail } from '@/chat/thinking-tail'
 import { AgentIcon } from '@/components/agent-icons'
 import { formatElapsed, formatTokens, type ThinkingProgress, type WorkingStatus } from '@/native-chat/chat-model'
 
@@ -42,20 +44,52 @@ export function WorkingIndicator({ agent, status, progress }: { agent: string; s
   )
 }
 
-/** The thinking streaming now: its last lines, muted, opening to the whole text on a click. */
+/**
+ * The thinking streaming now: folded, its last lines from a sentence start; opened, the whole text in a box that
+ * follows the newest words unless the person scrolled up to read.
+ */
 function ThinkingTail({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
-  // Only a tail cut at the top fades in; a short thought shows whole.
-  const cut = text.length > 240 || text.split('\n').length > 3
+  const box = useRef<HTMLDivElement>(null)
+  const following = useRef(true)
+  const tail = thinkingTail(text)
+  useEffect(() => {
+    if (open && following.current && box.current !== null) box.current.scrollTop = box.current.scrollHeight
+  }, [open, text])
+  const toggle = () => {
+    following.current = true
+    setOpen((value) => !value)
+  }
+  const look = 'whitespace-pre-wrap text-chat-ui text-ink-400 italic'
+  if (!tail.hidden) return <p className={`mt-1 ml-6 max-w-[80%] ${look}`}>{tail.text}</p>
   return (
-    <button
-      type="button"
-      onClick={() => setOpen((value) => !value)}
-      aria-expanded={open}
-      aria-label={open ? 'Show less of the thinking' : 'Show all of the thinking'}
-      className={`mt-1 ml-6 flex max-w-[80%] flex-col text-left text-chat-ui whitespace-pre-wrap text-ink-400 italic hover:text-ink-300 ${open ? 'max-h-60 overflow-y-auto' : `max-h-[4.5em] justify-end overflow-hidden ${cut ? '[mask-image:linear-gradient(to_bottom,transparent,black_1.5em)]' : ''}`}`}
-    >
-      <span>{text.trim()}</span>
-    </button>
+    <div className="group/thinking mt-1 ml-6 max-w-[80%]">
+      {open ? (
+        <div
+          ref={box}
+          onScroll={(event) => {
+            const { scrollTop, scrollHeight, clientHeight } = event.currentTarget
+            following.current = scrollHeight - scrollTop - clientHeight < 8
+          }}
+          className={`max-h-60 overflow-y-auto ${look}`}
+        >
+          {text.trim()}
+        </div>
+      ) : (
+        // A light fade says more lies above without dimming the first line past reading.
+        <button type="button" tabIndex={-1} onClick={toggle} aria-expanded={false} className={`block w-full text-left hover:text-ink-300 [mask-image:linear-gradient(to_bottom,rgb(0_0_0/0.6),black_1.5em)] ${look}`}>
+          {tail.text}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className={`mt-0.5 flex items-center gap-1 text-[12px] text-ink-400 transition-opacity hover:text-ink-300 focus-visible:opacity-100 group-hover/thinking:opacity-100 motion-reduce:transition-none ${open ? '' : 'opacity-0'}`}
+      >
+        <Chevron open={open} />
+        {open ? 'Show less' : 'Show all'}
+      </button>
+    </div>
   )
 }
