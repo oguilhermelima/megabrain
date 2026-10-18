@@ -75,6 +75,30 @@ describe("native input scenarios", () => {
     expect(JSON.parse((status as { value: string }).value)).toMatchObject({ udid, state: "starting", phase: expect.any(String), startedAt: expect.any(String) });
   });
 
+  test("compiled-style argv starts the input worker through the real executable", async () => {
+    const state = await emptyFixture(); const { process } = fakeProcess();
+    let launched: { command: string; args: readonly string[] } | undefined;
+    process.startDetached = async (command, args) => { launched = { command, args }; return ok({ pid: 123 }); };
+    const original = [...globalThis.process.argv];
+    try {
+      globalThis.process.argv.splice(0, globalThis.process.argv.length, process.execPath, "/$bunfs/root/megabrain");
+      await nativeInput(["start", udid], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(launched).toEqual({ command: globalThis.process.execPath, args: ["native", "input", "start", udid, "--worker"] });
+    } finally { globalThis.process.argv.splice(0, globalThis.process.argv.length, ...original); }
+  });
+
+  test("source-style argv starts the input worker through the script", async () => {
+    const state = await emptyFixture(); const { process } = fakeProcess();
+    let launched: { command: string; args: readonly string[] } | undefined;
+    process.startDetached = async (command, args) => { launched = { command, args }; return ok({ pid: 123 }); };
+    const original = [...globalThis.process.argv];
+    try {
+      globalThis.process.argv.splice(0, globalThis.process.argv.length, process.execPath, "/repo/src/cli.ts");
+      await nativeInput(["start", udid], { MEGABRAIN_STATE_DIR: state }, process);
+      expect(launched).toEqual({ command: globalThis.process.execPath, args: ["/repo/src/cli.ts", "native", "input", "start", udid, "--worker"] });
+    } finally { globalThis.process.argv.splice(0, globalThis.process.argv.length, ...original); }
+  });
+
   test("fails input start for a shutdown simulator without booting it", async () => {
     const state = await emptyFixture(); const { process, calls } = fakeProcess();
     const run = process.run.bind(process);

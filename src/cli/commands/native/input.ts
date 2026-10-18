@@ -2,6 +2,7 @@ import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, w
 import { join } from "node:path";
 import type { ProcessAdapter } from "../../../adapters/proc.js";
 import { resolveStateDirectory } from "../../../core/state.js";
+import { selfInvocation } from "../../../core/self-invocation.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { usageText } from "../../../core/usage.js";
 import { SIMULATOR_UDID, simCandidates } from "./index.js";
@@ -115,8 +116,8 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
       catch { const current = readStatus(env, udid); return current?.state === "starting" ? (rest.includes("--wait") ? waitForInput(env, udid, process, Number(option(rest, "--timeout") ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`)) : failed(`input start for ${udid} is already being claimed`); }
       closeSync(fd);
       writeStatus(env, { udid, state: "starting", phase: "validating simulator", startedAt: new Date().toISOString() });
-      const executable = globalThis.process.argv[1];
-      const launched = executable ? await process.startDetached(executable, ["native", "input", "start", udid, "--worker"], { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env), ...(env.MEGABRAIN_APPIUM_PORT ? { MEGABRAIN_APPIUM_PORT: env.MEGABRAIN_APPIUM_PORT } : {}) } }) : failed("could not locate megabrain executable for background input start");
+      const worker = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["native", "input", "start", udid, "--worker"]);
+      const launched = await process.startDetached(worker.command, worker.args, { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env), ...(env.MEGABRAIN_APPIUM_PORT ? { MEGABRAIN_APPIUM_PORT: env.MEGABRAIN_APPIUM_PORT } : {}) } });
       if (launched.kind !== "ok") { writeStatus(env, { udid, state: "failed", phase: "launching", startedAt: readStatus(env, udid)!.startedAt, error: launched.error }); try { unlinkSync(lock); } catch {} return launched; }
       return rest.includes("--wait") ? waitForInput(env, udid, process, Number(option(rest, "--timeout") ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);
     }
