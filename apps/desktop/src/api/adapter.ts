@@ -336,6 +336,8 @@ export interface DesktopApi {
   logSwitchTrace(record: object): Promise<void>
   /** Appends one chat start trace line to <state>/logs/desktop-chat-start.log. */
   logChatStartTrace(record: object): Promise<void>
+  /** Appends one render error an error boundary caught to <state>/logs/desktop-errors.log. */
+  logError(record: object): Promise<void>
   /** Embedded terminals (native Tauri commands). */
   /** `chatId` names the chat whose terminal mode this is, so its TUI stays that chat's conversation. */
   openTerminal(options: { engine: TerminalEngine; cwd: string; command?: string[]; tmuxSession?: string; chatId?: string; cols: number; rows: number }): Promise<TerminalSession>

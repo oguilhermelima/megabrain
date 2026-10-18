@@ -44,14 +44,15 @@ import { useRunPanels } from '@/run-panel/useRunPanels'
 import { announceAction } from '@/lib/app-events'
 import { useStableCallback } from '@/lib/useStableCallback'
 import { useStatus } from '@/lib/useStatus'
-import { chatsByWorktree, rowStatus } from '@/native-chat/chat-model'
+import { chatsByWorktree } from '@/native-chat/chat-model'
 import { NativeChatView } from '@/native-chat/NativeChatView'
 import { Launcher, newTerminalId } from '@/launcher/Launcher'
 import { forgetTerminal, LaunchedTerminal } from '@/launcher/LaunchedTerminal'
 import { addTerminal, closeCall, closeNeedsConfirm, mountsInBackground, removeTerminal, renameTerminal, terminalExited, terminalFailed, terminalLabel, terminalRetried, terminalRuns, terminalStarted, terminalsByWorktree, type AppTerminal, type TerminalLaunch } from '@/terminal/terminal-list'
 import { closePane, dropItem, itemKey, paneList, paneOfItem, paneRects, parseItem, replaceItem, spanItem, type Panes } from '@/panes/pane-model'
 import { activeGroup, changeShown, openLayoutItem, openPageItem, removeLayoutItem, shownPanes } from '@/panes/split-groups'
-import { groupRows, groupsByPlace, type MemberInfo } from '@/advanced/split-rows'
+import { groupRows, groupsByPlace } from '@/advanced/split-rows'
+import { describeItem as describeItemIn, itemRoot, type ItemSources } from '@/advanced/item-describe'
 import { SplitRowsContext, type SplitRowsValue } from '@/advanced/SplitRows'
 import { hasActionBar, presetIcons, presetNames } from '@/advanced/pane-layout-display'
 import { arrangePane } from '@/panes/arrange'
@@ -381,71 +382,9 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
     return Promise.resolve()
   })
   // Split groups in the sidebar: each member described for its group's row (see split-rows.ts).
-  const worktreeOfItem = (item: string): string | null => {
-    const parsed = parseItem(item)
-    if (parsed === null) return null
-    const keyOf = <T,>(lists: Record<string, T[]>, has: (entry: T) => boolean) => Object.entries(lists).find(([, list]) => list.some(has))?.[0] ?? null
-    switch (parsed.kind) {
-      case 'native':
-        return keyOf(chatsInWorktrees, (chat) => chat.id === parsed.id)
-      case 'terminal':
-        return keyOf(terminalsInWorktrees, (terminal) => terminal.id === parsed.id)
-      // A project's page spans its worktrees, so its group sits with no one worktree.
-      case 'project':
-      case 'knowledge':
-      case 'artifact':
-      case 'tasks':
-        return null
-      default: {
-        const root = rootOf(item)
-        return root === null || root === '' ? null : root
-      }
-    }
-  }
-  const describeItem = (item: string): MemberInfo => {
-    const parsed = parseItem(item)
-    const worktree = worktreeOfItem(item)
-    if (parsed === null) return { title: 'Unknown', mark: { kind: 'launcher' }, state: 'ended', worktree }
-    switch (parsed.kind) {
-      case 'dispatch': {
-        const chat = status?.dispatches.find((entry) => entry.dispatchId === parsed.id)
-        const session = sessionRows.find((row) => row.session.dispatchId === parsed.id)?.session
-        return { title: chat?.label ?? session?.title ?? parsed.id, mark: { kind: 'agent', agent: chat?.agent ?? session?.agent ?? 'claude' }, state: session?.status ?? 'idle', worktree }
-      }
-      case 'session': {
-        const session = findSession(parsed.id)?.session
-        return { title: session?.title ?? 'Session', mark: { kind: 'agent', agent: session?.agent ?? parsed.id.split(':', 1)[0] ?? 'claude' }, state: session?.status ?? 'ended', worktree }
-      }
-      case 'native': {
-        const chat = nativeChats.find((entry) => entry.id === parsed.id) ?? (startedChat?.id === parsed.id ? startedChat : null)
-        return { title: chat?.title ?? 'New chat', mark: { kind: 'agent', agent: chat?.agent ?? 'claude' }, state: chat === null ? 'ended' : rowStatus(chat.state), worktree }
-      }
-      case 'terminal': {
-        const terminal = terminals.find((entry) => entry.id === parsed.id)
-        const state = terminal === undefined ? 'ended' : terminal.status === 'starting' ? 'working' : terminal.status === 'live' ? 'idle' : 'ended'
-        return { title: terminal === undefined ? 'Terminal' : terminalLabel(terminal), mark: { kind: 'terminal' }, state, worktree }
-      }
-      // A launcher's worktree is only its current pick, so it does not decide where its group sits.
-      case 'launcher':
-        return { title: 'New chat', mark: { kind: 'launcher' }, state: 'idle', worktree: null }
-      case 'github': {
-        const target = parseGithubItemId(parsed.id)
-        return { title: target === null ? 'GitHub' : githubItemTitle(target), mark: { kind: 'github' }, state: 'idle', worktree }
-      }
-      case 'code':
-        return { title: codeTargetForRoot(projects, parsed.id).title, mark: { kind: 'code' }, state: 'idle', worktree }
-      case 'project': {
-        const project = projects.find((entry) => entry.path === parsed.id)
-        return { title: project === undefined ? 'Project' : displayName(project), mark: { kind: 'project' }, state: 'idle', worktree }
-      }
-      case 'knowledge':
-        return { title: 'Knowledge', mark: { kind: 'knowledge' }, state: 'idle', worktree }
-      case 'artifact':
-        return { title: 'Artifacts', mark: { kind: 'artifact' }, state: 'idle', worktree }
-      case 'tasks':
-        return { title: 'Tasks', mark: { kind: 'tasks' }, state: 'idle', worktree }
-    }
-  }
+  const itemSources: ItemSources = { status, sessionRows, findSession, nativeChats, startedChat, terminals, launcherRoots, projects, chatsInWorktrees, terminalsInWorktrees }
+  const rootOf = (item: string) => itemRoot(itemSources, item)
+  const describeItem = (item: string) => describeItemIn(itemSources, item)
   const splitRowsValue = groupRows(paneLayout, describeItem)
   const { shownGroupId, changeStrip, stripScrolls, setStripScrolls, focusSplit, focusSplitMember, renameSplit, splitGroupMenu, splitItemOf, splitWith, picks, splitRowMenu, dropSplit, pickSplitRow } = useSplitInteractions({ paneLayout, setLayout, setGithubPage, newPaneId, newGroupId, newLauncher, focusPaneInput, sessionItem, splitRowsValue, describeItem, presetNames, presetIcons })
 
@@ -504,37 +443,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
 
   const startedLauncherRoot = (launcher: string) => (cwd: string | null) => setLauncherRoots((current) => (current[launcher] === cwd ? current : { ...current, [launcher]: cwd }))
 
-  /** The worktree an item works in: its top bar runs commands there and its run panel shows. */
-  const rootOf = (item: string): string | null => {
-    const parsed = parseItem(item)
-    if (parsed === null) return null
-    switch (parsed.kind) {
-      case 'dispatch':
-        return status?.dispatches.find((entry) => entry.dispatchId === parsed.id)?.worktreePath ?? null
-      case 'session': {
-        const path = findSession(parsed.id)?.worktreePath ?? ''
-        return path === '' ? null : path
-      }
-      case 'native':
-        return (nativeChats.find((entry) => entry.id === parsed.id) ?? (startedChat?.id === parsed.id ? startedChat : null))?.cwd ?? null
-      case 'terminal':
-        return terminals.find((entry) => entry.id === parsed.id)?.cwd ?? null
-      case 'launcher':
-        return launcherRoots[item] ?? null
-      case 'github':
-        return parseGithubItemId(parsed.id)?.root ?? null
-      case 'code':
-        return parsed.id
-      // The page runs the project's commands in its main checkout.
-      case 'project':
-        return parsed.id
-      // The page spans a project's worktrees, so it runs nothing; nor do the Artifacts and Tasks pages.
-      case 'knowledge':
-      case 'artifact':
-      case 'tasks':
-        return null
-    }
-  }
   // The shown split's members, and the worktree they all work in when it shares one bar.
   const splitMembers: SplitMember[] = paneList(panes.root).map((leaf) => {
     const mark = describeItem(leaf.item).mark
@@ -743,7 +651,6 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
       />
     ) : null
 
-  // Built here, after everything describing an item (rootOf) is declared.
   const splitRowsSignature = JSON.stringify(splitRowsValue)
   const splitRows = useMemo<SplitRowsValue>(() => {
     const placed = groupsByPlace(splitRowsValue)

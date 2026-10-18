@@ -12,6 +12,11 @@ pub fn chat_start_trace_path(state_dir: &Path) -> PathBuf {
     state_dir.join("logs").join("desktop-chat-start.log")
 }
 
+/// Where the app writes a render error its error boundaries caught: one JSON line per error.
+pub fn error_log_path(state_dir: &Path) -> PathBuf {
+    state_dir.join("logs").join("desktop-errors.log")
+}
+
 /// Appends one switch record as a single JSON line; only an object is a record.
 pub fn append_switch_trace(state_dir: &Path, record: &serde_json::Value) -> Result<PathBuf, String> {
     append_trace(&switch_trace_path(state_dir), record)
@@ -20,6 +25,11 @@ pub fn append_switch_trace(state_dir: &Path, record: &serde_json::Value) -> Resu
 /// Appends one chat start record as a single JSON line; only an object is a record.
 pub fn append_chat_start_trace(state_dir: &Path, record: &serde_json::Value) -> Result<PathBuf, String> {
     append_trace(&chat_start_trace_path(state_dir), record)
+}
+
+/// Appends one caught render error as a single JSON line; only an object is a record.
+pub fn append_error_log(state_dir: &Path, record: &serde_json::Value) -> Result<PathBuf, String> {
+    append_trace(&error_log_path(state_dir), record)
 }
 
 fn append_trace(path: &Path, record: &serde_json::Value) -> Result<PathBuf, String> {

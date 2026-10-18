@@ -46,7 +46,7 @@ export function TasksList({
     { kind: 'select', label: 'Assignee', value: picked.assignee ?? anyValue, options: assignees, onChange: (value) => setPicked((current) => ({ ...current, assignee: fromAny(value) })) },
   ]
   const listRef = useRef<HTMLDivElement>(null)
-  useEffect(() => listRef.current?.scrollTo({ top: 0 }), [index])
+  useEffect(() => void listRef.current?.scrollTo({ top: 0 }), [index])
   // Every state's total travels with each page, so the tabs keep their counts while another tab loads.
   const [counts, setCounts] = useState<Record<string, number> | null>(null)
   useEffect(() => {

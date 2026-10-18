@@ -443,6 +443,7 @@ export function createTauriApi(): DesktopApi {
     chatDaemonDrain: async () => void (await cliText(['chat', 'daemon', 'drain', '--json'])),
     logSwitchTrace: async (record) => void (await invoke('switch_trace_log', { record })),
     logChatStartTrace: async (record) => void (await invoke('chat_start_trace_log', { record })),
+    logError: async (record) => void (await invoke('error_log', { record })),
     openTerminal: async (options) => terminalSessionSchema.parse(await invoke('terminal_open', { options })),
     writeTerminal: async (terminalId, data) => void (await invoke('terminal_write', { terminalId, data })),
     resizeTerminal: async (terminalId, cols, rows) => void (await invoke('terminal_resize', { terminalId, cols, rows })),

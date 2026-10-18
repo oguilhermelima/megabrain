@@ -6,6 +6,7 @@ import { columnAt, dragOuterEdge, equaliseBetween, minPaneHeight, minPaneWidth, 
 import { useStripScroll } from '@/panes/useStripScroll'
 import { WindowRowContext, type WindowRowJoin } from '@/panes/window-row'
 import { PaneChromeContext, type PaneChrome } from '@/panes/pane-chrome'
+import { PaneErrorBoundary } from '@/components/ErrorBoundary'
 
 /** What a pane shows for its item: the title on its header, and the view. */
 export interface PaneContent {
@@ -163,7 +164,9 @@ export function PaneArea({
                 {/* Positioned, so a PR or Diff view can lie over the item's own content below its top bar. */}
                 <div className={`relative flex min-h-0 flex-1 flex-col ${quiet.has(item) ? '' : 'motion-rise'}`}>
                   <WindowRowContext.Provider value={joined?.join.header === 'top-bar' ? joined.inset : null}>
-                    <PaneChromeContext.Provider value={chrome}>{content.node}</PaneChromeContext.Provider>
+                    <PaneChromeContext.Provider value={chrome}>
+                      <PaneErrorBoundary item={item} onClose={split && pane !== null ? () => onClose(pane.id) : null}>{content.node}</PaneErrorBoundary>
+                    </PaneChromeContext.Provider>
                   </WindowRowContext.Provider>
                 </div>
                 {focused && <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-40 ring-1 ring-accent/50 ring-inset" />}

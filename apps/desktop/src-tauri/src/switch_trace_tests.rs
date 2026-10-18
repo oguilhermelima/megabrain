@@ -1,4 +1,4 @@
-use crate::switch_trace::{append_chat_start_trace, append_switch_trace, chat_start_trace_path, switch_trace_path};
+use crate::switch_trace::{append_chat_start_trace, append_error_log, append_switch_trace, chat_start_trace_path, error_log_path, switch_trace_path};
 use serde_json::json;
 use std::fs;
 
@@ -46,5 +46,20 @@ fn each_chat_start_appends_one_json_line_and_leaves_the_switch_log_alone() {
     assert_eq!(lines, vec![record]);
     assert!(!switch_trace_path(&root).exists());
     assert!(append_chat_start_trace(&root, &json!(["not", "an", "object"])).is_err());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn each_caught_error_appends_one_json_line_to_its_own_log() {
+    let root = std::env::temp_dir().join(format!("megabrain-error-log-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(error_log_path(std::path::Path::new("/state")), std::path::PathBuf::from("/state/logs/desktop-errors.log"));
+    let record = json!({ "where": "pane", "item": "launcher:1", "message": "boom" });
+    append_error_log(&root, &record).expect("line");
+    let text = fs::read_to_string(error_log_path(&root)).expect("log");
+    let lines: Vec<serde_json::Value> = text.lines().map(|line| serde_json::from_str(line).expect("json line")).collect();
+    assert_eq!(lines, vec![record]);
+    assert!(!switch_trace_path(&root).exists());
+    assert!(append_error_log(&root, &json!("text")).is_err());
     let _ = fs::remove_dir_all(root);
 }

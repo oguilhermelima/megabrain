@@ -252,7 +252,7 @@ export async function startWebBridge(input: Partial<BridgeOptions> & { host?: st
             const bytes = Buffer.from(encoded, 'base64'); if (bytes.length > 20 * 1024 * 1024) throw 'image exceeds the 20 MB limit'
             await writeFile(path, bytes); return json(null)
           }
-          if (name === 'switch_trace_log' || name === 'chat_start_trace_log') { await appendTrace(options, name, body.record); return json(null) }
+          if (name === 'switch_trace_log' || name === 'chat_start_trace_log' || name === 'error_log') { await appendTrace(options, name, body.record); return json(null) }
           if (name === 'terminal_open' || name === 'terminal_write' || name === 'terminal_resize' || name === 'terminal_close' || name === 'terminal_listen' || name === 'terminal_unlisten') throw 'Terminals need the desktop app.'
           if (name === 'path_link_state') {
             const linkPath = join(homedir(), '.local', 'bin', 'megabrain')
@@ -294,9 +294,10 @@ async function saveAttachment(options: BridgeOptions, encoded: string, extension
   const metadata = await lstat(directory); if (metadata.isSymbolicLink() || !metadata.isDirectory()) throw 'attachment directory must be a real directory'
   const path = join(directory, `${crypto.randomUUID()}.${ext}`); await writeFile(path, bytes, { flag: 'wx', mode: 0o600 }); return await realpath(path)
 }
+const traceLogs: Record<string, string> = { switch_trace_log: 'desktop-switch.log', chat_start_trace_log: 'desktop-chat-start.log', error_log: 'desktop-errors.log' }
 async function appendTrace(options: BridgeOptions, name: string, record: unknown) {
   if (!record || typeof record !== 'object' || Array.isArray(record)) throw 'a trace record must be a JSON object'
-  const path = join(await stateDir(options), 'logs', name === 'switch_trace_log' ? 'desktop-switch.log' : 'desktop-chat-start.log')
+  const path = join(await stateDir(options), 'logs', traceLogs[name] ?? 'desktop-chat-start.log')
   await mkdir(dirname(path), { recursive: true }); await appendFile(path, `${JSON.stringify(record)}\n`)
 }
 

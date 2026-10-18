@@ -553,6 +553,7 @@ export function createMockApi(): DesktopApi {
     chatDaemonDrain: () => chatd.drain(),
     logSwitchTrace: async () => {},
     logChatStartTrace: async () => {},
+    logError: async () => {},
     openTerminal: async ({ engine, cwd, tmuxSession }) => ({ id: `term-${Date.now()}`, engine, cwd, title: 'zsh', tmuxSession: tmuxSession ?? null }),
     writeTerminal: async () => {},
     resizeTerminal: async () => {},

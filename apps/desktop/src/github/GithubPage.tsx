@@ -327,7 +327,7 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
   const { listing, error, loading, reload, index, cursors, go } = usePagedListing(project.path, { kind: 'prs', state: tab, filters: { ...filters, query } })
   const options = useFilterOptions(project.path)
   const listRef = useRef<HTMLDivElement>(null)
-  useEffect(() => listRef.current?.scrollTo({ top: 0 }), [index])
+  useEffect(() => void listRef.current?.scrollTo({ top: 0 }), [index])
   const [sheetOpen, setSheetOpen] = useState(false)
   const closeSheet = useCallback(() => setSheetOpen(false), [])
   const set = (patch: Partial<PullRequestFilters>) => setFilters((current) => ({ ...current, ...patch }))
