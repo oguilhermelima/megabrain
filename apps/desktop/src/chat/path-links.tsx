@@ -1,10 +1,13 @@
 import { Children, createContext, useContext, type ReactNode } from 'react'
-import { pathSegments } from '@/code/chat-paths'
+import { pathSegments, type FileTarget } from '@/code/chat-paths'
 
-/** Where a chat's file paths open: the worktree they must sit under, and what a click does. */
+/** Where a chat's file paths open: the worktree they must sit under, and what a click does. A link
+ * to a local file may also sit under any listed project or worktree in `roots`; `openFile` opens it. */
 export interface PathLinks {
   root: string | null
   open: (path: string, line: number | null) => void
+  roots: readonly string[]
+  openFile: (target: FileTarget) => void
 }
 
 export const PathLinksContext = createContext<PathLinks | null>(null)

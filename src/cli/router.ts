@@ -56,6 +56,7 @@ import { executeCode } from "./commands/code.js";
 import { executePort } from "./commands/port.js";
 import { executeMaestro } from "./commands/maestro.js";
 import { runCodeServerProxy } from "../core/code-server-proxy.js";
+import { runCodeExtensionsSync } from "../core/code-extensions.js";
 import { executeWorktreeHide } from "./commands/worktree-hide.js";
 import { executeCommands } from "./commands/commands.js";
 import { executeSession } from "./commands/session.js";
@@ -138,6 +139,7 @@ async function routeCommand(
     return ok("");
   }
   if (command === "__code-server-proxy") return runCodeServerProxy(commandArgs, dependencies.environment);
+  if (command === "__code-extensions") return runCodeExtensionsSync(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__delivery-worker") return executeDeliveryWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__supervise-worker") return executeSupervisorWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__usage-table") return Promise.resolve(ok(usageTable()));

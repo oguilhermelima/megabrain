@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { chatMenu, composerMenu, insertBlock, quoteText, toolCommand, type ChatMenuTarget } from '@/chat/chat-menu-model'
 
-const none: ChatMenuTarget = { selection: '', message: null, code: null, tool: null, image: null, link: null, canCompose: true }
+const none: ChatMenuTarget = { selection: '', message: null, code: null, tool: null, image: null, link: null, linkOpensFile: false, canCompose: true }
 const actions = (entries: ReturnType<typeof chatMenu>) => entries.map((entry) => ('separator' in entry ? '-' : entry.action))
 
 describe('chatMenu', () => {
@@ -93,6 +93,12 @@ describe('chatMenu', () => {
   test('a link the system cannot open is only copied', () => {
     expect(actions(chatMenu({ ...none, link: 'javascript:alert(1)' }))).toEqual(['copy-link', '-', 'scroll-bottom'])
     expect(actions(chatMenu({ ...none, link: 'mailto:a@b.c' }))).toEqual(['open-link', 'copy-link', '-', 'scroll-bottom'])
+  })
+
+  test('a link to a local file Code can open is offered in Code, then copied', () => {
+    const menu = chatMenu({ ...none, link: '/Users/operator/project/report.csv', linkOpensFile: true })
+    expect(actions(menu)).toEqual(['open-file', 'copy-link', '-', 'scroll-bottom'])
+    expect(menu[0]).toEqual({ action: 'open-file', label: 'Open in Code' })
   })
 })
 

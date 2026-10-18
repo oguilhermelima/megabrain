@@ -6,6 +6,7 @@ import { openableUrl } from '@/lib/external'
 
 export type ChatAction =
   | 'open-link'
+  | 'open-file'
   | 'copy-link'
   | 'copy-image'
   | 'save-image'
@@ -34,6 +35,8 @@ export interface ChatMenuTarget {
   /** `viewer`: the image opens in the app's preview when clicked. */
   image: { viewer: boolean } | null
   link: string | null
+  /** The link points at a local file under a listed project or worktree, which Code opens. */
+  linkOpensFile: boolean
   /** The chat has a composer to quote or insert into. */
   canCompose: boolean
 }
@@ -43,8 +46,9 @@ export const openableLink = (href: string) => openableUrl(href) !== null
 
 export function chatMenu(target: ChatMenuTarget): MenuModel<ChatAction>[] {
   const sections: MenuModel<ChatAction>[][] = []
-  const { selection, message, code, tool, image, link, canCompose } = target
-  if (link !== null) sections.push([...(openableLink(link) ? [{ action: 'open-link' as const, label: 'Open link' }] : []), { action: 'copy-link', label: 'Copy link' }])
+  const { selection, message, code, tool, image, link, linkOpensFile, canCompose } = target
+  const openLink = linkOpensFile ? [{ action: 'open-file' as const, label: 'Open in Code' }] : link !== null && openableLink(link) ? [{ action: 'open-link' as const, label: 'Open link' }] : []
+  if (link !== null) sections.push([...openLink, { action: 'copy-link', label: 'Copy link' }])
   if (image !== null)
     sections.push([
       { action: 'copy-image', label: 'Copy image' },

@@ -18,7 +18,7 @@ import { homeView, knowledgeItem, knowledgeItemIn, knowledgeView, type Knowledge
 import { artifactsItem, artifactsItemIn } from '@/advanced/artifacts-model'
 import { chooseView, initialView, worktreeFacts, type PaneView } from '@/chat/action-bar-model'
 import { PaneViewContext, type PaneViewControls } from '@/chat/pane-view-context'
-import type { OpenPath } from '@/chat/Conversation'
+import { CodeRootsProvider, type OpenPath } from '@/chat/Conversation'
 import { DispatchesContext } from '@/chat/NoticeCard'
 import { ChatdNotice } from '@/native-chat/ChatdNotice'
 import { SessionView } from '@/chat/SessionView'
@@ -843,7 +843,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
             <ErrorNote error={error} />
           </div>
         )}
-        <DispatchesContext.Provider value={status?.dispatches ?? noDispatches}>
+        <DispatchesContext.Provider value={status?.dispatches ?? noDispatches}><CodeRootsProvider projects={listed}>
           {/* The panes stay mounted under a GitHub page, so nothing in them is lost. */}
           <div className="relative flex min-h-0 flex-1 flex-col">
             <RunContext.Provider value={controlsFor(sharedRoot)}>
@@ -895,7 +895,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
               </div>
             )}
           </div>
-        </DispatchesContext.Provider>
+        </CodeRootsProvider></DispatchesContext.Provider>
       </main>
       {/* Every worktree's runs stay mounted; only the open chat's panel shows. */}
       {runPanelRoots.length > 0 && (

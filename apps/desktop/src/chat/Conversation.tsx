@@ -1,7 +1,7 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { api } from '@/api'
-import type { Transcript, TranscriptEvent } from '@/api/schema'
+import type { Project, Transcript, TranscriptEvent } from '@/api/schema'
 import { ContextMenu } from '@/components/ContextMenu'
 import type { MenuIcon } from '@/components/menu-icons'
 import { TranscriptSkeleton } from '@/components/Skeleton'
@@ -15,6 +15,7 @@ import { markedParts, toSections, type ComposeChannel } from '@/chat/chat-menu'
 import { imageBytes, pngBytes, saveName } from '@/lib/image-bytes'
 import { collapseNotices, type NoticeDisplayItem } from '@/chat/notice-model'
 import { PathLinksContext, type PathLinks } from '@/chat/path-links'
+import { localFileTarget } from '@/code/chat-paths'
 import { reuse } from '@/lib/reuse'
 import { isMissingLog } from '@/chat/session-open-model'
 import { pageMx } from '@/lib/page'
@@ -33,6 +34,15 @@ const noLive: LiveRow[] = []
 export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
 /** Opens a file under a chat's worktree in Code, at a line when one was named. */
 export type OpenPath = (root: string, path: string, line: number | null) => void
+
+// Every listed project and worktree: a chat's link to a local file under one opens there in Code.
+const CodeRootsContext = createContext<readonly string[]>([])
+
+/** Gives the conversations under it the listed projects and worktrees their file links open in. */
+export function CodeRootsProvider({ projects, children }: { projects: readonly Project[]; children: ReactNode }) {
+  const roots = useMemo(() => projects.flatMap((project) => [project.path, ...project.worktrees.map((worktree) => worktree.path)]), [projects])
+  return <CodeRootsContext.Provider value={roots}>{children}</CodeRootsContext.Provider>
+}
 
 
 // A streamed message keys by its messageId, so the row its chunks grew is the row the complete
@@ -167,10 +177,19 @@ export function ConversationList({
 }) {
   const [pinned, setPinned] = useState(true)
   const list = useRef<HTMLDivElement>(null)
-  const links = useMemo<PathLinks | null>(
-    () => (root === null || root === '' || onOpenPath === undefined ? null : { root, open: (path, line) => onOpenPath(root, path, line) }),
-    [root, onOpenPath],
-  )
+  const codeRoots = useContext(CodeRootsContext)
+  const links = useMemo<PathLinks | null>(() => {
+    if (onOpenPath === undefined) return null
+    const base = root === null || root === '' ? null : root
+    return {
+      root: base,
+      open: (path, line) => {
+        if (base !== null) onOpenPath(base, path, line)
+      },
+      roots: base === null ? codeRoots : [base, ...codeRoots],
+      openFile: (target) => onOpenPath(target.root, target.path, target.line),
+    }
+  }, [root, onOpenPath, codeRoots])
 
   // A background task shows once, where it started; its later states reach its row through the context.
   const tasks = useMemo(() => taskRows(events), [events])
@@ -279,6 +298,7 @@ export function ConversationList({
     const selected = window.getSelection()
     const selection = selected !== null && !selected.isCollapsed && list.current?.contains(selected.anchorNode) === true ? selected.toString() : ''
     const link = element?.closest<HTMLElement>('[data-link]')?.dataset.link ?? null
+    const file = link === null || links === null ? null : localFileTarget(link, links.root, links.roots)
     const image = marked.image ?? (element instanceof HTMLImageElement ? { src: element.currentSrc || element.src, name: element.alt || 'Image', open: null } : null)
     // A tool's input and output are <pre> too; the tool's own actions cover them.
     const code = marked.tool === undefined ? (element?.closest('pre')?.textContent ?? null) : null
@@ -290,6 +310,9 @@ export function ConversationList({
       switch (action) {
         case 'open-link':
           if (link !== null) void api.openUrl(link).catch(failed)
+          return
+        case 'open-file':
+          if (file !== null) links?.openFile(file)
           return
         case 'copy-link':
           if (link !== null) copy(link)
@@ -339,6 +362,7 @@ export function ConversationList({
     }
     const icons: Record<ChatAction, MenuIcon> = {
       'open-link': 'external',
+      'open-file': 'code',
       'copy-link': 'link',
       'copy-image': 'copy',
       'save-image': 'save',
@@ -353,7 +377,7 @@ export function ConversationList({
       'select-message': 'select',
       'scroll-bottom': 'bottom',
     }
-    const target = { selection, message, code, tool, image: image === null ? null : { viewer: image.open !== null }, link, canCompose: insert !== null }
+    const target = { selection, message, code, tool, image: image === null ? null : { viewer: image.open !== null }, link, linkOpensFile: file !== null, canCompose: insert !== null }
     contextMenu.open(event, toSections(chatMenu(target), run, icons))
   }
 

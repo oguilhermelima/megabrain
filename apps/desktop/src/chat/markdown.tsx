@@ -2,17 +2,41 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import { Children, Fragment, isValidElement, useMemo, useRef, useState, type AnchorHTMLAttributes, type ImgHTMLAttributes, type ReactNode } from 'react'
+import { Children, Fragment, isValidElement, useContext, useMemo, useRef, useState, type AnchorHTMLAttributes, type ImgHTMLAttributes, type ReactNode } from 'react'
 import { MenuIconGlyph } from '@/components/menu-icons'
 import { api } from '@/api'
-import { Linked } from '@/chat/path-links'
+import { Linked, PathLinksContext } from '@/chat/path-links'
+import { localFileTarget } from '@/code/chat-paths'
 import { openableUrl } from '@/lib/external'
 import { isShellFence, shellLines, type ShellToken, type ShellTokenKind } from '@/chat/shell-tokens'
 
-// A web or mail link opens in the system's default app; any other target stays inert text that only
-// shows where it points on hover. Either way the transcript's right-click menu reads data-link.
+// A web or mail link opens in the system's default app, and a link to a local file under a listed
+// project or worktree opens in Code; any other target stays inert text that only shows where it
+// points on hover. Either way the transcript's right-click menu reads data-link.
 function ExternalLink({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const links = useContext(PathLinksContext)
   const address = href === undefined ? null : openableUrl(href)
+  const file = address !== null || href === undefined || links === null ? null : localFileTarget(href, links.root, links.roots)
+  if (file !== null && links !== null) {
+    const openFile = () => links.openFile(file)
+    return (
+      <span
+        role="link"
+        tabIndex={0}
+        title={`Open in Code: ${href}`}
+        data-link={href}
+        onClick={openFile}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter') return
+          event.preventDefault()
+          openFile()
+        }}
+        className="cursor-pointer text-accent underline decoration-dotted underline-offset-2 hover:decoration-solid"
+      >
+        {children}
+      </span>
+    )
+  }
   if (address === null) {
     return (
       <span title={href} data-link={href} className="cursor-default text-accent underline decoration-dotted underline-offset-2">

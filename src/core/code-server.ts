@@ -11,6 +11,7 @@ import { listRepositories } from "../db/queries/repositories.js";
 import { failed, type Result } from "./result.js";
 import { selfInvocation } from "./self-invocation.js";
 import { CODE_WORKBENCH_CSS } from "./code-server-proxy.js";
+import { codeEditorAssociations, extensionsToInstall, PINNED_EXTENSIONS, readInstalledExtensions } from "./code-extensions.js";
 
 export const CODE_SERVER_VERSION = "4.138.0";
 const RELEASE_BASE = `https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}`;
@@ -47,6 +48,9 @@ export const CODE_ENFORCED_SETTINGS = {
   "update.mode": "none",
   "window.autoDetectColorScheme": false,
   "explorer.openEditors.visible": 0,
+  // Spreadsheets, office documents and PDFs open in the recommended extensions' viewers
+  // (code-extensions.json); Reopen Editor With still shows the text.
+  "workbench.editorAssociations": codeEditorAssociations(PINNED_EXTENSIONS),
 } as const;
 
 /** What a running server was started with. A live server whose record carries another version (or
@@ -88,6 +92,8 @@ export type CodeServerDependencies = Readonly<{
   token(): string;
   portAvailable?(port: number): Promise<boolean>;
   ready?(port: number, codePid: number, proxyPid: number): Promise<void>;
+  /** Starts the recommended extensions' install into a profile without waiting for it (code-extensions.ts). */
+  syncExtensions?(executable: string, extensionsDirectory: string): Promise<void>;
 }>;
 
 export function selectCodeServerAsset(platform: Platform, arch: string): CodeServerAsset | undefined {
@@ -178,6 +184,10 @@ function defaultDependencies(processAdapter: ProcessAdapter): CodeServerDependen
       try { process.kill(pid, "SIGTERM"); } catch { /* the process already exited */ }
     },
     token: () => randomBytes(32).toString("hex"),
+    async syncExtensions(executable, extensionsDirectory) {
+      const invocation = selfInvocation(process.execPath, process.argv, ["__code-extensions", executable, extensionsDirectory]);
+      startOrThrow(await processAdapter.startDetached(invocation.command, invocation.args), "code extensions sync");
+    },
   };
 }
 
@@ -407,6 +417,10 @@ export function createCodeServerManager(environment: StateEnvironment, processAd
         const url = `http://127.0.0.1:${port}/${token}/`;
         const record: ServerRecord = { root: canonicalRoot, url, port, token, codeServerPid, proxyPid, socketPath, configVersion: CODE_CONFIG_VERSION };
         await writeRecord(recordPath, record);
+        // Code is up either way: a sync that cannot start is tried again on the next start.
+        if (extensionsToInstall(PINNED_EXTENSIONS, await readInstalledExtensions(extensionsDirectory)).length > 0) {
+          await dependencies.syncExtensions?.(executable, extensionsDirectory).catch(() => {});
+        }
         return { root: canonicalRoot, url, port, pid: proxyPid, codeServerPid };
       } catch (cause: unknown) {
         if (proxyPid !== undefined) await stopPid(proxyPid, dependencies);

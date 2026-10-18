@@ -1,0 +1,60 @@
+{
+  "extensions": [
+    {
+      "id": "janisdd.vscode-edit-csv",
+      "version": "0.11.9",
+      "sha256": "174b6f012d33d93a1800db327263a0ccf8eecd529bbfe57966c0be51f2f83c80"
+    },
+    {
+      "id": "cweijan.vscode-office",
+      "version": "4.2.2",
+      "sha256": "74906054c339a2dfd9a6746489d79632507adcb64d30f43a3d781d813c0dd29f",
+      "editorAssociations": {
+        "*.csv": "cweijan.officeViewer",
+        "*.tsv": "cweijan.officeViewer",
+        "*.xlsx": "cweijan.officeViewer",
+        "*.xls": "cweijan.officeViewer",
+        "*.xlsm": "cweijan.officeViewer",
+        "*.ods": "cweijan.officeViewer",
+        "*.docx": "cweijan.officeViewer",
+        "*.pptx": "cweijan.officeViewer",
+        "*.dotx": "default",
+        "*.pptm": "default",
+        "*.epub": "default",
+        "*.ttf": "default",
+        "*.woff": "default",
+        "*.woff2": "default",
+        "*.otf": "default",
+        "*.svg": "default",
+        "*.icns": "default",
+        "*.psd": "default",
+        "*.xmind": "default",
+        "*.tiff": "default",
+        "*.tif": "default",
+        "*.heif": "default",
+        "*.heic": "default",
+        "*.jar": "default",
+        "*.zip": "default",
+        "*.7z": "default",
+        "*.rar": "default",
+        "*.tar.gz": "default",
+        "*.tgz": "default",
+        "*.tar": "default",
+        "*.apk": "default",
+        "*.vsix": "default",
+        "*.crx": "default",
+        "*.md": "default",
+        "*.markdown": "default",
+        "*.class": "default"
+      }
+    },
+    {
+      "id": "mathematic.vscode-pdf",
+      "version": "0.2.6",
+      "sha256": "256ce6f49ff1acb5d84b1bb842f8cf3facfb937d6775fc029ee4ebc8152a764c",
+      "editorAssociations": {
+        "*.pdf": "pdf.view"
+      }
+    }
+  ]
+}

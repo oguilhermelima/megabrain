@@ -8,6 +8,7 @@ import { createProcessAdapter } from "../../src/adapters/proc.js";
 import { registerMegabrainRepository } from "../../src/core/project-registry.js";
 import { BRIDGE_EXTENSION, CODE_CONFIG_VERSION, CODE_ENFORCED_SETTINGS, codeConfigVersion, codeServerPortCandidate, createCodeServerManager, selectCodeServerAsset, type CodeServerDependencies } from "../../src/core/code-server.js";
 import { CODE_WORKBENCH_CSS } from "../../src/core/code-server-proxy.js";
+import { PINNED_EXTENSIONS, codeEditorAssociations } from "../../src/core/code-extensions.js";
 import { ok } from "../../src/core/result.js";
 
 let root = "";
@@ -84,6 +85,11 @@ describe("code server", () => {
       "workbench.activityBar.location": "top",
       "workbench.sideBar.location": "right",
     });
+  });
+
+  test("opens spreadsheets, office documents and PDFs in the recommended extensions' viewers", () => {
+    expect(CODE_ENFORCED_SETTINGS["workbench.editorAssociations"]).toEqual(codeEditorAssociations(PINNED_EXTENSIONS));
+    expect(CODE_ENFORCED_SETTINGS["workbench.editorAssociations"]["*.csv"]).toBe("cweijan.officeViewer");
   });
 
   test("enforced layout keys win over layout the person set in the profile's user settings", async () => {
@@ -332,6 +338,37 @@ describe("code server", () => {
     expect(server.pid).toBe(4343);
     expect(server.codeServerPid).toBe(4242);
     expect(fake.started).toHaveLength(2);
+  });
+
+  test("starts the recommended extensions' sync for a profile that lacks one, without waiting for it", async () => {
+    const path = await repository("extensions-missing");
+    await registerMegabrainRepository(path, env, createProcessAdapter());
+    const synced: Array<{ executable: string; extensions: string }> = [];
+    const fake = fakes({ syncExtensions: async (executable, extensions) => { synced.push({ executable, extensions }); } });
+    const server = await createCodeServerManager(env, createProcessAdapter(), fake.dependencies).open(path);
+    expect(server.codeServerPid).toBe(4242);
+    const profile = join(state, "code-server", "data", createHash("sha256").update(path).digest("hex").slice(0, 20));
+    expect(synced).toEqual([{ executable: join(state, "code-server", "4.138.0", "code-server-4.138.0-macos-arm64", "bin", "code-server"), extensions: join(profile, "extensions") }]);
+  });
+
+  test("starts no sync when every recommended extension is installed at its pinned version", async () => {
+    const path = await repository("extensions-installed");
+    await registerMegabrainRepository(path, env, createProcessAdapter());
+    const profile = join(state, "code-server", "data", createHash("sha256").update(path).digest("hex").slice(0, 20));
+    mkdirSync(join(profile, "extensions"), { recursive: true });
+    writeFileSync(join(profile, "extensions", "extensions.json"), JSON.stringify(PINNED_EXTENSIONS.map((extension) => ({ identifier: { id: extension.id }, version: extension.version }))));
+    const synced: string[] = [];
+    const fake = fakes({ syncExtensions: async (_executable, extensions) => { synced.push(extensions); } });
+    await createCodeServerManager(env, createProcessAdapter(), fake.dependencies).open(path);
+    expect(synced).toEqual([]);
+  });
+
+  test("a sync that cannot start never keeps Code from opening", async () => {
+    const path = await repository("extensions-failing");
+    await registerMegabrainRepository(path, env, createProcessAdapter());
+    const fake = fakes({ syncExtensions: async () => { throw new Error("spawn failed"); } });
+    const server = await createCodeServerManager(env, createProcessAdapter(), fake.dependencies).open(path);
+    expect(server.url).toContain("random-test-token");
   });
 
   test("stop kills the server recorded for the registered root", async () => {
