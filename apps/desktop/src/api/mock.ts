@@ -387,7 +387,6 @@ export function createMockApi(): DesktopApi {
     codeBranchDiff: async (_root, _mergeBase, path) => ({ ...(isNew(mockBranchChanges.changes, path) ? mockNewFileDiff : mockCodeDiff), path }),
     chats: async () => mockChats,
     startChat: async ({ agent, model, cwd }) => {
-      if (agent === 'agy') throw new CliError('agy chats are not available yet', 1)
       return {
         ...mockNativeChat,
         id: `chat-${Date.now()}`,
@@ -395,8 +394,8 @@ export function createMockApi(): DesktopApi {
         model: model ?? null,
         cwd,
         title: null,
-        state: 'starting',
-        ...(agent === 'grok' ? { capabilities: grokCapabilities } : { capabilities: mockNativeChat.capabilities }),
+        state: agent === 'agy' ? 'idle' : 'starting',
+        ...(agent === 'grok' ? { capabilities: grokCapabilities } : agent === 'agy' ? { capabilities: { approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true }, mode: 'terminal', owner: 'terminal' } : { capabilities: mockNativeChat.capabilities }),
       }
     },
     sendChat: async (chatId, parts) => {

@@ -14,7 +14,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from ".././store.js";
 import { chatProtocolAdapters, type MessagePart } from ".././protocol.js";
-import { discoverSessionId, parseClaudeLog, parseCodexRollout, parseGrokLog, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
+import { discoverSessionId, parseAgyLog, parseClaudeLog, parseCodexRollout, parseGrokLog, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from ".././subagents.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { KnowledgePipeline } from "../../knowledge/pipeline.js";
@@ -166,7 +166,7 @@ export async function importTerminalTurns(daemon: ChatDaemon, chat: Chat, markIn
         const cursorOffset = chat.terminalLogCursor?.byteOffset ?? 0;
         const offset = cursorOffset <= completeEnd ? cursorOffset : 0;
         const tail = bytes.subarray(offset, completeEnd).toString("utf8");
-        turns = chat.agent === "claude" ? parseClaudeLog(tail) : chat.agent === "grok" ? parseGrokLog(tail) : parseCodexRollout(tail);
+        turns = chat.agent === "claude" ? parseClaudeLog(tail) : chat.agent === "grok" ? parseGrokLog(tail) : chat.agent === "agy" ? parseAgyLog(tail) : parseCodexRollout(tail);
         byteOffset = completeEnd;
       } catch { /* a missing or mid-write session file is retried on the next watch or poll */ }
     }

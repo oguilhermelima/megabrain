@@ -118,11 +118,11 @@ const grok: ChatProtocolAdapter = {
 };
 
 const agyUnavailable: ChatProtocolAdapter = {
-  async prepare() { throw new Error("agy chats are not available yet"); },
-  async send() { throw new Error("agy chats are not available yet"); },
-  async steer() { throw new Error("agy chats are not available yet"); },
-  async interrupt() { throw new Error("agy chats are not available yet"); },
-  terminalCommand() { return ["agy"]; },
+  async prepare() { throw new Error("agy chats are owned by the terminal"); },
+  async send() { throw new Error("agy messages must be sent through the agy terminal"); },
+  async steer() { throw new Error("agy does not support steering"); },
+  async interrupt() { throw new Error("agy does not support interruption"); },
+  terminalCommand(chat) { return ["agy", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(chat.model ? ["--model", chat.model] : [])]; },
 };
 
 function codexInput(parts: MessagePart[]): unknown[] {

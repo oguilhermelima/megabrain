@@ -1,0 +1,3 @@
+{"event":"step_update","step_update":{"conversation_id":"813f4620-468f-4762-8cd3-a60feba9e2db","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"813f4620-468f-4762-8cd3-a60feba9e2db","step_index":1,"state":"ACTIVE","step_type":"agent_response","text_delta":"# O"}}
+{"event":"result","result":{"conversation_id":"813f4620-468f-4762-8cd3-a60feba9e2db","status":"ERROR","response":"# O","error":"interrupted","duration_seconds":2.52179,"num_turns":1,"usage":{"input_tokens":14383,"output_tokens":2,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":14385}}}

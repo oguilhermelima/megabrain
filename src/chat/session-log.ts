@@ -169,6 +169,36 @@ export function parseGrokLog(content: string): LoggedTurn[] {
   return turns;
 }
 
+/** agy stores user prompts, model responses, and tool calls/results in transcript_full.jsonl. */
+export function parseAgyLog(content: string): LoggedTurn[] {
+  const turns: LoggedTurn[] = [];
+  const names = new Map<string, string>();
+  for (const [index, row] of records(content).entries()) {
+    const id = `agy:${text(row.step_index) || index}:${text(row.type) || "entry"}`;
+    const at = text(row.created_at) || new Date(0).toISOString();
+    const kind = text(row.type);
+    const status = text(row.status);
+    if (kind === "USER_INPUT") {
+      const value = text(row.content).match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/)?.[1]?.trim() ?? text(row.content).trim();
+      if (value) turns.push({ kind: "user", text: value, sourceId: id, at });
+    } else if (kind === "PLANNER_RESPONSE") {
+      const response = text(row.content);
+      if (response) turns.push({ kind: "assistant", text: response, sourceId: `${id}:response`, at });
+      for (const [callIndex, callValue] of blocks(row.tool_calls).entries()) {
+        const call = object(callValue);
+        const name = text(call.name) || "tool";
+        const callId = `${id}:tool:${callIndex}`;
+        names.set(callId, name);
+        turns.push({ kind: "tool-call", text: name, tool: { name, input: JSON.stringify(call.args ?? {}), status: undefined }, messageId: callId, sourceId: callId, at });
+      }
+    } else if (kind === "GENERIC" && status === "ERROR") {
+      const priorCall = [...names.entries()].at(-1);
+      if (priorCall) turns.push({ kind: "tool-result", text: text(row.error) || text(row.content), tool: { name: priorCall[1], status: "error" }, messageId: priorCall[0], sourceId: id, at });
+    }
+  }
+  return turns;
+}
+
 /** A background subagent's end as its own log tells it: its final message, which becomes its result; null while it has none. */
 function claudeSubagentEnd(content: string, id: string): LoggedTurn | null {
   const last = records(content).filter((row) => row.type === "user" || row.type === "assistant").at(-1);
@@ -330,6 +360,7 @@ export async function sessionLogPath(chat: Pick<Chat, "agent" | "cwd" | "agentSe
     } catch { /* no Grok sessions yet */ }
     return direct;
   }
+  if (chat.agent === "agy") return join(home, ".gemini", "antigravity-cli", "brain", chat.agentSessionId, ".system_generated", "logs", "transcript_full.jsonl");
   return await codexRolloutPath(home, chat.agentSessionId);
 }
 
@@ -344,6 +375,12 @@ const LOCAL_COMMAND = /^<(?:command-name|command-message|local-command-[a-z]+)>/
 export function sessionTurnOpen(agent: Chat["agent"], content: string): boolean {
   let open = false;
   for (const row of records(content)) {
+    if (agent === "agy") {
+      if (row.type === "USER_INPUT" && row.status === "DONE") open = true;
+      else if (row.type === "PLANNER_RESPONSE") open = row.status !== "DONE" && row.status !== "ERROR";
+      else if (row.type === "GENERIC" && row.status === "ERROR") open = false;
+      continue;
+    }
     if (agent === "grok") {
       const update = object(object(row.params).update ?? row.update);
       const kind = text(update.sessionUpdate ?? row.sessionUpdate);
@@ -380,7 +417,7 @@ export async function readSessionTurns(chat: Pick<Chat, "agent" | "cwd" | "agent
   const path = await sessionLogPath(chat, home, grokHome);
   if (path === null) return [];
   let main: LoggedTurn[];
-  try { main = (chat.agent === "claude" ? parseClaudeLog : chat.agent === "grok" ? parseGrokLog : parseCodexRollout)(await readFile(path, "utf8")); }
+  try { main = (chat.agent === "claude" ? parseClaudeLog : chat.agent === "grok" ? parseGrokLog : chat.agent === "agy" ? parseAgyLog : parseCodexRollout)(await readFile(path, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
   if (!main.some((turn) => turn.subagent !== undefined)) return main;
   return withSubagents(main, chat.agent === "claude" ? await claudeSubagentTurns(path, main) : await codexSubagentTurns(home, main));
@@ -415,12 +452,15 @@ export async function discoverSessionId(chat: Pick<Chat, "agent" | "cwd">, home:
     }
     return null;
   }
-  const codexPids = [...table].filter(([pid, entry]) => /(?:^|\/)codex(?:\s|$)/.test(entry.command) && inPane(pid)).map(([pid]) => String(pid));
-  if (codexPids.length === 0) return null;
-  const open = await processAdapter.run("lsof", ["-p", codexPids.join(","), "-Fn"]);
+  const processName = chat.agent === "agy" ? "agy" : "codex";
+  const agentPids = [...table].filter(([pid, entry]) => new RegExp(`(?:^|/)${processName}(?:\\s|$)`).test(entry.command) && inPane(pid)).map(([pid]) => String(pid));
+  if (agentPids.length === 0) return null;
+  const open = await processAdapter.run("lsof", ["-p", agentPids.join(","), "-Fn"]);
   if (open.kind !== "ok") return null;
   for (const line of open.value.stdout.split("\n")) {
-    const match = /^n.*\/rollout-[^/]*?-([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$/.exec(line);
+    const match = chat.agent === "agy"
+      ? /^n.*\/\.gemini\/antigravity-cli\/brain\/([0-9a-f-]{36})\/.system_generated\/logs\/transcript_full\.jsonl$/.exec(line)
+      : /^n.*\/rollout-[^/]*?-([0-9a-f]{8}-[0-9a-f-]{27})\.jsonl$/.exec(line);
     if (match?.[1] !== undefined) return match[1];
   }
   return null;

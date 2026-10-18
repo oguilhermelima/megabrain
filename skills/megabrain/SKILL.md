@@ -12,6 +12,8 @@ description: >-
 
 # megabrain
 
+agy chats follow their terminal transcript; approvals, interruption, live model switching, and steering are unavailable.
+
 One command surface for delegating to other coding agents and for the worktrees, terminals and
 device setups that work needs. Run `megabrain <command> --help` for the exact flags of any
 command; the help output is the authority, and the lines below are shortened for reading.
