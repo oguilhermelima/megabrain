@@ -62,10 +62,15 @@ function AssistantMessage({ event }: { event: TranscriptEvent }) {
   )
 }
 
+/** The id of the conversation's latest command output, whose card opens; older ones open collapsed. */
+const LatestCommandContext = createContext<string | null>(null)
+
+/** An info command's result: an agent's local command output, or one megabrain answered itself with data. */
 function CommandMessage({ event, command }: { event: TranscriptEvent; command: string }) {
+  const latest = useContext(LatestCommandContext)
   return (
     <li onContextMenu={markMessage(event.text)} className="max-w-[85%]">
-      <CommandOutput command={command} text={event.text} />
+      <CommandOutput command={command} text={event.text} data={event.data} latest={latest === null || latest === event.id} />
     </li>
   )
 }
@@ -366,6 +371,7 @@ const Item = memo(function Item({ item, onOpenChat }: { item: ConversationItem |
   const event = item.event
   if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />
   if (event.kind === 'user') return <UserMessage event={event} pending={item.pending} />
+  if (event.kind === 'command-output') return <CommandMessage event={event} command={event.command ?? ''} />
   if (event.kind === 'assistant' && event.command !== undefined) return <CommandMessage event={event} command={event.command} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} />
   if (event.kind === 'thinking') return <ThinkingMessage event={event} thoughtMs={item.thoughtMs} />
@@ -511,6 +517,13 @@ export function ConversationList({
     () => writeBases(events.flatMap((event) => (event.kind === 'tool-call' && event.tool !== undefined ? [{ id: event.id, name: event.tool.name, input: event.tool.input }] : []))),
     [events],
   )
+  const latestCommand = useMemo(() => {
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]
+      if (item?.type === 'message' && (item.event.kind === 'command-output' || (item.event.kind === 'assistant' && item.event.command !== undefined))) return item.event.id
+    }
+    return null
+  }, [items])
   const hasFooter = footer !== null
   const turns = useMemo(() => (navigator ? chatTurns(items) : []), [navigator, items])
   const width = usePaneWidth()
@@ -698,7 +711,9 @@ export function ConversationList({
               return (
                 <ol key={row.key} data-index={row.index} ref={virtualizer.measureElement} className="absolute top-0 left-0 w-full" style={{ transform: `translateY(${row.start}px)` }}>
                   <WriteBasesContext.Provider value={bases}>
-                    <Item item={item} onOpenChat={onOpenChat} />
+                    <LatestCommandContext.Provider value={latestCommand}>
+                      <Item item={item} onOpenChat={onOpenChat} />
+                    </LatestCommandContext.Provider>
                   </WriteBasesContext.Provider>
                 </ol>
               )

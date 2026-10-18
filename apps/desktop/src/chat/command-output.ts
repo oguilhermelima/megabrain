@@ -42,7 +42,8 @@ const field = /^([A-Za-z0-9][^:.!?;]{0,39}?):\s+(\S.*)$/
 const maxLabelWords = 5
 const maxTitleLength = 80
 
-function rowOf(line: string): OutputRow {
+/** One line read as a row: a meter, a field, a share, or text kept as printed. */
+export function outputRow(line: string): OutputRow {
   const text = line.trim()
   const used = meter.exec(text)
   if (used !== null) {
@@ -57,7 +58,7 @@ function rowOf(line: string): OutputRow {
   return { type: 'text', text }
 }
 
-const isRecognised = (line: string) => rowOf(line).type !== 'text'
+const isRecognised = (line: string) => outputRow(line).type !== 'text'
 const isTabular = (line: string) => boxDrawing.test(line) || (!isRecognised(line) && columnGap.test(line.trim()))
 
 function dedent(lines: string[]): string {
@@ -93,7 +94,7 @@ function groupBlocks(lines: string[]): OutputBlock[] {
       section = { type: 'section', title: title?.title ?? null, detail: title?.detail ?? null, rows: [] }
       blocks.push(section)
     }
-    if (title === null) section.rows.push(rowOf(line))
+    if (title === null) section.rows.push(outputRow(line))
     index += 1
   }
   return blocks

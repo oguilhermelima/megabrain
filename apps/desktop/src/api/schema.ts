@@ -134,15 +134,40 @@ export const messagePartSchema = z.discriminatedUnion('type', [
 ])
 export const transcriptImageSchema = z.union([z.object({ path: z.string() }), z.object({ dataUrl: z.string() })])
 
+// What megabrain read when it answered an info command itself (/status, /usage, /context) for a chat's
+// agent. Every field is absent when megabrain does not know it; a limit window this app does not name reads as other.
+const infoTokensSchema = z.looseObject({ input: z.number().optional(), output: z.number().optional(), cacheRead: z.number().optional(), cacheWrite: z.number().optional() })
+export const infoDataSchema = z.looseObject({
+  model: z.string().optional(),
+  effort: z.string().optional(),
+  approvals: z.string().optional(),
+  sandbox: z.string().optional(),
+  cwd: z.string().optional(),
+  session: z.looseObject({ id: z.string(), startedAt: z.string().optional(), turns: z.number().optional() }).optional(),
+  context: z.looseObject({ used: z.number().optional(), window: z.number().optional(), percent: z.number().optional() }).optional(),
+  limits: z
+    .array(z.looseObject({ label: z.string(), usedPercent: z.number(), resetsAt: z.string().nullable().optional(), window: z.enum(['5h', 'weekly', 'monthly', 'other']).catch('other') }))
+    .optional(),
+  cost: z
+    .looseObject({ total: z.number(), currency: z.string().optional(), byModel: z.array(infoTokensSchema.extend({ model: z.string(), cost: z.number().optional() })).optional() })
+    .optional(),
+  tokens: infoTokensSchema.optional(),
+})
+
 export const transcriptEventSchema = z.looseObject({
   id: z.string(),
   at: z.string().nullable(),
-  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system', 'approval', 'turn-cut', 'background-task']),
+  kind: z.enum(['user', 'assistant', 'thinking', 'tool-call', 'tool-result', 'system', 'approval', 'turn-cut', 'background-task', 'command-output']),
   text: z.string(),
   /** On a native chat's assistant or thinking event: the message its streamed chunks belonged to. */
   messageId: z.string().optional(),
-  /** On an assistant event that is a local command's output (/usage, /cost): the command it answers, slash included; "" when the log does not say. */
+  /** On an assistant event that is a local command's output (/usage, /cost): the command it answers, slash included; "" when the log does not say. Also on a command-output event. */
   command: z.string().optional(),
+  // On a command-output event: an info command megabrain answered itself, for that agent, with what it read
+  // as data and the same as plain text. Data this app cannot read is dropped and the text shows instead.
+  agent: z.enum(['claude', 'codex', 'grok', 'agy']).optional().catch(undefined),
+  source: z.string().optional(),
+  data: infoDataSchema.optional().catch(undefined),
   tool: z.looseObject({ name: z.string(), input: z.string().optional(), status: z.enum(['ok', 'error']).optional() }).optional(),
   /** On a native chat's event that a subagent produced (its thinking, text, tool calls and results): that subagent's id. */
   parentId: z.string().optional(),
@@ -418,6 +443,7 @@ export type QueuedMessage = z.infer<typeof queuedMessageSchema>
 export type ChatQueueItem = z.infer<typeof chatQueueItemSchema>
 export type CodeServer = z.infer<typeof codeServerSchema>
 export type TranscriptEvent = z.infer<typeof transcriptEventSchema>
+export type InfoData = z.infer<typeof infoDataSchema>
 export type TranscriptImage = z.infer<typeof transcriptImageSchema>
 export type CodeEntry = z.infer<typeof codeEntrySchema>
 export type CodeFile = z.infer<typeof codeFileSchema>

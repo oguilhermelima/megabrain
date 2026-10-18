@@ -1,0 +1,280 @@
+## Context Usage
+
+**Model:** claude-opus-5-5[1m]  
+**Tokens:** 257.2k / 500k (51%)
+
+### Estimated usage by category
+
+| Category | Tokens | Percentage |
+|----------|--------|------------|
+| System prompt | 2.3k | 0.5% |
+| System tools | 88 | 0.0% |
+| MCP tools | 620 | 0.1% |
+| MCP server instructions | 1.7k | 0.3% |
+| MCP tools (deferred) | 132.9k | 26.6% |
+| System tools (deferred) | 14.2k | 2.8% |
+| Custom agents | 435 | 0.1% |
+| Memory files | 28.4k | 5.7% |
+| Skills | 10k | 2.0% |
+| Messages | 213.7k | 42.7% |
+| Free space | 209.8k | 42.0% |
+| Autocompact buffer | 33k | 6.6% |
+
+### MCP Tools
+
+| Tool | Server | Tokens |
+|------|--------|--------|
+| mcp__appium-mcp__appium_alert | appium-mcp | 246 |
+| mcp__appium-mcp__appium_app_lifecycle | appium-mcp | 797 |
+| mcp__appium-mcp__appium_context | appium-mcp | 270 |
+| mcp__appium-mcp__appium_drag_and_drop | appium-mcp | 702 |
+| mcp__appium-mcp__appium_driver_settings | appium-mcp | 443 |
+| mcp__appium-mcp__appium_find_element | appium-mcp | 626 |
+| mcp__appium-mcp__appium_find_elements | appium-mcp | 556 |
+| mcp__appium-mcp__appium_generate_tests | appium-mcp | 188 |
+| mcp__appium-mcp__appium_geolocation | appium-mcp | 662 |
+| mcp__appium-mcp__appium_gesture | appium-mcp | 2.1k |
+| mcp__appium-mcp__appium_get_active_element | appium-mcp | 179 |
+| mcp__appium-mcp__appium_get_element_attribute | appium-mcp | 362 |
+| mcp__appium-mcp__appium_get_page_source | appium-mcp | 266 |
+| mcp__appium-mcp__appium_get_text | appium-mcp | 162 |
+| mcp__appium-mcp__appium_get_window_size | appium-mcp | 159 |
+| mcp__appium-mcp__appium_mobile_clipboard | appium-mcp | 277 |
+| mcp__appium-mcp__appium_mobile_device_control | appium-mcp | 368 |
+| mcp__appium-mcp__appium_mobile_device_info | appium-mcp | 347 |
+| mcp__appium-mcp__appium_mobile_file | appium-mcp | 396 |
+| mcp__appium-mcp__appium_mobile_keyboard | appium-mcp | 347 |
+| mcp__appium-mcp__appium_mobile_permissions | appium-mcp | 796 |
+| mcp__appium-mcp__appium_mobile_press_key | appium-mcp | 392 |
+| mcp__appium-mcp__appium_orientation | appium-mcp | 250 |
+| mcp__appium-mcp__appium_perform_actions | appium-mcp | 1k |
+| mcp__appium-mcp__appium_prepare_ios_real_device | appium-mcp | 472 |
+| mcp__appium-mcp__appium_screen_recording | appium-mcp | 797 |
+| mcp__appium-mcp__appium_screenshot | appium-mcp | 309 |
+| mcp__appium-mcp__appium_session_management | appium-mcp | 1.4k |
+| mcp__appium-mcp__appium_set_value | appium-mcp | 286 |
+| mcp__appium-mcp__generate_locators | appium-mcp | 182 |
+| mcp__appium-mcp__prepare_ios_simulator | appium-mcp | 429 |
+| mcp__appium-mcp__select_device | appium-mcp | 356 |
+| mcp__caveman__caveman_compress | caveman | 255 |
+| mcp__caveman__caveman_retrieve | caveman | 656 |
+| mcp__caveman__caveman_stats | caveman | 95 |
+| mcp__caveman__caveman_toon_decode | caveman | 129 |
+| mcp__caveman__caveman_toon_encode | caveman | 186 |
+| mcp__claude_ai_Claude_Docs__batch | claude_ai_Claude_Docs | 152 |
+| mcp__claude_ai_Claude_Docs__create | claude_ai_Claude_Docs | 236 |
+| mcp__claude_ai_Claude_Docs__delete | claude_ai_Claude_Docs | 317 |
+| mcp__claude_ai_Claude_Docs__export | claude_ai_Claude_Docs | 300 |
+| mcp__claude_ai_Claude_Docs__guide | claude_ai_Claude_Docs | 193 |
+| mcp__claude_ai_Claude_Docs__query | claude_ai_Claude_Docs | 168 |
+| mcp__claude_ai_Claude_Docs__read | claude_ai_Claude_Docs | 300 |
+| mcp__claude_ai_Claude_Docs__update | claude_ai_Claude_Docs | 275 |
+| mcp__claude_ai_Notion__notion-calendar-cancel-events | claude_ai_Notion | 435 |
+| mcp__claude_ai_Notion__notion-calendar-create-events | claude_ai_Notion | 2k |
+| mcp__claude_ai_Notion__notion-calendar-list-calendar-resources | claude_ai_Notion | 842 |
+| mcp__claude_ai_Notion__notion-calendar-list-calendars | claude_ai_Notion | 256 |
+| mcp__claude_ai_Notion__notion-calendar-list-contacts | claude_ai_Notion | 214 |
+| mcp__claude_ai_Notion__notion-calendar-list-coworkers-events | claude_ai_Notion | 331 |
+| mcp__claude_ai_Notion__notion-calendar-list-events | claude_ai_Notion | 320 |
+| mcp__claude_ai_Notion__notion-calendar-update-events | claude_ai_Notion | 2.8k |
+| mcp__claude_ai_Notion__notion-check-mcp-next-steps | claude_ai_Notion | 468 |
+| mcp__claude_ai_Notion__notion-convert-page-to-skill | claude_ai_Notion | 242 |
+| mcp__claude_ai_Notion__notion-create-attachment | claude_ai_Notion | 1.4k |
+| mcp__claude_ai_Notion__notion-create-comment | claude_ai_Notion | 4k |
+| mcp__claude_ai_Notion__notion-create-database | claude_ai_Notion | 1.6k |
+| mcp__claude_ai_Notion__notion-create-file-upload | claude_ai_Notion | 620 |
+| mcp__claude_ai_Notion__notion-create-folder | claude_ai_Notion | 455 |
+| mcp__claude_ai_Notion__notion-create-pages | claude_ai_Notion | 3.5k |
+| mcp__claude_ai_Notion__notion-create-view | claude_ai_Notion | 1.4k |
+| mcp__claude_ai_Notion__notion-delete-comment | claude_ai_Notion | 289 |
+| mcp__claude_ai_Notion__notion-delete-databases | claude_ai_Notion | 552 |
+| mcp__claude_ai_Notion__notion-delete-pages | claude_ai_Notion | 499 |
+| mcp__claude_ai_Notion__notion-download-attachment | claude_ai_Notion | 468 |
+| mcp__claude_ai_Notion__notion-download-skill | claude_ai_Notion | 213 |
+| mcp__claude_ai_Notion__notion-duplicate-page | claude_ai_Notion | 319 |
+| mcp__claude_ai_Notion__notion-fetch | claude_ai_Notion | 1.5k |
+| mcp__claude_ai_Notion__notion-get-async-task | claude_ai_Notion | 388 |
+| mcp__claude_ai_Notion__notion-get-comments | claude_ai_Notion | 757 |
+| mcp__claude_ai_Notion__notion-get-enabled-skills | claude_ai_Notion | 196 |
+| mcp__claude_ai_Notion__notion-get-file-download-urls | claude_ai_Notion | 443 |
+| mcp__claude_ai_Notion__notion-get-groups | claude_ai_Notion | 438 |
+| mcp__claude_ai_Notion__notion-get-self | claude_ai_Notion | 185 |
+| mcp__claude_ai_Notion__notion-get-session-status | claude_ai_Notion | 247 |
+| mcp__claude_ai_Notion__notion-get-teams | claude_ai_Notion | 297 |
+| mcp__claude_ai_Notion__notion-get-tool-access | claude_ai_Notion | 507 |
+| mcp__claude_ai_Notion__notion-get-users | claude_ai_Notion | 550 |
+| mcp__claude_ai_Notion__notion-list-favorite-pages | claude_ai_Notion | 227 |
+| mcp__claude_ai_Notion__notion-list-page-backlinks | claude_ai_Notion | 491 |
+| mcp__claude_ai_Notion__notion-list-private-pages | claude_ai_Notion | 250 |
+| mcp__claude_ai_Notion__notion-list-recent-pages | claude_ai_Notion | 308 |
+| mcp__claude_ai_Notion__notion-list-session-events | claude_ai_Notion | 415 |
+| mcp__claude_ai_Notion__notion-list-shared-pages | claude_ai_Notion | 247 |
+| mcp__claude_ai_Notion__notion-memory-search | claude_ai_Notion | 340 |
+| mcp__claude_ai_Notion__notion-move-pages | claude_ai_Notion | 819 |
+| mcp__claude_ai_Notion__notion-query-data-sources | claude_ai_Notion | 31.1k |
+| mcp__claude_ai_Notion__notion-query-meeting-notes | claude_ai_Notion | 8.5k |
+| mcp__claude_ai_Notion__notion-query-multiple-data-sources | claude_ai_Notion | 1.1k |
+| mcp__claude_ai_Notion__notion-query-sessions | claude_ai_Notion | 6.8k |
+| mcp__claude_ai_Notion__notion-read-session-event | claude_ai_Notion | 300 |
+| mcp__claude_ai_Notion__notion-restore-pages | claude_ai_Notion | 298 |
+| mcp__claude_ai_Notion__notion-search | claude_ai_Notion | 2.5k |
+| mcp__claude_ai_Notion__notion-search-agents | claude_ai_Notion | 472 |
+| mcp__claude_ai_Notion__notion-search-sessions | claude_ai_Notion | 264 |
+| mcp__claude_ai_Notion__notion-send-message-to-session | claude_ai_Notion | 284 |
+| mcp__claude_ai_Notion__notion-set-comment-reaction | claude_ai_Notion | 309 |
+| mcp__claude_ai_Notion__notion-set-discussion-resolved | claude_ai_Notion | 356 |
+| mcp__claude_ai_Notion__notion-show-advanced-analysis-next-steps | claude_ai_Notion | 277 |
+| mcp__claude_ai_Notion__notion-spawn-session | claude_ai_Notion | 247 |
+| mcp__claude_ai_Notion__notion-stop-session | claude_ai_Notion | 236 |
+| mcp__claude_ai_Notion__notion-update-comment | claude_ai_Notion | 404 |
+| mcp__claude_ai_Notion__notion-update-data-source | claude_ai_Notion | 5k |
+| mcp__claude_ai_Notion__notion-update-enabled-skills | claude_ai_Notion | 382 |
+| mcp__claude_ai_Notion__notion-update-folder | claude_ai_Notion | 587 |
+| mcp__claude_ai_Notion__notion-update-page | claude_ai_Notion | 4k |
+| mcp__claude_ai_Notion__notion-update-view | claude_ai_Notion | 908 |
+| mcp__claude_ai_Notion__notion-upload-skill | claude_ai_Notion | 948 |
+| mcp__claude_ai_Notion__notion-wait-session | claude_ai_Notion | 287 |
+| mcp__playwright__browser_click | playwright | 339 |
+| mcp__playwright__browser_close | playwright | 81 |
+| mcp__playwright__browser_console_messages | playwright | 322 |
+| mcp__playwright__browser_drag | playwright | 323 |
+| mcp__playwright__browser_drop | playwright | 381 |
+| mcp__playwright__browser_emulate_media | playwright | 427 |
+| mcp__playwright__browser_evaluate | playwright | 325 |
+| mcp__playwright__browser_file_upload | playwright | 160 |
+| mcp__playwright__browser_fill_form | playwright | 416 |
+| mcp__playwright__browser_find | playwright | 437 |
+| mcp__playwright__browser_handle_dialog | playwright | 159 |
+| mcp__playwright__browser_hover | playwright | 194 |
+| mcp__playwright__browser_navigate | playwright | 115 |
+| mcp__playwright__browser_navigate_back | playwright | 95 |
+| mcp__playwright__browser_network_request | playwright | 347 |
+| mcp__playwright__browser_network_requests | playwright | 323 |
+| mcp__playwright__browser_press_key | playwright | 141 |
+| mcp__playwright__browser_resize | playwright | 152 |
+| mcp__playwright__browser_run_code_unsafe | playwright | 329 |
+| mcp__playwright__browser_select_option | playwright | 264 |
+| mcp__playwright__browser_snapshot | playwright | 333 |
+| mcp__playwright__browser_tabs | playwright | 222 |
+| mcp__playwright__browser_take_screenshot | playwright | 598 |
+| mcp__playwright__browser_type | playwright | 333 |
+| mcp__playwright__browser_wait_for | playwright | 186 |
+| mcp__refero__refero_get_flow | refero | 587 |
+| mcp__refero__refero_get_screen | refero | 642 |
+| mcp__refero__refero_get_screen_image | refero | 434 |
+| mcp__refero__refero_get_similar_screens | refero | 636 |
+| mcp__refero__refero_get_style | refero | 1.7k |
+| mcp__refero__refero_search_apps | refero | 670 |
+| mcp__refero__refero_search_flows | refero | 1.2k |
+| mcp__refero__refero_search_screens | refero | 1.4k |
+| mcp__refero__refero_search_sites | refero | 695 |
+| mcp__refero__refero_search_styles | refero | 1.7k |
+
+### Custom Agents
+
+| Agent Type | Source | Tokens |
+|------------|--------|--------|
+| caveman:cavecrew-builder | Plugin | 136 |
+| caveman:cavecrew-investigator | Plugin | 114 |
+| caveman:cavecrew-reviewer | Plugin | 124 |
+| caveman:docs:AGENTS | Plugin | 30 |
+| caveman:docs:CLAUDE | Plugin | 31 |
+
+### Memory Files
+
+| Type | Path | Tokens |
+|------|------|--------|
+| User | /Users/operator/.claude/CLAUDE.md | 21.7k |
+| User | /Users/operator/.claude/RTK.md | 372 |
+| AutoMem | /Users/operator/.claude/projects/-Users-operator-Workspaces-canto-space/memory/MEMORY.md | 691 |
+| Project | /Users/operator/Workspaces/canto-space/AGENTS.md | 5.6k |
+
+### Skills
+
+| Skill | Source | Tokens |
+|-------|--------|--------|
+| 2d-character-rig-animation | User | ~120 |
+| computer-use | User | ~150 |
+| find-skills | User | ~110 |
+| maestri | User | ~110 |
+| maestri-manager | User | ~90 |
+| maestri-portal | User | ~70 |
+| maestri-portal-devices | User | ~90 |
+| maestri-routines | User | ~80 |
+| maestri-workspace | User | ~90 |
+| megabrain | User | ~200 |
+| motion-design | User | ~140 |
+| orca-cli | User | ~280 |
+| orchestration | User | ~350 |
+| svg-character-animation | User | ~50 |
+| mobile-qa | Project | ~130 |
+| refero-design | Project | ~330 |
+| caveman:caveman-init | Plugin (caveman) | ~40 |
+| superset:superset-automation | Plugin (superset) | ~50 |
+| caveman:cavecrew | Plugin (caveman) | ~190 |
+| caveman:caveman | Plugin (caveman) | ~140 |
+| caveman:caveman-commit | Plugin (caveman) | ~120 |
+| caveman:caveman-compress | Plugin (caveman) | ~120 |
+| caveman:caveman-discover | Plugin (caveman) | ~150 |
+| caveman:caveman-evidence-review | Plugin (caveman) | ~130 |
+| caveman:caveman-explore | Plugin (caveman) | ~150 |
+| caveman:caveman-help | Plugin (caveman) | ~70 |
+| caveman:caveman-learn | Plugin (caveman) | ~130 |
+| caveman:caveman-manage | Plugin (caveman) | ~130 |
+| caveman:caveman-optimize | Plugin (caveman) | ~140 |
+| caveman:caveman-review | Plugin (caveman) | ~110 |
+| caveman:caveman-setup | Plugin (caveman) | ~120 |
+| caveman:caveman-stats | Plugin (caveman) | ~90 |
+| caveman:investigate-first | Plugin (caveman) | ~70 |
+| caveman:lean-build | Plugin (caveman) | ~70 |
+| caveman:migration | Plugin (caveman) | ~60 |
+| caveman:safe-refactor | Plugin (caveman) | ~60 |
+| caveman:surgical-patch | Plugin (caveman) | ~60 |
+| caveman:verify-and-stop | Plugin (caveman) | ~60 |
+| superset:10x | Plugin (superset) | ~140 |
+| superset:automate | Plugin (superset) | ~180 |
+| superset:browser | Plugin (superset) | ~170 |
+| superset:computer | Plugin (superset) | ~190 |
+| superset:contribute | Plugin (superset) | ~110 |
+| superset:doctor | Plugin (superset) | ~120 |
+| superset:feedback | Plugin (superset) | ~90 |
+| superset:integrations | Plugin (superset) | ~150 |
+| superset:orchestrate | Plugin (superset) | ~180 |
+| superset:page | Plugin (superset) | ~280 |
+| superset:plugins | Plugin (superset) | ~110 |
+| superset:setup | Plugin (superset) | ~150 |
+| superset:standup | Plugin (superset) | ~120 |
+| dataviz | Built-in | ~480 |
+| update-config | Built-in | ~240 |
+| keybindings-help | Built-in | ~80 |
+| code-review | Built-in | ~340 |
+| simplify | Built-in | ~60 |
+| fewer-permission-prompts | Built-in | ~60 |
+| loop | Built-in | ~120 |
+| schedule | Built-in | ~130 |
+| claude-api | Built-in | ~360 |
+| workflow-authoring | Built-in | ~80 |
+| run | Built-in | ~120 |
+| plugin-authoring | Built-in | ~90 |
+| init | Built-in | ~20 |
+| security-review | Built-in | ~30 |
+| brand-guidelines | claude.ai sync | ~90 |
+| built-in-browser | claude.ai sync | ~290 |
+| chrome-browser | claude.ai sync | < 20 |
+| anthropic-skills:computer-use | claude.ai sync | < 20 |
+| anthropic-skills:deep-research | claude.ai sync | < 20 |
+| docs | claude.ai sync | ~340 |
+| docx | claude.ai sync | < 20 |
+| google-workspace | claude.ai sync | < 20 |
+| import-memory | claude.ai sync | ~60 |
+| mcp-builder | claude.ai sync | ~100 |
+| morning | claude.ai sync | < 20 |
+| anthropic-skills:motion-design | claude.ai sync | ~120 |
+| pdf | claude.ai sync | < 20 |
+| pptx | claude.ai sync | < 20 |
+| remotion-maps | claude.ai sync | < 20 |
+| remotion-video | claude.ai sync | < 20 |
+| skill-creator | claude.ai sync | < 20 |
+| ui-mockups | claude.ai sync | < 20 |
+| web-artifacts-builder | claude.ai sync | < 20 |
+| xlsx | claude.ai sync | < 20 |

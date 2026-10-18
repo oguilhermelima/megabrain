@@ -186,14 +186,15 @@ describe('CommandOutput', () => {
     expect(html).toContain('/usage')
     expect(html).toContain('Current week (all models)')
     expect(html).toContain('width:46%')
-    expect(html).toContain('resets Oct 22 at 1pm (America/Sao_Paulo)')
+    expect(html).toContain('Resets Oct 22 at 1pm (America/Sao_Paulo)')
     expect(html).toContain('Last 24h')
     expect(html).toContain('5543 requests · 84 sessions')
     expect(html).not.toContain('Show all')
   })
 
   test('offers Show all on a long result', () => {
-    const html = renderToStaticMarkup(createElement(CommandOutput, { command: '/context', text: captured('claude-context.txt') }))
+    const listing = `## Plugins\n\n| Plugin | State |\n|--------|-------|\n${Array.from({ length: 30 }, (_, index) => `| plugin-${index} | on |`).join('\n')}`
+    const html = renderToStaticMarkup(createElement(CommandOutput, { command: '/plugin', text: listing }))
     expect(html).toContain('Show all')
     expect(html).toContain('<table')
   })

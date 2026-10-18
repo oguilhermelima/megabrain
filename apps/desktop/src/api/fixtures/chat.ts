@@ -1,6 +1,7 @@
 import { CliError, type ChatQueueChange } from '@/api/adapter'
-import type { ChatApproval, ChatEventLine, ChatQueueItem, MessagePart, NativeChat, TranscriptEvent } from '@/api/schema'
+import type { ChatApproval, ChatEventLine, ChatQueueItem, InfoData, MessagePart, NativeChat, TranscriptEvent } from '@/api/schema'
 // Real outputs of Claude's local commands (see command-output.test.ts).
+import contextFullOutput from '@/api/fixtures/captured/command-output/claude-context-full.txt?raw'
 import contextOutput from '@/api/fixtures/captured/command-output/claude-context.txt?raw'
 import costOutput from '@/api/fixtures/captured/command-output/claude-cost.txt?raw'
 import mcpOutput from '@/api/fixtures/captured/command-output/claude-mcp.txt?raw'
@@ -57,12 +58,17 @@ export const steps = [
 
 See the [Next.js routing docs](https://nextjs.org/docs/app/building-your-application/routing) for why \`_steps\` stays out of the routes.`
 
+// Not captured: the real /usage with one meter and one period garbled, to show a section that keeps the generic layout.
+const unreadableUsage = usageOutput
+  .replace('Current week (Fable): 0% used', 'Current week (Fable): unavailable')
+  .replace('  56% of your usage was while 4+ sessions ran in parallel', '  ▒▒ 3 of 7 rows unavailable ▒▒')
+
 export const mockChatLines: ChatEventLine[] = ([
   { id: 'e1', at: at(60), kind: 'user', text: 'Tidy the onboarding steps and run the tests.' },
   { id: 'e2', at: at(55), kind: 'assistant', text: 'Looking at the steps first.' },
   { id: 'e3', at: at(50), kind: 'tool-call', text: 'Bash', tool: { name: 'Bash', input: 'ls apps/web/src/app/onboarding' } },
   { id: 'e4', at: at(49), kind: 'tool-result', text: '_components\n_hooks\n_steps\nlayout.tsx\npage.tsx', tool: { name: 'Bash', status: 'ok' } },
-  ...commandEvents(48, ['/usage', usageOutput], ['/cost', costOutput], ['/context', contextOutput], ['/mcp', mcpOutput]),
+  ...commandEvents(48, ['/usage', usageOutput], ['/cost', costOutput], ['/context', contextOutput], ['/mcp', mcpOutput], ['/usage', unreadableUsage], ['/context', contextFullOutput]),
   ...explainedTurn(40),
 ] satisfies TranscriptEvent[]).map((event, index) => ({ cursor: String(index + 1), event: { ...event, id: `e${index + 1}` } })).concat([
   { cursor: '30', event: { id: 'e-cut', at: at(2), kind: 'turn-cut', text: '', reason: 'interrupted', partial: true } },
@@ -102,6 +108,61 @@ export const mockCutChat: NativeChat = {
   createdAt: at(1800),
   lastActivityAt: at(30),
 }
+
+/** A Codex chat where megabrain answered /status and /context itself (the command-output event). */
+export const mockCodexChat: NativeChat = {
+  ...mockNativeChat,
+  id: 'chat-0004',
+  agent: 'codex',
+  model: 'gpt-6-luna',
+  title: 'Check the Codex limits',
+  state: 'idle',
+  agentSessionId: '019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b',
+  createdAt: at(900),
+  lastActivityAt: at(40),
+}
+
+// Not captured: the CLI lane that appends command-output events (feat/chat-info-commands-all-agents) has
+// not landed; these follow its contract. Its own fixtures replace them when it merges.
+const inMinutes = (minutes: number) => new Date(now + minutes * 60_000).toISOString()
+const codexStatusData: InfoData = {
+  model: 'gpt-6-luna',
+  effort: 'high',
+  approvals: 'never',
+  sandbox: 'workspace-write',
+  cwd: '/Users/operator/Workspaces/canto',
+  session: { id: '019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b', startedAt: at(900), turns: 12 },
+  context: { used: 182_400, window: 400_000, percent: 45.6 },
+  limits: [
+    { label: '5h limit', usedPercent: 74, resetsAt: inMinutes(131), window: '5h' },
+    { label: 'Weekly limit', usedPercent: 38, resetsAt: inMinutes(4 * 24 * 60 + 200), window: 'weekly' },
+  ],
+  tokens: { input: 1_204_000, output: 38_200, cacheRead: 9_800_000 },
+}
+const codexStatusText = `Model: gpt-6-luna (reasoning high)
+Directory: /Users/operator/Workspaces/canto
+Approval: never
+Sandbox: workspace-write
+Session: 019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b
+Context window: 46% used (182.4k / 400k)
+5h limit: 74% used
+Weekly limit: 38% used`
+
+export const mockCodexChatLines: ChatEventLine[] = ([
+  { id: '', at: at(60), kind: 'user', text: '/status' },
+  { id: '', at: at(60), kind: 'command-output', command: '/status', agent: 'codex', source: 'megabrain', data: codexStatusData, text: codexStatusText },
+  { id: '', at: at(45), kind: 'user', text: '/context' },
+  {
+    id: '',
+    at: at(45),
+    kind: 'command-output',
+    command: '/context',
+    agent: 'codex',
+    source: 'megabrain',
+    data: { model: 'gpt-6-luna', context: codexStatusData.context },
+    text: 'Context window: 46% used (182.4k / 400k)',
+  },
+] satisfies TranscriptEvent[]).map((event, index) => ({ cursor: String(index + 1), event: { ...event, id: `x${index + 1}` } }))
 
 type Task = NonNullable<TranscriptEvent['backgroundTask']>
 const task = (seconds: number, backgroundTask: Task): TranscriptEvent => ({ id: '', at: at(seconds), kind: 'background-task', text: backgroundTask.label, backgroundTask })
@@ -201,9 +262,10 @@ function mockChat(chatId: string): MockChat {
   const original = chatId === mockNativeChat.id
   const long = chatId === mockLongChat.id
   const cutTurns = chatId === mockCutChat.id
-  const stored = long || cutTurns
-  const lines = original ? mockChatLines.slice() : long ? mockLongChatLines.slice() : cutTurns ? mockCutChatLines.slice() : []
-  const record: NativeChat = original ? mockNativeChat : long ? mockLongChat : cutTurns ? mockCutChat : { ...mockNativeChat, id: chatId, title: null }
+  const codex = chatId === mockCodexChat.id
+  const stored = long || cutTurns || codex
+  const lines = original ? mockChatLines.slice() : long ? mockLongChatLines.slice() : cutTurns ? mockCutChatLines.slice() : codex ? mockCodexChatLines.slice() : []
+  const record: NativeChat = original ? mockNativeChat : long ? mockLongChat : cutTurns ? mockCutChat : codex ? mockCodexChat : { ...mockNativeChat, id: chatId, title: null }
   chat = { lines, followers: new Set(), state: original || stored ? 'idle' : 'starting', turnStartedAt: original || stored ? null : new Date().toISOString(), cancel: null, queue: [], held: false, owner: 'chat', record }
   chats.set(chatId, chat)
   if (original) play(chatId, openingTurn)
