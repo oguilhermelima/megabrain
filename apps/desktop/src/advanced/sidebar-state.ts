@@ -1,5 +1,23 @@
 import { parseRowOrder, type RowOrder } from '@/advanced/row-model'
 
+const collapsedKey = 'megabrain.sidebar.hidden'
+
+export function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(collapsedKey) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function writeSidebarCollapsed(collapsed: boolean) {
+  try {
+    localStorage.setItem(collapsedKey, collapsed ? '1' : '0')
+  } catch {
+    // Remembered collapse state is a convenience; starting expanded is fine.
+  }
+}
+
 // What the sidebar folded and the order the person dragged each worktree's rows into, saved through
 // `megabrain settings set sidebar-state` so a restart keeps both. Folders and the top-level order of
 // projects and folders live in sidebar-folders. Projects fold by path, stacks by `stack:<worktree

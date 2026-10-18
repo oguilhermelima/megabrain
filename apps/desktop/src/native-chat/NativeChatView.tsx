@@ -15,7 +15,7 @@ import { TerminalSkeleton } from '@/terminal/TerminalSkeleton'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { announceAction } from '@/lib/app-events'
 import { ApprovalCard, type ApprovalDecision } from '@/native-chat/ApprovalCard'
-import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, resumableChatState, rewindEvents, shouldInterrupt, thinkingProgress, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
+import { composerContext, dropOutgoing, liveTail, markAnswered, modeToggle, pendingApproval, queueOutgoing, resumableChatState, shouldInterrupt, thinkingProgress, withModel, withSwitchResult, workingStatus } from '@/native-chat/chat-model'
 import { WorkingIndicator } from '@/native-chat/WorkingIndicator'
 import { ConversationAgent } from '@/components/agent-icons'
 import { ChatSuggestions } from '@/native-chat/ChatSuggestions'
@@ -33,7 +33,7 @@ import { runningTasks, taskRows } from '@/chat/background-tasks'
 import { BackgroundIndicator } from '@/native-chat/BackgroundTasks'
 import { OwnerStrip } from '@/native-chat/OwnerStrip'
 import { pageMx } from '@/lib/page'
-import { editableParts } from '@/native-chat/message-actions'
+import { useChatMessageEditing } from '@/native-chat/useChatMessageEditing'
 
 // xterm's code is preloaded at app start (preloadTerminalView), so the first switch does not wait for it.
 const TerminalView = lazy(() => import('@/terminal/TerminalView').then((module) => ({ default: module.TerminalView })))
@@ -189,35 +189,14 @@ export function NativeChatView({
     }
     return null
   }
-  // Edit on the latest message of the person (or Up in an empty composer) takes it back to the composer;
-  // sending rewinds it and its answer out of the session and sends the edit in its place.
-  const lastPerson = useMemo(() => state.events.filter((event) => event.kind === 'user').at(-1) ?? null, [state.events])
-  const lastMessage = useMemo(() => (lastPerson === null || busy ? null : { parts: editableParts(lastPerson) }), [lastPerson, busy])
-  const [editRequest, setEditRequest] = useState<{ parts: MessagePart[] } | null>(null)
-  const editLast = async (parts: MessagePart[]): Promise<Notice | null> => {
-    const from = lastPerson
-    // Shown at once, as a send is: the chat's echo of it can arrive before the call returns.
-    const id = crypto.randomUUID()
-    const text = parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
-    const images = parts.flatMap((part) => (part.type === 'image' ? [{ path: part.path }] : []))
-    update((current) => queueOutgoing(current, { id, text, sentAt: new Date().toISOString(), ...(images.length === 0 ? {} : { images, parts }) }))
-    try {
-      await api.editLastMessage(chat.id, parts)
-    } catch (caught) {
-      update((current) => dropOutgoing(current, id))
-      return { tone: 'bad', text: caught instanceof Error ? caught.message : String(caught) }
-    }
-    // The rewind line chatd stores says the same, and comes before the edited message; once it has, this does nothing.
-    if (from !== null) update((current) => rewindEvents(current, from.id))
-    announceAction()
-    return null
-  }
-  // Branch from here: a new chat with the conversation up to that turn, opened beside this one.
-  const branch = (event: TranscriptEvent) =>
-    void act(async () => {
-      const forked = await api.forkChat(chat.id, event.id)
-      onOpenNativeChat?.(forked)
-    })
+  const { lastMessage, editRequest, requestEdit, editLast, branch } = useChatMessageEditing({
+    chat,
+    events: state.events,
+    busy,
+    update,
+    act,
+    onOpenNativeChat,
+  })
 
   const keepDraft = (caught: unknown): Notice => {
     const kept = sendFailure(caught)
@@ -419,7 +398,7 @@ export function NativeChatView({
             searchRef={openSearch}
             busy={busy}
             shareTitle={title}
-            onEditLast={(event) => setEditRequest({ parts: editableParts(event) })}
+            onEditLast={requestEdit}
             onBranch={onOpenNativeChat === undefined ? undefined : branch}
           />
         )}

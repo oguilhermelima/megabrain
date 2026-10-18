@@ -68,6 +68,8 @@ import { focusPaneInput, usePaneShortcuts, worktreeChoices } from '@/advanced/us
 import { useSplitInteractions } from '@/advanced/useSplitInteractions'
 import { pageX } from '@/lib/page'
 import { GoneNote } from '@/advanced/GoneNote'
+import { SettingsOverlay } from '@/advanced/SettingsOverlay'
+import { readSidebarCollapsed, writeSidebarCollapsed } from '@/advanced/sidebar-state'
 
 // Code, the GitHub pages and settings load the first time they open,
 // so starting the app parses only the sidebar and chats.
@@ -77,18 +79,9 @@ const GithubItemView = lazy(() => import('@/github/GithubItem').then((module) =>
 const ProjectPage = lazy(() => import('@/advanced/ProjectPage').then((module) => ({ default: module.ProjectPage })))
 const KnowledgePage = lazy(() => import('@/advanced/KnowledgePage').then((module) => ({ default: module.KnowledgePage })))
 const ArtifactsPage = lazy(() => import('@/advanced/ArtifactsPage').then((module) => ({ default: module.ArtifactsPage })))
-const SettingsWindow = lazy(() => import('@/settings/SettingsWindow').then((module) => ({ default: module.SettingsWindow })))
 
 function Loading() {
   return <PaneSkeleton />
-}
-
-function storedSidebarCollapsed(): boolean {
-  try {
-    return localStorage.getItem('megabrain.sidebar.hidden') === '1'
-  } catch {
-    return false
-  }
 }
 
 // The advanced window: chats in a sidebar (projects > worktrees > chats), the selected chat followed
@@ -128,7 +121,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   // The page Settings opens on, from the Knowledge page's link.
   const [settingsSection, setSettingsSection] = useState<'knowledge' | null>(null)
   const [filters, setFilters] = useState<SidebarFilters>(readFilters)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(storedSidebarCollapsed)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(readSidebarCollapsed)
   const sidebarWidth = usePanelWidth('megabrain.sidebar.width', sidebarLimits)
   const runPanelWidth = usePanelWidth('megabrain.runPanel.width', runPanelLimits)
   const runs = useRunPanels()
@@ -141,11 +134,7 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const toggleSidebarCollapsed = () => {
     setSidebarCollapsed((current) => {
       const next = !current
-      try {
-        localStorage.setItem('megabrain.sidebar.hidden', next ? '1' : '0')
-      } catch {
-        // A remembered collapse state is a convenience; starting expanded is fine.
-      }
+      writeSidebarCollapsed(next)
       return next
     })
   }
@@ -672,21 +661,19 @@ export function Advanced({ onSetup }: { onSetup: () => void }) {
   const shownItems = new Set(paneList(panes.root).map((leaf) => leaf.item))
   const backgroundTerminals = terminals.filter(mountsInBackground).map((terminal) => itemKey('terminal', terminal.id)).filter((item) => !shownItems.has(item))
 
-  const settingsOverlay = settingsOpen && (
-    <Suspense fallback={null}>
-      <SettingsWindow
-        key={`${settingsProject ?? ''}\n${settingsSection ?? ''}`}
-        focusProject={settingsProject}
-        initialSection={settingsSection}
-        focusChat={focusedNativeChat}
-        onClose={() => {
-          setSettingsOpen(false)
-          setSettingsProject(null)
-          setSettingsSection(null)
-        }}
-        onSetup={onSetup}
-      />
-    </Suspense>
+  const settingsOverlay = (
+    <SettingsOverlay
+      open={settingsOpen}
+      project={settingsProject}
+      section={settingsSection}
+      chat={focusedNativeChat}
+      onClose={() => {
+        setSettingsOpen(false)
+        setSettingsProject(null)
+        setSettingsSection(null)
+      }}
+      onSetup={onSetup}
+    />
   )
 
   // Each root shown in Code has one frame, held by one pane (see frameHolders); a running root no

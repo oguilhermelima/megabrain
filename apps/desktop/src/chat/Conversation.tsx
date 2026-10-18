@@ -2,7 +2,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { Transcript, TranscriptEvent } from '@/api/schema'
-import { ContextMenu, useContextMenu } from '@/components/ContextMenu'
+import { ContextMenu } from '@/components/ContextMenu'
 import type { MenuIcon } from '@/components/menu-icons'
 import { TranscriptSkeleton } from '@/components/Skeleton'
 import { AgentIcon, ConversationAgent } from '@/components/agent-icons'
@@ -33,12 +33,9 @@ import { pageMx } from '@/lib/page'
 import { chatTurns, railShown, turnLanding } from '@/native-chat/navigator-rail'
 import { NavigatorRail, railMargin } from '@/native-chat/NavigatorRail'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
-import { SearchBar, useSearchHighlights, useTranscriptSearch } from '@/native-chat/TranscriptSearch'
-import { matchedTurns } from '@/native-chat/transcript-search'
-import { MessageActions, MessageActionsContext, SelectionBar, SelectTarget, type MessageActionsValue } from '@/native-chat/MessageActions'
-import { messageCopyText, messageRoles, selectionCopyText, shareFileName } from '@/native-chat/message-actions'
-import { emptySelection, selectableIds, selectedInOrder, toggleMessage, type MessageSelection } from '@/native-chat/message-selection'
-import { renderPng } from '@/native-chat/share-image'
+import { MessageActions, MessageActionsContext, SelectTarget } from '@/native-chat/MessageActions'
+import { useConversationSearch } from '@/native-chat/useConversationSearch'
+import { ConversationActionBars, useConversationActions } from '@/native-chat/useConversationActions'
 import { cutLine, taskDurationMs, taskRows, taskStateLabel, taskTool, type BackgroundTask } from '@/chat/background-tasks'
 
 const noLive: LiveRow[] = []
@@ -94,16 +91,6 @@ function ShareCard({ events, agent, title, width }: { events: readonly Transcrip
     </div>
   )
 }
-
-const footerKey = 'megabrain.share.footer'
-function readShareFooter(): boolean {
-  try {
-    return localStorage.getItem(footerKey) !== '0'
-  } catch {
-    return true
-  }
-}
-
 
 function CommandMessage({ event, command }: { event: TranscriptEvent; command: string }) {
   const latest = useContext(LatestCommandContext)
@@ -598,24 +585,7 @@ export function ConversationList({
     overscan: 6,
   })
 
-  // A new query starts at the row in view: the first one whose bottom is below the view's top.
-  const search = useTranscriptSearch(items, () => {
-    const offset = virtualizer.scrollOffset ?? 0
-    return virtualizer.getVirtualItems().find((row) => row.end > offset)?.index ?? 0
-  })
-  useSearchHighlights(search, list, virtualizer, () => setPinned(false))
-  useEffect(() => {
-    if (searchRef === undefined) return
-    searchRef.current = search.show
-    return () => {
-      searchRef.current = null
-    }
-  })
-  const marked = useMemo(() => new Set(matchedTurns(turns.map((turn) => turn.row), search.matches)), [turns, search.matches])
-  const closeSearch = () => {
-    search.close()
-    list.current?.focus({ preventScroll: true })
-  }
+  const { search, marked, closeSearch } = useConversationSearch({ items, turns, virtualizer, list, searchRef, setPinned })
 
   const scrollToLatest = () => {
     if (count > 0) virtualizer.scrollToIndex(count - 1, { align: 'end' })
@@ -654,7 +624,6 @@ export function ConversationList({
     setPinned(element.scrollHeight - element.scrollTop - element.clientHeight < 40)
   }
 
-  const contextMenu = useContextMenu()
   // What an action did (an image copied) or could not do (a clipboard or a save refused), shown for a few seconds.
   const [flash, setFlash] = useState<{ text: string; bad: boolean } | null>(null)
   useEffect(() => {
@@ -665,73 +634,8 @@ export function ConversationList({
   const setMenuError = (text: string) => setFlash({ text, bad: true })
   const failed = (caught: unknown) => setMenuError(caught instanceof Error ? caught.message : String(caught))
 
-  // The message actions: copy, share as an image, select several, edit the latest, branch from a turn.
-  const agent = useContext(ConversationAgent)
-  const [selecting, setSelecting] = useState(false)
-  const [selection, setSelection] = useState<MessageSelection>(emptySelection)
-  const [shareFooter, setShareFooter] = useState(readShareFooter)
-  const order = useMemo(() => selectableIds(items), [items])
-  const byId = useMemo(() => new Map(items.flatMap((item) => (item.type === 'message' ? [[item.event.id, item.event] as const] : []))), [items])
-  const roles = useMemo(() => ({ latest: messageRoles(items, false).lastPerson, turnEnds: messageRoles(items, busy).turnEnds }), [items, busy])
-  // As wide as the transcript shows it, within what reads well as a picture.
-  const cardWidth = () => Math.min(880, Math.max(520, list.current?.clientWidth ?? 720))
-  const shareImage = (events: TranscriptEvent[], how: 'copy' | 'save') =>
-    renderPng(<ShareCard events={events} agent={agent} title={shareFooter ? (shareTitle ?? null) : null} width={cardWidth()} />)
-      .then(async (png) => {
-        if (how === 'copy') {
-          await api.copyImage(png)
-          setFlash({ text: events.length === 1 ? 'Image copied' : `Image of ${events.length} messages copied`, bad: false })
-        } else if (await api.saveImageAs(png, shareFileName(shareTitle, events.length))) setFlash({ text: 'Image saved', bad: false })
-      })
-      .catch(failed)
-  const stopSelecting = () => {
-    setSelecting(false)
-    setSelection(emptySelection)
-  }
-  const chosen = () => selectedInOrder(selection, order).flatMap((id) => byId.get(id) ?? [])
-  const actions = useMemo<MessageActionsValue>(
-    () => ({
-      copy: (event) => api.copyText(messageCopyText(event)).catch((caught: unknown) => {
-        failed(caught)
-        throw caught
-      }),
-      share: (event, trigger) =>
-        contextMenu.open(trigger, [
-          [
-            { label: 'Copy image', icon: 'copy', onSelect: () => void shareImage([event], 'copy') },
-            { label: 'Download PNG', icon: 'save', onSelect: () => void shareImage([event], 'save') },
-          ],
-          [
-            {
-              label: shareFooter ? 'Leave out the chat title' : 'Show the chat title',
-              icon: 'chat',
-              onSelect: () => {
-                setShareFooter(!shareFooter)
-                try {
-                  localStorage.setItem(footerKey, shareFooter ? '0' : '1')
-                } catch {
-                  // Not kept: the next app run shows the title again.
-                }
-              },
-            },
-          ],
-        ]),
-      select: (event) => {
-        setSelecting(true)
-        setSelection(toggleMessage(emptySelection, event.id, order, false))
-      },
-      selecting,
-      selected: new Set(selection.ids),
-      toggle: (id, range) => setSelection((current) => toggleMessage(current, id, order, range)),
-      lastPerson: roles.latest,
-      editDisabled: busy,
-      edit: onEditLast ?? null,
-      turnEnds: roles.turnEnds,
-      branch: onBranch ?? null,
-    }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selecting, selection, order, roles, busy, onEditLast, onBranch, shareFooter, agent, shareTitle],
-  )
+  const messageActions = useConversationActions({ items, list, busy, onEditLast, onBranch, shareTitle: shareTitle ?? null, renderCard: (events, agent, title, width) => <ShareCard events={events} agent={agent} title={title} width={width} />, setFlash, failed })
+  const { actions, selecting, selection, shareImage, stopSelecting, chosen, contextMenu } = messageActions
 
   const onContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => {
     const marked = markedParts(event)
@@ -874,28 +778,7 @@ export function ConversationList({
           </div>
         </div>
         {rail && <NavigatorRail turns={turns} virtualizer={virtualizer} scroller={list} marked={marked} />}
-        {search.open && <SearchBar search={search} onClose={closeSearch} />}
-        {selecting && (
-          <SelectionBar
-            count={selection.ids.length}
-            onCopyImage={() => void shareImage(chosen(), 'copy')}
-            onDownload={() => void shareImage(chosen(), 'save')}
-            onCopyText={() => void api.copyText(selectionCopyText(chosen())).then(() => setFlash({ text: 'Text copied', bad: false }), failed)}
-            onCancel={stopSelecting}
-          />
-        )}
-        {!pinned && !selecting && (
-          <button
-            type="button"
-            onClick={() => {
-              setPinned(true)
-              scrollToLatest()
-            }}
-            className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/15 bg-ink-900/90 px-4 py-1.5 text-[12.5px] font-semibold text-ink-100 shadow-lg"
-          >
-            Jump to latest
-          </button>
-        )}
+        <ConversationActionBars search={search} closeSearch={closeSearch} selecting={selecting} selection={selection} shareImage={shareImage} chosen={chosen} stopSelecting={stopSelecting} failed={failed} setFlash={setFlash} pinned={pinned} onJumpToLatest={() => { setPinned(true); scrollToLatest() }} />
         {flash !== null && (
           <p role="status" className={`absolute bottom-14 left-1/2 z-20 max-w-[80%] -translate-x-1/2 truncate rounded-full border bg-ink-900/95 px-4 py-1.5 text-[12.5px] shadow-lg ${flash.bad ? 'border-bad/30 text-bad' : 'border-white/15 text-ink-100'}`}>
             {flash.text}

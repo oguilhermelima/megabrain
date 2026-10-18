@@ -39,7 +39,6 @@ import { githubRepository } from '@/github/github-model'
 import type { ItemRows, TerminalRows } from '@/advanced/WorktreeRow'
 
 const filtersKey = 'megabrain.sidebar.filters'
-
 export function readFilters(): SidebarFilters {
   try {
     return parseFilters(localStorage.getItem(filtersKey))
