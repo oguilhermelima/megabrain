@@ -3,8 +3,8 @@ import { limitWindows, parseResetsAt, readingAge, resetDistance, usageLimitTone,
 import { agentColor } from '@/components/agent-activity'
 
 // What the sidebar's usage readout says of each agent: its windows grouped by the pool of models they
-// count (agy keeps one for its own models and one for the others), the window closest to running out
-// first, and, for a reading that is only the last one known, why and what to do about it.
+// count (agy keeps one for its own models and one for the others), always 5-hour then weekly, and, for
+// a reading that is only the last one known, why and what to do about it.
 
 /** A share's tone, or stale for a value that is the last one known: muted, never a warning. */
 export type MeterTone = LimitTone | 'stale'
@@ -16,14 +16,14 @@ export interface UsageMeter {
   usedPercent: number
   tone: MeterTone
   resetsAt: Date | null
-  /** How far the reset is, "in 3h 43m", or null when the reading has no reset time. */
+  /** When the window resets as a phrase, "Resets in 3h 43m" or "Resets Tue 14:00", or null when the reading has no reset time. */
   reset: string | null
 }
 
 export interface UsagePool {
   /** The pool's name when the agent has several; null when it has one. */
   bucket: string | null
-  /** Most constraining first. */
+  /** 5-hour, weekly, then any other in reading order. */
   meters: UsageMeter[]
 }
 
@@ -77,12 +77,29 @@ function meterOf(reading: UsageReading & { usedPercent: number }, now: Date): Us
     usedPercent: reading.usedPercent,
     tone: isStale(reading) ? 'stale' : usageLimitTone(reading.usedPercent),
     resetsAt,
-    reset: resetsAt === null ? null : resetDistance(resetsAt, now),
+    reset: resetsAt === null ? null : resetPhrase(resetsAt, now),
   }
 }
 
-// Highest share first; a tie goes 5-hour, weekly, then reading order, which a stable sort keeps.
-const byConstraint = (a: UsageMeter, b: UsageMeter) => b.usedPercent - a.usedPercent || windowRank(a.window) - windowRank(b.window)
+const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const clock = (at: Date) => `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+const dayMilliseconds = 24 * 3600 * 1000
+
+/**
+ * A reset in plain words: how far it is within a day, "Resets in 3h 43m"; the weekday and time within
+ * the week, "Resets Tue 14:00"; the date beyond that, where a weekday alone could read as today.
+ */
+export function resetPhrase(at: Date, now: Date = new Date()): string {
+  const ahead = at.getTime() - now.getTime()
+  if (ahead <= 0) return 'Resets now'
+  if (ahead < dayMilliseconds) return `Resets ${resetDistance(at, now)}`
+  if (ahead < 6 * dayMilliseconds) return `Resets ${weekdays[at.getDay()] ?? ''} ${clock(at)}`
+  return `Resets ${months[at.getMonth()] ?? ''} ${at.getDate()}, ${clock(at)}`
+}
+
+// 5-hour, weekly, then any other window in reading order, which a stable sort keeps.
+export const byWindow = (a: UsageMeter, b: UsageMeter) => windowRank(a.window) - windowRank(b.window)
 
 /** Each agent with a share, in the order the readings first name it. */
 export function agentUsage(readings: UsageReading[], now: Date = new Date()): AgentUsage[] {
@@ -96,7 +113,7 @@ export function agentUsage(readings: UsageReading[], now: Date = new Date()): Ag
       meters: own
         .filter((reading) => buckets.length === 1 || bucketOf(reading) === bucket)
         .map((reading) => meterOf(reading, now))
-        .sort(byConstraint),
+        .sort(byWindow),
     }))
     const lead = pools.flatMap((pool) => pool.meters).reduce((highest, meter) => (meter.usedPercent > highest.usedPercent ? meter : highest))
     const lapsed = own.find(isStale)
@@ -110,3 +127,21 @@ const percentClasses: Record<MeterTone, string> = { normal: 'text-ink-300', ambe
 
 /** A share's text colour: neutral, then warning and a light critical rose near the limit, dimmed but legible when stale. */
 export const percentClass = (tone: MeterTone) => percentClasses[tone]
+
+const fillClasses: Record<MeterTone, string> = { normal: 'bg-accent', amber: 'bg-warn', red: 'bg-bad', stale: 'bg-ink-500' }
+
+/** A meter's fill: the accent, then the theme's warning and critical tones near the limit, grey when stale. */
+export const fillClass = (tone: MeterTone) => fillClasses[tone]
+
+export interface ClosestLimit {
+  agent: string
+  /** The pool the window counts, when the agent has several. */
+  bucket: string | null
+  meter: UsageMeter
+}
+
+/** The current window nearest its limit across every agent, the first on a tie; a last-known one never counts. */
+export function closestToLimit(usage: AgentUsage[]): ClosestLimit | null {
+  const current = usage.flatMap((item) => item.pools.flatMap((pool) => pool.meters.filter((meter) => meter.tone !== 'stale').map((meter) => ({ agent: item.agent, bucket: pool.bucket, meter }))))
+  return current.reduce<ClosestLimit | null>((closest, limit) => (closest === null || limit.meter.usedPercent > closest.meter.usedPercent ? limit : closest), null)
+}

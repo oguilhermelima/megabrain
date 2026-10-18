@@ -3,7 +3,7 @@ import { api } from '@/api'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { arrangeUsage, isEmptyUsageOrder, moveUsage, noUsageOrder, parseUsageOrder, serialiseUsageOrder, toggleUsageHidden, type UsageOrder } from '@/advanced/usage-order'
 import { agentUsage, type AgentUsage } from '@/advanced/usage-limits'
-import { AgentUsageRow, UsageFooterItem } from '@/advanced/UsageMeters'
+import { AgentUsageRow, ClosestLimitLine, UsageFooterItem } from '@/advanced/UsageMeters'
 import { useSavedSetting } from '@/advanced/useSavedSetting'
 import { shimmer, useSettings } from '@/chat/ComposerStatus'
 import { Popover } from '@/components/Popover'
@@ -27,8 +27,8 @@ function useUsageOrder(): { saved: UsageOrder; change: (next: UsageOrder) => voi
 /**
  * The sidebar's foot: a mark in the agent's colour and a share per provider, from the one settings store,
  * in the order the person chose and without the ones they hid. A click opens a row per provider with a
- * meter per window, the most constraining first, and when each resets; a reading that is old or only
- * the last one known says so. Edit there reorders and hides them. Nothing shows until a provider has one.
+ * meter per window, 5-hour then weekly, and when each resets, under a line naming the window
+ * nearest its limit; a reading that is old or only the last one known says so. Edit there reorders and hides them. Nothing shows until a provider has one.
  */
 export function SidebarUsage({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { settings, stale, failed } = useSettings()
@@ -311,8 +311,12 @@ function UsageDetails({
     <>
       {/* The heading takes focus on open, which leaves the footer actions unlit until the person moves to them. */}
       <h2 tabIndex={-1} className="flex h-8 items-center px-3 outline-none text-[11px] font-semibold tracking-[0.08em] text-ink-500 uppercase">Usage limits</h2>
-      {editing && <p className="px-3 pb-2 text-[11px] leading-4 text-ink-500">Drag a handle, or press Alt+Up or Alt+Down on it, to reorder. The eye shows or hides a provider in the sidebar.</p>}
-      <div ref={list} className="flex flex-col gap-0.5">
+      {editing ? (
+        <p className="px-3 pb-2 text-[11px] leading-4 text-ink-500">Drag a handle, or press Alt+Up or Alt+Down on it, to reorder. The eye shows or hides a provider in the sidebar.</p>
+      ) : (
+        <ClosestLimitLine usage={usage} />
+      )}
+      <div ref={list} className="flex flex-col gap-0.5 divide-y divide-white/[0.06]">
         {listed.map((item) => (
           <AgentUsageRow
             key={item.agent}

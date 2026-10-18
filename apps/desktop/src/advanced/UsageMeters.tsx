@@ -1,5 +1,6 @@
 import type { KeyboardEvent, PointerEvent } from 'react'
-import { percentClass, type AgentUsage, type MeterTone, type UsageMeter } from '@/advanced/usage-limits'
+import { closestToLimit, fillClass, percentClass, type AgentUsage, type MeterTone, type UsageMeter } from '@/advanced/usage-limits'
+import { agentColor } from '@/components/agent-activity'
 import { AgentIcon } from '@/components/agent-icons'
 import { agentLabel } from '@/native-chat/empty-chat'
 
@@ -23,35 +24,38 @@ export function UsageFooterItem({ usage }: { usage: AgentUsage }) {
   )
 }
 
-// A meter's fill: neutral, the theme's warning and critical tones near the limit, dim when stale.
-const fillClass: Record<MeterTone, string> = { normal: 'bg-ink-300', amber: 'bg-warn', red: 'bg-bad', stale: 'bg-ink-600' }
+// A share's figure: bright when there is room, the tone's colour near the limit.
+const valueClass = (tone: MeterTone) => (tone === 'normal' ? 'text-ink-100' : percentClass(tone))
 
 /**
- * One window: its name, a thin meter, the share and how far its reset is. The first of a pool is its
- * most constraining window and reads brighter; the exact reset time is read out and shown on hover.
+ * One window: its name and the share used on one line, a meter under them, and when it resets in
+ * plain words under that. Every window reads at the same weight; a last-known one says so.
  */
-function MeterRow({ meter, lead }: { meter: UsageMeter; lead: boolean }) {
+function MeterRow({ meter }: { meter: UsageMeter }) {
   const stale = meter.tone === 'stale'
-  const share = lead && meter.tone === 'normal' ? 'text-ink-100' : percentClass(meter.tone)
   const exact = meter.resetsAt === null ? null : resetClock(meter.resetsAt)
+  const note = [meter.reset, stale ? 'Last known' : null].filter((part) => part !== null).join(' · ')
   return (
     <li
-      className="grid h-5 grid-cols-[48px_minmax(0,1fr)_32px_60px] items-center gap-2"
+      className="py-1"
       aria-label={`${meter.label}: ${percent(meter.usedPercent)} used${stale ? ', last known' : ''}${exact === null ? '' : `, resets ${exact}`}`}
       title={exact === null ? undefined : `Resets ${exact}`}
     >
-      <span aria-hidden="true" className={`truncate text-[11.5px] ${lead && !stale ? 'text-ink-300' : 'text-ink-500'}`}>
-        {meter.label}
+      <div aria-hidden="true" className="flex h-5 items-center justify-between gap-2">
+        <span className="truncate text-[12px] text-ink-200">{meter.label}</span>
+        <span className="shrink-0 tabular-nums">
+          <span className={`text-[12.5px] font-semibold ${valueClass(meter.tone)}`}>{percent(meter.usedPercent)}</span>
+          <span className="text-[11px] text-ink-400"> used</span>
+        </span>
+      </div>
+      <span aria-hidden="true" className="mt-1 block h-2 overflow-hidden rounded-full bg-white/[0.1]">
+        <span className={`block h-full rounded-full ${fillClass(meter.tone)}`} style={{ width: `${Math.max(2, Math.min(100, Math.round(meter.usedPercent)))}%` }} />
       </span>
-      <span aria-hidden="true" className={`block overflow-hidden rounded-full bg-white/[0.08] ${lead ? 'h-1.5' : 'h-1'}`}>
-        <span className={`block h-full rounded-full ${fillClass[meter.tone]}`} style={{ width: `${Math.max(3, Math.round(meter.usedPercent))}%` }} />
-      </span>
-      <span aria-hidden="true" className={`text-right text-[12px] tabular-nums ${lead ? 'font-semibold' : ''} ${share}`}>
-        {percent(meter.usedPercent)}
-      </span>
-      <span aria-hidden="true" className="truncate text-right text-[11px] text-ink-500 tabular-nums">
-        {meter.reset ?? ''}
-      </span>
+      {note !== '' && (
+        <p aria-hidden="true" className="mt-1 truncate text-[11px] text-ink-400 tabular-nums">
+          {note}
+        </p>
+      )}
     </li>
   )
 }
@@ -86,9 +90,9 @@ export interface RowEdit {
 const smallButton = 'flex size-6 shrink-0 items-center justify-center rounded-[6px] text-ink-500 transition-colors hover:bg-white/[0.06] hover:text-ink-100 focus-visible:bg-white/[0.06] focus-visible:text-ink-100 focus-visible:outline-none'
 
 /**
- * One agent in the popover: its mark and name, then a meter per window, each pool under its name when
- * it has several. A reading that is not fresh says how old it is beside the name; one that is only the
- * last known says why and what to do, under the meters. Editing, a grip moves it and an eye hides it.
+ * One agent in the popover: its mark and name, then a meter per window, each pool nested under its name
+ * when it has several. A reading that is not fresh says when it was updated beside the name; one that is
+ * only the last known says why and what to do, under the meters. Editing, a grip moves it and an eye hides it.
  */
 export function AgentUsageRow({ usage, focused, edit }: { usage: AgentUsage; focused: boolean; edit: RowEdit | null }) {
   const name = agentLabel(usage.agent)
@@ -98,7 +102,7 @@ export function AgentUsageRow({ usage, focused, edit }: { usage: AgentUsage; foc
       data-provider-limits={usage.agent}
       data-hidden={hidden || undefined}
       aria-label={name}
-      className={`rounded-[8px] px-3 py-1.5 transition-[background-color,opacity] motion-reduce:transition-none ${edit?.dragging === true ? 'bg-white/[0.08]' : focused ? 'bg-row-hover' : ''} ${hidden ? 'opacity-50' : ''}`}
+      className={`rounded-[8px] px-3 py-2 transition-[background-color,opacity] motion-reduce:transition-none ${edit?.dragging === true ? 'bg-white/[0.08]' : focused ? 'bg-row-hover' : ''} ${hidden ? 'opacity-50' : ''}`}
     >
       <div className="flex h-6 items-center gap-2">
         {edit !== null && (
@@ -109,8 +113,8 @@ export function AgentUsageRow({ usage, focused, edit }: { usage: AgentUsage; foc
         <span className={`flex ${usage.lapse === null ? '' : 'opacity-60'}`} style={{ color: usage.color }}>
           <AgentIcon agent={usage.agent} size={14} />
         </span>
-        <h3 className={`min-w-0 flex-1 truncate text-[12.5px] font-semibold ${usage.lapse === null ? 'text-ink-100' : 'text-ink-300'}`}>{name}</h3>
-        {edit === null && usage.age !== null && <span className="shrink-0 text-[11px] text-ink-500">{usage.age}</span>}
+        <h3 className={`min-w-0 flex-1 truncate text-[13px] font-semibold ${usage.lapse === null ? 'text-ink-100' : 'text-ink-300'}`}>{name}</h3>
+        {edit === null && usage.age !== null && <span className="shrink-0 text-[10.5px] text-ink-500">{`Updated ${usage.age}`}</span>}
         {edit !== null && (
           <button type="button" aria-pressed={!hidden} aria-label={`Show ${name} in the sidebar`} onClick={edit.onToggle} className={`${smallButton} -mr-2`}>
             <EyeIcon hidden={hidden} />
@@ -118,11 +122,12 @@ export function AgentUsageRow({ usage, focused, edit }: { usage: AgentUsage; foc
         )}
       </div>
       {usage.pools.map((pool) => (
-        <div key={pool.bucket ?? ''}>
-          {pool.bucket !== null && <p className="truncate pt-1 text-[11px] font-medium text-ink-400">{pool.bucket}</p>}
+        // A pool of several hangs off the agent on a rule, so it reads as part of it rather than a provider.
+        <div key={pool.bucket ?? ''} className={pool.bucket === null ? '' : 'mt-1.5 ml-[6px] border-l border-white/[0.1] pl-3'}>
+          {pool.bucket !== null && <p className="truncate text-[11px] font-medium text-ink-400">{pool.bucket}</p>}
           <ul>
-            {pool.meters.map((meter, index) => (
-              <MeterRow key={meter.window} meter={meter} lead={index === 0} />
+            {pool.meters.map((meter) => (
+              <MeterRow key={meter.window} meter={meter} />
             ))}
           </ul>
         </div>
@@ -134,5 +139,24 @@ export function AgentUsageRow({ usage, focused, edit }: { usage: AgentUsage; foc
         </p>
       )}
     </section>
+  )
+}
+
+/** The window nearest its limit across every agent, one line above the cards; nothing when none is current. */
+export function ClosestLimitLine({ usage }: { usage: AgentUsage[] }) {
+  const closest = closestToLimit(usage)
+  if (closest === null) return null
+  const where = [agentLabel(closest.agent), closest.bucket, closest.meter.label].filter((part) => part !== null).join(' · ')
+  return (
+    <p data-usage-closest="" className="mx-1 mb-1 flex items-center gap-2 rounded-[8px] bg-white/[0.04] px-2 py-1.5 text-[11.5px]">
+      <span className="flex shrink-0" style={{ color: agentColor(closest.agent) }}>
+        <AgentIcon agent={closest.agent} size={13} />
+      </span>
+      <span className="min-w-0 flex-1 truncate text-ink-300">
+        <span className="text-ink-500">Closest </span>
+        {where}
+      </span>
+      <span className={`shrink-0 font-semibold tabular-nums ${valueClass(closest.meter.tone)}`}>{`${percent(closest.meter.usedPercent)} used`}</span>
+    </p>
   )
 }

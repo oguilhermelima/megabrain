@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { mockSettings } from '@/api/fixtures/mock'
 import { usageReadingSchema, type UsageReading } from '@/api/schema'
 import { agentColor } from '@/components/agent-activity'
-import { agentUsage, percentClass, type AgentUsage } from '@/advanced/usage-limits'
+import { agentUsage, closestToLimit, fillClass, percentClass, resetPhrase, type AgentUsage } from '@/advanced/usage-limits'
 import { UsageFooterItem } from '@/advanced/UsageMeters'
 
 const now = new Date(1_800_000_000 * 1000)
@@ -27,8 +27,8 @@ describe('agentUsage grouping', () => {
   test('one entry per provider in reading order, a single pool without a label when the provider has one bucket', () => {
     const usage = agentUsage([reading('codex', '5h', 30), reading('claude', '5h', 5), reading('codex', 'weekly', 58), reading('claude', 'weekly', 42, { bucket: 'default' })], now)
     expect(shape(usage)).toEqual([
-      ['codex', [[null, [['weekly', 58], ['5h', 30]]]]],
-      ['claude', [[null, [['weekly', 42], ['5h', 5]]]]],
+      ['codex', [[null, [['5h', 30], ['weekly', 58]]]]],
+      ['claude', [[null, [['5h', 5], ['weekly', 42]]]]],
     ])
   })
 
@@ -71,10 +71,14 @@ describe('agentUsage grouping', () => {
 })
 
 describe('agentUsage order and lead', () => {
-  test('the most constraining window comes first, a tie keeping 5-hour before weekly', () => {
-    expect(agentUsage([reading('codex', '5h', 40), reading('codex', 'weekly', 40)], now)[0]?.pools[0]?.meters.map((meter) => meter.window)).toEqual(['5h', 'weekly'])
-    expect(agentUsage([reading('codex', 'weekly', 40), reading('codex', '5h', 40)], now)[0]?.pools[0]?.meters.map((meter) => meter.window)).toEqual(['5h', 'weekly'])
-    expect(agentUsage([reading('claude', '5h', 10), reading('claude', 'opus-weekly', 93), reading('claude', 'weekly', 30)], now)[0]?.pools[0]?.meters.map((meter) => meter.window)).toEqual(['opus-weekly', 'weekly', '5h'])
+  test('every pool reads 5-hour, weekly, then any other window in reading order, however full each is', () => {
+    const windows = (readings: UsageReading[]) => agentUsage(readings, now)[0]?.pools.map((pool) => pool.meters.map((meter) => meter.window))
+    expect(windows([reading('codex', 'weekly', 90), reading('codex', '5h', 10)])).toEqual([['5h', 'weekly']])
+    expect(windows([reading('claude', 'opus-weekly', 93), reading('claude', 'weekly', 30), reading('claude', 'sonnet-weekly', 50), reading('claude', '5h', 10)])).toEqual([['5h', 'weekly', 'opus-weekly', 'sonnet-weekly']])
+    expect(windows([reading('agy', 'weekly', 3, { bucket: 'A' }), reading('agy', '5h', 7, { bucket: 'A' }), reading('agy', '5h', 40, { bucket: 'B' }), reading('agy', 'weekly', 12, { bucket: 'B' })])).toEqual([
+      ['5h', 'weekly'],
+      ['5h', 'weekly'],
+    ])
   })
 
   test('the lead is the most constraining window across every pool', () => {
@@ -82,11 +86,11 @@ describe('agentUsage order and lead', () => {
     expect(agy?.lead).toMatchObject({ window: 'weekly', usedPercent: 64 })
   })
 
-  test('each meter names its window and how far its reset is', () => {
+  test('each meter names its window and when it resets in plain words', () => {
     const [claude] = agentUsage([reading('claude', '5h', 5, { resetsAt: String(seconds + 3 * 3600 + 43 * 60) }), reading('claude', 'weekly', 42, { resetsAt: null })], now)
     expect(claude?.pools[0]?.meters.map((meter) => [meter.label, meter.reset])).toEqual([
+      ['5-hour', 'Resets in 3h 43m'],
       ['Weekly', null],
-      ['5-hour', 'in 3h 43m'],
     ])
   })
 
@@ -106,6 +110,63 @@ describe('agentUsage tone', () => {
     expect(percentClass('amber')).toBe('text-warn')
     expect(percentClass('red')).toBe('text-bad-soft')
     expect(percentClass('stale')).toBe('text-ink-400')
+  })
+})
+
+describe('resetPhrase', () => {
+  // Local time, as the phrase reads it: Tuesday 6 October 2026, 09:00.
+  const tuesday = new Date(2026, 9, 6, 9, 0)
+  const later = (minutes: number) => new Date(tuesday.getTime() + minutes * 60_000)
+
+  test('a reset already due is now', () => {
+    expect(resetPhrase(tuesday, tuesday)).toBe('Resets now')
+    expect(resetPhrase(later(-5), tuesday)).toBe('Resets now')
+  })
+
+  test('within a day it says how far, in minutes, then hours and minutes', () => {
+    expect(resetPhrase(later(42), tuesday)).toBe('Resets in 42m')
+    expect(resetPhrase(later(3 * 60 + 43), tuesday)).toBe('Resets in 3h 43m')
+    expect(resetPhrase(later(24 * 60 - 1), tuesday)).toBe('Resets in 23h 59m')
+  })
+
+  test('from a day out it names the weekday and a 24-hour time', () => {
+    expect(resetPhrase(new Date(2026, 9, 7, 9, 0), tuesday)).toBe('Resets Wed 09:00')
+    expect(resetPhrase(new Date(2026, 9, 9, 14, 5), tuesday)).toBe('Resets Fri 14:05')
+  })
+
+  test('six days or more out it names the date, since the weekday alone could read as this week', () => {
+    expect(resetPhrase(new Date(2026, 9, 12, 9, 0), tuesday)).toBe('Resets Oct 12, 09:00')
+    expect(resetPhrase(new Date(2026, 9, 13, 8, 30), tuesday)).toBe('Resets Oct 13, 08:30')
+  })
+})
+
+describe('fillClass', () => {
+  test('the accent when there is room, warning and critical near the limit, grey when stale', () => {
+    expect(fillClass('normal')).toBe('bg-accent')
+    expect(fillClass('amber')).toBe('bg-warn')
+    expect(fillClass('red')).toBe('bg-bad')
+    expect(fillClass('stale')).toBe('bg-ink-500')
+  })
+})
+
+describe('closestToLimit', () => {
+  test('the fullest window across every agent and pool, with the pool it counts', () => {
+    const usage = agentUsage(
+      [reading('claude', '5h', 20), reading('claude', 'weekly', 61), reading('agy', '5h', 7, { bucket: 'Gemini Models' }), reading('agy', 'weekly', 84, { bucket: 'Claude and GPT models' }), reading('codex', 'weekly', 40)],
+      now,
+    )
+    expect(closestToLimit(usage)).toMatchObject({ agent: 'agy', bucket: 'Claude and GPT models', meter: { window: 'weekly', usedPercent: 84, tone: 'amber' } })
+  })
+
+  test('a single pool has no bucket, and a tie goes to the first agent and window', () => {
+    expect(closestToLimit(agentUsage([reading('codex', '5h', 50), reading('claude', 'weekly', 50), reading('claude', '5h', 50)], now))).toMatchObject({ agent: 'codex', bucket: null, meter: { window: '5h' } })
+  })
+
+  test('a last-known window never counts, however full; nothing when none is current', () => {
+    const stale = { status: 'stale', reason: 'x (sign-in expired)' } as const
+    expect(closestToLimit(agentUsage([reading('grok', 'weekly', 99, stale), reading('codex', '5h', 12)], now))).toMatchObject({ agent: 'codex', meter: { usedPercent: 12 } })
+    expect(closestToLimit(agentUsage([reading('grok', 'weekly', 99, stale)], now))).toBeNull()
+    expect(closestToLimit([])).toBeNull()
   })
 })
 
