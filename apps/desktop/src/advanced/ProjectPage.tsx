@@ -5,26 +5,28 @@ import { displayName, projectTint } from '@/advanced/appearance-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { projectColor } from '@/advanced/picture-model'
-import { changeCounts, defaultBranch, heroFacts, newestFirst, recentChats, scriptRows, scriptState, worktreeSummaries, type ChangeCounts, type RecentChat, type ScriptRow, type ScriptState, type WorktreeOpen, type WorktreeSummary } from '@/advanced/project-page-model'
+import { changeCounts, defaultBranch, newestFirst, recentChats, scriptRows, scriptState, worktreeSummaries, type ChangeCounts, type RecentChat, type ScriptRow, type ScriptState, type WorktreeOpen, type WorktreeSummary } from '@/advanced/project-page-model'
 import { useStackDetails } from '@/advanced/useStackDetails'
 import { AgentIcon } from '@/components/agent-icons'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { ContextMenu, menuFrom, type MenuItem, type OpenMenu } from '@/components/ContextMenu'
 import { MenuIconGlyph, type MenuIcon } from '@/components/menu-icons'
 import { Bone } from '@/components/Skeleton'
+import { Tooltip } from '@/components/Tooltip'
 import { ErrorNote } from '@/components/ui'
 import { checkSummary, githubRepository, stateColors } from '@/github/github-model'
 import { issuePage, pullRequestPage } from '@/github/github-requests'
 import { CommentIcon, PullRequestIcon } from '@/github/icons'
 import { CheckGlyph, IssueStateIcon, LabelChip, PullRequestStateIcon, ReviewChip, ago, checkTitle, openOnGithub, useNow } from '@/github/parts'
 import type { GithubKind } from '@/github/useGithubCounts'
+import { tildePath } from '@/import/parts'
 import { mapLimited } from '@/lib/poll-model'
 import { useRunControls, type RunControls } from '@/run-panel/run-context'
 import { pageX } from '@/lib/page'
 
-// A project's page in a pane. A hero says who it is (picture, name, remote, the main checkout's
-// branch, its path) and what is live in it, with New chat as the one primary action and the rest in a
-// compact toolbar and a more menu. Below, sections for its worktrees (across the page), its open pull
+// A project's page in a pane. A hero says who it is (picture, name, and one line with the remote, the
+// main checkout's branch and its path), with New chat as the one primary action beside quiet buttons
+// and a more menu. Below, sections for its worktrees (across the page), its open pull
 // requests and issues, recent chats and commands, two columns from 1200 px. Every list comes from a
 // call the app already makes; each section shows its skeleton until its call answers.
 
@@ -82,6 +84,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
   const chatsShown = recentChats(project, chats, 6)
   const name = displayName(project)
   const tint = projectTint(project) ?? projectColor(project.name)
+  const home = useLoad('home', () => api.homeDir())
   const scripts = useLoad<ProjectScripts>(project.path, () => api.projectScripts(project.path))
   const rows = scriptRows(scripts.state === 'ready' ? scripts.value : null)
   const port = scripts.state === 'ready' ? scripts.value.port : null
@@ -115,7 +118,6 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
   })
 
   const openCount = (load: Load<{ counts: Record<string, number>; totalCount: number }>) => (load.state === 'ready' ? (load.value.counts.open ?? load.value.totalCount) : null)
-  const facts = heroFacts({ worktrees: worktrees.length, working: worktrees.reduce((sum, worktree) => sum + worktree.working, 0), pulls: openCount(pulls), issues: openCount(issues) })
 
   const copy = (text: string) => void navigator.clipboard.writeText(text).catch(() => {})
   const editCommands = () => run?.editCommands(project.path)
@@ -139,14 +141,14 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
   return (
     <div className="@container min-h-0 flex-1 overflow-y-auto">
       <div className={`mx-auto flex max-w-[1320px] flex-col gap-6 pt-6 pb-14 @min-[720px]:pt-8 ${pageX}`}>
-        <header className="relative overflow-hidden rounded-[32px] border border-white/[0.07] bg-ink-900 px-6 py-6 @min-[720px]:px-8 @min-[720px]:py-7">
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: `radial-gradient(90% 140% at 0% 0%, color-mix(in srgb, ${tint} 16%, transparent), transparent 62%)` }} />
-          <div className="relative flex flex-col gap-6 @min-[900px]:flex-row @min-[900px]:items-end">
-            <div className="flex min-w-0 flex-1 items-start gap-5">
+        <header className="relative overflow-hidden rounded-[24px] border border-white/[0.07] bg-ink-900 p-6">
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ background: `radial-gradient(80% 160% at 0% 0%, color-mix(in srgb, ${tint} 14%, transparent), transparent 60%)` }} />
+          <div className="relative flex flex-col gap-5 @min-[900px]:flex-row @min-[900px]:items-center @min-[900px]:gap-8">
+            <div className="flex min-w-0 flex-1 items-center gap-4">
               <ProjectPicture project={project} size="hero" />
               <div className="min-w-0 flex-1">
-                <h1 className="truncate text-[30px] leading-[1.15] font-semibold tracking-[-0.025em] text-ink-100">{name}</h1>
-                <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-[13px] text-ink-400">
+                <h1 className="truncate text-[26px] leading-[1.2] font-semibold tracking-[-0.02em] text-ink-100">{name}</h1>
+                <div className="mt-1 flex min-w-0 items-center gap-1 text-[13px] text-ink-400">
                   {repository !== null ? (
                     <button type="button" onClick={() => void openOnGithub(repository.url)} className={`-ml-1.5 flex min-w-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 font-medium text-ink-300 hover:text-ink-100 ${hover} ${focusRing}`}>
                       <span className="truncate">{repository.nameWithOwner}</span>
@@ -155,46 +157,41 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
                       </span>
                     </button>
                   ) : (
-                    <span className="truncate select-text">{project.remote ?? 'No remote'}</span>
+                    <span className="min-w-0 truncate select-text">{project.remote ?? 'No remote'}</span>
                   )}
                   {defaultBranch(project) !== null && (
                     <>
                       <Dot />
-                      <span className="flex items-center gap-1.5 px-1">
+                      <span className="flex shrink-0 items-center gap-1.5 px-1">
                         <MenuIconGlyph icon="branch" />
                         <span className="font-mono text-[12px]">{defaultBranch(project)}</span>
                       </span>
                     </>
                   )}
                   <Dot />
-                  <CopyPath path={project.path} />
+                  <CopyPath path={project.path} shown={tildePath(project.path, home.state === 'ready' ? home.value : null)} />
                 </div>
-                <ul aria-label="At a glance" className="mt-4 flex flex-wrap gap-1.5">
-                  {facts.map((fact) => (
-                    <li key={fact.key} className={`flex h-7 items-center gap-2 rounded-full px-3 text-[12.5px] font-medium tabular-nums ${fact.live === true ? 'bg-ok/[0.1] text-ok' : 'bg-white/[0.05] text-ink-300'}`}>
-                      {fact.live === true && <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-ok motion-reduce:animate-none" />}
-                      {fact.text}
-                    </li>
-                  ))}
-                </ul>
               </div>
             </div>
-            <div className="flex shrink-0 flex-wrap items-center gap-2 @min-[900px]:flex-col @min-[900px]:items-end">
-              <button type="button" onClick={() => actions.newChat(project.path)} className={`flex h-10 items-center gap-2 rounded-full bg-accent px-5 text-[14px] font-semibold text-accent-ink hover:bg-[#a3aeff] ${hover} ${focusRing}`}>
+            <div role="toolbar" aria-label={`${name} actions`} className="flex shrink-0 flex-wrap items-center gap-1.5">
+              <button type="button" onClick={() => actions.newChat(project.path)} className={`${heroButton} bg-accent text-accent-ink hover:bg-[#a3aeff]`}>
                 <MenuIconGlyph icon="chat" />
                 New chat
               </button>
-              <div role="toolbar" aria-label={`${name} actions`} className="flex items-center gap-0.5 rounded-full border border-white/[0.08] bg-white/[0.04] p-1">
-                <ToolButton icon="branch" label="New worktree" onClick={() => setNewWorktree(true)} />
-                <ToolButton icon="code" label="Code" onClick={() => actions.code(project.path)} />
-                <RunToolButton run={run} row={runRow ?? null} loading={scripts.state === 'loading'} port={port} onSetUp={editCommands} />
-                {repository !== null && <ToolButton icon="external" label="GitHub" onClick={() => void openOnGithub(repository.url)} />}
-                <button type="button" aria-label="More actions" aria-haspopup="menu" onClick={openMore} className={`grid h-8 w-8 place-items-center rounded-full text-[15px] font-bold text-ink-300 hover:bg-white/[0.08] hover:text-ink-100 ${hover} ${focusRing}`}>
-                  <span aria-hidden="true" className="-mt-1.5">
-                    …
-                  </span>
-                </button>
-              </div>
+              <ToolButton icon="branch" label="New worktree" onClick={() => setNewWorktree(true)} />
+              <ToolButton icon="code" label="Code" onClick={() => actions.code(project.path)} />
+              <RunToolButton run={run} row={runRow ?? null} loading={scripts.state === 'loading'} port={port} onSetUp={editCommands} />
+              <span aria-hidden="true" className="mx-1 h-5 w-px bg-white/[0.08]" />
+              {repository !== null && (
+                <IconTool label="Open on GitHub" onClick={() => void openOnGithub(repository.url)}>
+                  <MenuIconGlyph icon="external" />
+                </IconTool>
+              )}
+              <IconTool label="More actions" menu onClick={openMore}>
+                <span aria-hidden="true" className="-mt-1.5 text-[15px] font-bold">
+                  …
+                </span>
+              </IconTool>
             </div>
           </div>
         </header>
@@ -299,8 +296,8 @@ const Dot = () => (
   </span>
 )
 
-/** The project's folder, copied on a click; the label says so for a moment. */
-function CopyPath({ path }: { path: string }) {
+/** The project's folder, shown from ~ with the full path on hover, copied on a click; the label says so for a moment. */
+function CopyPath({ path, shown }: { path: string; shown: string }) {
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!copied) return
@@ -308,26 +305,46 @@ function CopyPath({ path }: { path: string }) {
     return () => clearTimeout(timer)
   }, [copied])
   return (
-    <button
-      type="button"
-      aria-label={`Copy ${path}`}
-      onClick={() => navigator.clipboard.writeText(path).then(() => setCopied(true), () => {})}
-      className={`group/path flex min-w-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 font-mono text-[12px] text-ink-400 hover:text-ink-200 ${hover} ${focusRing}`}
-    >
-      <span className="truncate">{path}</span>
-      <span aria-live="polite" className={`shrink-0 font-sans text-[11.5px] ${copied ? 'text-ok' : 'text-ink-500 opacity-0 group-hover/path:opacity-100 group-focus-visible/path:opacity-100'}`}>
-        {copied ? 'Copied' : <MenuIconGlyph icon="copy" />}
-      </span>
+    <Tooltip text={path}>
+      {(anchor) => (
+        <button
+          {...anchor}
+          type="button"
+          aria-label={`Copy ${path}`}
+          onClick={() => navigator.clipboard.writeText(path).then(() => setCopied(true), () => {})}
+          className={`group/path flex min-w-0 items-center gap-1.5 rounded-full px-1.5 py-0.5 font-mono text-[12px] text-ink-400 hover:text-ink-200 ${hover} ${focusRing}`}
+        >
+          <span className="truncate">{shown}</span>
+          <span aria-live="polite" className={`shrink-0 font-sans text-[11.5px] ${copied ? 'text-ok' : 'text-ink-500 opacity-0 group-hover/path:opacity-100 group-focus-visible/path:opacity-100'}`}>
+            {copied ? 'Copied' : <MenuIconGlyph icon="copy" />}
+          </span>
+        </button>
+      )}
+    </Tooltip>
+  )
+}
+
+// The hero's buttons, in the language of a pull request's hero: a filled primary, quiet pills, icons.
+const heroButton = `flex h-9 shrink-0 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold disabled:opacity-50 ${hover} ${focusRing}`
+
+function ToolButton({ icon, label, onClick, tone, disabled = false }: { icon: MenuIcon; label: string; onClick: () => void; tone?: 'live'; disabled?: boolean }) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className={`${heroButton} border border-white/[0.10] bg-white/[0.05] hover:bg-white/[0.10] disabled:hover:bg-white/[0.05] ${tone === 'live' ? 'text-ok' : 'text-ink-100'}`}>
+      <MenuIconGlyph icon={icon} />
+      {label}
     </button>
   )
 }
 
-function ToolButton({ icon, label, onClick, tone, disabled = false }: { icon: MenuIcon; label: string; onClick: () => void; tone?: 'live'; disabled?: boolean }) {
+function IconTool({ label, onClick, menu = false, children }: { label: string; onClick: (event: MouseEvent<HTMLButtonElement>) => void; menu?: boolean; children: ReactNode }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[12.5px] font-semibold hover:bg-white/[0.08] disabled:opacity-50 disabled:hover:bg-transparent ${tone === 'live' ? 'text-ok' : 'text-ink-200 hover:text-ink-100'} ${hover} ${focusRing}`}>
-      <MenuIconGlyph icon={icon} />
-      {label}
-    </button>
+    <Tooltip text={label}>
+      {(anchor) => (
+        <button {...anchor} type="button" aria-label={label} aria-haspopup={menu ? 'menu' : undefined} onClick={onClick} className={`grid size-9 shrink-0 place-items-center rounded-full text-ink-300 hover:bg-white/[0.08] hover:text-ink-100 ${hover} ${focusRing}`}>
+          {children}
+        </button>
+      )}
+    </Tooltip>
   )
 }
 

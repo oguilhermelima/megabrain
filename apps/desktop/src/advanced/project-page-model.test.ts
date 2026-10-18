@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { NativeChat, Project, ProjectScripts, ProjectSession, ProjectWorktree } from '@/api/schema'
-import { changeCounts, defaultBranch, heroFacts, newestFirst, recentChats, scriptRows, scriptState, worktreeSummaries } from '@/advanced/project-page-model'
+import { changeCounts, defaultBranch, newestFirst, recentChats, scriptRows, scriptState, worktreeSummaries } from '@/advanced/project-page-model'
 import type { RunTab, WorktreePanel } from '@/run-panel/run-model'
 
 const session = (sessionId: string, lastActivityAt: string | null, extra: Partial<ProjectSession> = {}): ProjectSession => ({
@@ -190,17 +190,6 @@ describe('changeCounts', () => {
   test('without a base only the uncommitted work counts', () => {
     expect(changeCounts([{ path: 'x', status: 'deleted' }], null)).toEqual({ added: 0, modified: 0, deleted: 1, uncommitted: 1 })
     expect(changeCounts([], null)).toEqual({ added: 0, modified: 0, deleted: 0, uncommitted: 0 })
-  })
-})
-
-describe('heroFacts', () => {
-  test('worktrees, open pull requests and issues, and the chats working now', () => {
-    expect(heroFacts({ worktrees: 3, working: 1, pulls: 2, issues: 1 }).map((fact) => fact.text)).toEqual(['3 worktrees', '2 open pull requests', '1 open issue', '1 chat working'])
-    expect(heroFacts({ worktrees: 1, working: 2, pulls: 0, issues: 0 }).find((fact) => fact.key === 'working')).toEqual({ key: 'working', text: '2 chats working', live: true })
-  })
-
-  test('leaves out what is not read yet or not on GitHub, and an idle project says nothing about chats', () => {
-    expect(heroFacts({ worktrees: 1, working: 0, pulls: null, issues: null }).map((fact) => fact.text)).toEqual(['1 worktree'])
   })
 })
 

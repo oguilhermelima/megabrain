@@ -157,21 +157,6 @@ export function changeCounts(uncommitted: readonly CodeChange[], branch: BranchC
   return counts
 }
 
-const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
-
-/**
- * The hero's line of live facts. Pull requests and issues are left out until read, and for a project
- * not on GitHub; chats working now only when some are.
- */
-export function heroFacts({ worktrees, working, pulls, issues }: { worktrees: number; working: number; pulls: number | null; issues: number | null }): { key: string; text: string; live?: boolean }[] {
-  return [
-    { key: 'worktrees', text: plural(worktrees, 'worktree', 'worktrees') },
-    ...(pulls === null ? [] : [{ key: 'pulls', text: plural(pulls, 'open pull request', 'open pull requests') }]),
-    ...(issues === null ? [] : [{ key: 'issues', text: plural(issues, 'open issue', 'open issues') }]),
-    ...(working === 0 ? [] : [{ key: 'working', text: `${plural(working, 'chat', 'chats')} working`, live: true }]),
-  ]
-}
-
 export type ScriptState = { kind: 'idle' } | { kind: 'starting' } | { kind: 'running' } | { kind: 'failed'; code: number | null } | { kind: 'stopped' }
 
 /**
