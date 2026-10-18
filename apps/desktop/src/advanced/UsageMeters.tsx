@@ -1,8 +1,7 @@
 import type { KeyboardEvent, PointerEvent } from 'react'
 import { Chevron } from '@/advanced/chrome'
 import { mostUsed } from '@/advanced/usage-collapse'
-import { closestToLimit, fillClass, percentClass, type AgentUsage, type MeterTone, type UsageMeter, type UsagePool } from '@/advanced/usage-limits'
-import { agentColor } from '@/components/agent-activity'
+import { fillClass, percentClass, type AgentUsage, type MeterTone, type UsageMeter, type UsagePool } from '@/advanced/usage-limits'
 import { AgentIcon } from '@/components/agent-icons'
 import { agentLabel } from '@/native-chat/empty-chat'
 
@@ -119,8 +118,8 @@ const smallButton = 'flex size-6 shrink-0 items-center justify-center rounded-[6
 /**
  * One agent in the popover: its mark and name, then a meter per window, each pool nested under its name
  * when it has several. A reading that is not fresh says when it was updated beside the name; one that is
- * only the last known says why and what to do, under the meters. Editing, a grip moves it and an eye hides it.
- * Folded, it is one row with its most used window; a folded pool is its name and its own most used one.
+ * only the last known says why and what to do, under the meters; an age past an hour reads as a warning.
+ * Editing, a grip moves it and an eye hides it. Folded, it is one row with its most used window; a folded pool is its name and its own most used one.
  */
 export function AgentUsageRow({ usage, focused, edit, fold }: { usage: AgentUsage; focused: boolean; edit: RowEdit | null; fold: RowFold }) {
   const name = agentLabel(usage.agent)
@@ -148,7 +147,7 @@ export function AgentUsageRow({ usage, focused, edit, fold }: { usage: AgentUsag
               <AgentIcon agent={usage.agent} size={14} />
             </span>
             <span className={`min-w-0 flex-1 truncate text-[13px] font-semibold ${usage.lapse === null ? 'text-ink-100' : 'text-ink-300'}`}>{name}</span>
-            {collapsed ? <MeterSummary meter={usage.lead} /> : edit === null && usage.age !== null && <span className="shrink-0 text-[10.5px] font-normal text-ink-500">{`Updated ${usage.age}`}</span>}
+            {collapsed ? <MeterSummary meter={usage.lead} /> : edit === null && usage.age !== null && <span className={`shrink-0 text-[11px] font-normal ${usage.aged ? 'text-warn' : 'text-ink-400'}`} title={usage.aged ? 'These numbers may be out of date' : undefined}>{`Updated ${usage.age}`}</span>}
           </button>
         </h3>
         {edit !== null && (
@@ -192,24 +191,5 @@ export function AgentUsageRow({ usage, focused, edit, fold }: { usage: AgentUsag
         </p>
       )}
     </section>
-  )
-}
-
-/** The window nearest its limit across every agent, one line above the cards; nothing when none is current. */
-export function ClosestLimitLine({ usage }: { usage: AgentUsage[] }) {
-  const closest = closestToLimit(usage)
-  if (closest === null) return null
-  const where = [agentLabel(closest.agent), closest.bucket, closest.meter.label].filter((part) => part !== null).join(' · ')
-  return (
-    <p data-usage-closest="" className="mx-1 mb-1 flex items-center gap-2 rounded-[8px] bg-white/[0.04] px-2 py-1.5 text-[11.5px]">
-      <span className="flex shrink-0" style={{ color: agentColor(closest.agent) }}>
-        <AgentIcon agent={closest.agent} size={13} />
-      </span>
-      <span className="min-w-0 flex-1 truncate text-ink-300">
-        <span className="text-ink-500">Closest </span>
-        {where}
-      </span>
-      <span className={`shrink-0 font-semibold tabular-nums ${valueClass(closest.meter.tone)}`}>{`${percent(closest.meter.usedPercent)} used`}</span>
-    </p>
   )
 }

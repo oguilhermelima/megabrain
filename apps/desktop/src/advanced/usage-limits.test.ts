@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { mockSettings } from '@/api/fixtures/mock'
 import { usageReadingSchema, type UsageReading } from '@/api/schema'
 import { agentColor } from '@/components/agent-activity'
-import { agentUsage, closestToLimit, fillClass, percentClass, resetPhrase, type AgentUsage } from '@/advanced/usage-limits'
+import { agentUsage, fillClass, percentClass, resetPhrase, type AgentUsage } from '@/advanced/usage-limits'
 import { UsageFooterItem } from '@/advanced/UsageMeters'
 
 const now = new Date(1_800_000_000 * 1000)
@@ -149,27 +149,6 @@ describe('fillClass', () => {
   })
 })
 
-describe('closestToLimit', () => {
-  test('the fullest window across every agent and pool, with the pool it counts', () => {
-    const usage = agentUsage(
-      [reading('claude', '5h', 20), reading('claude', 'weekly', 61), reading('agy', '5h', 7, { bucket: 'Gemini Models' }), reading('agy', 'weekly', 84, { bucket: 'Claude and GPT models' }), reading('codex', 'weekly', 40)],
-      now,
-    )
-    expect(closestToLimit(usage)).toMatchObject({ agent: 'agy', bucket: 'Claude and GPT models', meter: { window: 'weekly', usedPercent: 84, tone: 'amber' } })
-  })
-
-  test('a single pool has no bucket, and a tie goes to the first agent and window', () => {
-    expect(closestToLimit(agentUsage([reading('codex', '5h', 50), reading('claude', 'weekly', 50), reading('claude', '5h', 50)], now))).toMatchObject({ agent: 'codex', bucket: null, meter: { window: '5h' } })
-  })
-
-  test('a last-known window never counts, however full; nothing when none is current', () => {
-    const stale = { status: 'stale', reason: 'x (sign-in expired)' } as const
-    expect(closestToLimit(agentUsage([reading('grok', 'weekly', 99, stale), reading('codex', '5h', 12)], now))).toMatchObject({ agent: 'codex', meter: { usedPercent: 12 } })
-    expect(closestToLimit(agentUsage([reading('grok', 'weekly', 99, stale)], now))).toBeNull()
-    expect(closestToLimit([])).toBeNull()
-  })
-})
-
 describe('agentUsage staleness', () => {
   test('a stale reading is muted however high it is, never a warning', () => {
     const [grok] = agentUsage([reading('grok', 'weekly', 95, { status: 'stale', reason: 'grok weekly window is stale (sign-in expired)' })], now)
@@ -204,6 +183,13 @@ describe('agentUsage freshness', () => {
     expect(age(seconds - 14 * 60)).toBeNull()
     expect(age(seconds - 2 * 3600)).toBe('2h ago')
     expect(age(null)).toBeNull()
+  })
+
+  test('an age past an hour is aged, so the row can warn the numbers may be old', () => {
+    const aged = (fetchedAt: number) => agentUsage([reading('codex', '5h', 10, { fetchedAt })], now)[0]?.aged
+    expect(aged(seconds - 30)).toBe(false)
+    expect(aged(seconds - 40 * 60)).toBe(false)
+    expect(aged(seconds - 2 * 3600)).toBe(true)
   })
 
   test('the newest reading of the provider dates it', () => {

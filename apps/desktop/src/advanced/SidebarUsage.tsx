@@ -5,7 +5,7 @@ import type { AnchorRect } from '@/advanced/menu-placement'
 import { arrangeUsage, isEmptyUsageOrder, moveUsage, noUsageOrder, parseUsageOrder, serialiseUsageOrder, toggleUsageHidden, type UsageOrder } from '@/advanced/usage-order'
 import { collapseAll, isPoolCollapsed, isProviderCollapsed, poolKey, readUsageCollapse, writeUsageCollapse, type UsageCollapse } from '@/advanced/usage-collapse'
 import { agentUsage, type AgentUsage } from '@/advanced/usage-limits'
-import { AgentUsageRow, ClosestLimitLine, UsageFooterItem } from '@/advanced/UsageMeters'
+import { AgentUsageRow, UsageFooterItem } from '@/advanced/UsageMeters'
 import { useSavedSetting } from '@/advanced/useSavedSetting'
 import { shimmer, useSettings } from '@/chat/ComposerStatus'
 import { Popover } from '@/components/Popover'
@@ -340,16 +340,12 @@ function UsageDetails({
     <>
       {/* The heading takes focus on open, which leaves the footer actions unlit until the person moves to them. */}
       <div className="flex h-8 items-center justify-between gap-2 pl-3">
-        <h2 tabIndex={-1} className="outline-none text-[11px] font-semibold tracking-[0.08em] text-ink-500 uppercase">Usage limits</h2>
+        <h2 tabIndex={-1} className="outline-none text-[12px] font-semibold tracking-[0.06em] text-ink-200 uppercase">Usage limits</h2>
         <button type="button" onClick={() => fold(collapseAll(collapsed, listed, !allFolded))} className={footerAction}>
           {allFolded ? 'Expand all' : 'Compact'}
         </button>
       </div>
-      {editing ? (
-        <p className="px-3 pb-2 text-[11px] leading-4 text-ink-500">Drag a handle, or press Alt+Up or Alt+Down on it, to reorder. The eye shows or hides a provider in the sidebar.</p>
-      ) : (
-        <ClosestLimitLine usage={usage} />
-      )}
+      {editing && <p className="px-3 pb-2 text-[11px] leading-4 text-ink-500">Drag a handle, or press Alt+Up or Alt+Down on it, to reorder. The eye shows or hides a provider in the sidebar.</p>}
       <div ref={list} className="flex flex-col gap-0.5 divide-y divide-white/[0.06]">
         {listed.map((item) => (
           <AgentUsageRow

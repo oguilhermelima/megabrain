@@ -42,6 +42,8 @@ export interface AgentUsage {
   lead: UsageMeter
   /** How old the newest reading is, only when it is not fresh and not stale. */
   age: string | null
+  /** Whether that age is past an hour, old enough that the numbers may have moved. */
+  aged: boolean
   lapse: UsageLapse | null
 }
 
@@ -55,6 +57,8 @@ const windowRank = (window: string) => {
 
 /** A reading younger than this is fresh and says nothing of its age. */
 const freshSeconds = 15 * 60
+/** A reading older than this may no longer be right, and its age reads as a warning. */
+const agedSeconds = 3600
 
 const isStale = (reading: UsageReading) => reading.stale === true || reading.status === 'stale'
 const bucketOf = (reading: UsageReading) => (reading.bucket === undefined || reading.bucket === null || reading.bucket === 'default' ? null : reading.bucket)
@@ -118,8 +122,9 @@ export function agentUsage(readings: UsageReading[], now: Date = new Date()): Ag
     const lead = pools.flatMap((pool) => pool.meters).reduce((highest, meter) => (meter.usedPercent > highest.usedPercent ? meter : highest))
     const lapsed = own.find(isStale)
     const newest = Math.max(...own.map((reading) => reading.fetchedAt ?? -Infinity))
-    const age = lapsed !== undefined || !Number.isFinite(newest) || now.getTime() / 1000 - newest < freshSeconds ? null : readingAge(newest, now)
-    return [{ agent, color: agentColor(agent), pools, lead, age, lapse: lapsed === undefined ? null : lapseOf(agent, lapsed, now) }]
+    const elapsed = now.getTime() / 1000 - newest
+    const age = lapsed !== undefined || !Number.isFinite(newest) || elapsed < freshSeconds ? null : readingAge(newest, now)
+    return [{ agent, color: agentColor(agent), pools, lead, age, aged: age !== null && elapsed > agedSeconds, lapse: lapsed === undefined ? null : lapseOf(agent, lapsed, now) }]
   })
 }
 
@@ -132,16 +137,3 @@ const fillClasses: Record<MeterTone, string> = { normal: 'bg-accent', amber: 'bg
 
 /** A meter's fill: the accent, then the theme's warning and critical tones near the limit, grey when stale. */
 export const fillClass = (tone: MeterTone) => fillClasses[tone]
-
-export interface ClosestLimit {
-  agent: string
-  /** The pool the window counts, when the agent has several. */
-  bucket: string | null
-  meter: UsageMeter
-}
-
-/** The current window nearest its limit across every agent, the first on a tie; a last-known one never counts. */
-export function closestToLimit(usage: AgentUsage[]): ClosestLimit | null {
-  const current = usage.flatMap((item) => item.pools.flatMap((pool) => pool.meters.filter((meter) => meter.tone !== 'stale').map((meter) => ({ agent: item.agent, bucket: pool.bucket, meter }))))
-  return current.reduce<ClosestLimit | null>((closest, limit) => (closest === null || limit.meter.usedPercent > closest.meter.usedPercent ? limit : closest), null)
-}
