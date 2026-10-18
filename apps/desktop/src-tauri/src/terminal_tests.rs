@@ -5,6 +5,7 @@ use crate::terminal::{
     resumed_session, tmux_attach_argv, tmux_create_argv, tmux_kill_session_argv, tmux_server_name,
     CloseAction, CloseReason, Engine, OutputBatcher, PendingOutput, PtyProcess,
 };
+use crate::terminal_tmux_config::tmux_plain_panes_argv;
 use std::io::Read;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -50,6 +51,7 @@ fn native_engine_uses_the_requested_command_or_login_shell() {
 #[test]
 fn tmux_engine_builds_private_server_commands_for_new_and_existing_sessions() {
     assert_eq!(tmux_server_name(), "megabrain-app");
+    assert_eq!(tmux_plain_panes_argv(), ["-L", "megabrain-app", "set-window-option", "-g", "pane-border-status", "off"]);
     assert_eq!(
         tmux_create_argv("megabrain-app", "term-test", "/tmp/work", None, Some(&["/bin/zsh".into(), "-l".into()])),
         ["-L", "megabrain-app", "new-session", "-d", "-s", "term-test", "-c", "/tmp/work", "/bin/zsh", "-l"]

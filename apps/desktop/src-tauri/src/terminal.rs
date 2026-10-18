@@ -1,4 +1,4 @@
-use crate::app_terminals;
+use crate::{app_terminals, terminal_tmux_config::{configure_tmux_plain_panes, TMUX_SERVER}};
 use base64::engine::general_purpose::STANDARD;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
@@ -15,7 +15,6 @@ use uuid::Uuid;
 const MAX_OUTPUT_BATCH: usize = 64 * 1024;
 const OUTPUT_BATCH_WINDOW: Duration = Duration::from_millis(8);
 const MAX_PRE_LISTEN_OUTPUT: usize = 256 * 1024;
-const TMUX_SERVER: &str = "megabrain-app";
 const APP_SESSION_PREFIX: &str = "mb-app-";
 const OWNED_SESSION_PREFIX: &str = "mb-";
 
@@ -761,7 +760,7 @@ fn create_tmux_session(
     let args = tmux_create_argv(tmux_server_name(), session, &cwd, Some(size), command);
     let tmux = find_on_path("tmux", cli_path)
         .ok_or_else(|| "tmux was not found on the login PATH".to_string())?;
-    let output = Command::new(tmux)
+    let output = Command::new(&tmux)
         .args(args)
         .env("PATH", cli_path)
         .env_remove("TMUX")
@@ -772,6 +771,7 @@ fn create_tmux_session(
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
+    configure_tmux_plain_panes(&tmux, cli_path)?;
     Ok(())
 }
 

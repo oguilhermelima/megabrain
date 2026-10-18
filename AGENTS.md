@@ -174,7 +174,7 @@
 - Run megabrain native app reload <phone|tv> [--route <r>] [--bundle-id <id>] [--url-template <tpl>] [--device <name-or-udid>] [--metro-port <p>] [--timeout <s>] [--json]. — recommended when you need to restart a native app and navigate it to a route.
 - Run megabrain tv connect <ip> [--port <port>]. — recommended when you need to connect an Android TV device over adb.
 - Run megabrain tv disconnect [<ip>]. — recommended when you need to disconnect an Android TV device from adb.
-- Run megabrain tmux tune [--yes] [--dry-run] [--revert] [--json]. — recommended when you need to apply or remove the native tmux theme and agent badges.
+- Run megabrain tmux tune [--yes] [--dry-run] [--revert] [--json]. — recommended when you need to apply or remove the native tmux theme with plain panes and no top bar.
 - Run megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json]. — recommended when you need to install or remove the shell wrapper for hand-typed agent commands.
 - Run megabrain web [--device SLUG|--category NAME|--viewport WxH] .... — recommended when you need to see browser viewport and visual-testing operations.
 - Run megabrain web viewport set|show|devices .... — recommended when you need to set viewport dimensions, inspect settings, or manage device presets.

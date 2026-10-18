@@ -113,7 +113,7 @@ export async function report(module: string, environment: Environment, process: 
       const platform = platformResult.kind === "ok" ? platformResult.value.stdout.trim() : "Darwin";
       const wrapperFile = shell.endsWith("/bash") || (!shell && platform !== "Darwin") ? ".bashrc" : ".zshrc";
       const files = tmuxFileState(environment);
-      const config = `${version}; runtime ${enabled ? "enabled" : "disabled"}; tuning block ${files.tuningBlock}; tuning file current ${files.tuningFile}; wrapper block in ${wrapperFile} ${files.wrapperBlock}; wrapper file current ${files.wrapperFile}; ${server.running ? `running server RGB ${server.rgb}` : "running server none"}; session registry current; ${server.configApplied ? "megabrain session config applied" : "megabrain session config will apply when a session launches"}`;
+      const config = `${version}; runtime ${enabled ? "enabled" : "disabled"}; plain panes (no top bar); tuning block ${files.tuningBlock}; tuning file current ${files.tuningFile}; wrapper block in ${wrapperFile} ${files.wrapperBlock}; wrapper file current ${files.wrapperFile}; ${server.running ? `running server RGB ${server.rgb}` : "running server none"}; session registry current; ${server.configApplied ? "megabrain session config applied" : "megabrain session config will apply when a session launches"}`;
       if (enabled && files.tuningBlock && files.tuningFile && files.wrapperBlock && files.wrapperFile) {
         status = "ok";
         reason = config;

@@ -575,11 +575,11 @@ Check `native health`, the evaluated value, or a changed screenshot after naviga
 ## tmux
 
 ```
-megabrain tmux tune [--yes] [--dry-run] [--revert] [--json] — recommended when you need to apply or remove the native tmux theme and agent badges.
+megabrain tmux tune [--yes] [--dry-run] [--revert] [--json] — recommended when you need to apply or remove the native tmux theme with plain panes and no top bar.
 megabrain tmux wrapper [--yes] [--dry-run] [--revert] [--json] — recommended when you need to install or remove the shell wrapper for hand-typed agent commands.
 ```
 
-`tune` applies tmux’s native theme and shows agent badges, chat name, and state in pane headers.
+`tune` applies tmux’s native theme with plain panes and no top bar. Agent and chat names remain in pane and terminal titles.
 `--revert` removes the managed source block and reloads the remaining tmux config. `wrapper` installs the zsh wrapper for hand-typed agent commands. When the `tmux-runtime`
 module is installed a child opens as a split pane; otherwise it opens as a tab in the IDE that
 launched the session. Override per call with `--tmux true|false`.

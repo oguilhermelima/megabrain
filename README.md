@@ -282,7 +282,7 @@ and classifies the error messages present in Grok 1.0.50's CLI.
 The context meter reads `turn_completed` usage from the session matched by the Grok PID in the pane
 and `active_sessions.json`; it does not guess from the newest session. Chain usage windows read the
 weekly credit window the Grok CLI's `/usage` shows, and a Grok coordinator is identified by its
-session. The tmux badge and shell wrapper remain unsupported. Grok error patterns come from
+session. Grok-specific tmux integration and the shell wrapper remain unsupported. Grok error patterns come from
 the installed CLI's message strings; unrecognized errors remain unknown.
 
 ## Desktop settings
@@ -947,15 +947,11 @@ wrapper sessions and the caller's pane stay open.
 
 ### The tmux theme
 
-`megabrain tmux tune --yes` installs a terminal-relative theme with a thin header on each pane.
-Headers show the agent in a padded badge: Codex uses black on white, Claude uses white on orange,
-and agy uses white on blue. Other agents use the terminal's bright-black foreground. A version-like
-pane command falls back to the Claude badge. The chat title is bold with the terminal's default
-foreground on the active pane and dimmed on inactive panes. State glyphs appear only when a state is
-set. Apart from Claude's orange, colours use the terminal palette so the theme follows the host
-terminal's light or dark appearance. The bottom status line stays hidden with one window and appears
-with multiple windows. `megabrain tmux tune --revert` removes the managed config block and reloads
-the remaining tmux config.
+`megabrain tmux tune --yes` installs a terminal-relative theme with plain panes and no top bar.
+Agent and chat names remain in the pane title and terminal title. Colours use the terminal palette
+so the theme follows the host terminal's light or dark appearance. The bottom status line stays
+hidden with one window and appears with multiple windows. `megabrain tmux tune --revert` removes
+the managed config block and reloads the remaining tmux config.
 
 ### The shell wrapper: every agent starts in tmux
 

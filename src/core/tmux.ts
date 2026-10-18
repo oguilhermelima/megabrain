@@ -128,7 +128,7 @@ export function wrapperSource(shell: "zsh" | "bash" | string): string | undefine
 }
 
 export function tunePlan(config: string, installPath: string, backupPath: string | undefined): string {
-  return `Recommended tmux tuning:\n  - enable RGB and host-terminal parity options\n  - raise history, enable focus, passthrough, clipboard, mouse, and titles\n  - make splits and new windows inherit the current pane path\n  - install the shared tuning file at ${installPath}\n${backupPath === undefined ? `  - no backup: ${config} does not exist` : `  - back up ${config} to ${backupPath}`}\n`;
+  return `Recommended tmux tuning:\n  - use plain pane borders with no top bar\n  - enable RGB and host-terminal parity options\n  - raise history, enable focus, passthrough, clipboard, mouse, and titles\n  - make splits and new windows inherit the current pane path\n  - install the shared tuning file at ${installPath}\n${backupPath === undefined ? `  - no backup: ${config} does not exist` : `  - back up ${config} to ${backupPath}`}\n`;
 }
 
 export function wrapperPlan(config: string, installPath: string, backupPath: string | undefined): string {

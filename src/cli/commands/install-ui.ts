@@ -45,7 +45,7 @@ export type MachinePrompter = Readonly<{
 const AGENT_LABELS: Readonly<Record<MachineAgent, string>> = { claude: "Claude Code", codex: "Codex", agy: "Antigravity (agy)", grok: "Grok" };
 
 const MODULE_INFO: Readonly<Record<string, Readonly<{ label: string; hint: string; group: string }>>> = {
-  "tmux-runtime": { label: "tmux split panes", hint: "shell wrapper plus child panes beside the parent", group: "Agents" },
+  "tmux-runtime": { label: "tmux split panes", hint: "plain panes with no top bar; child panes beside the parent", group: "Agents" },
   orchestration: { label: "Orchestration", hint: "dispatch and supervise agents in Orca, Superset or tmux", group: "Agents" },
   "orchestration-hooks": { label: "Turn-end hooks", hint: "tell the parent when a child finishes its turn", group: "Agents" },
   "summaries-context": { label: "Summaries context", hint: "start Claude and Codex sessions with the latest summaries of the worktree (opt-in)", group: "Agents" },
@@ -125,7 +125,7 @@ export function createClackPrompter(): MachinePrompter {
     })),
     tmux: async (initial) => {
       const answer = settled(await clack.confirm({
-        message: `Run agents inside tmux? ${dim("children open as split panes beside you")}`,
+        message: `Run agents inside tmux? ${dim("plain panes, no top bar; children open beside you")}`,
         initialValue: initial,
       }));
       return answer ? "yes" : "no";

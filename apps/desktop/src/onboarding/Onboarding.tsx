@@ -318,7 +318,7 @@ function ChooseStep({
               ]}
             />
             <p className="mt-2 text-[11px] leading-relaxed text-ink-400">
-              {plan.hosts.tmux ? 'Agents open in tmux splits, with the megabrain theme and agent badges.' : 'tmux is not installed.'}
+              {plan.hosts.tmux ? 'Agents open in tmux splits, with a plain tmux theme and no top bar.' : 'tmux is not installed.'}
             </p>
           </Card>
         </div>

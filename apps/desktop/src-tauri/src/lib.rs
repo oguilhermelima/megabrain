@@ -10,6 +10,7 @@ pub mod path_link;
 mod process_tree;
 mod switch_trace;
 mod terminal;
+mod terminal_tmux_config;
 mod tray;
 #[cfg(test)]
 mod terminal_tests;

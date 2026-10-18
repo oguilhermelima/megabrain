@@ -7,6 +7,9 @@ state_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-usage.XXXXXX")"
 source "$root/tests/support/state-dir-guard.bash"
 export MEGABRAIN_STATE_DIR="$state_dir/.megabrain-test-state"
 require_megabrain_test_state
+export HOME="$state_dir/home"
+export TMUX_TMPDIR="$state_dir"
+mkdir -p "$HOME"
 
 binary="$root/.build/megabrain"
 

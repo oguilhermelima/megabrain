@@ -91,7 +91,7 @@
   {
     "module": "tmux-runtime",
     "status": "ok",
-    "reason": "tmux 3.7c; runtime enabled; tuning block true; tuning file current true; wrapper block in .zshrc true; wrapper file current true; running server RGB true; session registry current; megabrain session config will apply when a session launches",
+    "reason": "tmux 3.7c; runtime enabled; plain panes (no top bar); tuning block true; tuning file current true; wrapper block in .zshrc true; wrapper file current true; running server RGB true; session registry current; megabrain session config will apply when a session launches",
     "uncertainDispatches": 0,
     "uncertainReasons": [],
     "retainedTerminals": 0,

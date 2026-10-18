@@ -31,7 +31,6 @@ trap cleanup EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 option() { "${server[@]}" display-message -p -t theme "#{$1}"; }
-header() { "${server[@]}" display-message -p -t "$1" '#{E:pane-border-format}'; }
 add_pane() { "${server[@]}" split-window -d -h -t "$1" -P -F '#{pane_id}' "$2"; }
 
 "${server[@]}" new-session -d -s theme -n main 'sleep 60'
@@ -55,47 +54,16 @@ version="$(add_pane "$codex" "$version_command")"
 "${server[@]}" set-option -p -t "$version" @megabrain_state stuck
 "${server[@]}" select-pane -t "$version"
 
-expected_header() {
-  local agent="$1" title="$2" state="$3" active="$4" badge title_style glyph
-  case "$agent" in
-    codex) badge='#[bg=white fg=black]' ;;
-    claude) badge='#[bg=#d97757 fg=white]' ;;
-    agy) badge='#[bg=blue fg=white]' ;;
-    *) badge='#[fg=brightblack]' ;;
-  esac
-  title_style='#[fg=brightblack]'
-  if [ "$active" = yes ]; then title_style='#[fg=default bold]'; fi
-  glyph=''
-  case "$state" in
-    working) glyph=' #[fg=blue]●#[default]' ;;
-    question) glyph=' #[fg=yellow]?#[default]' ;;
-    finished) glyph=' #[fg=green]✓#[default]' ;;
-    stuck) glyph=' #[fg=red]!#[default]' ;;
-  esac
-  printf '%s %s #[default] %s%s#[default]%s ' "$badge" "$agent" "$title_style" "$title" "$glyph"
-}
-
-assert_header() {
-  local pane="$1" label="$2" agent="$3" title="$4" state="$5" active="$6" actual expected
-  actual="$(header "$pane")"
-  expected="$(expected_header "$agent" "$title" "$state" "$active")"
-  [ "$actual" = "$expected" ] || fail "$label header mismatch; expected [$expected], got [$actual]"
-  printf '%s header: %s\n' "$label" "$actual"
-}
-
-assert_header "$codex" codex codex codex-title working no
-assert_header "$claude" claude claude claude-title question no
-assert_header "$agy" agy agy agy-title finished no
-assert_header "$none" fallback sleep none-title '' no
+[ "$("${server[@]}" display-message -p -t "$claude" '#{pane_title}')" = claude-title ] || fail 'pane title lost agent identity'
+[ "$("${server[@]}" display-message -p -t "$agy" '#{pane_title}')" = agy-title ] || fail 'pane title lost agent identity'
 [ "$("${server[@]}" display-message -p -t "$version" '#{pane_current_command}')" = '2.1.296' ] || fail 'version pane command did not retain its version-like name'
-assert_header "$version" version claude version-title stuck yes
 
 current_status="$(option status)"
 [ "$current_status" = off ] || fail "status must be off with one window (got: $current_status)"
 global_status="$("${server[@]}" show-options -gqv status)"
 [ "$global_status" = off ] || fail "global default status must be off (got: $global_status)"
 window_options="$("${server[@]}" show-window-options -g)"
-for setting in 'pane-border-status top' 'pane-border-lines single' 'pane-border-indicators off'; do
+for setting in 'pane-border-status off' 'pane-border-lines single' 'pane-border-indicators off'; do
   case "$window_options" in *"$setting"*) ;; *) fail "missing tmux window option: $setting" ;; esac
 done
 
@@ -106,6 +74,7 @@ current_status="$(option status)"
 current_status="$(option status)"
 [ "$current_status" = off ] || fail "status must return off with one window (got: $current_status)"
 printf 'status: off with one window, on with two, off again with one\n'
+printf 'pane borders: no status line; pane titles retain identity\n'
 
 # Reverting a live server must remove the settings that the managed block applied, even when the
 # user's original config did not define those options.
@@ -125,7 +94,7 @@ for _ in {1..50}; do
 done
 [[ "$output" == *"tmux tuning applied"* ]] || fail "could not apply the theme to the isolated server: $output"
 revert_theme="$("${revert_server[@]}" show-window-options -g pane-border-status | awk '{print $2}')"
-[ "$revert_theme" = top ] || fail "isolated server did not get the theme (got: $revert_theme)"
+[ "$revert_theme" = off ] || fail "isolated server did not get the theme (got: $revert_theme)"
 "${revert_server[@]}" send-keys -t "$revert_pane" "HOME='$revert_home' MEGABRAIN_ROOT='$root' MEGABRAIN_STATE_DIR='$work/revert-state' '$root/.build/megabrain' tmux tune --revert" Enter
 for _ in {1..50}; do
   output="$("${revert_server[@]}" capture-pane -p -t "$revert_pane" -S -10)"
