@@ -5,6 +5,7 @@ import { sessionsOfOrigin } from '@/api/projects-origin'
 import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep, NativeChat } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockNewFileDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
+import { mockOrchestrationGraph } from '@/api/fixtures/orchestration-graph'
 import { createMockMaestroApi } from '@/api/fixtures/maestro'
 import { createMockChatd } from '@/api/fixtures/chatd'
 import { mockUsageStats } from '@/api/fixtures/usage'
@@ -229,6 +230,7 @@ export function createMockApi(): DesktopApi {
       await wait(150)
       return explainChains(settings.chains, input, settings.limits.readings)
     },
+    orchestrationGraph: async () => mockOrchestrationGraph,
     editStep: async (name, index, patch) => {
       await wait(150)
       const editChain = (chain: Chain): Chain => {

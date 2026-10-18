@@ -444,6 +444,20 @@ export const dispatchMessagesSchema = z.looseObject({
   messages: z.array(z.looseObject({ from: z.string(), type: z.string(), text: z.string() })),
 })
 
+export const orchestrationGraphSchema = z.looseObject({
+  version: z.literal(1), focus: z.string(), root: z.string(),
+  nodes: z.array(z.looseObject({
+    id: z.string(), kind: z.enum(['coordinator', 'lane']), parent: z.string().nullable(), label: z.string(),
+    agent: z.enum(['claude', 'codex', 'grok', 'agy']), model: z.string().nullable(), effort: z.string().nullable(),
+    state: z.enum(['starting', 'working', 'asking', 'idle', 'done', 'closed', 'failed', 'stalled']),
+    startedAt: z.string(), endedAt: z.string().nullable(), contextPercent: z.number().min(0).max(100).nullable(),
+    last: z.looseObject({ type: z.enum(['received', 'ask', 'reply', 'done', 'change', 'supervise', 'stalled']), text: z.string(), at: z.string() }).nullable(),
+    finding: z.string().nullable(), unanswered: z.boolean(), worktree: z.string().nullable(), branch: z.string().nullable(),
+    commits: z.number().nullable(), chatId: z.string().nullable(), session: z.string().nullable(),
+  })),
+  events: z.array(z.looseObject({ at: z.string(), node: z.string(), direction: z.enum(['to-parent', 'to-child']), type: z.string(), text: z.string() })),
+})
+
 export type InstallPlan = z.infer<typeof installPlanSchema>
 export type PlanModule = InstallPlan['modules'][number]
 export type InstallEvent = z.infer<typeof installEventSchema>
@@ -479,3 +493,4 @@ export type CodeDiff = z.infer<typeof codeDiffSchema>
 export type BranchChanges = z.infer<typeof branchChangesSchema>
 export type ChatRead = z.infer<typeof chatReadSchema>
 export type ReplyResult = z.infer<typeof replyResultSchema>
+export type OrchestrationGraph = z.infer<typeof orchestrationGraphSchema>

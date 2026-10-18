@@ -25,6 +25,7 @@ import { executeOrchestrateAck, executeOrchestrateWatch } from "./commands/orche
 import { executeOrchestrateQueue } from "./commands/orchestrate-queue.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "./commands/orchestrate-read-liveness.js";
 import { executeOrchestrateTranscript } from "./commands/orchestrate-transcript.js";
+import { executeOrchestrateGraph } from "./commands/orchestrate-graph.js";
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
 import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "./commands/orchestrate-stop-reconcile.js";
@@ -219,6 +220,9 @@ async function routeCommand(
   }
   if (command === "orchestrate" && commandArgs[0] === "list") {
     return executeOrchestrateList(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "graph") {
+    return executeOrchestrateGraph(commandArgs.slice(1), dependencies.environment);
   }
   if (command === "orchestrate" && commandArgs[0] === "adopt") {
     return executeOrchestrateAdopt(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);

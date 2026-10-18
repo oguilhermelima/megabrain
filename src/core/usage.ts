@@ -87,6 +87,7 @@ export const USAGE_LINES = {
   "orchestrate-policy": "orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--operator] [--json]",
   "orchestrate-adopt": "orchestrate adopt <dispatch-id-or-suffix> [--force] [--json]",
   "orchestrate-list": "orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]",
+  "orchestrate-graph": "orchestrate graph (--chat <chat id> | --session <agent:id>) [--follow] --json",
   "orchestrate-prune": "orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]",
   "orchestrate-reconcile": "orchestrate reconcile <dispatch-id-or-suffix> [--all] [--operator] [--json]",
   "orchestrate-liveness": "orchestrate liveness <dispatch-id-or-suffix> [--operator] [--json]",
