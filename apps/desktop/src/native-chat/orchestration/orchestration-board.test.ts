@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { BOARD_MARGIN, clampScale, fitView, keepInView, MAX_SCALE, MIN_SCALE, panBy, wheelZoom, zoomAt } from '@/native-chat/orchestration/orchestration-board'
+import { BOARD_MARGIN, clampScale, fitView, keepInView, MAX_SCALE, MIN_SCALE, panBy, wheelMove, wheelZoom, zoomAt } from '@/native-chat/orchestration/orchestration-board'
 
 describe('clampScale', () => {
   test('keeps a scale between the smallest and the largest', () => {
@@ -92,5 +92,28 @@ describe('wheelZoom', () => {
   })
   test('a mouse wheel notch is capped so one tick is not a leap', () => {
     expect(wheelZoom(-1000)).toBe(wheelZoom(-50))
+  })
+})
+
+describe('wheelMove', () => {
+  const plain = { deltaX: 0, deltaY: 0, ctrlKey: false, metaKey: false, shiftKey: false }
+  test('a vertical wheel pans vertically, against the scroll', () => {
+    expect(wheelMove({ ...plain, deltaY: 30 })).toEqual({ kind: 'pan', dx: 0, dy: -30 })
+  })
+  test('a sideways trackpad swipe pans horizontally', () => {
+    expect(wheelMove({ ...plain, deltaX: 25 })).toEqual({ kind: 'pan', dx: -25, dy: 0 })
+  })
+  test('a diagonal swipe pans on both axes', () => {
+    expect(wheelMove({ ...plain, deltaX: -10, deltaY: 20 })).toEqual({ kind: 'pan', dx: 10, dy: -20 })
+  })
+  test('shift plus a vertical wheel pans horizontally', () => {
+    expect(wheelMove({ ...plain, deltaY: 40, shiftKey: true })).toEqual({ kind: 'pan', dx: -40, dy: 0 })
+  })
+  test('shift with a horizontal delta the system already made keeps it', () => {
+    expect(wheelMove({ ...plain, deltaX: 40, shiftKey: true })).toEqual({ kind: 'pan', dx: -40, dy: 0 })
+  })
+  test('ctrl or cmd plus wheel, as a pinch sends it, zooms', () => {
+    expect(wheelMove({ ...plain, deltaY: -10, ctrlKey: true })).toEqual({ kind: 'zoom', factor: wheelZoom(-10) })
+    expect(wheelMove({ ...plain, deltaY: 10, metaKey: true })).toEqual({ kind: 'zoom', factor: wheelZoom(10) })
   })
 })

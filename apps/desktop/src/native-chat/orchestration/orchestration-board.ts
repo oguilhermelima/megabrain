@@ -50,6 +50,12 @@ export function zoomAt(view: BoardView, factor: number, point: { x: number; y: n
   return { x: point.x - (point.x - view.x) * ratio, y: point.y - (point.y - view.y) * ratio, scale }
 }
 
+/** The view that fits a box of the canvas, wherever on the canvas it lies, as fitView fits one at its origin. */
+export function fitBox(box: Box, viewport: Size, margin = BOARD_MARGIN): BoardView {
+  const view = fitView(box, viewport, margin)
+  return { ...view, x: view.x - box.left * view.scale, y: view.y - box.top * view.scale }
+}
+
 export const panBy = (view: BoardView, dx: number, dy: number): BoardView => ({ ...view, x: view.x + dx, y: view.y + dy })
 
 /**
@@ -71,3 +77,19 @@ export function keepInView(view: BoardView, box: Box, viewport: Size, margin = B
 
 /** A wheel's zoom factor from its vertical delta: a pinch or Ctrl/Cmd plus wheel, smooth on a trackpad and a mouse alike. */
 export const wheelZoom = (deltaY: number): number => Math.exp(-Math.max(-50, Math.min(50, deltaY)) * 0.01)
+
+/** What one wheel event does to the board. */
+export type WheelMove = { kind: 'zoom'; factor: number } | { kind: 'pan'; dx: number; dy: number }
+
+/**
+ * A wheel event as a board move, its deltas already in pixels. Ctrl/Cmd (which a trackpad pinch also
+ * sets) zooms; otherwise the board pans against the scroll on both axes, so a sideways swipe moves it
+ * sideways. Shift plus a plain vertical wheel pans sideways too, where the system has not turned it
+ * into a horizontal delta itself.
+ */
+export function wheelMove(event: { deltaX: number; deltaY: number; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): WheelMove {
+  if (event.ctrlKey || event.metaKey) return { kind: 'zoom', factor: wheelZoom(event.deltaY) }
+  if (event.shiftKey && event.deltaX === 0) return { kind: 'pan', dx: 0 - event.deltaY, dy: 0 }
+  // 0 - d rather than -d, so a still axis is 0 and not -0.
+  return { kind: 'pan', dx: 0 - event.deltaX, dy: 0 - event.deltaY }
+}
