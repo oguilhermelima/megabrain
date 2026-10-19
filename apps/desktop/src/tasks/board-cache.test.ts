@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { fixtureBacklog, fixtureRoadmap, fixtureRoadmapItems } from '@/api/fixtures/github-projects'
 import type { GithubProjectItem } from '@/api/schema'
-import { boardCacheKey, boardKey, boardReadDue, createBoardMemory, distinctItems, readBoardPages, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
+import { boardCacheKey, boardKey, boardListReadDue, boardReadDue, createBoardMemory, distinctItems, readBoardPages, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
 
 const item = (id: string): GithubProjectItem => ({ id, type: 'ISSUE', number: 1, title: id, url: null, state: 'OPEN', repository: 'o/r', status: null, assignees: [], labels: [], updatedAt: '2026-10-17T00:00:00.000Z' })
 const ids = (items: GithubProjectItem[]) => items.map((entry) => entry.id)
@@ -146,5 +146,14 @@ describe('reading a board a page at a time', () => {
     expect(all).toBeNull()
     expect(asked).toBe(1)
     expect(shown).toEqual([])
+  })
+})
+
+describe('when a repository lists its boards again', () => {
+  test('the list read this run is read again once five minutes old, or when asked', () => {
+    expect(boardListReadDue(undefined, 1_000, false)).toBe(true)
+    expect(boardListReadDue(1_000, 120_000, false)).toBe(false)
+    expect(boardListReadDue(1_000, 120_000, true)).toBe(true)
+    expect(boardListReadDue(1_000, 301_000, false)).toBe(true)
   })
 })
