@@ -35,7 +35,10 @@ async function orcaForegroundGroup(scope: TerminalScope, pid: number, agent: str
   }
   const rootRow = rows.get(rootPid);
   const agentRow = rows.get(pid);
-  if (rootRow === undefined || agentRow === undefined || !agentCommand(agent, agentRow.command) || rootRow.foreground <= 0 || agentRow.group !== rootRow.foreground) return false;
+  // Orca can place the recorded agent in a child process group. The recorded PID, matching
+  // agent command, and ancestry to this terminal's root identify that receiver; requiring its
+  // process group to equal the root's foreground group rejects valid owned layouts.
+  if (rootRow === undefined || agentRow === undefined || !agentCommand(agent, agentRow.command) || rootRow.foreground <= 0) return false;
   const seen = new Set<number>();
   let current = pid;
   while (!seen.has(current)) {
