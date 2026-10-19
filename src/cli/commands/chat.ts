@@ -5,6 +5,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
 import { grokDefaultModel, loadAndPersistModelRegistry, readTemplateModels } from "../../core/model.js";
 import { modelEnabled, readModelSettings, startModel } from "../../core/model-settings.js";
+import { readAgentSettings, startMode } from "../../core/agent-settings.js";
 import { callChatd, callPermissionServer, chatdStatus, drainChatd, retireChatd } from "../../chat/daemon.js";
 import { ChatStore, type ChatLine } from "../../chat/store.js";
 import { readSummaries, searchSummaries } from "../../chat/summaries.js";
@@ -90,11 +91,12 @@ export async function executeChat(args: readonly string[], environment: Environm
       const parsed = takeValue(rest, "--agent"); const agent = parsed.value;
       const modelArg = takeValue(parsed.rest, "--model");
       const effortArg = takeValue(modelArg.rest, "--effort");
-      const cwdArg = takeValue(effortArg.rest, "--cwd");
+      const modeArg = takeValue(effortArg.rest, "--mode");
+      const cwdArg = takeValue(modeArg.rest, "--cwd");
       const partsArg = takeValue(cwdArg.rest, "--parts");
       const approvals = partsArg.rest.includes("--approvals");
       partsArg.rest = partsArg.rest.filter((arg) => arg !== "--approvals");
-      if (agent === undefined || !["claude", "codex", "grok", "agy"].includes(agent) || cwdArg.value === undefined || effortArg.value === "" || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex|grok|agy> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
+      if (agent === undefined || !["claude", "codex", "grok", "agy"].includes(agent) || cwdArg.value === undefined || effortArg.value === "" || (modeArg.value !== undefined && modeArg.value !== "chat" && modeArg.value !== "terminal") || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex|grok|agy> --cwd <path> [--mode <chat|terminal>] [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
       const parts = partsJson(partsArg.value);
       // Without --model the chat takes the configured app default. For Grok, resolve the CLI's own
       // default too, so the chat header and model picker name the model Grok will actually run.
@@ -109,7 +111,9 @@ export async function executeChat(args: readonly string[], environment: Environm
         const entry = defaultModel === undefined ? undefined : models.find((candidate) => candidate.agent === "grok" && candidate.model === defaultModel);
         if (entry !== undefined && modelEnabled(modelSettings, entry)) model = defaultModel;
       }
-      value = await callChatd(dir, { operation: "start", agent, model, effort: start.effort, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
+      // Without --mode the chat opens in the agent's default mode from Settings > Agents.
+      const mode = modeArg.value ?? startMode(await readAgentSettings(dir), agent);
+      value = await callChatd(dir, { operation: "start", agent, model, effort: start.effort, cwd: cwdArg.value, mode, approvals, parts }, environment, processAdapter);
       return ok(argsJson(value));
     }
     if (verb === "send") {

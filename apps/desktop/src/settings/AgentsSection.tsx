@@ -5,7 +5,7 @@ import { AgentIcon } from '@/components/agent-icons'
 import { Bone } from '@/components/Skeleton'
 import { ErrorNote, Segmented, Spinner } from '@/components/ui'
 import { AgentUpdatesGroup, type AgentUpdates } from '@/settings/AgentUpdates'
-import { agentNames, agentRows, defaultAgentSettings, parseAgentSettings, serialiseAgentSettings, withDefault, withEnabled, type AgentRow, type AgentSettings } from '@/settings/agents-model'
+import { agentNames, agentRows, defaultAgentSettings, parseAgentSettings, serialiseAgentSettings, withDefault, withEnabled, withMode, type AgentRow, type AgentSettings } from '@/settings/agents-model'
 import { quiet, SettingsGroup } from '@/settings/settings-ui'
 
 type Plan = InstallPlan['agents']
@@ -82,7 +82,7 @@ function DefaultPicker({ rows, value, onChange }: { rows: AgentRow[]; value: str
   )
 }
 
-function AgentLine({ row, onEnabled, onDefault }: { row: AgentRow; onEnabled: (enabled: boolean) => void; onDefault: () => void }) {
+function AgentLine({ row, onEnabled, onDefault, onMode }: { row: AgentRow; onEnabled: (enabled: boolean) => void; onDefault: () => void; onMode: (mode: AgentRow['mode']) => void }) {
   return (
     <div className="flex min-h-16 items-center gap-3 px-4 py-3">
       <span className={`grid size-8 shrink-0 place-items-center rounded-[10px] bg-white/[0.06] ${row.installed ? 'text-ink-100' : 'text-ink-500'}`}>
@@ -104,6 +104,16 @@ function AgentLine({ row, onEnabled, onDefault }: { row: AgentRow; onEnabled: (e
             Set default
           </button>
         )}
+        <div role="group" aria-label={`${row.label} opens new chats as`}>
+          <Segmented
+            value={row.mode}
+            options={[
+              { value: 'chat', label: 'Chat' },
+              { value: 'terminal', label: 'Terminal' },
+            ]}
+            onChange={onMode}
+          />
+        </div>
         <Segmented
           value={row.enabled ? 'on' : 'off'}
           options={[
@@ -178,10 +188,10 @@ export function AgentsSection({ updates }: { updates: AgentUpdates }) {
         }
       >
         {rows.map((row) => (
-          <AgentLine key={row.agent} row={row} onEnabled={(enabled) => void save(withEnabled(current, row.agent, enabled))} onDefault={() => void save(withDefault(current, row.agent))} />
+          <AgentLine key={row.agent} row={row} onEnabled={(enabled) => void save(withEnabled(current, row.agent, enabled))} onDefault={() => void save(withDefault(current, row.agent))} onMode={(mode) => void save(withMode(current, row.agent, mode))} />
         ))}
       </SettingsGroup>
-      <p className="px-1 text-[12px] text-ink-500">A disabled agent stays installed; New chat just does not offer it. The command is what the app runs to start the agent’s own terminal.</p>
+      <p className="px-1 text-[12px] text-ink-500">A disabled agent stays installed; New chat just does not offer it. Chat or Terminal is how a new chat with that agent opens; the switch in a chat’s header changes only that chat. The command is what the app runs to start the agent’s own terminal.</p>
       <AgentUpdatesGroup updates={updates} />
       {error !== null && <ErrorNote error={error} />}
       {saveError !== null && <ErrorNote error={saveError} />}

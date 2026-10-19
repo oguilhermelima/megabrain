@@ -39,6 +39,8 @@ export type Chat = {
   error?: string | null;
   /** When the chat last moved to its terminal: the agent's own log is imported from here on the way back. */
   terminalSince?: string;
+  /** The first message of a chat that opened in its terminal, until the TUI takes it as its initial prompt. */
+  pendingPrompt?: string;
 };
 
 export type ChatApproval = { id: string; tool: string; input: string; reason: string | null; decisions: Array<"allow" | "allow-session" | "deny"> };

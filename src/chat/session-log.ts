@@ -465,3 +465,29 @@ export async function discoverSessionId(chat: Pick<Chat, "agent" | "cwd">, home:
   }
   return null;
 }
+
+/** Reads only the endpoint variables exported by an agy process in this chat's owned pane. */
+export async function discoverAgyEnvironment(panePids: readonly number[], processAdapter: ProcessAdapter): Promise<Readonly<Record<string, string | undefined>> | undefined> {
+  if (panePids.length === 0) return undefined;
+  const table = await readProcessTable(processAdapter);
+  const inPane = (pid: number): boolean => {
+    const seen = new Set<number>();
+    for (let current: number | undefined = pid; current !== undefined && current > 1 && !seen.has(current); current = table.get(current)?.ppid) {
+      if (panePids.includes(current)) return true;
+      seen.add(current);
+    }
+    return false;
+  };
+  const pids = [...table].filter(([pid, entry]) => /(?:^|\/)agy(?:\s|$)/.test(entry.command) && inPane(pid)).map(([pid]) => pid);
+  for (const pid of pids) {
+    const output = await processAdapter.run("ps", ["eww", "-p", String(pid)], { timeoutMs: 5_000, maxOutputBytes: 64 * 1024 });
+    if (output.kind !== "ok") continue;
+    const environment: Record<string, string> = {};
+    for (const name of ["ANTIGRAVITY_LS_ADDRESS", "ANTIGRAVITY_CSRF_TOKEN", "ANTIGRAVITY_CONVERSATION_ID", "ANTIGRAVITY_LS_VERSION"] as const) {
+      const match = new RegExp(`(?:^|\\s)${name}=([^\\s]+)`).exec(output.value.stdout);
+      if (match?.[1] !== undefined) environment[name] = match[1];
+    }
+    if (environment.ANTIGRAVITY_LS_ADDRESS && environment.ANTIGRAVITY_CSRF_TOKEN && environment.ANTIGRAVITY_CONVERSATION_ID) return environment;
+  }
+  return undefined;
+}
