@@ -7,7 +7,7 @@ import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { executeHookTurnEnd, type HookEnvironment } from "../../src/cli/commands/hook-turn-end.js";
 import { executeCheck } from "../../src/cli/commands/check.js";
-import { appendMessage } from "../../src/cli/commands/queue-write.js";
+import { appendMessage, waiterIsActive } from "../../src/cli/commands/queue-write.js";
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
@@ -167,6 +167,23 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       const fake = fakeProcess();
       await executeHookTurnEnd([], parentEnv(root), fake, noStdin);
       expect(fake.calls.some((call) => call.args.includes("send"))).toBe(false);
+    });
+  });
+
+  test("removes a waiter whose PID now belongs to a different process", async () => {
+    await withRoot("reused-waiter", async (root) => {
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const dispatch = createDispatch(database.value, { dispatchId: "reused", state: "running" });
+      if (dispatch.kind !== "ok") throw new Error(dispatch.error);
+      const waiter = putWaiter(database.value, {
+        dispatchId: "reused", pid: process.pid, parentSessionId: "coord-term", parentHost: "orca",
+        createdAt: new Date().toISOString(), processStartIdentity: "not-the-current-process",
+      });
+      if (waiter.kind !== "ok") throw new Error(waiter.error);
+
+      expect(await waiterIsActive(root, "reused")).toBe(false);
+      expect(database.value.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("reused")).toBeNull();
     });
   });
 
