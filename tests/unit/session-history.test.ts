@@ -56,6 +56,23 @@ function agyHistory(home: string, rows: readonly object[]): void {
 }
 
 describe("session history", () => {
+  test("enumerates the global Codex rollout tree once for concurrent workspace queries", async () => {
+    const { home, stateDir } = machine();
+    codexRollout(home, CWD, "codex-one", "first", "2026-10-02T09:30:00Z");
+    codexRollout(home, OTHER, "codex-two", "second", "2026-10-02T09:35:00Z");
+    const root = join(home, ".codex", "sessions");
+    const spy = spyOn(fsPromises, "readdir");
+    try {
+      const [first, second] = await Promise.all([
+        sessionHistory(CWD, "codex", { home, stateDir }),
+        sessionHistory(OTHER, "codex", { home, stateDir }),
+      ]);
+      expect(first.map((session) => session.id)).toEqual(["codex-one"]);
+      expect(second.map((session) => session.id)).toEqual(["codex-two"]);
+      expect(spy.mock.calls.filter(([directory]) => directory === root)).toHaveLength(1);
+    } finally { spy.mockRestore(); }
+  });
+
   test("shares the global Antigravity history read across workspace queries", async () => {
     const { home, stateDir } = machine();
     agyHistory(home, [
