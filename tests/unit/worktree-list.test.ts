@@ -241,7 +241,7 @@ describe("executeWorktreeList", () => {
     if (result.kind === "failed") expect(result.error).toContain("git worktree list failed");
   });
 
-  test("lists healthy repositories and reports failures in partial JSON results", async () => {
+  test("keeps partial JSON results as an array and reports failures on stderr", async () => {
     const fixture = await createFixture();
     const healthy = join(fixture.shared, "healthy");
     const broken = join(fixture.shared, "broken");
@@ -262,13 +262,37 @@ describe("executeWorktreeList", () => {
 
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") {
-      expect(JSON.parse(result.value)).toEqual({
-        worktrees: expect.arrayContaining([
-          expect.objectContaining({ path: healthy }),
-          expect.objectContaining({ path: fixture.linked }),
-        ]),
-        errors: [{ repository: broken, message: "broken repo git failure" }],
-      });
+      expect(Array.isArray(JSON.parse(result.value))).toBe(true);
+      expect(JSON.parse(result.value)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: healthy }),
+        expect.objectContaining({ path: fixture.linked }),
+      ]));
+      expect(result.stderr).toContain(`${broken}: broken repo git failure`);
+    }
+  });
+
+  test("lists healthy repositories when another repository config read fails", async () => {
+    const fixture = await createFixture();
+    const healthy = join(fixture.shared, "healthy");
+    const broken = join(fixture.shared, "broken-config");
+    await mkdir(join(healthy, ".git"), { recursive: true });
+    await mkdir(join(broken, ".git"), { recursive: true });
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") return output(gitWorktrees(path, fixture.linked));
+      if (gitArgs[0] === "config") return path === broken ? failed("git config failed", 128) : failed("no parent config");
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList(["--json"], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/missing" }, process);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(Array.isArray(JSON.parse(result.value))).toBe(true);
+      expect(JSON.parse(result.value)).toEqual(expect.arrayContaining([expect.objectContaining({ path: healthy })]));
+      expect(result.stderr).toContain(`${broken}: git config failed`);
     }
   });
 
