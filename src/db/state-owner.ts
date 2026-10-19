@@ -92,7 +92,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "settle-closed-parent-backlog" }
   )
 >;
-export type StateOwner = { readonly stateDir: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
+export type StateOwner = { readonly stateDir: string; readonly executablePath: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
 type Response = { ok: true; value: unknown } | { ok: false; error: string };
 
 function ownerLogPath(stateDir: string): string { return join(stateDir, "logs", "state-owner.log"); }
@@ -339,6 +339,7 @@ function stopForLifecycle(owner: StateOwner): void {
 }
 
 export async function startStateOwner(stateDir: string, processAdapter: ProcessAdapter = createProcessAdapter(), environment: Readonly<Record<string, string | undefined>> = process.env): Promise<StateOwner> {
+  const executablePath = environment.MEGABRAIN_STATE_OWNER_EXECUTABLE ?? (process.argv[1] !== undefined && !process.argv[1].startsWith("/$bunfs/") ? resolve(process.argv[1]) : process.execPath);
   const directory = join(stateDir, "state-owner");
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await chmod(directory, 0o700);
@@ -391,7 +392,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
   });
   if (initializedRequests.kind !== "ok") { logOwner(stateDir, "startup-failed", { error: initializedRequests.error }); handle.close(); await unlink(lockPath).catch(() => undefined); throw new Error("state owner could not initialize request results: " + initializedRequests.error); }
   const server = createServer();
-  const owner: StateOwner = { stateDir, handle, server, lockPath, processAdapter, environment, pendingDeliveries: new Set(), pendingVerifications: new Set(), deliveryChains: new Map(), scheduledOutbox: new Set(), scheduledVerifications: new Set(), verificationTimers: new Map(), requests: new Map(), clients: 0, stopped: false };
+    const owner: StateOwner = { stateDir, executablePath, handle, server, lockPath, processAdapter, environment, pendingDeliveries: new Set(), pendingVerifications: new Set(), deliveryChains: new Map(), scheduledOutbox: new Set(), scheduledVerifications: new Set(), verificationTimers: new Map(), requests: new Map(), clients: 0, stopped: false };
   // Load the subscriber's transport code before accepting writes, so the first published row
   // does not pay a module-load delay after its transaction commits.
   await import("../cli/commands/delivery-worker.js");
@@ -410,7 +411,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
       await appendFile(environment.MEGABRAIN_STATE_OWNER_TEST_REGISTRY, `${JSON.stringify({ pid: process.pid, stateDir: resolve(stateDir) })}\n`, { mode: 0o600 });
     }
     owner.lifecycleTimer = setInterval(() => {
-      if (!existsSync(owner.stateDir)) { stopForLifecycle(owner); return; }
+      if (!existsSync(owner.stateDir) || !existsSync(owner.executablePath)) { stopForLifecycle(owner); return; }
       const parentPid = owner.environment.MEGABRAIN_STATE_OWNER_TEST_MODE === "1" ? Number(owner.environment.MEGABRAIN_STATE_OWNER_TEST_PARENT_PID) : 0;
       if (!Number.isSafeInteger(parentPid) || parentPid <= 0) return;
       const parentStart = owner.environment.MEGABRAIN_STATE_OWNER_TEST_PARENT_START;
