@@ -59,8 +59,8 @@ function repositoryOf(common: string, repos: readonly Repository[]): { name: str
   return { name: basename(path), path };
 }
 
-async function runGit(process: ProcessAdapter, path: string, args: readonly string[]): Promise<Result<string>> {
-  const result = await process.run("git", ["-C", path, ...args], { timeoutMs: 2_000 });
+async function runGit(process: ProcessAdapter, path: string, args: readonly string[], timeoutMs = 2_000): Promise<Result<string>> {
+  const result = await process.run("git", ["-C", path, ...args], { timeoutMs });
   return result.kind === "ok" ? ok(result.value.stdout) : failed(result.error, result.exitCode);
 }
 
@@ -177,22 +177,28 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   const repos = selectedRepository === undefined ? await repositories(root.value, process) : [selectedRepository];
   const gitResults = await Promise.all(repos.filter((repository) => filter === undefined || repository.common === filter).map(async (repository) => {
     const [output, config] = await Promise.all([
-      runGit(process, repository.path, ["worktree", "list", "--porcelain"]),
+      runGit(process, repository.path, ["worktree", "list", "--porcelain"], 10_000),
       runGit(process, repository.path, ["config", "--get-regexp", "^branch\\..*\\.megabrain-parent$"]),
     ]);
     return { repository, output, config };
   }));
-  const failedWorktreeList = gitResults.find((result) => result.output.kind !== "ok");
-  if (failedWorktreeList !== undefined) {
-    const error = failedWorktreeList.output.kind === "failed" ? failedWorktreeList.output : undefined;
-    return failed(`could not list worktrees for ${failedWorktreeList.repository.path}: ${error?.error ?? "git returned no result"}`, error?.exitCode);
+  const worktreeListErrors = gitResults.flatMap((result) => {
+    if (result.output.kind === "ok") return [];
+    const message = result.output.kind === "failed" ? result.output.error : "git returned no result";
+    return [{ repository: result.repository.path, message, exitCode: result.output.kind === "failed" ? result.output.exitCode : undefined }];
+  });
+  if (selectedRepository !== undefined && worktreeListErrors.length > 0) {
+    const error = worktreeListErrors[0];
+    if (error !== undefined) return failed(`could not list worktrees for ${error.repository}: ${error.message}`, error.exitCode);
   }
-  const failedConfig = gitResults.find((result) => result.config.kind === "failed" && result.config.exitCode !== 1 && result.config.error !== "no parent config");
+  const listedResults = gitResults.filter((result) => result.output.kind === "ok");
+  const listedRepositories = listedResults.map((result) => result.repository);
+  const failedConfig = listedResults.find((result) => result.config.kind === "failed" && result.config.exitCode !== 1 && result.config.error !== "no parent config");
   if (failedConfig !== undefined && failedConfig.config.kind === "failed") {
     return failed(`could not read branch metadata for ${failedConfig.repository.path}: ${failedConfig.config.error}`, failedConfig.config.exitCode);
   }
-  const gitRecords = gitResults.flatMap((result) => result.output.kind === "ok" ? parseGitWorktrees(result.output.value, result.repository.common) : []);
-  const parents = gitResults.flatMap((result) => result.config.kind === "ok" ? parseParentConfig(result.config.value, result.repository.common) : []);
+  const gitRecords = listedResults.flatMap((result) => result.output.kind === "ok" ? parseGitWorktrees(result.output.value, result.repository.common) : []);
+  const parents = listedResults.flatMap((result) => result.config.kind === "ok" ? parseParentConfig(result.config.value, result.repository.common) : []);
   const tools = await Promise.all(["superset", "orca", "gh"].map(async (command) => [command, await available(command, environment)] as const));
   const installed = new Map(tools);
   const [workspaceData, orcaData] = await Promise.all([
@@ -207,7 +213,7 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   const pullRequests = new Map<string, ReturnType<typeof parsePullRequests> extends Map<string, infer T> ? T : never>();
   const now = Date.now();
   const uncached: Repository[] = [];
-  for (const repository of repos) {
+  for (const repository of listedRepositories) {
     const cached = prCache.repositories[repository.path];
     if (cached !== undefined && cached.fetchedAt <= now && now - cached.fetchedAt < 60_000) {
       for (const [branch, pull] of parsePullRequests(cached.value)) pullRequests.set(branch, pull);
@@ -284,7 +290,10 @@ export async function executeWorktreeList(args: readonly string[], environment: 
     });
   }
   const formatted = formatWorktreeList(entries, options.value);
-  if (options.value.json) return ok(formatted);
+  if (options.value.json) {
+    if (worktreeListErrors.length === 0) return ok(formatted);
+    return ok(`${JSON.stringify({ worktrees: JSON.parse(formatted) as WorktreeListEntry[], errors: worktreeListErrors.map(({ repository, message }) => ({ repository, message })) }, null, 2)}\n`);
+  }
   const lines = formatted.split("\n");
   if (options.value.flat) {
     for (let index = 1; index < lines.length - 1; index += 1) {
@@ -294,5 +303,6 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   } else {
     lines[0] = `${lines[0]}${" ".repeat(28)}`;
   }
-  return ok(lines.join("\n"));
+  const stderr = worktreeListErrors.map(({ repository, message }) => `megabrain: could not list worktrees for ${repository}: ${message}\n`).join("");
+  return stderr.length === 0 ? ok(lines.join("\n")) : { ...ok(lines.join("\n")), stderr };
 }
