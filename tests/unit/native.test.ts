@@ -98,7 +98,10 @@ describe("native runtime commands", () => {
 
   test("does not report an empty downloadable runtime list as success", async () => {
     const result = await executeNative(["runtime", "list", "--available", "--json"], {}, process);
-    expect(result).toEqual({ kind: "ok", value: JSON.stringify({ refusal: { code: "invalid-arguments", message: expect.stringContaining("not supported") } }) + "\n", exitCode: 2 });
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.value)).toMatchObject({ refusal: { code: "invalid-arguments", message: expect.stringContaining("not supported") } });
   });
 });
 
