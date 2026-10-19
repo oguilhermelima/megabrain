@@ -142,6 +142,18 @@ describe("agent default mode", () => {
     await call(["chat", "stop", chat.id], env);
   });
 
+  test("an explicit --mode wins over the agent default", async () => {
+    const env = sandbox();
+    fakeAgent(env.bin, "claude", `process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "mode-session" }) + "\\n"); setInterval(() => {}, 1000);`);
+    writeFileSync(join(env.state, "agent-settings.json"), JSON.stringify({ version: 1, default: null, disabled: [], modes: { claude: "terminal" } }));
+    const started = await call(["chat", "start", "--agent", "claude", "--cwd", env.cwd, "--mode", "chat", "--json"], env);
+    if (started.kind !== "ok") throw new Error("start failed");
+    const chat = JSON.parse(started.value) as { id: string; mode: string };
+    expect(chat.mode).toBe("chat");
+    await waitForChat(chat.id, "idle", env);
+    await call(["chat", "stop", chat.id], env);
+  });
+
   test("switching one chat's mode never rewrites the agent defaults", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", `process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "mode-session" }) + "\\n"); setInterval(() => {}, 1000);`);

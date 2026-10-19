@@ -31,8 +31,8 @@ describe('agentMode', () => {
     expect(parseAgentSettings({ version: 1, default: null, disabled: [], modes: 'terminal' })).toEqual({ version: 1, default: null, disabled: [], modes: {} })
   })
 
-  test('with nothing saved Claude, Codex and Grok open in chat and agy in its terminal', () => {
-    expect(['claude', 'codex', 'grok', 'agy'].map((agent) => agentMode(defaultAgentSettings, agent))).toEqual(['chat', 'chat', 'chat', 'terminal'])
+  test('with nothing saved every agent opens in chat', () => {
+    expect(['claude', 'codex', 'grok', 'agy'].map((agent) => agentMode(defaultAgentSettings, agent))).toEqual(['chat', 'chat', 'chat', 'chat'])
   })
 
   test('a saved mode wins over the agent default', () => {
@@ -41,8 +41,8 @@ describe('agentMode', () => {
     expect(agentMode(settings, 'codex')).toBe('chat')
   })
 
-  test('agy stays in its terminal while it cannot chat', () => {
-    expect(agentMode({ version: 1, default: null, disabled: [], modes: { agy: 'chat' } }, 'agy')).toBe('terminal')
+  test('agy follows its saved mode like the others', () => {
+    expect(agentMode({ version: 1, default: null, disabled: [], modes: { agy: 'terminal' } }, 'agy')).toBe('terminal')
   })
 
   test('withMode changes only that agent and keeps the rest', () => {
@@ -75,7 +75,7 @@ describe('agentRows', () => {
       { agent: 'claude', label: 'Claude Code', installed: true, enabled: true, isDefault: false, mode: 'chat', command: 'claude --dangerously-skip-permissions' },
       { agent: 'codex', label: 'Codex', installed: true, enabled: true, isDefault: true, mode: 'chat', command: undefined },
       { agent: 'grok', label: 'Grok', installed: true, enabled: false, isDefault: false, mode: 'chat', command: null },
-      { agent: 'agy', label: 'Antigravity (agy)', installed: false, enabled: true, isDefault: false, mode: 'terminal', command: undefined },
+      { agent: 'agy', label: 'Antigravity (agy)', installed: false, enabled: true, isDefault: false, mode: 'chat', command: undefined },
     ])
   })
 
