@@ -30,6 +30,12 @@ export interface BoardCache {
 
 export const emptyBoardCache: BoardCache = { projects: {}, items: {} }
 
+/** How old a board's last read may be before the board reads again on its own. */
+export const boardFreshMs = 60_000
+
+/** Whether a board read last at `at` reads again now: never read, older than a minute, or asked for. */
+export const boardReadDue = (at: number | undefined, now: number, asked: boolean) => asked || at === undefined || now - at >= boardFreshMs
+
 /** A board's identity, the same under every repository whose items it holds. */
 export const boardKey = (board: Pick<GithubProject, 'owner' | 'number'>) => `${board.owner}/${board.number}`
 
