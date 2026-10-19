@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { boardItemsPolicy, boardListPolicy, deviceCatalogPolicy, devicesPolicy, githubCountsPolicy, mapLimited, planPoll, projectsPolicy, quickViewPolicy, retryDelay, statusPolicy, type PollPolicy } from '@/lib/poll-model'
+import { boardItemsPolicy, boardListPolicy, deviceCatalogPolicy, devicesPolicy, githubCountsPolicy, githubListingPolicy, mapLimited, planPoll, projectsPolicy, quickViewPolicy, retryDelay, statusPolicy, type PollPolicy } from '@/lib/poll-model'
 
 const policy: PollPolicy = { visibleMs: 30_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 const hiddenToo: PollPolicy = { visibleMs: 5_000, hiddenMs: 30_000, refreshOn: { action: true, focus: true } }
@@ -127,5 +127,14 @@ describe('the Tasks board list', () => {
     expect(boardListPolicy.visibleMs).toBe(300_000)
     expect(boardListPolicy.hiddenMs).toBeNull()
     expect(planPoll(boardListPolicy, 'focus', { visible: true, now: 1_000, lastRunAt: 0 }).run).toBe(true)
+  })
+})
+
+describe('the GitHub listing', () => {
+  test('reads the shown page again every minute while the window shows, never while hidden', () => {
+    expect(githubListingPolicy.visibleMs).toBe(60_000)
+    expect(githubListingPolicy.hiddenMs).toBeNull()
+    expect(planPoll(githubListingPolicy, 'timer', { visible: false, now: 600_000, lastRunAt: 0 })).toEqual({ run: false, nextInMs: null })
+    expect(planPoll(githubListingPolicy, 'visibility', { visible: true, now: 600_000, lastRunAt: 0 }).run).toBe(true)
   })
 })
