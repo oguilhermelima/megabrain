@@ -6,7 +6,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { appendMessage, createDelivery, createDispatch, getDeliveryChannel, getDispatch, listDeliveries, listOutbox, recordChannelResult, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { agyLanguageServerFile } from "../../src/agents/agy-ls.js";
+import { agyLanguageServerFile, sendAgyMessage } from "../../src/agents/agy-ls.js";
 import { deliverWithOwner } from "./owner-delivery.js";
 import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 import { executeQueueWrite } from "../../src/cli/commands/queue-write.js";
@@ -108,6 +108,21 @@ describe("endpoint capture", () => {
     createDispatch(db.value, { dispatchId: "d-codex", agent: "codex", state: "running", processState: "running", runtime: "host", childHost: "local", terminalId: "codex-child" });
     await executeQueueWrite("received", [], { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "d-codex", MEGABRAIN_SESSION_ID: "codex-child", ANTIGRAVITY_LS_ADDRESS: "localhost:1", ANTIGRAVITY_CSRF_TOKEN: TOKEN, ANTIGRAVITY_CONVERSATION_ID: CONVERSATION }, processAdapter);
     expect(existsSync(agyLanguageServerFile(root, "d-codex"))).toBe(false);
+  });
+});
+
+describe("language server trajectory cache", () => {
+  test("reuses the recorded cascade config across consecutive sends", async () => {
+    const server = await startLanguageServer();
+    const endpoint = { address: server.address, csrfToken: TOKEN, conversationId: CONVERSATION, version: "1.3.4" };
+
+    const first = await sendAgyMessage(endpoint, "first message");
+    const second = await sendAgyMessage(endpoint, "second message");
+
+    expect(first.kind).toBe("queued");
+    expect(second.kind).toBe("queued");
+    expect(server.calls.filter((method) => method === "GetCascadeTrajectory")).toHaveLength(1);
+    expect(server.sent.map((item) => item.cascadeConfig)).toEqual([USER_CONFIG, USER_CONFIG]);
   });
 });
 
