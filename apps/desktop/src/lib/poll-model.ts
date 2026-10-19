@@ -25,6 +25,8 @@ export const screenPolicy: PollPolicy = { visibleMs: 2_000, hiddenMs: null, refr
 export const boardItemsPolicy: PollPolicy = { visibleMs: 60_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
 // The Tasks page's list of a repository's GitHub Projects: rarely changes, so every five minutes and on focus.
 export const boardListPolicy: PollPolicy = { visibleMs: 300_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
+// The GitHub listing's shown page: once a minute while the window shows, at once when it shows again.
+export const githubListingPolicy: PollPolicy = { visibleMs: 60_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
 // The CLI caches each GitHub answer for 60 s; the badges can wait twice that.
 export const githubCountsPolicy: PollPolicy = { visibleMs: 120_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
 // Workflow runs: every 10 s while one shown is queued or running, else once a minute; paused while hidden.

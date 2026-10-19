@@ -16,6 +16,8 @@ import { ActionsPage } from '@/github/ActionsPage'
 import { Empty, IconButton, KindSwitch, Meta, OwnerPicture, Pager, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass, splitDetail, splitList, useSettled } from '@/github/page-parts'
 import type { GithubKind, GithubPageKind } from '@/github/useGithubCounts'
 import { readFence } from '@/lib/latest-load'
+import { githubListingPolicy } from '@/lib/poll-model'
+import { usePoll } from '@/lib/usePoll'
 import { reuse } from '@/lib/reuse'
 import { pageDivider, pageMx, pageX } from '@/lib/page'
 
@@ -24,8 +26,6 @@ import { pageDivider, pageMx, pageX } from '@/lib/page'
 // state's total, the tab a page at a time under a pager, search and filters GitHub applies to the
 // whole repository, and a detail pane on the right with the body, comments and, for a
 // pull request, its checks, review and line counts.
-
-const refreshMs = 60_000
 
 type Listing = { kind: 'prs'; page: GithubPullRequestList } | { kind: 'issues'; page: GithubIssueList }
 type ListRequest = { kind: 'prs'; state: PullRequestState; filters: PullRequestFilters } | { kind: 'issues'; state: IssueState; filters: IssueFilters }
@@ -38,7 +38,7 @@ async function readPage(root: string, request: ListRequest, after: string | null
 /**
  * One tab's listing a page at a time (github/pager): the page shown, the cursors that reach the pages
  * before and after it, and every state's total. Another repository, tab or filter starts again from the
- * first page; the shown page is read again every minute. The Tasks page lists issues with it too.
+ * first page; the shown page is read again every minute while the window shows (usePoll). The Tasks page lists issues with it too.
  */
 export function usePagedListing(root: string, request: ListRequest) {
   const key = JSON.stringify([root, request])
@@ -72,18 +72,15 @@ export function usePagedListing(root: string, request: ListRequest) {
     }
   }, [root, key, index, cursor])
 
-  useEffect(() => {
-    setError(null)
-    void read()
-    const timer = setInterval(() => void read(), refreshMs)
-    return () => clearInterval(timer)
-  }, [read])
+  useEffect(() => setError(null), [read])
+  // One read at a time, paused while the window is hidden; Refresh reads again at once.
+  const reload = usePoll(githubListingPolicy, read, [read])
 
   const go = useCallback((next: number) => setAt((now) => (now.key === key && next >= 0 && next < now.cursors.length ? { ...now, index: next } : now)), [key])
   // Another tab or filter shows nothing until its first page answers; another page of the same list keeps
   // the rows it had, under the pager's spinner, until the new page replaces them.
   const listing = shown?.key === key ? shown.listing : null
-  return { listing, error, loading, reload: read, index, cursors: place.cursors, go }
+  return { listing, error, loading, reload, index, cursors: place.cursors, go }
 }
 
 /** How long a typed search waits before GitHub is asked. */
