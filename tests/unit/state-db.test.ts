@@ -50,6 +50,7 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 describe("state database facade", () => {
   test("provides bounded outbox pages with a stable cursor", () => {
     const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "page-dispatch", state: "running" }));
     for (const [id, createdAt] of [["page-a", "2026-01-01"], ["page-b", "2026-01-02"]]) {
       db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", [id, "page-dispatch", "parent-pointer", "parent", "{}", createdAt, createdAt]);
     }
