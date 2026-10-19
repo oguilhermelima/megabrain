@@ -90,16 +90,17 @@ export async function executeChat(args: readonly string[], environment: Environm
       const parsed = takeValue(rest, "--agent"); const agent = parsed.value;
       const modelArg = takeValue(parsed.rest, "--model");
       const effortArg = takeValue(modelArg.rest, "--effort");
-      const cwdArg = takeValue(effortArg.rest, "--cwd");
+      const modeArg = takeValue(effortArg.rest, "--mode");
+      const cwdArg = takeValue(modeArg.rest, "--cwd");
       const partsArg = takeValue(cwdArg.rest, "--parts");
       const approvals = partsArg.rest.includes("--approvals");
       partsArg.rest = partsArg.rest.filter((arg) => arg !== "--approvals");
-      if (agent === undefined || !["claude", "codex", "grok", "agy"].includes(agent) || cwdArg.value === undefined || effortArg.value === "" || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex|grok|agy> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
+      if (agent === undefined || !["claude", "codex", "grok", "agy"].includes(agent) || cwdArg.value === undefined || effortArg.value === "" || (modeArg.value !== undefined && modeArg.value !== "chat" && modeArg.value !== "terminal") || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex|grok|agy> --cwd <path> [--mode <chat|terminal>] [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
       const parts = partsJson(partsArg.value);
       // Without --model the chat takes the agent's default from Settings > Models, when one is set.
       const registry = await loadAndPersistModelRegistry(environment);
       const start = startModel(await readModelSettings(dir), registry.kind === "loaded" ? registry.registry.models : [], agent, modelArg.value, effortArg.value);
-      value = await callChatd(dir, { operation: "start", agent, model: start.model, effort: start.effort, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
+      value = await callChatd(dir, { operation: "start", agent, model: start.model, effort: start.effort, cwd: cwdArg.value, ...(modeArg.value === undefined ? {} : { mode: modeArg.value }), approvals, parts }, environment, processAdapter);
       return ok(argsJson(value));
     }
     if (verb === "send") {

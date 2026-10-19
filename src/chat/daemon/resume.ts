@@ -23,6 +23,9 @@ import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFi
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import type { ChatDaemon } from "../daemon.js";
 import { handleLocalInfoCommand } from "./local-command.js";
+import { readAgyLanguageServer, sendAgyMessage } from "../../agents/agy-ls.js";
+import { getAgent } from "../../agents/index.js";
+import { composerHoldsText } from "../../core/composer-proof.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
 
@@ -48,6 +51,46 @@ export async function send(daemon: ChatDaemon, id: string, inputParts: Part[], f
     if (daemon.draining) { daemon.resumeOnStart.add(id); return { queued: await daemon.enqueue(chat, parts) }; }
     const holders = await daemon.foreignHolders(chat);
     const terminalOwns = holders.some((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
+    if (chat.agent === "agy" && terminalOwns && chat.owner === "terminal") {
+      if (parts.some((part) => part.type !== "text")) throw new Error("agy chat messages currently support text only");
+      const found = await daemon.sessionOfTerminal(chat);
+      if (found !== null && chat.agentSessionId !== found) { chat.agentSessionId = found; await daemon.save(chat); }
+      const endpoint = await readAgyLanguageServer(daemon.stateDir, chat.id);
+      const message = firstText(parts);
+      if (endpoint !== undefined) {
+        const sent = await sendAgyMessage(endpoint, message);
+        if (sent.kind === "queued") { await daemon.syncTerminalPolling(); return { queued: null }; }
+        if (sent.kind === "broken") {
+          await daemon.enqueue(chat, parts);
+          const notice = `Message was not sent; it remains in the chat queue. ${sent.reason.replaceAll(endpoint.csrfToken, "[redacted]" )}`;
+          await daemon.publish(chat, event("system", notice));
+          throw new Error(notice);
+        }
+      }
+      const alias = daemon.entryOf(chat.id)?.[1].aliases.tmux;
+      const session = alias?.startsWith(`${OWNED_TMUX_SERVER}:`) === true ? alias.slice(OWNED_TMUX_SERVER.length + 1) : "";
+      if (session.startsWith(APP_SESSION_PREFIX)) {
+        const tmux = ownedTmuxProcess(daemon.processes());
+        const pane = await tmux.run("tmux", ["display-message", "-p", "-t", `=${session}:0.0`, "#{pane_id}"]);
+        const screen = pane.kind === "ok" ? await tmux.run("tmux", ["capture-pane", "-p", "-t", pane.value.stdout.trim()]) : undefined;
+        const liveness = screen?.kind === "ok" ? getAgent("agy")?.classifyLiveness(screen.value.stdout) : undefined;
+        if (pane.kind === "ok" && screen?.kind === "ok" && liveness?.kind === "ok" && liveness.value.status === "idle") {
+          const typed = await tmux.run("tmux", ["send-keys", "-t", pane.value.stdout.trim(), "-l", message]);
+          const afterTyping = typed.kind === "ok" ? await tmux.run("tmux", ["capture-pane", "-p", "-t", pane.value.stdout.trim()]) : undefined;
+          const verified = afterTyping?.kind === "ok" && composerHoldsText("agy", afterTyping.value.stdout, message);
+          const submitted = verified ? await tmux.run("tmux", ["send-keys", "-t", pane.value.stdout.trim(), "Enter"]) : typed;
+          const afterSubmit = submitted.kind === "ok" ? await tmux.run("tmux", ["capture-pane", "-p", "-t", pane.value.stdout.trim()]) : undefined;
+          const afterState = afterSubmit?.kind === "ok" ? getAgent("agy")?.classifyLiveness(afterSubmit.value.stdout) : undefined;
+          const submittedVisible = afterSubmit?.kind === "ok" && (afterState?.kind === "ok" && afterState.value.status === "working" || !composerHoldsText("agy", afterSubmit.value.stdout, message));
+          if (submitted.kind === "ok" && submittedVisible) { await daemon.syncTerminalPolling(); return { queued: null }; }
+        }
+      }
+      await daemon.enqueue(chat, parts);
+      const reason = endpoint === undefined ? "agy's local language server is not available and the owned terminal has no verified idle composer" : "agy's local language server is unavailable and the owned terminal has no verified idle composer";
+      const notice = `Message was not sent; it remains in the chat queue. ${reason}.`;
+      await daemon.publish(chat, event("system", notice));
+      throw new Error(notice);
+    }
     if (terminalOwns && await daemon.logTurnOpen(chat)) {
       const turns = await readSessionTurns(chat, daemon.environment.HOME ?? process.env.HOME ?? "", daemon.environment.GROK_HOME);
       let lastUser = -1;
