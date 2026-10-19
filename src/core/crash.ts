@@ -89,6 +89,22 @@ export function parseCrashReport(contents: string, target: string): CrashParse {
 
 export type CrashInput = { readonly path: string; readonly contents: string; readonly modifiedAt: number };
 export type SelectedCrash = CrashInput & { readonly value: CrashReport };
+export type CrashFile = Readonly<{ path: string; modifiedAt: number }>;
+
+export function selectCrashReportFiles(files: readonly CrashFile[], target: string, last: number, read: (path: string) => string): Readonly<{ reports: readonly SelectedCrash[]; errors: readonly string[] }> {
+  const reports: SelectedCrash[] = [];
+  const errors: string[] = [];
+  for (const file of files.slice().sort((left, right) => right.modifiedAt - left.modifiedAt)) {
+    if (reports.length >= last) break;
+    let contents: string;
+    try { contents = read(file.path); }
+    catch (cause) { errors.push(`${file.path}: ${cause instanceof Error ? cause.message : "could not read file"}`); continue; }
+    const parsed = parseCrashReport(contents, target);
+    if (parsed.kind === "invalid") errors.push(`${file.path}: ${parsed.reason}`);
+    else if (parsed.kind === "report") reports.push({ ...file, contents, value: parsed.value });
+  }
+  return { reports, errors };
+}
 
 export function selectCrashReports(inputs: readonly CrashInput[], target: string, last: number): readonly SelectedCrash[] {
   return inputs

@@ -74,13 +74,13 @@ async function refreshedModels(agent: string, environment: Environment, processA
     return ok(refreshCodexModels(cache, template, new Date().toISOString()));
   }
   if (agent === "grok") {
-    const listed = await processAdapter.run("grok", ["models"]);
+    const listed = await processAdapter.run("grok", ["models"], { timeoutMs: 30_000 });
     if (listed.kind !== "ok") return failed("could not refresh grok models: grok models failed");
     const cache = await readFile(join(home, ".grok", "models_cache.json"), "utf8").catch(() => undefined);
     return ok(refreshGrokModels(listed.value.stdout, cache, known, new Date().toISOString(), template));
   }
   if (agent === "agy") {
-    const listed = await processAdapter.run("agy", ["models"]);
+    const listed = await processAdapter.run("agy", ["models"], { timeoutMs: 30_000 });
     if (listed.kind !== "ok") return failed("could not refresh agy models: agy models failed");
     return ok(refreshAgyModels(listed.value.stdout, new Date().toISOString(), template));
   }

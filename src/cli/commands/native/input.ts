@@ -6,7 +6,7 @@ import { selfInvocation } from "../../../core/self-invocation.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { usageText } from "../../../core/usage.js";
 import { SIMULATOR_UDID, simCandidates } from "./index.js";
-import { appium, appiumHttpFailure, appiumResponse, createAppiumSession, appiumInputSessionCapabilities } from "./session.js";
+import { appium, appiumHttpFailure, appiumResponse, createAppiumSession, appiumInputSessionCapabilities, APPIUM_REQUEST_TIMEOUT_MS } from "./session.js";
 import type { Environment } from "./index.js";
 
 
@@ -79,7 +79,7 @@ function save(env: Environment, entries: RecordEntry[]): void {
 async function request(process: ProcessAdapter, env: Environment, session: string, method: string, path: string, body?: unknown): Promise<Result<string>> {
   const args = ["-sS", "-w", "\n%{http_code}", "-X", method, `http://127.0.0.1:${env.MEGABRAIN_APPIUM_PORT ?? "4723"}/session/${session}${path}`, "-H", "Content-Type: application/json"];
   if (body !== undefined) args.push("-d", JSON.stringify(body));
-  const response = await process.run("curl", args);
+  const response = await process.run("curl", args, { timeoutMs: APPIUM_REQUEST_TIMEOUT_MS });
   if (response.kind !== "ok") return failed(response.error);
   const parsed = appiumResponse(response.value.stdout);
   if (parsed === undefined) return failed("Appium response did not include an HTTP status");

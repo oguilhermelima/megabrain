@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeNative } from "../../src/cli/commands/native.js";
 import { listNativeSessions } from "../../src/db/queries/native-sessions.js";
+import { nativeSessionArbitrationDelayMs } from "../../src/core/native-session.js";
 import { ok, failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
@@ -21,16 +22,16 @@ async function seed(directory: string, sessions: readonly { readonly udid: strin
   await writeFile(join(directory, "native-sessions.json"), `${JSON.stringify({ version: 1, sessions })}\n`);
 }
 
-function processStub(options: { readonly dead?: ReadonlySet<string>; readonly postDelay?: number; readonly kind?: "phone" | "tv"; readonly deleteFailure?: boolean } = {}): ProcessAdapter & { readonly calls: readonly { readonly command: string; readonly args: readonly string[] }[] } {
-  const calls: Array<{ readonly command: string; readonly args: readonly string[] }> = [];
+function processStub(options: { readonly dead?: ReadonlySet<string>; readonly postDelay?: number; readonly kind?: "phone" | "tv"; readonly deleteFailure?: boolean } = {}): ProcessAdapter & { readonly calls: readonly { readonly command: string; readonly args: readonly string[]; readonly options?: Parameters<ProcessAdapter["run"]>[2] }[] } {
+  const calls: Array<{ readonly command: string; readonly args: readonly string[]; readonly options?: Parameters<ProcessAdapter["run"]>[2] }> = [];
   let created = 0;
   const dead = options.dead ?? new Set<string>();
   const kind = options.kind ?? "phone";
   const device = kind === "tv" ? "tv-one" : "one";
   return {
     calls,
-    async run(command, args) {
-      calls.push({ command, args: [...args] });
+    async run(command, args, runOptions) {
+      calls.push({ command, args: [...args], ...(runOptions === undefined ? {} : { options: runOptions }) });
       if (command === "xcrun" && args[0] === "simctl" && args[1] === "list") return ok({ stdout: JSON.stringify({ devices: { [kind === "tv" ? "tvOS-1" : "iOS-1"]: [{ udid: device, state: "Booted", name: kind === "tv" ? "Apple TV" : "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
       if (command === "xcrun" && args[1] === "spawn") return ok({ stdout: kind === "tv" ? "com.example.tv" : "com.example.app", stderr: "", exitCode: 0 });
       if (command === "curl" && args.includes("http://127.0.0.1:4723/session")) {
@@ -97,6 +98,10 @@ afterEach(async () => {
 });
 
 describe("native Appium session store", () => {
+  test("backs off when concurrent sessions keep winning arbitration", () => {
+    expect([0, 1, 2, 3, 4, 20].map(nativeSessionArbitrationDelayMs)).toEqual([10, 20, 40, 80, 100, 100]);
+  });
+
   test("prepares legacy state before the first session read", async () => {
     const directory = await fixture();
     await seed(directory, [{ udid: "one", bundleId: "com.example.app", sessionId: "live-session" }]);
@@ -120,6 +125,23 @@ describe("native Appium session store", () => {
     const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
     expect(posts).toHaveLength(0);
     expect(processAdapter.calls.some((call) => call.args[1] === "http://127.0.0.1:4723/session/live-session")).toBe(true);
+  });
+
+  test("bounds Appium liveness and source requests explicitly", async () => {
+    const directory = await fixture();
+    await seed(directory, [{ udid: "one", bundleId: "com.example.app", sessionId: "live-session" }]);
+    const processAdapter = processStub();
+    await health(directory, processAdapter);
+    const requests = processAdapter.calls.filter((call) => call.command === "curl" && call.args.some((arg) => arg.endsWith("/session/live-session") || arg.endsWith("/source")));
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.every((call) => (call.options?.timeoutMs ?? Infinity) <= 10_000)).toBe(true);
+
+    const newSessionDirectory = await fixture();
+    const creatingProcess = processStub();
+    await health(newSessionDirectory, creatingProcess);
+    const create = creatingProcess.calls.find((call) => call.command === "curl" && call.args.some((arg) => arg === "http://127.0.0.1:4723/session"));
+    expect(create?.args).toContain("660");
+    expect(Number.isFinite(create?.options?.timeoutMs)).toBe(true);
   });
 
   test("drops a dead entry, creates a session, and persists only the new id", async () => {

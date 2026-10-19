@@ -43,14 +43,14 @@ export async function nativeRuntimeList(args: readonly string[], processAdapter:
     else return error(`unknown native runtime list option: ${arg}`, 2);
   }
   if (installed === available) return error("native runtime list requires exactly one of --installed or --available", 2);
+  if (available) return error("listing downloadable runtimes is not supported; use native runtime install <ios|tvos> <version>", 2);
   const json = args.includes("--json");
   if (installed) {
     const result = await installedRuntimes(processAdapter); if (result.kind !== "ok") return result;
     const runtimes = platform ? result.value.filter((runtime) => runtime.platform === platform) : result.value;
     return ok(json ? `${JSON.stringify({ platform: platform ?? "all", runtimes, available: [] })}\n` : runtimes.map((runtime) => `${runtime.platform}\t${runtime.version}\t${runtime.build}\t${runtime.identifier}`).join("\n") + "\n");
   }
-  const availableVersions: { platform: NativePlatform; version: string }[] = [];
-  return ok(json ? `${JSON.stringify({ platform: platform ?? "all", runtimes: [], available: availableVersions })}\n` : availableVersions.length === 0 ? "no known runtime versions are available for download\n" : availableVersions.map((entry) => `${entry.platform}\t${entry.version}`).join("\n") + "\n");
+  return error("listing downloadable runtimes is not supported; use native runtime install <ios|tvos> <version>", 2);
 }
 
 export async function nativeRuntimeInstall(args: readonly string[], processAdapter: ProcessAdapter): Promise<Result<string>> {
@@ -58,7 +58,7 @@ export async function nativeRuntimeInstall(args: readonly string[], processAdapt
   let platform: NativePlatform | undefined, version = "", json = false;
   for (const arg of args) { if (arg === "--json") json = true; else if (!platform) { const parsed = runtimePlatform(arg); if (parsed.kind !== "ok") return parsed; platform = parsed.value; } else if (!version) version = arg; else return error(`unknown native runtime install option: ${arg}`, 2); }
   if (!platform || !version) return error("native runtime install requires <platform> <version>", 2);
-  const download = await processAdapter.run("xcodebuild", ["-downloadPlatform", platform, "-buildVersion", version]);
+  const download = await processAdapter.run("xcodebuild", ["-downloadPlatform", platform, "-buildVersion", version], { timeoutMs: 60 * 60_000 });
   if (download.kind !== "ok") return error(`failed to download ${platform} ${version}: ${download.error}`);
   const installed = await installedRuntimes(processAdapter); if (installed.kind !== "ok") return installed;
   const match = installed.value.find((runtime) => runtime.platform === platform && runtime.version === version);

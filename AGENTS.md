@@ -180,7 +180,7 @@
 - Run megabrain native sim screenshot <udid> [--json]. — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
 - Run megabrain native sim shutdown <udid> [--json]. — recommended when you need to shut down one simulator headlessly.
 - Run megabrain native sim restart <udid> [--timeout <seconds>] [--json]. — recommended when you need to restart one simulator headlessly and wait until it boots.
-- Run megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json]. — recommended when you need to check which Apple simulator runtimes are installed or available.
+- Run megabrain native runtime list [<ios|tvos>] --installed [--json]. — recommended when you need to check which Apple simulator runtimes are installed.
 - Run megabrain native runtime install <ios|tvos> <version> [--json]. — recommended when you need to install an Apple simulator runtime needed by a device.
 - Run megabrain native health <phone|tv> [--bundle-id <id>] [--device <name-or-udid>] [--metro-port <p>] [--control-frame <path>] [--json]. — recommended when you need to verify that the native app is rendering on its simulator.
 - Run megabrain native navigate <phone|tv> <path> [--metro-port <p>] [--timeout <s>] [--json]. — recommended when you need to open a specific route in the running native app.

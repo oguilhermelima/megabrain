@@ -20,6 +20,12 @@ import { nativeHealth } from "./health.js";
 import { nativeCrashes } from "./crashes.js";
 import { runtimePlatform, installedRuntimes, nativeRuntimeList, nativeRuntimeInstall } from "./runtime.js";
 
+const SIMULATOR_BOOT_TIMEOUT_MS = 5 * 60_000;
+const EXPO_PREBUILD_TIMEOUT_MS = 20 * 60_000;
+const POD_INSTALL_TIMEOUT_MS = 10 * 60_000;
+const XCODE_BUILD_TIMEOUT_MS = 30 * 60_000;
+const SIMULATOR_INSTALL_TIMEOUT_MS = 5 * 60_000;
+
 import { Environment, Config, ExpoApp, NativeCaptureScreen, error, refusalCode, normalizeJsonResult, nativeWorktreeRoot, nativeConfigFile, config, setting, simCandidates, parseKind, optionValue, crashReportsDirectory, nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure, nativeReload, runtimeValue, formatEvaluation, cdpArguments, nativeEval, routerModuleExpression, logBoxExpression, devLoadingViewExpression, routeInfoExpression, navigationQueueExpression, navigationExpression, RouteSnapshot, NativeNavigationResult, routeSnapshot, routeChanged, nativeNavigationResult, pendingNavigationCount, nativeNavigate, nativeCaptureScreens, uniqueCaptureScreens, captureOptionNames, validateCaptureOptions, terminateNativeCaptureApp, resetNativeCaptureApp, captureNativeFrame, NativeSettledFrame, settleNativeFrame, NativeLogBoxStatus, NativeDevLoadingViewStatus, NativeResetOverlayStatus, silenceNativeLogBox, preventNativeDevLoadingView, silenceNativeOverlays, nativeOverlaySummary, nativeDevLoadingViewSummary, captureNavigationArgs, nativeCapture, appium, executeNative } from "./index.js";
 
 export function nativeBuildUsage(): string { return usageText("native-build"); }
@@ -105,28 +111,28 @@ export async function nativeBuild(args: readonly string[], environment: Environm
       return error(`cannot choose a ${platform} simulator automatically; pass --device <name-or-udid> or set surfaces.${kind.value}.device in .megabrain/native.json. Candidates: ${names}`);
     }
   }
-  const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid]);
+  const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid], { timeoutMs: SIMULATOR_BOOT_TIMEOUT_MS });
   if (boot.kind !== "ok" && !/already booted/i.test(boot.error)) return error(`failed to boot simulator ${selected.value.udid}: ${boot.error}`);
   const ownerNotice = await recordSimulatorOwner(selected.value.udid, undefined, environment, processAdapter, systemClock);
   if (ownerNotice) console.error(ownerNotice);
   const outcomes = {} as Record<NativeBuildStep, { ok: boolean; error?: string }>;
-  const prebuild = await processAdapter.run("pnpm", ["exec", "expo", "prebuild"], { cwd: appPath, env: { ...(kind.value === "tv" ? { EXPO_TV: "1" } : {}), REACT_NATIVE_NODE_MODULES_DIR: resolve(appPath, "node_modules") } });
+  const prebuild = await processAdapter.run("pnpm", ["exec", "expo", "prebuild"], { cwd: appPath, timeoutMs: EXPO_PREBUILD_TIMEOUT_MS, env: { ...(kind.value === "tv" ? { EXPO_TV: "1" } : {}), REACT_NATIVE_NODE_MODULES_DIR: resolve(appPath, "node_modules") } });
   outcomes.prebuild = prebuild.kind === "ok" ? { ok: true } : { ok: false, error: prebuild.error };
   if (!outcomes.prebuild.ok) return error(`native build failed at prebuild: ${outcomes.prebuild.error}`);
   const generated = generatedWorkspace(appPath); if (generated.kind !== "ok") return generated;
-  const pods = await processAdapter.run("pod", ["install"], { cwd: generated.value.iosPath });
+  const pods = await processAdapter.run("pod", ["install"], { cwd: generated.value.iosPath, timeoutMs: POD_INSTALL_TIMEOUT_MS });
   outcomes.pods = pods.kind === "ok" ? { ok: true } : { ok: false, error: pods.error };
   if (!outcomes.pods.ok) return error(`native build failed at pods: ${outcomes.pods.error}`);
   const derivedDataPath = resolve(generated.value.iosPath, "build");
-  const xcode = await processAdapter.run("xcodebuild", buildXcodebuildArgs(platform, generated.value.path, app.value.scheme, selectedRuntime.version, selected.value.udid, derivedDataPath), { cwd: appPath });
+  const xcode = await processAdapter.run("xcodebuild", buildXcodebuildArgs(platform, generated.value.path, app.value.scheme, selectedRuntime.version, selected.value.udid, derivedDataPath), { cwd: appPath, timeoutMs: XCODE_BUILD_TIMEOUT_MS });
   outcomes.build = xcode.kind === "ok" ? { ok: true } : { ok: false, error: xcode.error };
   if (!outcomes.build.ok) return error(`native build failed at build: ${outcomes.build.error}`);
   const sdk = platform === "tvOS" ? "appletvsimulator" : "iphonesimulator";
   const appBundle = resolve(derivedDataPath, `Build/Products/Debug-${sdk}/${app.value.scheme}.app`);
-  const install = await processAdapter.run("xcrun", ["simctl", "install", selected.value.udid, appBundle]);
+  const install = await processAdapter.run("xcrun", ["simctl", "install", selected.value.udid, appBundle], { timeoutMs: SIMULATOR_INSTALL_TIMEOUT_MS });
   outcomes.install = install.kind === "ok" ? { ok: true } : { ok: false, error: install.error };
   if (!outcomes.install.ok) return error(`native build failed at install: ${outcomes.install.error}`);
-  const launch = await processAdapter.run("xcrun", ["simctl", "launch", selected.value.udid, app.value.bundleId]);
+  const launch = await processAdapter.run("xcrun", ["simctl", "launch", selected.value.udid, app.value.bundleId], { timeoutMs: SIMULATOR_INSTALL_TIMEOUT_MS });
   outcomes.launch = launch.kind === "ok" ? { ok: true } : { ok: false, error: launch.error };
   if (!outcomes.launch.ok) return error(`native build failed at launch: ${outcomes.launch.error}`);
   return ok(JSON.stringify({ ok: true, kind: kind.value, runtime: selectedRuntime.version, device: selected.value.udid, bundleId: app.value.bundleId, installed: true, launched: true }) + "\n");

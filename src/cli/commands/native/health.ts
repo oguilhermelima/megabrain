@@ -15,7 +15,7 @@ import { resolveStateDirectory } from "../../../core/state.js";
 import { executeIdle, recordBooted } from "../native-idle.js";
 import { usageText } from "../../../core/usage.js";
 import { recordSimulatorOwner } from "../../../core/native-sim-owner.js";
-import { unknownProcess, unknownMetro, unknownTree, unknownFrame, APPIUM_SESSION_DEFAULTS, appiumSessionCapabilities, AppiumSession, AppiumSessionAttempt, AppiumResponse, appiumResponse, appiumMessage, appiumHttpFailure, createAppiumSession, appiumSession } from "./session.js";
+import { unknownProcess, unknownMetro, unknownTree, unknownFrame, APPIUM_SESSION_DEFAULTS, APPIUM_REQUEST_TIMEOUT_MS, appiumSessionCapabilities, AppiumSession, AppiumSessionAttempt, AppiumResponse, appiumResponse, appiumMessage, appiumHttpFailure, createAppiumSession, appiumSession } from "./session.js";
 
 import { Environment, Config, ExpoApp, NativeCaptureScreen, error, refusalCode, normalizeJsonResult, nativeWorktreeRoot, nativeConfigFile, config, setting, simCandidates, parseKind, optionValue, crashReportsDirectory, runtimePlatform, installedRuntimes, nativeBuildUsage, buildConfigError, readExpoApp, generatedWorkspace, nativeBuild, nativeRuntimeList, nativeRuntimeInstall, nativeCrashes, nativeList, SIMULATOR_UDID, nativeScreenshot, nativeEnsure, nativeReload, runtimeValue, formatEvaluation, cdpArguments, nativeEval, routerModuleExpression, logBoxExpression, devLoadingViewExpression, routeInfoExpression, navigationQueueExpression, navigationExpression, RouteSnapshot, NativeNavigationResult, routeSnapshot, routeChanged, nativeNavigationResult, pendingNavigationCount, nativeNavigate, nativeCaptureScreens, uniqueCaptureScreens, captureOptionNames, validateCaptureOptions, terminateNativeCaptureApp, resetNativeCaptureApp, captureNativeFrame, NativeSettledFrame, settleNativeFrame, NativeLogBoxStatus, NativeDevLoadingViewStatus, NativeResetOverlayStatus, silenceNativeLogBox, preventNativeDevLoadingView, silenceNativeOverlays, nativeOverlaySummary, nativeDevLoadingViewSummary, captureNavigationArgs, nativeCapture, appium, executeNative } from "./index.js";
 
@@ -61,7 +61,7 @@ export async function nativeHealth(args: readonly string[], environment: Environ
   else if (session.value.reason !== undefined) tree = unknownTree(session.value.reason);
   else if (session.value.session !== undefined) {
     const activeSession = session.value.session;
-    const source = await processAdapter.run("curl", ["-sS", "-w", "\n%{http_code}", `http://127.0.0.1:4723/session/${activeSession.sessionId}/source`]);
+    const source = await processAdapter.run("curl", ["-sS", "-w", "\n%{http_code}", `http://127.0.0.1:4723/session/${activeSession.sessionId}/source`], { timeoutMs: APPIUM_REQUEST_TIMEOUT_MS });
     if (source.kind !== "ok") tree = unknownTree(`Appium source request failed: ${source.error}`);
     else {
       const response = appiumResponse(source.value.stdout);
@@ -72,7 +72,7 @@ export async function nativeHealth(args: readonly string[], environment: Environ
         tree = { count: elements.length, loadingOnly: elements.length === 1 && /<XCUIElementTypeActivityIndicator\b/.test(response.body) };
       }
     }
-    if (!activeSession.stored) await processAdapter.run("curl", ["-fsS", "-X", "DELETE", `http://127.0.0.1:4723/session/${activeSession.sessionId}`]);
+    if (!activeSession.stored) await processAdapter.run("curl", ["-fsS", "-X", "DELETE", `http://127.0.0.1:4723/session/${activeSession.sessionId}`], { timeoutMs: APPIUM_REQUEST_TIMEOUT_MS });
   }
 
   let frame: NativeHealth["frame"] = unknownFrame(controlFrame ? `control frame could not be read: ${controlFrame}` : "no control frame configured");

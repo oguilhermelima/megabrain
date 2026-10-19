@@ -95,6 +95,14 @@ describe("native runtime commands", () => {
     const result = await executeNative(["runtime", "list", "--available", "--json", "--bad"], {}, process);
     expect(result).toEqual({ kind: "ok", value: JSON.stringify({ refusal: { code: "invalid-arguments", message: "unknown native runtime list option: --bad" } }) + "\n", exitCode: 2 });
   });
+
+  test("does not report an empty downloadable runtime list as success", async () => {
+    const result = await executeNative(["runtime", "list", "--available", "--json"], {}, process);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.value)).toMatchObject({ refusal: { code: "invalid-arguments", message: expect.stringContaining("not supported") } });
+  });
 });
 
 describe("native simulator lifecycle commands", () => {
@@ -117,6 +125,11 @@ describe("native simulator lifecycle commands", () => {
         }
         if (command === "xcrun" && args[0] === "simctl" && args[1] === "boot") {
           if (!options.neverBoots) booted = true;
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        }
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "bootstatus") {
+          if (options.neverBoots) return failed("simulator did not boot");
+          booted = true;
           return ok({ stdout: "", stderr: "", exitCode: 0 });
         }
         return failed(`${command} unavailable`);
@@ -155,6 +168,13 @@ describe("native simulator lifecycle commands", () => {
     expect(calls.some((call) => call[2] === "boot")).toBe(true);
   });
 
+  test("restart waits with bootstatus instead of repeatedly listing simulators", async () => {
+    const { process, calls } = simulatorProcess({ initiallyBooted: true });
+    await executeNative(["sim", "restart", phone, "--timeout", "2", "--json"], {}, process);
+    expect(calls.filter((call) => call[2] === "list" && call[3] === "devices")).toHaveLength(1);
+    expect(calls.filter((call) => call[2] === "bootstatus")).toHaveLength(1);
+  });
+
   test("lists booted devices across phone and tv runtimes", async () => {
     const { process } = simulatorProcess({ initiallyBooted: true });
     const result = await executeNative(["sim", "list", "--booted", "--json"], {}, process);
@@ -191,10 +211,10 @@ describe("native build planning", () => {
     await writeFile(join(worktree, ".megabrain", "native.json"), JSON.stringify({ version: 1, surfaces: { [options.kind ?? "phone"]: { appPath: `apps/${options.kind === "tv" ? "tv" : "phone"}`, ...(options.configuredDevice ? { device: options.configuredDevice } : {}) } } }));
     const runtimes = options.runtimes ?? [{ platform: options.kind === "tv" ? "tvOS" : "iOS", version: "27.0" }];
     const runtimeData = { runtimes: runtimes.map(({ platform, version }) => ({ name: `${platform} ${version}`, version, buildversion: "A1", identifier: `com.apple.CoreSimulator.SimRuntime.${platform}-${version.replaceAll(".", "-")}`, isAvailable: true })) };
-    const calls: Array<{ command: string; args: string[] }> = [];
+    const calls: Array<{ command: string; args: string[]; options?: Parameters<ProcessAdapter["run"]>[2] }> = [];
     const process: ProcessAdapter = {
-      async run(command, args) {
-        calls.push({ command, args: [...args] });
+      async run(command, args, runOptions) {
+        calls.push({ command, args: [...args], ...(runOptions === undefined ? {} : { options: runOptions }) });
         if (command === "git") return ok({ stdout: `${worktree}\n`, stderr: "", exitCode: 0 });
         if (command === "xcrun" && args.join(" ") === "simctl list runtimes --json") return ok({ stdout: JSON.stringify(runtimeData), stderr: "", exitCode: 0 });
         if (command === "xcrun" && args.join(" ") === "simctl list devices --json") return ok({ stdout: JSON.stringify({ devices: options.devices }), stderr: "", exitCode: 0 });
@@ -322,6 +342,14 @@ describe("native build planning", () => {
       "-workspace", "ios/canto.xcworkspace", "-scheme", "canto", "-sdk", "appletvsimulator",
       "-destination", "platform=tvOS Simulator,id=tv-1", "-derivedDataPath", "ios/build", "CODE_SIGNING_ALLOWED=NO", "build",
     ]);
+  });
+
+  test("gives xcodebuild a deadline longer than the generic process limit", async () => {
+    const { calls } = await runNativeBuildFixture({ devices: { "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+      { udid: "phone", state: "Booted", name: "iPhone", isAvailable: true },
+    ] } });
+    const xcode = calls.find((call) => call.command === "xcodebuild");
+    expect(xcode?.options?.timeoutMs).toBeGreaterThan(60_000);
   });
 
   test("stops at the first failed build step", () => {

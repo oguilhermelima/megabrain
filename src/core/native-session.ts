@@ -1,6 +1,10 @@
 export type NativeSessionKey = Readonly<{ udid: string; bundleId: string }>;
 export type NativeSession = NativeSessionKey & Readonly<{ sessionId: string }>;
 
+export function nativeSessionArbitrationDelayMs(attempt: number): number {
+  return Math.min(100, 10 * 2 ** Math.max(0, Math.min(4, attempt)));
+}
+
 export function nativeSessionIdentity(key: NativeSessionKey): string {
   return `${key.udid}\u0000${key.bundleId}`;
 }
