@@ -49,7 +49,7 @@ import { executeActions } from "./actions.js";
 import { executeProjects, PROJECT_VERBS } from "./projects.js";
 import { executeProjectMove } from "./project-move.js";
 import { executeProjectWrite } from "./project-writes.js";
-const PROJECT_WRITE_VERBS = ["project-field", "project-clear", "project-add", "project-draft", "project-archive", "project-unarchive"] as const;
+const PROJECT_WRITE_VERBS = ["project-field", "project-clear", "project-add", "project-draft", "project-draft-edit", "project-archive", "project-unarchive"] as const;
 import { executeProjectStatus, executeProjectStatusCreate } from "./project-status.js";
 import { executeProjectWorkflows } from "./project-workflows.js";
 export { executeProjects, PROJECTS_QUERY, PROJECT_QUERY } from "./projects.js";
@@ -83,6 +83,17 @@ import { executeGithubLabels } from "./labels.js";
 
 export async function executeGithub(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter(), now: Clock = Date.now): Promise<Result<string>> {
   const [verbArgument, ...rest] = args;
+  if (verbArgument === "viewer") {
+    if (rest.includes("-h") || rest.includes("--help")) return ok(usageText("github-viewer"));
+    if (rest.some((arg) => arg !== "--json")) return failed(usageMessage("github-viewer"), 2);
+    const result = await process.run("gh", ["api", "user"], { timeoutMs: 20_000 });
+    if (result.kind !== "ok") return result;
+    try {
+      const login = (JSON.parse(result.value.stdout) as { login?: unknown }).login;
+      if (typeof login !== "string" || login.length === 0) return failed("GitHub viewer response did not contain a login");
+      return ok(`${JSON.stringify({ login })}\n`);
+    } catch { return failed("GitHub viewer response was not valid JSON"); }
+  }
   if (verbArgument === "labels") return executeGithubLabels(rest, environment, process);
   if (verbArgument !== undefined && PROJECT_WRITE_VERBS.includes(verbArgument as (typeof PROJECT_WRITE_VERBS)[number])) return executeProjectWrite(verbArgument as (typeof PROJECT_WRITE_VERBS)[number], rest, environment, process);
   if (verbArgument !== undefined && PROJECT_VERBS.includes(verbArgument as (typeof PROJECT_VERBS)[number])) {

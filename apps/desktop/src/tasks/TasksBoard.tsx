@@ -379,6 +379,8 @@ export function TasksBoard({ root, repo, remembered, onPick, onOpenGithub }: { r
 
 function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub }: { root: string; repo: string; board: GithubProject; boards: GithubProject[]; onReloadBoards: () => void; onPick: (number: number) => void; onOpenGithub: (kind: 'pr' | 'issue', number: number) => void }) {
   const { items, answer, add, error, loading, reload } = useBoardItems(root, board)
+  const [viewerLogin, setViewerLogin] = useState<string | undefined>()
+  useEffect(() => { let active = true; void api.githubViewerLogin().then((login) => { if (active) setViewerLogin(login) }, () => {}); return () => { active = false } }, [])
   const [pending, setPending] = useState<PendingEdit[]>([])
   const [toast, setToast] = useState<ToastMessage | null>(null)
   const closeToast = useCallback(() => setToast(null), [])
@@ -472,6 +474,16 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
     )
   }
   const setField = (item: GithubProjectItem, { field, type, value }: FieldWrite) => write(item, `set ${field.name} on`, () => (field.id === board.statusField?.id ? api.githubProjectMove(root, board.number, item.id, value, board.owner) : api.githubProjectSetField(root, board.number, item.id, field.name, type, value, board.owner)))
+  const editDraft = (item: GithubProjectItem, title: string, body: string) => {
+    const optimistic = { ...item, title, body }
+    answer(optimistic)
+    setWriting(true)
+    void api.githubProjectEditDraft(root, board.number, item.id, title, body, board.owner).then((updated) => { answer(updated); setWriting(false) }, (cause: unknown) => {
+      answer(item)
+      setWriting(false)
+      setToast({ id: `draft-${Date.now()}`, text: `Couldn’t update “${item.title}”: ${cause instanceof Error ? cause.message : String(cause)}` })
+    })
+  }
   const clearField = (item: GithubProjectItem, name: string) => write(item, `clear ${name} on`, () => api.githubProjectClearField(root, board.number, item.id, name, board.owner))
   const archive = (item: GithubProjectItem) => {
     const archived = item.isArchived !== true
@@ -489,7 +501,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   }
 
   // The view's filter goes through the data layer's GitHub evaluator; the sheet's filters narrow what it matches.
-  const matched = useMemo(() => (items === null ? null : query.trim() === '' ? { items, warnings: [] } : api.githubProjectFilter(board, items, query)), [board, items, query])
+  const matched = useMemo(() => (items === null ? null : query.trim() === '' ? { items, warnings: [] } : api.githubProjectFilter(board, items, query, { ...(viewerLogin === undefined ? {} : { me: viewerLogin }) })), [board, items, query, viewerLogin])
   // An archived item leaves the board, as on GitHub.
   const shown = matched === null ? null : sortedItems(filterBoardItems(editedItems(matched.items.filter((item) => item.isArchived !== true), pending), { ...filters, query: '' }), board, view)
   const columns = shown === null || field === null ? [] : viewColumns(field, shown)
@@ -623,7 +635,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
         )}
         <ContextMenu menu={menu} onClose={closeMenu} />
       </div>
-      {panelItem !== undefined && <ItemPanel key={panelItem.id} item={panelItem} project={board} busy={writing} onSet={(entry) => setField(panelItem, entry)} onClear={(entry) => clearField(panelItem, entry.name)} onArchive={() => archive(panelItem)} onOpenDetail={detailOf(panelItem)} onClose={() => setSelected(null)} />}
+      {panelItem !== undefined && <ItemPanel key={panelItem.id} item={panelItem} project={board} busy={writing} onSet={(entry) => setField(panelItem, entry)} onClear={(entry) => clearField(panelItem, entry.name)} onEditDraft={(title, body) => editDraft(panelItem, title, body)} onArchive={() => archive(panelItem)} onOpenDetail={detailOf(panelItem)} onClose={() => setSelected(null)} />}
       <FilterPanel sheet={sheet} fields={sheetFields} />
       <Toast toast={toast} onClose={closeToast} />
     </div>

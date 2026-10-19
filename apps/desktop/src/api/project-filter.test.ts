@@ -10,6 +10,10 @@ describe('GitHub Project filter API', () => {
     expect(unknown.items).toHaveLength(fixtureRoadmapItems.length)
     expect(unknown.warnings).toEqual(['unknown:value'])
   })
+  test('resolves assignee:@me against the supplied viewer login', () => {
+    const items = fixtureRoadmapItems.map((item, index) => ({ ...item, assignees: index === 0 ? [{ login: 'viewer', avatarUrl: '' }] : [] }))
+    expect(filterGithubProjectItems(fixtureRoadmap, items, 'assignee:@me', { me: 'viewer' }).items.map((item) => item.id)).toEqual([items[0]!.id])
+  })
 })
 
 describe('single-select fields other than Status', () => {

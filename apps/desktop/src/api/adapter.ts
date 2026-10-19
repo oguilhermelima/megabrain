@@ -210,6 +210,8 @@ export interface DesktopApi {
   githubProjects(root: string): Promise<GithubProjects>
   /** One page of a GitHub Project v2 board's items. */
   githubProject(root: string, number: number, owner?: string, after?: string | null): Promise<GithubProjectPage>
+  /** GitHub login for the signed-in viewer, cached by the adapter. */
+  githubViewerLogin(): Promise<string>
   /** Applies a stored GitHub view filter locally and reports unsupported qualifiers. */
   githubProjectFilter(project: import('@/api/schema').GithubProject, items: GithubProjectItem[], filter: string, options?: { today?: string; me?: string }): { items: GithubProjectItem[]; warnings: string[] }
   /** Move a project item to a status option; writes through GitHub Projects v2. */
@@ -222,6 +224,8 @@ export interface DesktopApi {
   githubProjectAddItem(root: string, number: number, reference: string, owner?: string): Promise<GithubProjectItem>
   /** Create a draft issue inside a GitHub Project. */
   githubProjectCreateDraft(root: string, number: number, title: string, body?: string, owner?: string): Promise<GithubProjectItem>
+  /** Edit a project's draft issue title and body. */
+  githubProjectEditDraft(root: string, number: number, itemId: string, title: string, body: string, owner?: string): Promise<GithubProjectItem>
   /** Archive or unarchive one project item. */
   githubProjectSetArchived(root: string, number: number, itemId: string, archived: boolean, owner?: string): Promise<GithubProjectArchive>
   /** Every status update on a GitHub Project v2 board. */

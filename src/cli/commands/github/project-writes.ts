@@ -4,7 +4,7 @@ import { usageMessage, usageText } from '../../../core/usage.js'
 import { graphqlCall, resolveRepository } from './client.js'
 import { normalizeProject, normalizeProjectItem, PROJECT_FIELDS, CONTENT_FIELDS, PROJECT_ITEM_FIELD_VALUES } from './projects.js'
 
-type Verb = 'project-field' | 'project-clear' | 'project-add' | 'project-draft' | 'project-archive' | 'project-unarchive'
+type Verb = 'project-field' | 'project-clear' | 'project-add' | 'project-draft' | 'project-draft-edit' | 'project-archive' | 'project-unarchive'
 type Env = Readonly<Record<string, string | undefined>>
 type Opts = { repo: string; number: number; owner?: string; item?: string; field?: string; type?: string; value?: string; title?: string; body?: string; json: boolean }
 const rec = (value: unknown): Record<string, any> => value && typeof value === 'object' ? value as Record<string, any> : {}
@@ -21,7 +21,7 @@ function parse(verb: Verb, args: readonly string[]): Result<Opts> {
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i]!
     if (flag === '--json') { json = true; continue }
-    if (!['--owner','--field','--type','--value','--title','--body'].includes(flag) || !rest[i + 1] || rest[i + 1]!.startsWith('--')) return failed(usageMessage(`github-${verb}`), 2)
+    if (!['--owner','--field','--type','--value','--title','--body'].includes(flag) || rest[i + 1] === undefined || rest[i + 1]!.startsWith('--')) return failed(usageMessage(`github-${verb}`), 2)
     if (flags[flag] !== undefined) return failed(`${flag} may only be supplied once`, 2)
     flags[flag] = rest[++i]!
   }
@@ -29,8 +29,9 @@ function parse(verb: Verb, args: readonly string[]): Result<Opts> {
   if (verb === 'project-field' && (!flags['--field'] || !flags['--type'] || flags['--value'] === undefined)) return failed(usageMessage(`github-${verb}`), 2)
   if (verb === 'project-clear' && !flags['--field']) return failed(usageMessage(`github-${verb}`), 2)
   if (verb === 'project-draft' && !flags['--title']) return failed(usageMessage(`github-${verb}`), 2)
+  if (verb === 'project-draft-edit' && (!item || item.startsWith('--') || flags['--title'] === undefined || flags['--title']!.trim() === '' || flags['--body'] === undefined)) return failed(usageMessage(`github-${verb}`), 2)
   if (verb === 'project-add' && (!item || item.startsWith('--'))) return failed(usageMessage(`github-${verb}`), 2)
-  return ok({ repo, number: Number(numberText), ...(flags['--owner'] ? { owner: flags['--owner'] } : {}), ...(item ? { item } : {}), ...(flags['--field'] ? { field: flags['--field'] } : {}), ...(flags['--type'] ? { type: flags['--type'] } : {}), ...(flags['--value'] === undefined ? {} : { value: flags['--value'] }), ...(flags['--title'] ? { title: flags['--title'] } : {}), ...(flags['--body'] ? { body: flags['--body'] } : {}), json })
+  return ok({ repo, number: Number(numberText), ...(flags['--owner'] ? { owner: flags['--owner'] } : {}), ...(item ? { item } : {}), ...(flags['--field'] ? { field: flags['--field'] } : {}), ...(flags['--type'] ? { type: flags['--type'] } : {}), ...(flags['--value'] === undefined ? {} : { value: flags['--value'] }), ...(flags['--title'] === undefined ? {} : { title: flags['--title'] }), ...(flags['--body'] === undefined ? {} : { body: flags['--body'] }), json })
 }
 
 async function metadata(opts: Opts, env: Env, process: ProcessAdapter) {
@@ -83,6 +84,9 @@ export async function executeProjectWrite(verb: Verb, args: readonly string[], e
     if (typeof contentId !== 'string') return failed(`GitHub item ${opts.item} was not found`)
     query = `mutation($projectId:ID!,$contentId:ID!){addProjectV2ItemById(input:{projectId:$projectId,contentId:$contentId}){item{id isArchived updatedAt content{__typename ... on Issue{number title url state updatedAt repository{nameWithOwner}} ... on PullRequest{number title url state updatedAt repository{nameWithOwner}}} ${PROJECT_ITEM_FIELD_VALUES}}}}`
     variables = { projectId: project.id, contentId }
+  } else if (verb === 'project-draft-edit') {
+    query = `mutation($draftIssueId:ID!,$title:String!,$body:String!){updateProjectV2DraftIssue(input:{draftIssueId:$draftIssueId,title:$title,body:$body}){draftIssue{id title body}}}`
+    variables = { draftIssueId: opts.item!, title: opts.title!, body: opts.body! }
   } else if (verb === 'project-draft') {
     query = `mutation($projectId:ID!,$title:String!,$body:String){addProjectV2DraftIssue(input:{projectId:$projectId,title:$title,body:$body}){projectV2Item{id isArchived updatedAt content{__typename ... on DraftIssue{title body}} ${PROJECT_ITEM_FIELD_VALUES}}}}`
     variables = { projectId: project.id, title: opts.title!, ...(opts.body === undefined ? {} : { body: opts.body }) }
@@ -96,9 +100,9 @@ export async function executeProjectWrite(verb: Verb, args: readonly string[], e
   let output: unknown
   if (shape === 'archive') { const payload = rec(written.value.data[verb === 'project-archive' ? 'archiveProjectV2Item' : 'unarchiveProjectV2Item']); output = { item: payload.item ?? null } }
   else {
-    const key = verb === 'project-clear' || verb === 'project-field' ? verb === 'project-clear' ? 'clearProjectV2ItemFieldValue' : 'updateProjectV2ItemFieldValue' : verb === 'project-add' ? 'addProjectV2ItemById' : 'addProjectV2DraftIssue'
-    const payload = rec(written.value.data[key]); const item = payload.projectV2Item ?? payload.item
-    const normalized = normalizeProjectItem({ ...rec(item), content: rec(item).content ?? { __typename: 'DraftIssue', title: opts.title ?? '' } })
+    const key = verb === 'project-draft-edit' ? 'updateProjectV2DraftIssue' : verb === 'project-clear' || verb === 'project-field' ? verb === 'project-clear' ? 'clearProjectV2ItemFieldValue' : 'updateProjectV2ItemFieldValue' : verb === 'project-add' ? 'addProjectV2ItemById' : 'addProjectV2DraftIssue'
+    const payload = rec(written.value.data[key]); const item = verb === 'project-draft-edit' ? payload.draftIssue : payload.projectV2Item ?? payload.item
+    const normalized = normalizeProjectItem({ ...rec(item), content: rec(item).content ?? { __typename: 'DraftIssue', title: opts.title ?? '', body: opts.body ?? null } })
     output = { item: normalized ?? { id: rec(item).id ?? null } }
   }
   return opts.json ? ok(`${JSON.stringify(output, null, 2)}\n`) : ok(`${JSON.stringify(output)}\n`)
