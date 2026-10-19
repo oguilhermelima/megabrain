@@ -172,10 +172,19 @@ export async function usageStats(environment: Environment, options: UsageStatsOp
   const home = environment.HOME ?? process.env.HOME ?? "";
   const stateDir = environment.MEGABRAIN_STATE_DIR ?? join(home, ".megabrain");
   const found = await logFiles(home, options.provider);
-  const listed = await mapLimited(found, async (file): Promise<Listed> => {
-    try { const info = await stat(file.path); return { ...file, size: info.size, mtimeMs: info.mtimeMs }; }
+  const today = dayReader(options.timeZone)(options.now.toISOString()) ?? options.now.toISOString().slice(0, 10);
+  const from = options.days === null ? null : rangeStart(today, options.days);
+  // A log cannot contain an entry written after its mtime. Allow 14 hours before local midnight
+  // so the cutoff remains conservative for every UTC offset.
+  const cutoff = from === null ? null : Date.parse(`${from}T00:00:00.000Z`) - 14 * 60 * 60 * 1000;
+  const listed = (await mapLimited(found, async (file): Promise<Listed | null> => {
+    try {
+      const info = await stat(file.path);
+      if (cutoff !== null && info.mtimeMs < cutoff) return null;
+      return { ...file, size: info.size, mtimeMs: info.mtimeMs };
+    }
     catch (cause: unknown) { throw new Error(`could not inspect usage log ${file.path}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
-  });
+  })).filter((file): file is Listed => file !== null);
 
   const cache = await readCache(stateDir, options.timeZone);
   const next = new Map<string, CacheEntry>();
