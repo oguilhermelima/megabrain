@@ -46,6 +46,7 @@ export async function start(daemon: ChatDaemon): Promise<void> {
     await chmod(chatPid(daemon.stateDir), 0o600);
     await daemon.resumeDrained();
     daemon.startKnowledge();
+    await daemon.syncTerminalPolling();
   }
 
 export async function handle(daemon: ChatDaemon, request: Request, socket?: Socket): Promise<unknown> {
@@ -74,6 +75,7 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
     };
     await daemon.save(chat);
+    await daemon.syncTerminalPolling();
     await daemon.publish(chat, event("system", `Started ${agent} chat`));
     const queue = daemon.queues.get(chat.id) ?? [];
     if (parts.length > 0) { queue.push(parts); daemon.queues.set(chat.id, queue); await daemon.publish(chat, event("user", firstText(parts), undefined, withImages(parts))); }
@@ -260,24 +262,5 @@ export async function listen(daemon: ChatDaemon): Promise<void> {
       });
       daemon.server.once("error", reject);
       daemon.server.listen(socketPath, () => { void chmod(socketPath, 0o600).then(resolve, reject); });
-      const poll = timeoutMs(daemon.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
-      let refreshing = false;
-      let refreshPending = false;
-      const refresh = () => {
-        if (daemon.closed) return;
-        if (refreshing) { refreshPending = true; return; }
-        refreshing = true;
-        const task = daemon.refreshTerminalChats().catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          if (daemon.terminalRefreshError !== message) process.stderr.write(`chat terminal refresh failed: ${message}\n`);
-          daemon.terminalRefreshError = message;
-        }).finally(() => {
-          refreshing = false;
-          if (refreshPending && !daemon.closed) { refreshPending = false; refresh(); }
-        });
-        daemon.terminalRefresh = task;
-      };
-      daemon.terminalTimer = setInterval(refresh, poll);
-      daemon.terminalTimer.unref?.();
     });
   }

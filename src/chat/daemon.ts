@@ -203,6 +203,35 @@ export class ChatDaemon {
 
 async start(): Promise<void> { return await startImpl(this); }
 
+  /** Runs terminal refresh polling only while persisted chats select terminal mode. */
+  async syncTerminalPolling(): Promise<void> {
+    const needsPolling = (await this.store.list()).some((chat) => chat.mode === "terminal");
+    if (needsPolling && this.terminalTimer === undefined && !this.closed) {
+      const poll = timeoutMs(this.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
+      let refreshing = false;
+      let refreshPending = false;
+      const refresh = () => {
+        if (this.closed) return;
+        if (refreshing) { refreshPending = true; return; }
+        refreshing = true;
+        const task = this.refreshTerminalChats().catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (this.terminalRefreshError !== message) process.stderr.write(`chat terminal refresh failed: ${message}\n`);
+          this.terminalRefreshError = message;
+        }).finally(() => {
+          refreshing = false;
+          if (refreshPending && !this.closed) { refreshPending = false; refresh(); }
+        });
+        this.terminalRefresh = task;
+      };
+      this.terminalTimer = setInterval(refresh, poll);
+      this.terminalTimer.unref?.();
+    } else if (!needsPolling && this.terminalTimer !== undefined) {
+      clearInterval(this.terminalTimer);
+      this.terminalTimer = undefined;
+    }
+  }
+
   /**
    * The knowledge base reads sessions from outside the app too. A minute after start the summaries already on disk are curated once
    * (a rerun skips what is done), then new sessions are scanned every ten minutes. Both are read-only on the agents' logs and

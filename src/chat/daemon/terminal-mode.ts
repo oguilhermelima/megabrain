@@ -57,6 +57,7 @@ export async function remove(daemon: ChatDaemon, id: string): Promise<{ removed:
     await rm(daemon.store.dir(id), { recursive: true, force: true });
     daemon.store.forget(id);
     await daemon.dropConversation(id);
+    await daemon.syncTerminalPolling();
     return { removed: id };
   }
 
@@ -112,6 +113,7 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
         daemon.trackCallback(daemon.runAgent(chat, true).catch((error) => daemon.fail(id, error)));
       }
     }
+    await daemon.syncTerminalPolling();
     // The terminal's command rides along, so opening it costs no second round trip.
     return { chat, terminal: null, command: chat.mode === "terminal" ? chatProtocolAdapters[chat.agent].terminalCommand(chat) : null };
   }
@@ -135,6 +137,7 @@ export async function takeOver(daemon: ChatDaemon, id: string): Promise<Chat> {
     chat.state = "starting";
     chat.error = null;
     await daemon.save(chat);
+    await daemon.syncTerminalPolling();
     await daemon.runAgent(chat, true).catch((error) => daemon.resumeFailed(id, error));
     return await daemon.requireChat(id);
   }
