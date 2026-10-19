@@ -111,12 +111,22 @@ export const githubProjectItemSchema = z.looseObject({
 export const githubProjectsSchema = z.looseObject({ projects: z.array(githubProjectSchema) })
 export const githubProjectPageSchema = z.looseObject({ project: githubProjectSchema, items: z.array(githubProjectItemSchema), next: z.string().nullable() })
 export const githubProjectMoveSchema = z.looseObject({ item: githubProjectItemSchema })
+export const githubProjectStatusUpdateSchema = z.looseObject({
+  id: z.string(), status: z.enum(['INACTIVE', 'ON_TRACK', 'AT_RISK', 'OFF_TRACK', 'COMPLETE']), body: z.string(),
+  startDate: z.string().nullable(), targetDate: z.string().nullable(), createdAt: z.string(), creator: z.string().nullable(),
+})
+export const githubProjectStatusUpdatesSchema = z.looseObject({ updates: z.array(githubProjectStatusUpdateSchema) })
+export const githubProjectWorkflowsSchema = z.looseObject({ workflows: z.array(z.looseObject({ id: z.string(), name: z.string(), number: z.number(), enabled: z.boolean() })) })
 export type GithubProject = z.infer<typeof githubProjectSchema>
 export type GithubProjectStatusField = z.infer<typeof githubProjectStatusFieldSchema>
 export type GithubProjectColor = GithubProjectStatusField['options'][number]['color']
 export type GithubProjectItem = z.infer<typeof githubProjectItemSchema>
 export type GithubProjects = z.infer<typeof githubProjectsSchema>
 export type GithubProjectPage = z.infer<typeof githubProjectPageSchema>
+export type GithubProjectStatusUpdate = z.infer<typeof githubProjectStatusUpdateSchema>
+export type GithubProjectStatusUpdateStatus = GithubProjectStatusUpdate['status']
+export type GithubProjectStatusUpdates = z.infer<typeof githubProjectStatusUpdatesSchema>
+export type GithubProjectWorkflows = z.infer<typeof githubProjectWorkflowsSchema>
 
 // `megabrain github runs|run --json`: workflow runs and their jobs/steps.
 export const githubActionRunSchema = z.looseObject({
