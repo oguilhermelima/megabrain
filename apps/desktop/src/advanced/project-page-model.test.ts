@@ -218,7 +218,7 @@ describe('summary reads that fail', () => {
   test('a pull request whose detail could not be read is unavailable, not a pull request without checks', () => {
     expect(pullDetail(null)).toBe('unavailable')
     expect(pullDetail({ checks: [], reviewDecision: null })).toEqual({ checks: [], review: null })
-    expect(pullDetail({ checks: [], reviewDecision: 'APPROVED' })).toEqual({ checks: [], review: 'APPROVED' })
+    expect(pullDetail({ checks: [], reviewDecision: 'approved' })).toEqual({ checks: [], review: 'approved' })
   })
 
   test('the Issues line says the count could not be read instead of looking like it is still coming', () => {
