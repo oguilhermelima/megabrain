@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerSocket, stopStateOwner, type StateOwnerRequest } from "../../src/db/state-owner.js";
 import { inspectDatabase, openDatabase, openDatabaseReadOnly } from "../../src/db/db.js";
 import { createDispatch } from "../../src/adapters/state/dispatches.js";
@@ -17,6 +17,16 @@ import { cleanupTrackedStateOwners, trackStateOwnerCleanup } from "../helpers/st
 
 let root: string;
 let owner: Awaited<ReturnType<typeof startStateOwner>> | undefined;
+
+function processCpuSeconds(pid: number): number {
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "time="], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`could not sample CPU time for state owner ${pid}`);
+  const parts = result.stdout.trim().split(":").map(Number);
+  const seconds = parts.pop() ?? 0;
+  const minutes = parts.pop() ?? 0;
+  const hours = parts.pop() ?? 0;
+  return hours * 3_600 + minutes * 60 + seconds;
+}
 
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), "mb-state-owner-")); });
 afterEach(async () => {
@@ -309,6 +319,10 @@ describe("single state owner", () => {
       // Model a takeover after an external actor removes the stale owner's ownership files.
       rmSync(stateOwnerSocket(root), { force: true });
       rmSync(join(root, "state-owner", "owner.lock"), { force: true });
+      const cpuBefore = processCpuSeconds(firstStatus.pid);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const cpuAfter = processCpuSeconds(firstStatus.pid);
+      expect(cpuAfter - cpuBefore).toBeLessThan(0.25);
       const second = spawn(binary, ["__state-owner"], { detached: true, stdio: "ignore", env: environment });
       const secondDeadline = Date.now() + 5_000;
       let secondStatus = await inspectStateOwner(root);
@@ -328,7 +342,8 @@ describe("single state owner", () => {
       }
       expect(firstExited).toBe(true);
       // The replacement must retain its socket after the stale process exits.
-      expect(await inspectStateOwner(root)).toMatchObject({ running: true, pid: secondStatus.running ? secondStatus.pid : -1 });
+      const replacementStatus = await inspectStateOwner(root);
+      expect(replacementStatus).toMatchObject({ running: true, pid: secondStatus.running ? secondStatus.pid : -1 });
       try { process.kill(second.pid as number, "SIGTERM"); } catch { /* already exited */ }
     } finally {
       await cleanupTrackedStateOwners([root]);
