@@ -68,6 +68,43 @@ async function withLedgerLock<T>(root: string, action: () => T): Promise<T> {
   }
 }
 
+function withLedgerLockSync(root: string, action: () => void): boolean {
+  const lock = join(root, "model-calls.lock");
+  let descriptor: number;
+  try { descriptor = openSync(lock, "wx", 0o600); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    try {
+      const observed = statSync(lock);
+      const pid = Number(readFileSync(lock, "utf8"));
+      if (Date.now() - observed.mtimeMs > 60_000 || Number.isSafeInteger(pid) && pid > 0 && !alive(pid)) {
+        const claim = `${lock}.${process.pid}.${crypto.randomUUID()}.stale`;
+        try {
+          linkSync(lock, claim);
+          const claimed = statSync(claim), current = statSync(lock);
+          if (claimed.dev === current.dev && claimed.ino === current.ino) unlinkSync(lock);
+        } catch (claimError) {
+          if ((claimError as NodeJS.ErrnoException).code !== "ENOENT" && (claimError as NodeJS.ErrnoException).code !== "EEXIST") throw claimError;
+        } finally { try { unlinkSync(claim); } catch { /* already removed */ } }
+        descriptor = openSync(lock, "wx", 0o600);
+      } else return false;
+    } catch (readError) {
+      if ((readError as NodeJS.ErrnoException).code === "ENOENT") return withLedgerLockSync(root, action);
+      if ((readError as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw readError;
+    }
+  }
+  try {
+    writeSync(descriptor, String(process.pid));
+    action();
+    return true;
+  } finally {
+    const owned = fstatSync(descriptor);
+    closeSync(descriptor);
+    try { const current = statSync(lock); if (current.dev === owned.dev && current.ino === owned.ino) unlinkSync(lock); } catch { /* another process reclaimed it */ }
+  }
+}
+
 function migrateLedger(stateDir: string, now: Date): void {
   const directory = ledgerDays(stateDir);
   if (statDirectory(directory)) return;
@@ -140,6 +177,11 @@ export function modelUsage(stateDir: string, days = 7, now = new Date()): { days
   const cutoff = new Date(now.getTime() - Math.max(0, days - 1) * 86_400_000);
   const from = localDay(cutoff), today = localDay(now);
   const grouped = new Map<string, ModelCall[]>();
+  if (!statDirectory(ledgerDays(stateDir))) {
+    const root = join(stateDir, "knowledge");
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    withLedgerLockSync(root, () => { migrateLedger(stateDir, now); pruneLedger(stateDir, now); });
+  }
   const dayFiles = statDirectory(ledgerDays(stateDir))
     ? readdirSync(ledgerDays(stateDir)).filter((name) => name.endsWith(".jsonl")).map((name) => name.slice(0, -".jsonl".length)).filter((day) => day >= from && day <= today).flatMap((day) => rows(stateDir, day))
     : rows(stateDir);
