@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -270,6 +271,20 @@ describe("automatic titles", () => {
 });
 
 describe("search and cli", () => {
+  test("search uses indexed titles without opening one chat record per conversation", async () => {
+    const h = await harness();
+    for (let index = 0; index < 5; index += 1) {
+      const chat = await seedChat(h);
+      await turn(h, chat, `login request ${index}`);
+      await h.summarizer.summarize(chat.id);
+    }
+    const spy = spyOn(fs, "readFileSync");
+    try {
+      expect(searchSummaries(h.state, "login")).toHaveLength(5);
+      expect(spy.mock.calls.filter(([path]) => String(path).endsWith("/chat.json"))).toHaveLength(0);
+    } finally { spy.mockRestore(); }
+  });
+
   test("the index finds past chats by project, branch, title and summary", async () => {
     const h = await harness();
     const chat = await seedChat(h);
