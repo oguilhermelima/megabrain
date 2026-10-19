@@ -99,6 +99,22 @@ describe("single state owner", () => {
     expect(await callStateOwner(root, { operation: "renew-outbox", id: "renew-outbox-row", holder: "holder-b", leaseSeconds: 90 } as StateOwnerRequest)).toBe(false);
   });
 
+  test("a stale outbox holder cannot finish a row reclaimed by another worker", async () => {
+    owner = await startStateOwner(root);
+    expect(createDispatch(owner.handle, { dispatchId: "fenced-outbox", state: "running" }).kind).toBe("ok");
+    const now = new Date().toISOString();
+    withWrite(owner.handle, (db) => insertOutbox(db, {
+      id: "fenced-outbox-row", dispatchId: "fenced-outbox", targetKind: "parent-pointer", target: "parent",
+      payload: {}, status: "pending", attempts: 0, leaseUntil: null, transport: null,
+      createdAt: now, updatedAt: now, leaseHolder: null, detail: null,
+    }));
+    await callStateOwner(root, { operation: "claim-outbox", id: "fenced-outbox-row", holder: "holder-a", leaseSeconds: 90 });
+    owner.handle.db.run("UPDATE outbox SET lease_until = ? WHERE id = ?", ["2000-01-01T00:00:00.000Z", "fenced-outbox-row"]);
+    await callStateOwner(root, { operation: "claim-outbox", id: "fenced-outbox-row", holder: "holder-b", leaseSeconds: 90 });
+    expect(await callStateOwner(root, { operation: "finish-outbox", id: "fenced-outbox-row", holder: "holder-a", status: "failed", detail: "stale" } as StateOwnerRequest)).toBe(false);
+    expect(owner.handle.db.query<{ status: string; lease_holder: string | null }>("SELECT status, lease_holder FROM outbox WHERE id = ?").get("fenced-outbox-row")).toEqual({ status: "sending", lease_holder: "holder-b" });
+  });
+
   test("acknowledging a delivered message completes its matching outbox row", async () => {
     owner = await startStateOwner(root);
     expect(createDispatch(owner.handle, { dispatchId: "owner-ack-outbox", state: "running" }).kind).toBe("ok");
