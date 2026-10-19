@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { fixtureBacklog, fixtureRoadmap, fixtureRoadmapItems } from '@/api/fixtures/github-projects'
 import type { GithubProjectItem } from '@/api/schema'
-import { boardCacheKey, boardKey, boardReadDue, createBoardMemory, distinctItems, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
+import { boardCacheKey, boardKey, boardReadDue, createBoardMemory, distinctItems, readBoardPages, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
 
 const item = (id: string): GithubProjectItem => ({ id, type: 'ISSUE', number: 1, title: id, url: null, state: 'OPEN', repository: 'o/r', status: null, assignees: [], labels: [], updatedAt: '2026-10-17T00:00:00.000Z' })
 const ids = (items: GithubProjectItem[]) => items.map((entry) => entry.id)
@@ -113,5 +113,38 @@ describe('when a board is read again', () => {
     expect(boardReadDue(1_000, 30_000, false)).toBe(false)
     expect(boardReadDue(1_000, 30_000, true)).toBe(true)
     expect(boardReadDue(1_000, 61_000, false)).toBe(true)
+  })
+})
+
+describe('reading a board a page at a time', () => {
+  const page = (items: GithubProjectItem[], next: string | null) => ({ items, next })
+
+  test('reads each page in turn, showing them as they come, and answers every item', async () => {
+    const asked: (string | null)[] = []
+    const shown: string[][] = []
+    const pages: Record<string, ReturnType<typeof page>> = { first: page([item('a')], 'c2'), c2: page([item('b')], null) }
+    const all = await readBoardPages({ read: async (after) => (asked.push(after), pages[after ?? 'first'] ?? page([], null)), maxPages: 5, current: () => true, show: (items) => shown.push(ids(items)) })
+    expect(asked).toEqual([null, 'c2'])
+    expect(all === null ? null : ids(all)).toEqual(['a', 'b'])
+    expect(shown).toEqual([['a'], ['a', 'b']])
+  })
+
+  test('a read whose board was left writes nothing more and stops asking', async () => {
+    let live = true
+    const shown: string[][] = []
+    let asked = 0
+    const all = await readBoardPages({
+      read: async () => {
+        asked += 1
+        live = false
+        return page([item(`p${asked}`)], 'more')
+      },
+      maxPages: 5,
+      current: () => live,
+      show: (items) => shown.push(ids(items)),
+    })
+    expect(all).toBeNull()
+    expect(asked).toBe(1)
+    expect(shown).toEqual([])
   })
 })
