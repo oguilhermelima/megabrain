@@ -616,6 +616,7 @@ describe("a chat in terminal mode", () => {
     const env = sandbox();
     let calls = 0;
     const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "60", MEGABRAIN_KNOWLEDGE_SCANNER: "off" });
+    await daemon.startChat({ operation: "start", agent: "agy", cwd: env.cwd });
     daemon.refreshTerminalChats = async () => {
       calls += 1;
       if (calls === 1) throw new Error("ownership lookup failed");
@@ -639,6 +640,7 @@ describe("a chat in terminal mode", () => {
     const first = new Promise<void>((resolve) => { markFirst = resolve; });
     const second = new Promise<void>((resolve) => { markSecond = resolve; });
     const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "200", MEGABRAIN_KNOWLEDGE_SCANNER: "off" });
+    await daemon.startChat({ operation: "start", agent: "agy", cwd: env.cwd });
     daemon.refreshTerminalChats = async () => {
       calls += 1;
       if (calls === 1) { markFirst(); await new Promise<void>((resolve) => { release = resolve; }); }
