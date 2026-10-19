@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/api'
+import { followOrchestration } from '@/native-chat/orchestration/orchestration-follow'
 import type { NativeChat, OrchestrationEvent, OrchestrationGraph, OrchestrationNode, OrchestrationTarget } from '@/api/schema'
 import type { OpenChat } from '@/chat/Conversation'
 import { TextSkeleton } from '@/components/Skeleton'
@@ -68,7 +69,7 @@ export function OrchestrationView({ target, onOpenChat, onOpenNativeChat }: { ta
       setGraph(next)
       if (fresh.length > 0) addPulses(fresh)
     }
-    api.followOrchestration(target, onGraph, (reason) => !stopped && setEnded(reason ?? 'The follow ended.')).then(
+    followOrchestration(target, onGraph, (reason) => !stopped && setEnded(reason ?? 'The follow ended.')).then(
       (cancel) => {
         if (stopped) cancel()
         else stop = cancel

@@ -32,7 +32,9 @@ import { ArtifactPanel, ArtifactsRow, useChatArtifacts, useChatPanel, useHiddenC
 import { artifactRow, closeChip, openArtifact, panelLayout, type ArtifactChip } from '@/native-chat/chat-artifacts'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
 import { runningTasks, taskRows } from '@/chat/background-tasks'
-import { BackgroundIndicator } from '@/native-chat/BackgroundTasks'
+import type { TrayAction } from '@/native-chat/ActivityTray'
+import { trayEntries, type TrayEntry } from '@/native-chat/activity-tray'
+import { useChatLanes } from '@/native-chat/orchestration/orchestration-follow'
 import { OwnerStrip } from '@/native-chat/OwnerStrip'
 import { DockRow } from '@/chat/ComposerDock'
 import { pageMx } from '@/lib/page'
@@ -388,8 +390,25 @@ export function NativeChatView({
     />
   )
 
-  // The background work still running, above the composer; a pick scrolls the transcript to its row.
+  // The work running outside the transcript, in the tray above the composer: background tasks (a pick scrolls the
+  // transcript to the row where one started), subagents still working, and the lanes this chat started.
   const running = useMemo(() => runningTasks(taskRows(state.events).latest), [state.events])
+  const lanes = useChatLanes(chat.id)
+  const activity = useMemo(() => {
+    const taskIds = new Set(running.map((task) => task.id))
+    const laneNodes = new Map(lanes.map((lane) => [lane.id, lane]))
+    const action = (entry: TrayEntry): TrayAction | null => {
+      if (taskIds.has(entry.id)) return { label: 'Show', run: () => jumpToTask.current?.(entry.id) }
+      const lane = laneNodes.get(entry.id)
+      if (lane === undefined) return null
+      const chatId = lane.chatId
+      if (chatId !== null && onOpenNativeChat !== undefined) {
+        return { label: 'Open', run: () => void api.chats().then((chats) => { const found = chats.find((entry) => entry.id === chatId); if (found !== undefined) onOpenNativeChat(found) }, () => {}) }
+      }
+      return onOpenChat === undefined ? null : { label: 'Open', run: () => onOpenChat({ dispatchId: lane.id }) }
+    }
+    return { entries: trayEntries({ tasks: running, events: state.events, lanes, queue: [] }), action }
+  }, [running, lanes, state.events, onOpenChat, onOpenNativeChat])
   const jumpToTask = useRef<((taskId: string) => void) | null>(null)
   const openSearch = useRef<(() => void) | null>(null)
   // Cmd+F anywhere in the chat, the composer included, searches its transcript.
@@ -546,13 +565,9 @@ export function NativeChatView({
                 channel={compose}
                 initCommands={chat.slashCommands}
                 queue={queueControls}
+                activity={activity}
                 above={
-                  running.length === 0 && chips === null ? undefined : (
-                    <>
-                      <BackgroundIndicator tasks={running} onJump={(taskId) => jumpToTask.current?.(taskId)} />
-                      {chips !== null && <ArtifactsRow chips={chips} now={now} onOpen={(chip) => panel.open(chip.active ? null : chip.artifact.id)} onClose={closeArtifactChip} />}
-                    </>
-                  )
+                  chips === null ? undefined : <ArtifactsRow chips={chips} now={now} onOpen={(chip) => panel.open(chip.active ? null : chip.artifact.id)} onClose={closeArtifactChip} />
                 }
                 edge={
                   bar === null && pending === null ? undefined : (
