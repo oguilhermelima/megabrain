@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerSocket, stopStateOwner } from "../../src/db/state-owner.js";
+import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerSocket, stopStateOwner, type StateOwnerRequest } from "../../src/db/state-owner.js";
 import { inspectDatabase, openDatabase, openDatabaseReadOnly } from "../../src/db/db.js";
 import { createDispatch } from "../../src/adapters/state/dispatches.js";
 import { getTmuxSession, putTmuxSession } from "../../src/adapters/state/machine.js";
@@ -80,6 +80,23 @@ describe("single state owner", () => {
     expect(log).toContain('"event":"ready"');
     expect(log).toContain('"event":"request-start"');
     expect(log).toContain('"event":"request-committed"');
+  });
+
+  test("renewing an outbox lease extends only the current holder claim", async () => {
+    owner = await startStateOwner(root);
+    expect(createDispatch(owner.handle, { dispatchId: "renew-outbox", state: "running" }).kind).toBe("ok");
+    const now = new Date().toISOString();
+    withWrite(owner.handle, (db) => insertOutbox(db, {
+      id: "renew-outbox-row", dispatchId: "renew-outbox", targetKind: "parent-pointer", target: "parent",
+      payload: {}, status: "pending", attempts: 0, leaseUntil: null, transport: null,
+      createdAt: now, updatedAt: now, leaseHolder: null, detail: null,
+    }));
+    await callStateOwner(root, { operation: "claim-outbox", id: "renew-outbox-row", holder: "holder-a", leaseSeconds: 1 });
+    const renewed = await callStateOwner(root, { operation: "renew-outbox", id: "renew-outbox-row", holder: "holder-a", leaseSeconds: 90 } as StateOwnerRequest);
+    expect(renewed).toBe(true);
+    const lease = owner.handle.db.query<{ lease_until: string | null }>("SELECT lease_until FROM outbox WHERE id = ?").get("renew-outbox-row")?.lease_until;
+    expect(lease === null || lease === undefined ? 0 : Date.parse(lease) - Date.now()).toBeGreaterThan(80_000);
+    expect(await callStateOwner(root, { operation: "renew-outbox", id: "renew-outbox-row", holder: "holder-b", leaseSeconds: 90 } as StateOwnerRequest)).toBe(false);
   });
 
   test("acknowledging a delivered message completes its matching outbox row", async () => {
