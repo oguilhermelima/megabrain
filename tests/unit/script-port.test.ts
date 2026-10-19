@@ -135,4 +135,17 @@ describe("repo scripts --json", () => {
     if (result.kind !== "ok") return;
     expect(JSON.parse(result.value).port).toMatchObject({ port: 3000, framework: "next", source: "default" });
   });
+
+  test("rejects unsupported options instead of saving recognized options", async () => {
+    const directory = project("cli-unknown-option", { dev: "vite" });
+    const env = { HOME: join(root, "home-unknown"), MEGABRAIN_STATE_DIR: join(root, "state-unknown") };
+    mkdirSync(env.HOME);
+    const process = createProcessAdapter();
+    expect((await process.run("git", ["init", "-b", "main"], { cwd: directory })).kind).toBe("ok");
+
+    const result = await route(["repo", "scripts", directory, "--run", "vite", "--unexpected"], { environment: env, processAdapter: process });
+
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") expect(result.error).toContain("unknown option");
+  });
 });

@@ -1,10 +1,11 @@
-import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { executeWorktreeList } from "../../src/cli/commands/worktree-list.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
+import { openDatabase } from "../../src/db/db.js";
 import {
   formatWorktreeList,
   parseGitWorktrees,
@@ -38,12 +39,15 @@ async function createFixture(): Promise<Fixture> {
   await mkdir(join(repo, ".git"), { recursive: true });
   await mkdir(linked, { recursive: true });
   await writeFile(join(state, "worktree-root"), `${shared}\n`);
+  const database = openDatabase({ MEGABRAIN_STATE_DIR: state });
+  if (database.kind !== "ok") throw new Error(database.error);
+  database.value.close();
   return { root, state, shared, repo, linked };
 }
 
-function processFor(routes: (command: string, args: readonly string[]) => Result<ProcessOutput>): ProcessAdapter {
+function processFor(routes: (command: string, args: readonly string[], options?: Parameters<ProcessAdapter["run"]>[2]) => Result<ProcessOutput>): ProcessAdapter {
   return {
-    run: async (command, args) => routes(command, args),
+    run: async (command, args, options) => routes(command, args, options),
     startDetached: async () => failed("not used"),
     invocationCount: () => 0,
   };
@@ -218,6 +222,180 @@ describe("executeWorktreeList", () => {
 
     expect(result.kind).toBe("failed");
     if (result.kind === "failed") expect(result.error).toContain("missing-repo");
+  });
+
+  test("fails when Git cannot enumerate a repository's worktrees", async () => {
+    const fixture = await createFixture();
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "rev-parse" && gitArgs.includes("--show-toplevel")) return output(`${fixture.repo}\n`);
+      if (gitArgs[0] === "rev-parse" && gitArgs.includes("--git-common-dir")) return output(`${fixture.repo}/.git\n`);
+      if (gitArgs[0] === "worktree") return failed("git worktree list failed");
+      return failed("no parent config");
+    });
+
+    const result = await executeWorktreeList(["--repo", fixture.repo, "--json"], { MEGABRAIN_STATE_DIR: fixture.state }, process);
+
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") expect(result.error).toContain("git worktree list failed");
+  });
+
+  test("keeps partial JSON results as an array and reports failures on stderr", async () => {
+    const fixture = await createFixture();
+    const healthy = join(fixture.shared, "healthy");
+    const broken = join(fixture.shared, "broken");
+    await mkdir(join(healthy, ".git"), { recursive: true });
+    await mkdir(join(broken, ".git"), { recursive: true });
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") {
+        return path === broken ? failed("broken repo git failure") : output(gitWorktrees(healthy, fixture.linked));
+      }
+      if (gitArgs[0] === "config") return failed("no parent config");
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList(["--json"], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/missing" }, process);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(Array.isArray(JSON.parse(result.value))).toBe(true);
+      expect(JSON.parse(result.value)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: healthy }),
+        expect.objectContaining({ path: fixture.linked }),
+      ]));
+      expect(result.stderr).toContain(`${broken}: broken repo git failure`);
+    }
+  });
+
+  test("lists healthy repositories when another repository config read fails", async () => {
+    const fixture = await createFixture();
+    const healthy = join(fixture.shared, "healthy");
+    const broken = join(fixture.shared, "broken-config");
+    await mkdir(join(healthy, ".git"), { recursive: true });
+    await mkdir(join(broken, ".git"), { recursive: true });
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") return output(gitWorktrees(path, fixture.linked));
+      if (gitArgs[0] === "config") return path === broken ? failed("git config failed", 128) : failed("no parent config");
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList(["--json"], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/missing" }, process);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(Array.isArray(JSON.parse(result.value))).toBe(true);
+      expect(JSON.parse(result.value)).toEqual(expect.arrayContaining([expect.objectContaining({ path: healthy })]));
+      expect(result.stderr).toContain(`${broken}: git config failed`);
+    }
+  });
+
+  test("prints partial list errors to stderr and gives worktree enumeration ten seconds", async () => {
+    const fixture = await createFixture();
+    const healthy = join(fixture.shared, "healthy");
+    const broken = join(fixture.shared, "broken");
+    await mkdir(join(healthy, ".git"), { recursive: true });
+    await mkdir(join(broken, ".git"), { recursive: true });
+    const worktreeTimeouts: Array<number | undefined> = [];
+    const process = processFor((command, args, options) => {
+      if (command !== "git") return commandOutput(command);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") {
+        worktreeTimeouts.push(options?.timeoutMs);
+        return path === broken ? failed("broken repo git failure") : output(gitWorktrees(healthy, fixture.linked));
+      }
+      if (gitArgs[0] === "config") return failed("no parent config");
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList([], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/missing" }, process);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.value).toContain(healthy);
+      expect(result.stderr).toContain(`${broken}: broken repo git failure`);
+    }
+    expect(worktreeTimeouts).toEqual([10_000, 10_000]);
+  });
+
+  test("fails on Git configuration errors other than a missing match", async () => {
+    const fixture = await createFixture();
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "rev-parse" && gitArgs.includes("--show-toplevel")) return output(`${fixture.repo}\n`);
+      if (gitArgs[0] === "rev-parse" && gitArgs.includes("--git-common-dir")) return output(`${fixture.repo}/.git\n`);
+      if (gitArgs[0] === "worktree") return output(gitWorktrees(fixture.repo, fixture.linked));
+      if (gitArgs[0] === "config") return failed("git config failed", 128);
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList(["--repo", fixture.repo, "--json"], { MEGABRAIN_STATE_DIR: fixture.state }, process);
+
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") expect(result.error).toContain("git config failed");
+  });
+
+  test("bounds the fallback GitHub pull request query", async () => {
+    const fixture = await createFixture();
+    const repo = join(fixture.shared, "repo");
+    await mkdir(join(repo, ".git"), { recursive: true });
+    await writeFile(join(fixture.state, "megabrain.db"), "not a SQLite database");
+    const ghOptions: Array<Parameters<ProcessAdapter["run"]>[2]> = [];
+    const process = processFor((command, args, options) => {
+      if (command === "gh") {
+        ghOptions.push(options);
+        return output("[]");
+      }
+      if (command !== "git") return failed(`${command} unavailable`);
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") return output(gitWorktrees(repo, fixture.linked));
+      if (gitArgs[0] === "config") return failed("no parent config", 1);
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList(["--json"], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/opt/homebrew/bin" }, process);
+
+    expect(result.kind).toBe("ok");
+    expect(ghOptions).toHaveLength(1);
+    expect(ghOptions[0]?.timeoutMs).toBe(2_000);
+  });
+
+  test("collects expired pull request cache entries for repositories no longer scanned", async () => {
+    const fixture = await createFixture();
+    const repoA = join(fixture.shared, "repo-a");
+    const repoB = join(fixture.shared, "repo-b");
+    await mkdir(join(repoA, ".git"), { recursive: true });
+    await mkdir(join(repoB, ".git"), { recursive: true });
+    const process = processFor((command, args) => {
+      if (command === "gh") return output("[]");
+      if (command !== "git") return failed(`${command} unavailable`);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") return output(`worktree ${path}\nHEAD abc\nbranch refs/heads/main\n`);
+      if (gitArgs[0] === "config") return failed("no parent config", 1);
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+    const environment = { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/opt/homebrew/bin" };
+    await executeWorktreeList(["--json"], environment, process);
+    const cachePath = join(fixture.state, "worktree-pull-requests.json");
+    const cache = JSON.parse(await readFile(cachePath, "utf8")) as { repositories: Record<string, { fetchedAt: number; value: unknown }> };
+    for (const entry of Object.values(cache.repositories)) entry.fetchedAt = 1;
+    await writeFile(cachePath, JSON.stringify(cache));
+    await rm(repoB, { recursive: true, force: true });
+
+    const result = await executeWorktreeList(["--json"], environment, process);
+    const updated = JSON.parse(await readFile(cachePath, "utf8")) as { repositories: Record<string, unknown> };
+
+    expect(result.kind).toBe("ok");
+    expect(Object.keys(updated.repositories)).toEqual([repoA]);
   });
 
   test("keeps the shared-root scan when no repository is named", async () => {

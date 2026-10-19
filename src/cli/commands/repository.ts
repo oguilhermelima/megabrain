@@ -51,20 +51,29 @@ export async function executeRepository(args: readonly string[], environment: En
   if (verb === "run") return executeRepoRun(rest, environment, process);
   if (verb === "stop") return executeRepoStop(rest, environment, process);
   if (verb === "scripts") {
-    const selector = rest.find((argument) => !argument.startsWith("-"));
+    let selector: string | undefined;
+    const changes: SavedProjectScripts = {};
+    const seen = new Set<string>();
+    for (let index = 0; index < rest.length; index += 1) {
+      const argument = rest[index];
+      if (argument === "--json") continue;
+      if (argument === "--run" || argument === "--build" || argument === "--install") {
+        if (seen.has(argument)) return failed(`${argument} may only be supplied once`, 2);
+        seen.add(argument);
+        const value = rest[index + 1];
+        if (value === undefined || value.startsWith("--")) return failed(`${argument} requires a command (use an empty string to clear it)`, 2);
+        changes[argument.slice(2) as keyof SavedProjectScripts] = value;
+        index += 1;
+        continue;
+      }
+      if (argument.startsWith("-")) return failed(`unknown option for repo scripts: ${argument}`, 2);
+      if (selector !== undefined) return failed(`unexpected repo scripts argument: ${argument}`, 2);
+      selector = argument;
+    }
     if (selector === undefined) return failed("Usage: megabrain repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]", 2);
     const resolved = await resolveRepositoryPath(selector, environment, process);
     if (resolved.kind !== "ok") return resolved;
     const repoPath = resolved.value;
-    const changes: SavedProjectScripts = {};
-    for (const name of ["run", "build", "install"] as const) {
-      const index = rest.indexOf(`--${name}`);
-      if (index >= 0) {
-        const value = rest[index + 1];
-        if (value === undefined || value === "--json" || value.startsWith("--")) return failed(`--${name} requires a command (use an empty string to clear it)`, 2);
-        changes[name] = value;
-      }
-    }
     const scripts = Object.keys(changes).length > 0
       ? await setProjectScripts(repoPath, changes, environment)
       : await projectScripts(repoPath, environment);
@@ -154,12 +163,14 @@ export async function executeRepository(args: readonly string[], environment: En
     const ownerIndex = rest.indexOf("--owner");
     if (ownerIndex >= 0) owner = rest[ownerIndex + 1];
     if (ownerIndex >= 0 && (owner === undefined || owner === "")) return failed("--owner requires a GitHub login", 2);
-    const auth = await process.run("gh", ["auth", "status"]);
+    const auth = await process.run("gh", ["auth", "status"], { timeoutMs: 2_000 });
     if (auth.kind !== "ok") return failed(auth.error.includes("not found") ? "GitHub CLI (gh) is required; install it and sign in with gh auth login" : "GitHub CLI is not signed in; run gh auth login");
     if (rest.includes("--orgs")) {
-      const user = await process.run("gh", ["api", "user"]);
+      const [user, orgs] = await Promise.all([
+        process.run("gh", ["api", "user"], { timeoutMs: 2_000 }),
+        process.run("gh", ["api", "user/orgs", "--paginate"], { timeoutMs: 2_000 }),
+      ]);
       if (user.kind !== "ok") return failed(`could not read the GitHub account: ${user.error}`);
-      const orgs = await process.run("gh", ["api", "user/orgs", "--paginate"]);
       if (orgs.kind !== "ok") return failed(`could not list GitHub organisations: ${orgs.error}`);
       try {
         const account = JSON.parse(user.value.stdout) as GithubAccount;
@@ -171,7 +182,7 @@ export async function executeRepository(args: readonly string[], environment: En
         return ok(json ? `${JSON.stringify(owners, null, 2)}\n` : owners.map((entry) => `${entry.login}\t${entry.kind}\n`).join(""));
       } catch { return failed("gh api returned invalid JSON"); }
     }
-    const listed = await process.run("gh", ["repo", "list", ...(owner === undefined ? [] : [owner]), "--json", "nameWithOwner,url,description,isPrivate,updatedAt,primaryLanguage,stargazerCount", "--limit", "200"]);
+    const listed = await process.run("gh", ["repo", "list", ...(owner === undefined ? [] : [owner]), "--json", "nameWithOwner,url,description,isPrivate,updatedAt,primaryLanguage,stargazerCount", "--limit", "1000"], { timeoutMs: 2_000 });
     if (listed.kind !== "ok") return failed(`could not list GitHub repositories: ${listed.error}`);
     try {
       const repositories = JSON.parse(listed.value.stdout) as GithubRepository[];

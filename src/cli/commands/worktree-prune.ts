@@ -19,7 +19,7 @@ type Candidate = {
 };
 
 async function run(process: ProcessAdapter, command: string, args: readonly string[]): Promise<Result<string>> {
-  const result = await process.run(command, args);
+  const result = await process.run(command, args, { timeoutMs: 2_000 });
   return result.kind === "ok" ? ok(result.value.stdout) : failed(result.error, result.exitCode);
 }
 
@@ -44,7 +44,7 @@ async function repoRootFor(process: ProcessAdapter, path: string): Promise<strin
 
 async function discoverCandidates(process: ProcessAdapter, environment: Environment, selector?: string): Promise<Result<Array<{ path: string; repo: string; branch: string }>>> {
   if (selector !== undefined) {
-    const selected = await repoFromOrca(process, selector, environment);
+    const selected = await repoFromOrca(process, selector, environment, 2_000);
     if (selected.kind !== "ok") return selected;
     const repo = await realpath(selected.value).catch(() => selected.value);
     const output = await run(process, "git", ["-C", repo, "worktree", "list", "--porcelain"]);
@@ -151,12 +151,13 @@ export async function executeWorktreePrune(args: readonly string[], environment:
   const discovered = await discoverCandidates(process, environment, parsed.value.repo);
   if (discovered.kind !== "ok") return discovered;
   const now = Date.now();
-  const candidates: Candidate[] = [];
-  for (const candidate of discovered.value) candidates.push(await assess(process, candidate, records.get(candidate.path), dispatches, parsed.value.olderThan, now));
+  const candidates = await Promise.all(discovered.value.map((candidate) =>
+    assess(process, candidate, records.get(candidate.path), dispatches, parsed.value.olderThan, now),
+  ));
   const removed: Array<{ path: string; branch: string; verified: boolean; branchDeleted: boolean }> = [];
   if (parsed.value.yes && !parsed.value.dryRun) {
+    const freshDb = openDatabaseReadOnly(environment);
     for (const candidate of candidates.filter((item) => item.eligible)) {
-      const freshDb = openDatabaseReadOnly(environment);
       if (freshDb.kind !== "ok") {
         candidate.eligible = false;
         candidate.reason = `dispatch state could not be rechecked: ${freshDb.error}`;
@@ -164,16 +165,13 @@ export async function executeWorktreePrune(args: readonly string[], environment:
       }
       let freshDispatches = new Map<string, string[]>();
       try {
-        for (const row of freshDb.value.db.query<{ worktree_path: string | null; state: string }>("SELECT worktree_path, state FROM dispatches WHERE worktree_path IS NOT NULL AND archived_at IS NULL").all()) {
-          if (row.worktree_path !== null) freshDispatches.set(row.worktree_path, [...(freshDispatches.get(row.worktree_path) ?? []), row.state]);
-        }
+        const rows = freshDb.value.db.query<{ state: string }>("SELECT state FROM dispatches WHERE worktree_path = ? AND archived_at IS NULL").all(candidate.path);
+        if (rows.length > 0) freshDispatches.set(candidate.path, rows.map((row) => row.state));
       } catch (cause: unknown) {
-        freshDb.value.close();
         candidate.eligible = false;
         candidate.reason = `dispatch state could not be rechecked: ${cause instanceof Error ? cause.message : String(cause)}`;
         continue;
       }
-      freshDb.value.close();
       const fresh = await assess(process, candidate, records.get(candidate.path), freshDispatches, parsed.value.olderThan, Date.now());
       if (!fresh.eligible) {
         candidate.eligible = false;
@@ -201,6 +199,7 @@ export async function executeWorktreePrune(args: readonly string[], environment:
         candidate.reason = message;
       }
     }
+    if (freshDb.kind === "ok") freshDb.value.close();
   }
   const response = { dryRun: !parsed.value.yes || parsed.value.dryRun, olderThan: parsed.value.olderThan, candidates, removed };
   if (parsed.value.json) return ok(`${JSON.stringify(response, null, 2)}\n`);

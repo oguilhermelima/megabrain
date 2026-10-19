@@ -27,14 +27,25 @@ export const CONTENT_FIELDS = `
 `
 const PROJECT_ITEMS = `items(first: 100, after: $after) { nodes { id fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CONTENT_FIELDS} } } pageInfo { hasNextPage endCursor } }`
 
-export const PROJECTS_QUERY = `query($owner: String!, $name: String!) {
+export const PROJECTS_QUERY = `query projectsDiscovery($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
-    projectsV2(first: 100) { nodes { ${PROJECT_FIELDS} } }
+    projectsV2(first: 100) { nodes { ${PROJECT_FIELDS} } pageInfo { hasNextPage endCursor } }
     owner {
       __typename login
-      ... on User { projectsV2(first: 100) { nodes { ${PROJECT_FIELDS} items(first: 100) { nodes { content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } } } } } } }
-      ... on Organization { projectsV2(first: 100) { nodes { ${PROJECT_FIELDS} items(first: 100) { nodes { content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } } } } } } }
+      ... on User { projectsV2(first: 100) { nodes { ${PROJECT_FIELDS} items(first: 100) { nodes { content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } } } pageInfo { hasNextPage endCursor } } } pageInfo { hasNextPage endCursor } } }
+      ... on Organization { projectsV2(first: 100) { nodes { ${PROJECT_FIELDS} items(first: 100) { nodes { content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } } } pageInfo { hasNextPage endCursor } } } pageInfo { hasNextPage endCursor } } }
     }
+  }
+}`
+
+export const REPOSITORY_PROJECTS_PAGE_QUERY = `query repositoryProjects($owner: String!, $name: String!, $after: String) {
+  repository(owner: $owner, name: $name) { projectsV2(first: 100, after: $after) { nodes { ${PROJECT_FIELDS} } pageInfo { hasNextPage endCursor } } }
+}`
+
+export const OWNER_PROJECTS_PAGE_QUERY = `query ownerProjects($owner: String!, $after: String) {
+  repositoryOwner(login: $owner) {
+    ... on User { projectsV2(first: 100, after: $after) { nodes { ${PROJECT_FIELDS} items(first: 100) { nodes { content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } } } pageInfo { hasNextPage endCursor } } } pageInfo { hasNextPage endCursor } } }
+    ... on Organization { projectsV2(first: 100, after: $after) { nodes { ${PROJECT_FIELDS} items(first: 100) { nodes { content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } } } pageInfo { hasNextPage endCursor } } } pageInfo { hasNextPage endCursor } } }
   }
 }`
 
@@ -101,6 +112,30 @@ function containsRepository(value: unknown, repository: string): boolean {
   })
 }
 
+function nextConnectionCursor(value: unknown): Result<string | null> {
+  const info = record(record(value)?.pageInfo)
+  if (info?.hasNextPage !== true) return ok(null)
+  const cursor = nullableText(info.endCursor)
+  return cursor === null ? failed('GitHub project discovery returned a next page without a cursor') : ok(cursor)
+}
+
+async function ownerProjectContainsRepository(node: unknown, repository: string, owner: string, process: ProcessAdapter): Promise<Result<boolean>> {
+  const project = normalizeProject(node)
+  if (project === null || containsRepository(record(node)?.items, repository)) return ok(project !== null && containsRepository(record(node)?.items, repository))
+  let cursorResult = nextConnectionCursor(record(node)?.items)
+  if (cursorResult.kind !== 'ok') return cursorResult
+  let cursor = cursorResult.value
+  while (cursor !== null) {
+    const page = await projectQuery(repository, owner, project.number, cursor, process)
+    if (page.kind !== 'ok') return page
+    if (page.value.items.some((item) => item.repository === repository)) return ok(true)
+    cursorResult = nextConnectionCursor({ pageInfo: { hasNextPage: page.value.next !== null, endCursor: page.value.next } })
+    if (cursorResult.kind !== 'ok') return cursorResult
+    cursor = cursorResult.value
+  }
+  return ok(false)
+}
+
 type Parsed = { selector: string; number?: number; owner?: string; after?: string | null; json: boolean }
 function parse(verb: ProjectVerb, args: readonly string[]): Result<Parsed> {
   const positionals = verb === 'projects' ? 1 : 2
@@ -144,15 +179,49 @@ export async function executeProjects(verb: ProjectVerb, args: readonly string[]
   if (resolved.kind !== 'ok') return resolved
   const repositoryName = resolved.value.nameWithOwner
   if (verb === 'projects') {
-    const answer = await graphqlCall(process, 'gh api graphql', PROJECTS_QUERY, repositoryVariables(repositoryName))
-    if (answer.kind !== 'ok') return answer
-    const repo = connection(answer.value.data.repository)
-    const owner = record(repo.owner) ?? {}
-    const linked = list(record(repo.projectsV2)?.nodes).flatMap((node) => { const found = normalizeProject(node); return found === null ? [] : [found] })
-    const ownerProjects = ownerProjectNodes(owner).flatMap((node) => {
+    const repositoryVariablesValue = repositoryVariables(repositoryName)
+    const initial = await graphqlCall(process, 'gh api graphql', PROJECTS_QUERY, repositoryVariablesValue)
+    if (initial.kind !== 'ok') return initial
+    const initialRepo = connection(initial.value.data.repository)
+    const initialOwner = record(initialRepo.owner) ?? {}
+    const linked: Project[] = list(record(initialRepo.projectsV2)?.nodes).flatMap((node) => { const found = normalizeProject(node); return found === null ? [] : [found] })
+    const ownerNodes = ownerProjectNodes(initialOwner)
+    const repositoryNext = nextConnectionCursor(initialRepo.projectsV2)
+    if (repositoryNext.kind !== 'ok') return repositoryNext
+    const ownerNext = nextConnectionCursor(initialOwner.projectsV2)
+    if (ownerNext.kind !== 'ok') return ownerNext
+
+    let repositoryAfter = repositoryNext.value
+    while (repositoryAfter !== null) {
+      const answer = await graphqlCall(process, 'gh api graphql', REPOSITORY_PROJECTS_PAGE_QUERY, { ...repositoryVariablesValue, after: repositoryAfter })
+      if (answer.kind !== 'ok') return answer
+      const connectionPage = connection(connection(answer.value.data.repository).projectsV2)
+      linked.push(...list(connectionPage.nodes).flatMap((node) => { const found = normalizeProject(node); return found === null ? [] : [found] }))
+      const next = nextConnectionCursor(connectionPage)
+      if (next.kind !== 'ok') return next
+      repositoryAfter = next.value
+    }
+
+    const ownerLogin = repositoryVariablesValue.owner
+    let ownerAfter = ownerNext.value
+    while (ownerAfter !== null) {
+      const answer = await graphqlCall(process, 'gh api graphql', OWNER_PROJECTS_PAGE_QUERY, { owner: ownerLogin, after: ownerAfter })
+      if (answer.kind !== 'ok') return answer
+      const ownerPage = connection(answer.value.data.repositoryOwner)
+      ownerNodes.push(...ownerProjectNodes(ownerPage))
+      const next = nextConnectionCursor(ownerPage.projectsV2)
+      if (next.kind !== 'ok') return next
+      ownerAfter = next.value
+    }
+
+    const ownerProjects: Project[] = []
+    for (const node of ownerNodes) {
       const found = normalizeProject(node)
-      return found !== null && !found.closed && containsRepository(record(node)?.items, repositoryName) ? [found] : []
-    })
+      if (found === null || found.closed) continue
+      const membership = await ownerProjectContainsRepository(node, repositoryName, ownerLogin, process)
+      if (membership.kind !== 'ok') return membership
+      if (membership.value) ownerProjects.push(found)
+    }
     const unique = new Map([...linked, ...ownerProjects].map((item) => [item.id, item]))
     const output = { projects: [...unique.values()] }
     return options.json ? ok(`${JSON.stringify(output, null, 2)}\n`) : ok(output.projects.map((item) => `#${item.number}\t${item.title}\t${item.owner}\t${item.url}`).join('\n') + (output.projects.length ? '\n' : ''))

@@ -62,6 +62,29 @@ describe('github projects', () => {
     expect(calls).toHaveLength(1)
   })
 
+  test('continues owner project and membership scans through their cursors', async () => {
+    answer = (args) => {
+      const gql = query(args)
+      const cursor = variables(args).after
+      if (gql.includes('query repositoryProjects')) return stdout({ data: { repository: { projectsV2: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } })
+      if (gql.includes('query ownerProjects')) {
+        if (cursor === undefined) return stdout({ data: { repositoryOwner: { projectsV2: { nodes: [], pageInfo: { hasNextPage: true, endCursor: 'owner-cursor' } } } } })
+        expect(cursor).toBe('owner-cursor')
+        return stdout({ data: { repositoryOwner: { projectsV2: { nodes: [{ ...base, items: { nodes: [], pageInfo: { hasNextPage: true, endCursor: 'item-cursor' } } }], pageInfo: { hasNextPage: false, endCursor: null } } } } })
+      }
+      if (gql.includes('query($owner: String!, $name: String!, $number: Int!, $after: String)')) {
+        expect(cursor).toBe('item-cursor')
+        return stdout({ data: { repositoryOwner: { projectV2: { ...base, items: { nodes: [projectItem('I-late')], pageInfo: { hasNextPage: false, endCursor: null } } } } } })
+      }
+      return stdout({ data: { repository: { projectsV2: { nodes: [], pageInfo: { hasNextPage: true, endCursor: 'owner-cursor' } }, owner: { __typename: 'User', login: 'operator', projectsV2: { nodes: [], pageInfo: { hasNextPage: true, endCursor: 'owner-cursor' } } } } } })
+    }
+
+    const result = await parsed<{ projects: { number: number }[] }>(['projects', root, '--json'])
+
+    expect(result.projects.map((project) => project.number)).toEqual([7])
+    expect(calls.length).toBeGreaterThanOrEqual(4)
+  })
+
   test('reads issue and pull request items with status and normalizes their fields', async () => {
     answer = () => stdout({ data: { repositoryOwner: { projectV2: { ...base, items: { nodes: [projectItem('I1'), { ...projectItem('I2'), type: 'PULL_REQUEST', content: { ...projectItem('I2').content, __typename: 'PullRequest', state: 'MERGED' } }], pageInfo: { hasNextPage: false, endCursor: null } } } } } })
     const result = await parsed<{ items: { type: string; status: string | null; state: string | null }[] }>(['project', root, '7', '--json'])

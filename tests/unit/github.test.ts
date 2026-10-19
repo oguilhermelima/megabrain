@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter, type ProcessOutput } from "../../src/adapters/proc.js";
@@ -470,6 +470,19 @@ describe("github cache", () => {
     await Bun.write(file as string, "{broken");
     expect((await github(["prs", path, "--json"], 1_000_001)).kind).toBe("ok");
     expect(calls).toHaveLength(2);
+  });
+
+  test("collects expired cache files when writing a fresh entry", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    await github(["prs", path, "--json"], 1_000_000);
+    const [expiredFile] = cacheFiles();
+    const expired = JSON.parse(readFileSync(expiredFile as string, "utf8")) as Record<string, unknown>;
+    writeFileSync(expiredFile as string, JSON.stringify({ ...expired, fetchedAt: 1 }));
+
+    await github(["issues", path, "--json"], 1_000_000);
+
+    expect(cacheFiles()).toHaveLength(1);
+    expect(cacheFiles()[0]).not.toBe(expiredFile);
   });
 });
 
@@ -1279,6 +1292,52 @@ describe("github rerun-checks", () => {
 });
 
 describe("github Actions", () => {
+  test("fetches metadata only for the selected workflow", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const workflows = { workflows: [
+      { id: 3, name: "CI", path: ".github/workflows/ci.yml", state: "active" },
+      { id: 4, name: "Release", path: ".github/workflows/release.yml", state: "active" },
+      { id: 5, name: "Lint", path: ".github/workflows/lint.yml", state: "active" },
+    ] };
+    answer = (args) => {
+      const endpoint = args[1] ?? "";
+      if (endpoint.includes("actions/workflows?")) return stdout(JSON.stringify(workflows));
+      if (endpoint.endsWith("/contents/.github/workflows/ci.yml")) return stdout(JSON.stringify({ encoding: "base64", content: Buffer.from("on: workflow_dispatch").toString("base64") }));
+      if (endpoint.includes("actions/runs?")) return stdout(JSON.stringify({ workflow_runs: [] }));
+      return failed(`unexpected gh ${args.join(" ")}`);
+    };
+
+    await github(["runs", path, "--workflow", "CI", "--json"]);
+
+    expect(calls.filter((call) => call[1]?.includes("/contents/")).map((call) => call[1])).toEqual(["repos/operator/sample/contents/.github/workflows/ci.yml"]);
+  });
+
+  test("returns an opaque cursor and resumes runs after it", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const pages: string[] = [];
+    answer = (args) => {
+      const endpoint = args[1] ?? "";
+      if (endpoint.includes("actions/workflows?")) return stdout(fixture("actions-workflows.json"));
+      if (endpoint.endsWith("/contents/.github/workflows/ci.yml")) return stdout(JSON.stringify({ encoding: "base64", content: Buffer.from("on: workflow_dispatch").toString("base64") }));
+      if (endpoint.includes("actions/runs?")) {
+        pages.push(endpoint);
+        return stdout(JSON.stringify({ workflow_runs: [{ id: pages.length }, { id: pages.length + 1 }] }));
+      }
+      return failed(`unexpected gh ${args.join(" ")}`);
+    };
+
+    const first = parsed<{ next: string | null }>(await github(["runs", path, "--limit", "2", "--json"]));
+    expect(first.next).not.toBeNull();
+    if (first.next === null) return;
+    expect(first.next).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(Buffer.from(first.next, "base64url").toString("utf8")).toBe("actions-runs:2");
+    await github(["runs", path, "--limit", "2", "--after", first.next, "--json"]);
+    expect(pages).toEqual([
+      "repos/operator/sample/actions/runs?per_page=2&page=1",
+      "repos/operator/sample/actions/runs?per_page=2&page=2",
+    ]);
+  });
+
   test("lists normalized runs and workflows using the Actions API", async () => {
     const path = await repository("sample", "git@github.com:operator/sample.git");
     answer = (args) => args[1]?.includes("actions/runs") ? stdout(fixture("actions-runs.json"))

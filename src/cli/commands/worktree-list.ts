@@ -36,20 +36,20 @@ async function sharedRoot(environment: WorktreeListEnvironment): Promise<Result<
   return ok((await canonical(resolve(expanded))) ?? resolve(expanded));
 }
 
-async function repositoryForDirectory(process: ProcessAdapter, path: string): Promise<Repository | undefined> {
+async function repositoryForDirectory(process: ProcessAdapter, path: string): Promise<Result<Repository>> {
   const top = await runGit(process, path, ["rev-parse", "--path-format=absolute", "--show-toplevel"]);
-  if (top === undefined) return undefined;
-  const initialTop = await canonical(top.trim());
-  if (initialTop === undefined) return undefined;
+  if (top.kind !== "ok") return failed(`could not resolve repository: ${top.error}`, top.exitCode);
+  const initialTop = await canonical(top.value.trim());
+  if (initialTop === undefined) return failed(`could not resolve repository path: ${path}`);
   const common = await runGit(process, initialTop, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-  if (common === undefined) return undefined;
-  const commonPath = await canonical(common.trim());
-  if (commonPath === undefined) return undefined;
+  if (common.kind !== "ok") return failed(`could not resolve repository Git directory: ${common.error}`, common.exitCode);
+  const commonPath = await canonical(common.value.trim());
+  if (commonPath === undefined) return failed(`could not resolve repository Git directory: ${common.value.trim()}`);
   const topPath = commonPath.endsWith("/.git")
     ? await canonical(commonPath.slice(0, -"/.git".length))
     : initialTop;
-  if (topPath === undefined) return undefined;
-  return { common: commonPath, path: topPath };
+  if (topPath === undefined) return failed(`could not resolve repository path: ${commonPath}`);
+  return ok({ common: commonPath, path: topPath });
 }
 
 // A non-bare repository's common dir is <checkout>/.git; a bare one has no checkout, so the
@@ -59,9 +59,9 @@ function repositoryOf(common: string, repos: readonly Repository[]): { name: str
   return { name: basename(path), path };
 }
 
-async function runGit(process: ProcessAdapter, path: string, args: readonly string[]): Promise<string | undefined> {
-  const result = await process.run("git", ["-C", path, ...args]);
-  return result.kind === "ok" ? result.value.stdout : undefined;
+async function runGit(process: ProcessAdapter, path: string, args: readonly string[], timeoutMs = 2_000): Promise<Result<string>> {
+  const result = await process.run("git", ["-C", path, ...args], { timeoutMs });
+  return result.kind === "ok" ? ok(result.value.stdout) : failed(result.error, result.exitCode);
 }
 
 async function repositories(root: string, process: ProcessAdapter): Promise<Repository[]> {
@@ -103,7 +103,7 @@ function optionResult(args: readonly string[]): Result<{ readonly repo?: string;
 }
 
 async function batchJson(process: ProcessAdapter, command: string, args: readonly string[]): Promise<unknown> {
-  const result = await process.run(command, args);
+  const result = await process.run(command, args, { timeoutMs: 2_000 });
   return result.kind === "ok" ? jsonValue(result.value.stdout) : undefined;
 }
 
@@ -169,23 +169,40 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   if (options.value.repo !== undefined) {
     const selector = await repoFromOrca(process, options.value.repo, environment);
     if (selector.kind !== "ok") return failed(`repo not found: ${options.value.repo}`);
-    selectedRepository = await repositoryForDirectory(process, selector.value);
-    if (selectedRepository === undefined) return failed(`repo not found: ${options.value.repo}`);
+    const resolved = await repositoryForDirectory(process, selector.value);
+    if (resolved.kind !== "ok") return failed(`repo not found: ${options.value.repo} (${resolved.error})`, resolved.exitCode);
+    selectedRepository = resolved.value;
     filter = selectedRepository.common;
   }
   const repos = selectedRepository === undefined ? await repositories(root.value, process) : [selectedRepository];
   const gitResults = await Promise.all(repos.filter((repository) => filter === undefined || repository.common === filter).map(async (repository) => {
     const [output, config] = await Promise.all([
-      runGit(process, repository.path, ["worktree", "list", "--porcelain"]),
+      runGit(process, repository.path, ["worktree", "list", "--porcelain"], 10_000),
       runGit(process, repository.path, ["config", "--get-regexp", "^branch\\..*\\.megabrain-parent$"]),
     ]);
-    return {
-      gitRecords: output === undefined ? [] : parseGitWorktrees(output, repository.common),
-      parents: config === undefined ? [] : parseParentConfig(config, repository.common),
-    };
+    return { repository, output, config };
   }));
-  const gitRecords = gitResults.flatMap((result) => result.gitRecords);
-  const parents = gitResults.flatMap((result) => result.parents);
+  const worktreeListErrors = gitResults.flatMap((result) => {
+    if (result.output.kind === "ok") return [];
+    const message = result.output.kind === "failed" ? result.output.error : "git returned no result";
+    return [{ repository: result.repository.path, message, exitCode: result.output.kind === "failed" ? result.output.exitCode : undefined }];
+  });
+  if (selectedRepository !== undefined && worktreeListErrors.length > 0) {
+    const error = worktreeListErrors[0];
+    if (error !== undefined) return failed(`could not list worktrees for ${error.repository}: ${error.message}`, error.exitCode);
+  }
+  const listedResults = gitResults.filter((result) => result.output.kind === "ok");
+  const listedRepositories = listedResults.map((result) => result.repository);
+  const configErrors = listedResults.flatMap((result) => {
+    if (result.config.kind !== "failed" || result.config.exitCode === 1 || result.config.error === "no parent config") return [];
+    return [{ repository: result.repository.path, message: result.config.error, exitCode: result.config.exitCode }];
+  });
+  if (selectedRepository !== undefined && configErrors.length > 0) {
+    const error = configErrors[0];
+    if (error !== undefined) return failed(`could not read branch metadata for ${error.repository}: ${error.message}`, error.exitCode);
+  }
+  const gitRecords = listedResults.flatMap((result) => result.output.kind === "ok" ? parseGitWorktrees(result.output.value, result.repository.common) : []);
+  const parents = listedResults.flatMap((result) => result.config.kind === "ok" ? parseParentConfig(result.config.value, result.repository.common) : []);
   const tools = await Promise.all(["superset", "orca", "gh"].map(async (command) => [command, await available(command, environment)] as const));
   const installed = new Map(tools);
   const [workspaceData, orcaData] = await Promise.all([
@@ -200,7 +217,7 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   const pullRequests = new Map<string, ReturnType<typeof parsePullRequests> extends Map<string, infer T> ? T : never>();
   const now = Date.now();
   const uncached: Repository[] = [];
-  for (const repository of repos) {
+  for (const repository of listedRepositories) {
     const cached = prCache.repositories[repository.path];
     if (cached !== undefined && cached.fetchedAt <= now && now - cached.fetchedAt < 60_000) {
       for (const [branch, pull] of parsePullRequests(cached.value)) pullRequests.set(branch, pull);
@@ -249,7 +266,14 @@ export async function executeWorktreeList(args: readonly string[], environment: 
       if (Array.isArray(value)) { prCache.repositories[repository.path] = { fetchedAt: now, value }; prCacheChanged = true; }
     }
   }
-  if (prCacheChanged) await writePullRequestCache(stateDirectory, prCache);
+  if (prCacheChanged) {
+    for (const [path, entry] of Object.entries(prCache.repositories)) {
+      if (!Number.isFinite(entry.fetchedAt) || entry.fetchedAt > now || now - entry.fetchedAt >= 60_000) {
+        delete prCache.repositories[path];
+      }
+    }
+    await writePullRequestCache(stateDirectory, prCache);
+  }
   const entries: WorktreeListEntry[] = [];
   for (const record of gitRecords) {
     const path = await canonical(record.path);
@@ -270,7 +294,14 @@ export async function executeWorktreeList(args: readonly string[], environment: 
     });
   }
   const formatted = formatWorktreeList(entries, options.value);
-  if (options.value.json) return ok(formatted);
+  const errors = [...worktreeListErrors, ...configErrors];
+  const stderr = errors.map(({ repository, message }) => {
+    const action = worktreeListErrors.some((error) => error.repository === repository) ? "list worktrees" : "read branch metadata";
+    return `megabrain: could not ${action} for ${repository}: ${message}\n`;
+  }).join("");
+  if (options.value.json) {
+    return { ...ok(formatted), ...(stderr.length === 0 ? {} : { stderr }) };
+  }
   const lines = formatted.split("\n");
   if (options.value.flat) {
     for (let index = 1; index < lines.length - 1; index += 1) {
@@ -280,5 +311,5 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   } else {
     lines[0] = `${lines[0]}${" ".repeat(28)}`;
   }
-  return ok(lines.join("\n"));
+  return stderr.length === 0 ? ok(lines.join("\n")) : { ...ok(lines.join("\n")), stderr };
 }

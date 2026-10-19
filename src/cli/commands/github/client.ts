@@ -72,6 +72,17 @@ export function writeCache(environment: Environment, key: string, fetchedAt: num
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     chmodSync(directory, 0o700);
     const path = cachePath(environment, key);
+    for (const name of readdirSync(directory)) {
+      if (!name.endsWith(".json")) continue;
+      const candidate = join(directory, name);
+      if (candidate === path) continue;
+      try {
+        const entry = record(JSON.parse(readFileSync(candidate, "utf8")));
+        if (typeof entry?.fetchedAt === "number" && entry.fetchedAt <= fetchedAt && fetchedAt - entry.fetchedAt >= CACHE_TTL) {
+          rmSync(candidate, { force: true });
+        }
+      } catch { /* Unreadable cache entries are ignored and replaced when their key is requested. */ }
+    }
     const temporary = `${path}.${globalThis.process.pid}.${fetchedAt}.tmp`;
     writeFileSync(temporary, JSON.stringify({ key, fetchedAt, value }), { mode: 0o600 });
     renameSync(temporary, path);

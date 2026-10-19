@@ -10,8 +10,9 @@ async function run(
   process: ProcessAdapter,
   command: string,
   args: readonly string[],
+  timeoutMs?: number,
 ): Promise<Result<{ readonly stdout: string; readonly stderr: string }>> {
-  const result = await process.run(command, args);
+  const result = await process.run(command, args, timeoutMs === undefined ? undefined : { timeoutMs });
   return result.kind === "ok"
     ? ok(result.value)
     : failed(result.error, result.exitCode);
@@ -21,13 +22,14 @@ export async function repoFromOrca(
   process: ProcessAdapter,
   selector: string,
   environment: Environment,
+  timeoutMs?: number,
 ): Promise<Result<string>> {
   const direct = await run(process, "git", [
     "-C",
     selector,
     "rev-parse",
     "--show-toplevel",
-  ]);
+  ], timeoutMs);
   if (direct.kind === "ok") {
     const common = await run(process, "git", [
       "-C",
@@ -35,7 +37,7 @@ export async function repoFromOrca(
       "rev-parse",
       "--path-format=absolute",
       "--git-common-dir",
-    ]);
+    ], timeoutMs);
     const commonPath = common.kind === "ok" ? common.value.stdout.trim() : "";
     if (commonPath.endsWith("/.git")) {
       const canonical = await run(process, "git", [
@@ -43,15 +45,15 @@ export async function repoFromOrca(
         commonPath.slice(0, -5),
         "rev-parse",
         "--show-toplevel",
-      ]);
+      ], timeoutMs);
       if (canonical.kind === "ok") return ok(canonical.value.stdout.trim());
     }
     return ok(direct.value.stdout.trim());
   }
-  const command = await run(process, "sh", ["-c", "command -v orca"]);
+  const command = await run(process, "sh", ["-c", "command -v orca"], timeoutMs);
   let orcaReason = "Orca is unavailable";
   if (command.kind === "ok") {
-    const listed = await run(process, "orca", ["repo", "list", "--json"]);
+    const listed = await run(process, "orca", ["repo", "list", "--json"], timeoutMs);
     if (listed.kind !== "ok") orcaReason = "Orca repository lookup failed";
     else {
       try {
@@ -97,7 +99,7 @@ export async function repoFromOrca(
   registry.value.close();
   const validPaths: string[] = [];
   for (const path of matchingPaths) {
-    const top = await run(process, "git", ["-C", path, "rev-parse", "--path-format=absolute", "--show-toplevel"]);
+    const top = await run(process, "git", ["-C", path, "rev-parse", "--path-format=absolute", "--show-toplevel"], timeoutMs);
     if (top.kind === "ok") validPaths.push(top.value.stdout.trim());
   }
   const uniquePaths = [...new Set(validPaths)];
