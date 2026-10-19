@@ -1292,6 +1292,26 @@ describe("github rerun-checks", () => {
 });
 
 describe("github Actions", () => {
+  test("fetches metadata only for the selected workflow", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const workflows = { workflows: [
+      { id: 3, name: "CI", path: ".github/workflows/ci.yml", state: "active" },
+      { id: 4, name: "Release", path: ".github/workflows/release.yml", state: "active" },
+      { id: 5, name: "Lint", path: ".github/workflows/lint.yml", state: "active" },
+    ] };
+    answer = (args) => {
+      const endpoint = args[1] ?? "";
+      if (endpoint.includes("actions/workflows?")) return stdout(JSON.stringify(workflows));
+      if (endpoint.endsWith("/contents/.github/workflows/ci.yml")) return stdout(JSON.stringify({ encoding: "base64", content: Buffer.from("on: workflow_dispatch").toString("base64") }));
+      if (endpoint.includes("actions/runs?")) return stdout(JSON.stringify({ workflow_runs: [] }));
+      return failed(`unexpected gh ${args.join(" ")}`);
+    };
+
+    await github(["runs", path, "--workflow", "CI", "--json"]);
+
+    expect(calls.filter((call) => call[1]?.includes("/contents/")).map((call) => call[1])).toEqual(["repos/operator/sample/contents/.github/workflows/ci.yml"]);
+  });
+
   test("lists normalized runs and workflows using the Actions API", async () => {
     const path = await repository("sample", "git@github.com:operator/sample.git");
     answer = (args) => args[1]?.includes("actions/runs") ? stdout(fixture("actions-runs.json"))
