@@ -9,13 +9,13 @@ import { ErrorNote } from '@/components/ui'
 import { stateColors } from '@/github/github-model'
 import { ChevronIcon, ClosedIssueIcon, ClosedPullRequestIcon, IssueIcon, MergedIcon, MoreIcon, PullRequestIcon, RefreshIcon } from '@/github/icons'
 import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts'
-import { Avatar, LabelChip, OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
+import { OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
 import { pageDivider, pageX } from '@/lib/page'
 import { answeredItems, otherRepository } from '@/tasks/board-model'
 import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
 import { boardSheetFields } from '@/tasks/BoardFilterBar'
-import { ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
-import { editedItems, groupField, laneField, optionOf, projectViews, readViewPrefs, shownView, sortedItems, swimlanes, viewColumns, writeViewPrefs, type PendingEdit, type ViewColumn } from '@/tasks/board-view'
+import { Chips, ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
+import { cardChips, editedItems, groupField, laneField, optionOf, projectViews, readViewPrefs, shownView, sortedItems, swimlanes, viewColumns, writeViewPrefs, type CardChip, type PendingEdit, type ViewColumn } from '@/tasks/board-view'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
 import { boardItemsPolicy, boardListPolicy } from '@/lib/poll-model'
@@ -217,7 +217,7 @@ function ItemIcon({ item }: { item: GithubProjectItem }) {
   )
 }
 
-function Card({ item, repo, moving, onPointerDown, onOpen, onMenu }: { item: GithubProjectItem; repo: string; moving: boolean; onPointerDown: (event: PointerEvent<HTMLElement>) => void; onOpen: (() => void) | null; onMenu: (event: MouseEvent<HTMLElement>) => void }) {
+function Card({ item, repo, chips, moving, onPointerDown, onOpen, onMenu }: { item: GithubProjectItem; repo: string; chips: readonly CardChip[]; moving: boolean; onPointerDown: (event: PointerEvent<HTMLElement>) => void; onOpen: (() => void) | null; onMenu: (event: MouseEvent<HTMLElement>) => void }) {
   const other = otherRepository(item, repo)
   return (
     <li onPointerDown={onPointerDown} onContextMenu={onMenu} className={`group relative cursor-grab space-y-2 rounded-[14px] border border-white/[0.07] bg-ink-850 px-3 py-2.5 transition-opacity select-none active:cursor-grabbing ${moving ? 'opacity-40' : ''}`}>
@@ -233,20 +233,9 @@ function Card({ item, repo, moving, onPointerDown, onOpen, onMenu }: { item: Git
           {item.title}
         </button>
       )}
-      {(item.labels.length > 0 || item.assignees.length > 0) && (
+      {chips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1">
-          {item.labels.map((label) => (
-            <LabelChip key={label.name} name={label.name} color={label.color} />
-          ))}
-          {item.assignees.length > 0 && (
-            <span className="ml-auto flex -space-x-1.5" title={`Assigned to ${item.assignees.map((assignee) => assignee.login).join(', ')}`}>
-              {item.assignees.slice(0, 3).map((assignee) => (
-                <span key={assignee.login} className="rounded-full ring-2 ring-ink-850">
-                  <Avatar login={assignee.login} size={18} />
-                </span>
-              ))}
-            </span>
-          )}
+          <Chips chips={chips} />
         </div>
       )}
       <button type="button" data-card-menu="" onClick={onMenu} aria-haspopup="menu" aria-label={`Move ${item.title}`} title="Move to" className="absolute top-1.5 right-1.5 grid size-6 place-items-center rounded-full text-ink-400 opacity-0 group-hover:opacity-100 hover:bg-white/[0.08] hover:text-ink-100 focus-visible:opacity-100">
@@ -427,7 +416,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   const sheetFields = boardSheetFields(filters, options, filter, field === null ? null : { on: showNoStatus, count: noStatus, onChange: setNoStatus })
   const moving = new Set(pending.map((entry) => entry.itemId))
   const card = (item: GithubProjectItem) => (
-    <Card key={item.id} item={item} repo={repo} moving={moving.has(item.id) || drag?.item.id === item.id} onPointerDown={(event) => start(event, item)} onOpen={opener(item)} onMenu={(event) => menuFor(event, item, field === null ? null : optionOf(item, field))} />
+    <Card key={item.id} item={item} repo={repo} chips={cardChips(item, board, view, [field?.name ?? '', lane?.name ?? ''])} moving={moving.has(item.id) || drag?.item.id === item.id} onPointerDown={(event) => start(event, item)} onOpen={opener(item)} onMenu={(event) => menuFor(event, item, field === null ? null : optionOf(item, field))} />
   )
 
   const laneMenu = (event: MouseEvent<HTMLElement>) => {

@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react'
 import { SearchIcon } from '@/advanced/SidebarTools'
 import type { GithubProject, GithubProjectItem, GithubProjectView } from '@/api/schema'
-import { cardChips } from '@/tasks/board-view'
+import { Avatar, LabelChip } from '@/github/parts'
+import { cardChips, type CardChip } from '@/tasks/board-view'
 
 // A GitHub Project's saved views as tabs over the board, the bar that holds the shown view's filter,
 // and the table a table-layout view draws. The filter is evaluated by the data layer
@@ -144,14 +145,40 @@ export function ViewTable({ project, view, items, onOpen }: { project: GithubPro
   )
 }
 
+/** A card's chips (board-view cardChips): labels and options in their colours, values plainly, assignees as avatars. */
+export function Chips({ chips }: { chips: readonly CardChip[] }) {
+  return (
+    <>
+      {chips.map((chip) =>
+        chip.kind === 'label' ? (
+          <LabelChip key={`label:${chip.name}`} name={chip.name} color={chip.color} />
+        ) : chip.kind === 'option' ? (
+          <span key={`option:${chip.field}`} title={chip.field} style={{ color: chip.color, borderColor: `${chip.color}66`, backgroundColor: `${chip.color}1f` }} className="inline-flex h-[20px] shrink-0 items-center rounded-full border px-2 text-[11.5px] leading-none font-semibold whitespace-nowrap">
+            {chip.name}
+          </span>
+        ) : chip.kind === 'value' ? (
+          <span key={`value:${chip.field}`} title={chip.field} className="inline-flex h-[20px] shrink-0 items-center gap-1 rounded-full border border-white/[0.1] px-2 text-[11.5px] leading-none whitespace-nowrap text-ink-300">
+            <span className="text-ink-500">{chip.field}</span>
+            {chip.text}
+          </span>
+        ) : (
+          <span key="assignees" className="ml-auto flex -space-x-1.5" title={`Assigned to ${chip.logins.join(', ')}`}>
+            {chip.logins.slice(0, 3).map((login) => (
+              <span key={login} className="rounded-full ring-2 ring-ink-850">
+                <Avatar login={login} size={18} />
+              </span>
+            ))}
+          </span>
+        ),
+      )}
+    </>
+  )
+}
+
 function CellChips({ item, project, view }: { item: GithubProjectItem; project: GithubProject; view: GithubProjectView }) {
   return (
     <span className="flex items-center gap-1">
-      {cardChips(item, project, view).map((chip, index) => (
-        <span key={index} className="truncate">
-          {chip.kind === 'label' || chip.kind === 'option' ? chip.name : chip.kind === 'value' ? chip.text : chip.logins.join(', ')}
-        </span>
-      ))}
+      <Chips chips={cardChips(item, project, view)} />
     </span>
   )
 }
