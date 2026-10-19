@@ -62,6 +62,13 @@ async function settings(env: ReturnType<typeof sandbox>): Promise<Record<string,
 }
 
 describe("megabrain settings", () => {
+  test("rejects --only without --json before reading settings", async () => {
+    const env = sandbox();
+    const result = await run(["settings", "--only", "models"], env);
+    expect(result).toMatchObject({ kind: "failed", error: "settings --only needs --json", exitCode: 2 });
+    expect(existsSync(join(env.state, "megabrain.sqlite"))).toBe(false);
+  });
+
   test("returns the desktop schema keys with empty settings", async () => {
     const env = sandbox();
     const value = await settings(env);
