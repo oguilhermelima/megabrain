@@ -73,6 +73,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "put-waiter"; waiter: Readonly<{ dispatchId: string; pid: number; parentSessionId: string | null; parentHost: string | null; createdAt: string }> }
   | { operation: "delete-waiter"; dispatchId: string }
   | { operation: "claim-outbox"; id: string; holder: string; leaseSeconds: number }
+  | { operation: "renew-outbox"; id: string; holder: string; leaseSeconds: number }
   | { operation: "acquire-lease"; key: string; holder: string; seconds: number }
   | { operation: "release-lease"; key: string; holder: string }
   | { operation: "transfer-lease"; key: string; from: string; to: string }

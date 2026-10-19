@@ -166,6 +166,18 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     if (!nested) await callStateOwner(root, { operation: "release-lease", key: leaseKey, holder }).catch(() => undefined);
     return ok("delivery already claimed\n");
   }
+  let outboxLeaseLost = false;
+  let renewalInFlight = false;
+  const leaseHeartbeat = setInterval(() => {
+    if (renewalInFlight || outboxLeaseLost) return;
+    renewalInFlight = true;
+    void callStateOwner(root, { operation: "renew-outbox", id: outboxId, holder, leaseSeconds: DELIVERY_LEASE_SECONDS })
+      .then((renewed) => { if (renewed !== true) outboxLeaseLost = true; })
+      .catch(() => { outboxLeaseLost = true; })
+      .finally(() => { renewalInFlight = false; });
+  }, DELIVERY_LEASE_SECONDS * 1000 / 3);
+  leaseHeartbeat.unref();
+  const outboxLeaseActive = (): boolean => !outboxLeaseLost;
   const targetKind = claimedValue.targetKind;
   const target = claimedValue.target;
   const payload = typeof claimedValue.payload === "object" && claimedValue.payload !== null ? claimedValue.payload as Meta : {};
@@ -203,6 +215,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const priorVerification = getOutboxPeerVerification(database.value, outboxId);
   const fallbackOnly = priorVerification.kind === "ok" && priorVerification.value?.state === "fallback-queued";
   const queueVerification = async (channel: string, messageId: string, agentVersion: string, transcript?: string, transcriptOffset?: number): Promise<void> => {
+    if (!outboxLeaseActive()) return;
     const saved = markOutboxPeerSent(database.value, outboxId, holder, {
       state: "pending", messageId, agent: String(meta.agent ?? "unknown"), channel, agentVersion,
       acceptedAt: Date.now(), ...(transcript === undefined ? {} : { transcript, transcriptOffset }),
@@ -243,6 +256,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const localParent = targetKind === "parent-pointer" && meta.runtime === "host" && meta.childHost === "local";
   const threadId = targetKind === "parent-pointer" ? persistedMeta.parentAgentThreadId : persistedMeta.agentThreadId;
   const typed = async (): Promise<boolean | Readonly<{ delivered: boolean; stop?: boolean; detail?: string }>> => {
+    if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
     if (localParent || text === "" || dispatch === "" || sequence < 1) return false;
     const terminal = targetKind === "parent-pointer"
       ? { host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId, workspaceId: meta.parentWorkspaceId }
@@ -320,6 +334,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     text,
     channels: {
       "peer-socket": async () => {
+        if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || choice?.kind !== "socket" || home === undefined || text === "" || dispatch === "" || sequence < 1 || typeof meta.agentSessionId !== "string") return false;
         try {
           peer = await deliverThroughClaudePeer({
@@ -339,6 +354,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         return false;
       },
       "leader-socket": async () => {
+        if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || !direct || meta.agent !== "grok" || typeof meta.grokLeaderSocket !== "string" || typeof meta.grokSessionId !== "string" || text === "") return false;
         peer = await deliverThroughGrokLeader({ database: database.value, socketPath: meta.grokLeaderSocket, sessionId: meta.grokSessionId, text });
         peerChannel = GROK_LEADER_CHANNEL;
@@ -347,6 +363,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         outcome = "verifying"; transport = "ack-verifying"; return true;
       },
       "agy-language-server": async () => {
+        if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || !direct || meta.agent !== "agy" || text === "" || dispatch === "" || sequence < 1) return false;
         try {
           peer = await deliverThroughAgyLanguageServer({
@@ -360,6 +377,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         return false;
       },
       "codex-queue": async () => {
+        if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || typeof threadId !== "string" || threadId === "" || text === "") return false;
         const found = await findCodexProcessByThread(threadId, process);
         if (!("pid" in found)) { peer = { kind: "fallback", reason: found.reason }; return false; }
@@ -374,6 +392,11 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       if (channel === "typed") await recordChannelResultThroughOwner(root, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true });
     },
   });
+  if (!outboxLeaseActive()) {
+    clearInterval(leaseHeartbeat);
+    console.error(`delivery outbox lease lost: ${outboxId}`);
+    return ok("delivery lease lost\n");
+  }
   if (peer !== undefined && (peer.kind === "delivered" || peer.kind === "accepted" || peer.kind === "read")) {
     await decisionLog.record({ dispatchId: dispatch, outboxId, channel: peerChannel, decision: peer.kind === "read" ? "cancelled" : peer.kind === "accepted" ? "ack-verifying" : "peer-delivered", ...(peer.kind === "read" ? {} : { msgId: peer.msgId }) });
   }
@@ -400,6 +423,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     }
     await callStateOwner(root, { operation: "release-lease", key: leaseKey, holder }).catch(() => undefined);
   }
+  clearInterval(leaseHeartbeat);
   return ok(`delivery ${transport}\n`);
 }
 
