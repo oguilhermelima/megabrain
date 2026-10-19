@@ -163,6 +163,13 @@ describe("native simulator lifecycle commands", () => {
     expect(calls.some((call) => call[2] === "boot")).toBe(true);
   });
 
+  test("restart waits with bootstatus instead of repeatedly listing simulators", async () => {
+    const { process, calls } = simulatorProcess({ initiallyBooted: true });
+    await executeNative(["sim", "restart", phone, "--timeout", "2", "--json"], {}, process);
+    expect(calls.filter((call) => call[2] === "list" && call[3] === "devices")).toHaveLength(1);
+    expect(calls.filter((call) => call[2] === "bootstatus")).toHaveLength(1);
+  });
+
   test("lists booted devices across phone and tv runtimes", async () => {
     const { process } = simulatorProcess({ initiallyBooted: true });
     const result = await executeNative(["sim", "list", "--booted", "--json"], {}, process);
