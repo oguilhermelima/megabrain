@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeNative } from "../../src/cli/commands/native.js";
 import { listNativeSessions } from "../../src/db/queries/native-sessions.js";
+import { nativeSessionArbitrationDelayMs } from "../../src/core/native-session.js";
 import { ok, failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
@@ -97,6 +98,10 @@ afterEach(async () => {
 });
 
 describe("native Appium session store", () => {
+  test("backs off when concurrent sessions keep winning arbitration", () => {
+    expect([0, 1, 2, 3, 4, 20].map(nativeSessionArbitrationDelayMs)).toEqual([10, 20, 40, 80, 100, 100]);
+  });
+
   test("prepares legacy state before the first session read", async () => {
     const directory = await fixture();
     await seed(directory, [{ udid: "one", bundleId: "com.example.app", sessionId: "live-session" }]);
