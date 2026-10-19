@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createServer, type Server, type Socket } from "node:net";
@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { route } from "../../src/cli/router.js";
 import { failed } from "../../src/core/result.js";
-import { callChatd, ChatDaemon } from "../../src/chat/daemon.js";
+import { callChatd, ChatDaemon, retireChatd } from "../../src/chat/daemon.js";
 import { ChatStore, type Chat } from "../../src/chat/store.js";
 
 const directories: string[] = [];
@@ -62,6 +62,17 @@ async function silentServer(path: string, onConnection?: (socket: Socket) => voi
 }
 
 describe("chatd recovers from stale state", () => {
+  test("retire treats a socket that disappears after probing as not running", async () => {
+    const env = sandbox();
+    const server = createServer(() => {
+      server.close();
+      unlinkSync(env.socket);
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(env.socket, resolve));
+    await expect(retireChatd(env.state)).resolves.toEqual({ running: false });
+  });
+
   test("a stale pid file and socket do not block a call", async () => {
     const env = sandbox();
     await leaveStaleSocket(env.socket);
