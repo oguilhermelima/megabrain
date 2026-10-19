@@ -602,6 +602,30 @@ describe("turns cut short", () => {
 });
 
 describe("a chat in terminal mode", () => {
+  test("runs one coalesced refresh after a periodic tick lands during an active scan", async () => {
+    const env = sandbox();
+    let calls = 0;
+    let release = () => {};
+    let markFirst = () => {};
+    let markSecond = () => {};
+    const first = new Promise<void>((resolve) => { markFirst = resolve; });
+    const second = new Promise<void>((resolve) => { markSecond = resolve; });
+    const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "200", MEGABRAIN_KNOWLEDGE_SCANNER: "off" });
+    daemon.refreshTerminalChats = async () => {
+      calls += 1;
+      if (calls === 1) { markFirst(); await new Promise<void>((resolve) => { release = resolve; }); }
+      if (calls === 2) markSecond();
+    };
+    try {
+      await first;
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      expect(calls).toBe(1);
+      release();
+      const ranImmediately = await Promise.race([second.then(() => true), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))]);
+      expect(ranImmediately).toBe(true);
+    } finally { release(); }
+  });
+
   test("shows the TUI's state from the session log: working during an unfinished turn, idle at its end or when the TUI is gone", async () => {
     const env = sandbox();
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
