@@ -602,6 +602,24 @@ describe("turns cut short", () => {
 });
 
 describe("a chat in terminal mode", () => {
+  test("retains and exposes a terminal refresh failure while later refreshes continue", async () => {
+    const env = sandbox();
+    let calls = 0;
+    const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "60", MEGABRAIN_KNOWLEDGE_SCANNER: "off" });
+    daemon.refreshTerminalChats = async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("ownership lookup failed");
+    };
+    let status: { terminalRefreshError?: string } = {};
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      status = await daemon.daemonStatus() as unknown as { terminalRefreshError?: string };
+      if (status.terminalRefreshError !== undefined) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(status.terminalRefreshError).toContain("ownership lookup failed");
+    expect(calls).toBeGreaterThan(1);
+  });
+
   test("runs one coalesced refresh after a periodic tick lands during an active scan", async () => {
     const env = sandbox();
     let calls = 0;
