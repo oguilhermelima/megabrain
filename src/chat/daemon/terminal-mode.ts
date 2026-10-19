@@ -159,16 +159,16 @@ export async function importTerminalTurns(daemon: ChatDaemon, chat: Chat, markIn
     const since = chat.terminalSince ?? "";
     const path = await sessionLogPath(chat, daemon.environment.HOME ?? homedir(), daemon.environment.GROK_HOME);
     let turns: import(".././session-log.js").LoggedTurn[] = [];
-    let byteOffset = 0;
+    let byteOffset = chat.terminalLogCursor?.byteOffset ?? 0;
+    let turnOpen = chat.terminalTurnOpen ?? false;
+    let readSucceeded = false;
     if (path !== null) {
       try {
-        const bytes = await readFile(path);
-        const completeEnd = bytes.lastIndexOf(10) + 1;
-        const cursorOffset = chat.terminalLogCursor?.byteOffset ?? 0;
-        const offset = cursorOffset <= completeEnd ? cursorOffset : 0;
-        const tail = bytes.subarray(offset, completeEnd).toString("utf8");
-        turns = chat.agent === "claude" ? parseClaudeLog(tail) : chat.agent === "grok" ? parseGrokLog(tail) : chat.agent === "agy" ? parseAgyLog(tail) : parseCodexRollout(tail);
-        byteOffset = completeEnd;
+        const tail = await readTerminalTail(path, byteOffset);
+        turns = parseTerminalTurns(chat.agent, tail.content);
+        byteOffset = tail.byteOffset;
+        turnOpen = sessionTurnOpen(chat.agent, tail.content, turnOpen);
+        readSucceeded = true;
       } catch { /* a missing or mid-write session file is retried on the next watch or poll */ }
     }
     let lastMessageId = chat.terminalLogCursor?.lastMessageId ?? (existing.at(-1)?.messageId ?? null);
@@ -183,10 +183,11 @@ export async function importTerminalTurns(daemon: ChatDaemon, chat: Chat, markIn
       const { kind, text: value, at, tool, messageId, parentId, subagent, backgroundTask, reason, detail, partial, sourceId } = turn;
       await daemon.publish(chat, { id: randomUUID(), at, kind, text: value, ...(tool === undefined ? {} : { tool }), ...(messageId === undefined ? {} : { messageId }), ...(parentId === undefined ? {} : { parentId }), ...(subagent === undefined ? {} : { subagent }), ...(backgroundTask === undefined ? {} : { backgroundTask }), ...(reason === undefined ? {} : { reason }), ...(detail === undefined ? {} : { detail }), ...(partial === undefined ? {} : { partial }), sourceId });
     }
-    if (path !== null) {
+    if (path !== null && readSucceeded) {
       const current = await daemon.store.get(chat.id);
       if (current !== null) {
         current.terminalLogCursor = { byteOffset, lastMessageId };
+        current.terminalTurnOpen = turnOpen;
         await daemon.save(current);
       }
     }
@@ -210,6 +211,30 @@ export async function logTurnOpen(daemon: ChatDaemon, chat: Chat): Promise<boole
     if (path === null) return false;
     try { return sessionTurnOpen(chat.agent, await readFile(path, "utf8")); } catch { return false; }
   }
+
+type TerminalTail = { content: string; byteOffset: number };
+
+function parseTerminalTurns(agent: Chat["agent"], content: string): import(".././session-log.js").LoggedTurn[] {
+  return agent === "claude" ? parseClaudeLog(content) : agent === "grok" ? parseGrokLog(content) : agent === "agy" ? parseAgyLog(content) : parseCodexRollout(content);
+}
+
+async function readTerminalTail(path: string, cursor: number, knownSize?: number): Promise<TerminalTail> {
+  const file = await open(path, "r");
+  try {
+    const size = knownSize ?? (await file.stat()).size;
+    const offset = cursor <= size ? cursor : 0;
+    const remaining = size - offset;
+    const bytes = Buffer.alloc(remaining);
+    let bytesRead = 0;
+    while (bytesRead < remaining) {
+      const result = await file.read(bytes, bytesRead, remaining - bytesRead, offset + bytesRead);
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+    }
+    const completeEnd = bytes.subarray(0, bytesRead).lastIndexOf(10) + 1;
+    return { content: bytes.subarray(0, completeEnd).toString("utf8"), byteOffset: offset + completeEnd };
+  } finally { await file.close(); }
+}
 
 export async function foreignHolders(daemon: ChatDaemon, chat: Chat, panes?: ReadonlyMap<number, string>, exclude: ReadonlySet<number> = new Set()): Promise<SessionHolder[]> {
     if (chat.agentSessionId === null) return [];
@@ -306,11 +331,14 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
       let content: string;
       let key: string;
       let logExists = false;
+      let turnOpen = listed.terminalTurnOpen ?? false;
       try {
         const info = await stat(path ?? "");
         key = `${info.size}:${info.mtimeMs}`;
         logExists = true;
-        content = await readFile(path ?? "", "utf8");
+        const tail = await readTerminalTail(path ?? "", listed.terminalLogCursor?.byteOffset ?? 0, info.size);
+        content = tail.content;
+        turnOpen = sessionTurnOpen(listed.agent, content, turnOpen);
       } catch { content = ""; key = ""; }
       const hadRead = daemon.terminalLogs.has(listed.id);
       const previousKey = daemon.terminalLogs.get(listed.id);
@@ -333,7 +361,7 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
         daemon.terminalFileWatches.get(listed.id)?.close();
         daemon.terminalFileWatches.delete(listed.id);
       }
-      const working = owner === "terminal" && sessionTurnOpen(listed.agent, content) && active;
+      const working = owner === "terminal" && turnOpen && active;
       const state: Chat["state"] = working ? "working" : "idle";
       // The record may have moved on while the log was read: only the same session/view snapshot is refreshed.
       const chat = await daemon.store.get(listed.id);

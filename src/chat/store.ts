@@ -31,6 +31,8 @@ export type Chat = {
   owner?: "chat" | "terminal" | "none";
   /** Last complete byte read from the agent's session log while its TUI owned the conversation. */
   terminalLogCursor?: { byteOffset: number; lastMessageId: string | null };
+  /** Whether the most recently read complete terminal log row leaves a turn open. */
+  terminalTurnOpen?: boolean;
   agentSessionId: string | null;
   createdAt: string;
   lastActivityAt: string | null;
