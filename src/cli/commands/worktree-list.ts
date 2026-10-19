@@ -193,9 +193,13 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   }
   const listedResults = gitResults.filter((result) => result.output.kind === "ok");
   const listedRepositories = listedResults.map((result) => result.repository);
-  const failedConfig = listedResults.find((result) => result.config.kind === "failed" && result.config.exitCode !== 1 && result.config.error !== "no parent config");
-  if (failedConfig !== undefined && failedConfig.config.kind === "failed") {
-    return failed(`could not read branch metadata for ${failedConfig.repository.path}: ${failedConfig.config.error}`, failedConfig.config.exitCode);
+  const configErrors = listedResults.flatMap((result) => {
+    if (result.config.kind !== "failed" || result.config.exitCode === 1 || result.config.error === "no parent config") return [];
+    return [{ repository: result.repository.path, message: result.config.error, exitCode: result.config.exitCode }];
+  });
+  if (selectedRepository !== undefined && configErrors.length > 0) {
+    const error = configErrors[0];
+    if (error !== undefined) return failed(`could not read branch metadata for ${error.repository}: ${error.message}`, error.exitCode);
   }
   const gitRecords = listedResults.flatMap((result) => result.output.kind === "ok" ? parseGitWorktrees(result.output.value, result.repository.common) : []);
   const parents = listedResults.flatMap((result) => result.config.kind === "ok" ? parseParentConfig(result.config.value, result.repository.common) : []);
@@ -290,9 +294,13 @@ export async function executeWorktreeList(args: readonly string[], environment: 
     });
   }
   const formatted = formatWorktreeList(entries, options.value);
+  const errors = [...worktreeListErrors, ...configErrors];
+  const stderr = errors.map(({ repository, message }) => {
+    const action = worktreeListErrors.some((error) => error.repository === repository) ? "list worktrees" : "read branch metadata";
+    return `megabrain: could not ${action} for ${repository}: ${message}\n`;
+  }).join("");
   if (options.value.json) {
-    if (worktreeListErrors.length === 0) return ok(formatted);
-    return ok(`${JSON.stringify({ worktrees: JSON.parse(formatted) as WorktreeListEntry[], errors: worktreeListErrors.map(({ repository, message }) => ({ repository, message })) }, null, 2)}\n`);
+    return { ...ok(formatted), ...(stderr.length === 0 ? {} : { stderr }) };
   }
   const lines = formatted.split("\n");
   if (options.value.flat) {
@@ -303,6 +311,5 @@ export async function executeWorktreeList(args: readonly string[], environment: 
   } else {
     lines[0] = `${lines[0]}${" ".repeat(28)}`;
   }
-  const stderr = worktreeListErrors.map(({ repository, message }) => `megabrain: could not list worktrees for ${repository}: ${message}\n`).join("");
   return stderr.length === 0 ? ok(lines.join("\n")) : { ...ok(lines.join("\n")), stderr };
 }
