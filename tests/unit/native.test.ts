@@ -95,6 +95,11 @@ describe("native runtime commands", () => {
     const result = await executeNative(["runtime", "list", "--available", "--json", "--bad"], {}, process);
     expect(result).toEqual({ kind: "ok", value: JSON.stringify({ refusal: { code: "invalid-arguments", message: "unknown native runtime list option: --bad" } }) + "\n", exitCode: 2 });
   });
+
+  test("does not report an empty downloadable runtime list as success", async () => {
+    const result = await executeNative(["runtime", "list", "--available", "--json"], {}, process);
+    expect(result).toEqual({ kind: "ok", value: JSON.stringify({ refusal: { code: "invalid-arguments", message: expect.stringContaining("not supported") } }) + "\n", exitCode: 2 });
+  });
 });
 
 describe("native simulator lifecycle commands", () => {
