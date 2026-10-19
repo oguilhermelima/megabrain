@@ -48,7 +48,7 @@ export const USAGE_LINES = {
   "port-who": "port who <port> [--json]",
   "port-free": "port free [--from <port>] [--json]",
   "port-kill": "port kill <port> [--json]",
-  "github": "github projects|project|project-move|project-field|project-clear|project-add|project-draft|project-archive|project-unarchive|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
+  "github": "github projects|project|project-move|project-field|project-clear|project-add|project-draft|project-draft-edit|project-archive|project-unarchive|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
   "github-projects": "github projects <repo name|path> [--json]",
   "github-project": "github project <repo name|path> <project number> [--owner <login>] [--after <cursor>] [--json]",
   "github-project-move": "github project-move <repo name|path> <project number> <item id> --status <option id> [--owner <login>] [--json]",
@@ -56,6 +56,7 @@ export const USAGE_LINES = {
   "github-project-clear": "github project-clear <repo> <project number> <item id> --field <name> [--owner <login>] [--json]",
   "github-project-add": "github project-add <repo> <project number> <issue-or-pr-url|repo#number> [--owner <login>] [--json]",
   "github-project-draft": "github project-draft <repo> <project number> --title <title> [--body <text>] [--owner <login>] [--json]",
+  "github-project-draft-edit": "github project-draft-edit <repo> <project number> <draft item id> --title <title> --body <text> [--owner <login>] [--json]",
   "github-project-archive": "github project-archive <repo> <project number> <item id> [--owner <login>] [--json]",
   "github-project-unarchive": "github project-unarchive <repo> <project number> <item id> [--owner <login>] [--json]",
   "github-project-status": "github project-status <repo name|path> <project number> [--owner <login>] [--json]",
@@ -267,7 +268,7 @@ Commands:
   projects [--json]                     List projects, worktrees, and agent sessions
   usage stats [--days <n>] [--provider <id>] [--json] Token usage per day and provider from the agents' logs
   port who|free|kill ...                Find, free and stop port listeners
-  github projects|project|project-move|project-field|project-clear|project-add|project-draft|project-archive|project-unarchive|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read and manage GitHub projects, pull requests, issues and Actions
+  github projects|project|project-move|project-field|project-clear|project-add|project-draft|project-draft-edit|project-archive|project-unarchive|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... Read and manage GitHub projects, pull requests, issues and Actions
   app open <target> [--split right|down] [--beside <pane>] [--focus] Drive the desktop layout without keyboard shortcuts
   code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json] Open Code for a project
   worktree create ...                  Create a shared Orca/Superset worktree (--from <ref>)
