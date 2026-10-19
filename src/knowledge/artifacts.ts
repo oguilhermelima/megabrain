@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { extname, join } from "node:path";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, readSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveProject } from "./project-id.js";
 
@@ -114,6 +114,40 @@ function writeAtomic(path: string, text: string): void {
   renameSync(temporary, path);
 }
 
+function revisionOffsetsPath(dir: string): string { return join(dirname(dir), ".revision-offsets", `${basename(dir)}.json`); }
+
+function readRevisionOffsets(dir: string, count: number): number[] {
+  try {
+    const value: unknown = JSON.parse(readFileSync(revisionOffsetsPath(dir), "utf8"));
+    if (Array.isArray(value) && value.length === count && value.every((offset) => Number.isSafeInteger(offset) && offset >= 0)) return value as number[];
+  } catch { /* Older artifact histories have no offset index. */ }
+  if (count === 0) return [];
+  const content = readFileSync(join(dir, "revisions.jsonl"), "utf8");
+  const offsets: number[] = [];
+  let offset = 0;
+  for (const line of content.split("\n")) {
+    if (line !== "") offsets.push(offset);
+    offset += Buffer.byteLength(line) + 1;
+  }
+  if (offsets.length !== count) throw new Error("artifact revision history is incomplete");
+  mkdirSync(dirname(revisionOffsetsPath(dir)), { recursive: true, mode: 0o700 });
+  writeAtomic(revisionOffsetsPath(dir), `${JSON.stringify(offsets)}\n`);
+  return offsets;
+}
+
+function readArtifactRevision(dir: string, revision: number, count: number): ArtifactRevision | undefined {
+  const offsets = readRevisionOffsets(dir, count);
+  const offset = offsets[revision - 1];
+  if (offset === undefined) return undefined;
+  const end = offsets[revision] ?? statSync(join(dir, "revisions.jsonl")).size;
+  const descriptor = openSync(join(dir, "revisions.jsonl"), "r");
+  try {
+    const buffer = Buffer.alloc(end - offset);
+    const bytes = readSync(descriptor, buffer, 0, buffer.length, offset);
+    return JSON.parse(buffer.subarray(0, bytes).toString("utf8")) as ArtifactRevision;
+  } finally { closeSync(descriptor); }
+}
+
 function readStored(dir: string): Stored | null {
   try {
     const value = JSON.parse(readFileSync(join(dir, "artifact.json"), "utf8")) as Stored;
@@ -175,7 +209,14 @@ export async function updateArtifact(stateDir: string, id: string, input: Update
   const oldFile = join(dir, contentFile(previous.format));
   const oldContent = readFileSync(oldFile, "utf8");
   const revision: ArtifactRevision = { ...previous, content: oldContent, replacedAt: now };
-  appendFileSync(join(dir, "revisions.jsonl"), `${JSON.stringify(revision)}\n`);
+  const revisionsFile = join(dir, "revisions.jsonl");
+  const revisionCount = previous.revision - 1;
+  const offsets = readRevisionOffsets(dir, revisionCount);
+  const offset = existsSync(revisionsFile) ? statSync(revisionsFile).size : 0;
+  appendFileSync(revisionsFile, `${JSON.stringify(revision)}\n`);
+  offsets.push(offset);
+  mkdirSync(dirname(revisionOffsetsPath(dir)), { recursive: true, mode: 0o700 });
+  writeAtomic(revisionOffsetsPath(dir), `${JSON.stringify(offsets)}\n`);
   const stored: Stored = { ...previous, title, kind, format: input.format, updatedAt: now, revision: previous.revision + 1 };
   writeAtomic(join(dir, contentFile(stored.format)), input.format === "html" ? stripGoogleFonts(input.content) : input.content);
   if (stored.format !== previous.format) rmSync(oldFile, { force: true });
@@ -209,7 +250,7 @@ export async function showArtifact(stateDir: string, id: string, revision?: numb
     return { ...artifact, content: readFileSync(artifact.path, "utf8") };
   }
   if (!Number.isSafeInteger(revision) || revision < 1 || revision > stored.revision) return null;
-  const previous = (await artifactRevisions(stateDir, id)).find((entry) => entry.revision === revision);
+  const previous = readArtifactRevision(dir, revision, stored.revision - 1);
   return previous === undefined ? null : { ...withPath(dir, previous), ...previous };
 }
 
