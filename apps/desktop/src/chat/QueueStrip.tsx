@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react'
 import type { ChatQueueItem } from '@/api/schema'
-import { moveTarget, queueSummary } from '@/chat/queue-walk'
+import { moveTarget, queueRows } from '@/chat/queue-walk'
 import { Tooltip } from '@/components/Tooltip'
 
 /** What the composer offers on a native chat's queue; the view owns the calls and the confirm before Send now. */
@@ -21,9 +21,10 @@ const iconButton =
 const textButton = 'shrink-0 rounded-full px-2 py-0.5 text-[12px] font-medium text-ink-200 transition-colors duration-100 hover:bg-white/[0.08] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none'
 
 /**
- * The messages waiting for the running turn to end, oldest first, above the composer. Each can be
- * dragged by its handle or moved with Alt+ArrowUp/Down, taken into the composer to edit, or removed;
- * the first can be sent now, which stops the turn.
+ * The messages waiting for the running turn to end, as an open queue above the composer: in send
+ * order on one line, the next to go out marked. Each can be dragged by its handle or moved with its
+ * buttons or Alt+ArrowUp/Down, taken into the composer to edit, or removed; the first can be sent
+ * now, which stops the turn.
  */
 export function QueueStrip({ queue, editing, onEdit }: { queue: QueueControls; editing: string | null; onEdit: (item: ChatQueueItem) => void }) {
   const { items } = queue
@@ -68,114 +69,164 @@ export function QueueStrip({ queue, editing, onEdit }: { queue: QueueControls; e
     if (state !== null && state.over !== ids.indexOf(state.id)) void queue.move(state.id, state.over)
   }
 
+  const move = (id: string, direction: 'up' | 'down') => {
+    const to = moveTarget(ids, id, direction)
+    if (to !== null) void queue.move(id, to).then(() => rows.current.get(id)?.focus())
+  }
+
   const onRowKey = (event: KeyboardEvent<HTMLLIElement>, id: string) => {
     if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
     event.preventDefault()
-    const to = moveTarget(ids, id, event.key === 'ArrowUp' ? 'up' : 'down')
-    if (to === null) return
-    void queue.move(id, to).then(() => rows.current.get(id)?.focus())
+    move(id, event.key === 'ArrowUp' ? 'up' : 'down')
   }
 
   return (
-    <ol aria-label="Queued messages" className="-mx-1 mb-1.5 flex max-h-40 flex-col gap-1 overflow-y-auto px-1">
-      {shown.map((item, index) => {
-        const { line, images } = queueSummary(item.parts)
-        const isEditing = item.id === editing
-        const dragging = drag?.id === item.id
-        return (
-          <li
-            key={item.id}
-            ref={(element) => {
-              if (element === null) rows.current.delete(item.id)
-              else rows.current.set(item.id, element)
-            }}
-            tabIndex={0}
-            onKeyDown={(event) => onRowKey(event, item.id)}
-            aria-label={`Queued message ${index + 1}${isEditing ? ', editing' : ''}: ${line || `${images.length} image${images.length === 1 ? '' : 's'}`}. Alt+Arrow keys reorder.`}
-            className={`group flex min-w-0 items-center gap-1.5 rounded-[12px] border py-0.5 pr-1 pl-0.5 text-[12.5px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 ${
-              isEditing ? 'border-accent/40 bg-accent/[0.08]' : 'border-white/[0.07] bg-white/[0.03]'
-            } ${dragging ? 'ring-1 ring-accent/40' : ''}`}
-          >
-            <Tooltip text="Drag to reorder (Alt+↑/↓)">
-              {(tip) => (
-                <button
-                  type="button"
-                  aria-label="Drag to reorder"
-                  {...tip}
-                  onPointerDown={(event) => onHandleDown(event, item.id)}
-                  onPointerMove={onHandleMove}
-                  onPointerUp={onHandleUp}
-                  onPointerCancel={() => setDrag(null)}
-                  className={`${iconButton} cursor-grab touch-none active:cursor-grabbing`}
-                >
-                  <svg viewBox="0 0 16 16" className="size-3" fill="currentColor" aria-hidden="true">
-                    <circle cx="6" cy="4" r="1.1" />
-                    <circle cx="10" cy="4" r="1.1" />
-                    <circle cx="6" cy="8" r="1.1" />
-                    <circle cx="10" cy="8" r="1.1" />
-                    <circle cx="6" cy="12" r="1.1" />
-                    <circle cx="10" cy="12" r="1.1" />
-                  </svg>
-                </button>
-              )}
-            </Tooltip>
-            <span className="w-4 shrink-0 text-right text-[11.5px] text-ink-500 tabular-nums">{index + 1}</span>
-            <Tooltip text={line}>
-              {(tip) => (
-                <span {...tip} className={`min-w-0 flex-1 truncate ${line === '' ? 'text-ink-400' : 'text-ink-200'}`}>
-                  {line === '' ? 'Images only' : line}
-                </span>
-              )}
-            </Tooltip>
-            {images.map((name, position) => (
-              <Tooltip key={`${name}-${position}`} text={name}>
-                {(tip) => (
-                  <span {...tip} className="max-w-24 shrink-0 truncate rounded-full border border-white/[0.08] bg-white/[0.05] px-1.5 text-[11px] text-ink-300">
-                    {name}
-                  </span>
+    <section aria-label="Queue" className="mb-1.5">
+      <div className="flex h-6 items-center gap-1.5 px-1 text-chat-small">
+        <span className="font-medium text-ink-200">Queue</span>
+        <span className="rounded-full bg-white/[0.06] px-1.5 text-[11px] font-medium text-ink-300 tabular-nums">{items.length}</span>
+        <span className="min-w-0 truncate text-chat-label text-ink-400">sends when the turn ends</span>
+      </div>
+      {/* About five messages show; a longer queue scrolls inside the block so the composer stays put. */}
+      <ol className="-mx-1 flex max-h-[15.5rem] flex-col overflow-y-auto px-1">
+        {queueRows(shown).map((row, index) => {
+          const item = shown[index]
+          if (item === undefined) return null
+          const isEditing = item.id === editing
+          const dragging = drag?.id === item.id
+          const last = index === shown.length - 1
+          return (
+            <li
+              key={row.id}
+              ref={(element) => {
+                if (element === null) rows.current.delete(row.id)
+                else rows.current.set(row.id, element)
+              }}
+              tabIndex={0}
+              onKeyDown={(event) => onRowKey(event, row.id)}
+              aria-label={`${row.next ? 'Next' : `Queued message ${row.position}`}${isEditing ? ', editing' : ''}: ${row.text || `${row.images.length} image${row.images.length === 1 ? '' : 's'}`}. Alt+Arrow keys reorder.`}
+              className={`group relative flex min-w-0 gap-2 rounded-[12px] py-1 pr-1 pl-1 text-[12.5px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 ${
+                isEditing ? 'bg-accent/[0.08]' : row.next ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'
+              } ${dragging ? 'ring-1 ring-accent/40' : ''}`}
+            >
+              {/* The line joining the messages, from this marker down to the next one. */}
+              {!last && <span aria-hidden="true" className="pointer-events-none absolute top-6 -bottom-1 left-[13px] w-px bg-white/[0.1]" />}
+              <span
+                aria-hidden="true"
+                className={`relative z-10 mt-px grid size-[18px] shrink-0 place-items-center rounded-full text-[10.5px] font-medium tabular-nums ${
+                  row.next ? 'bg-accent/20 text-accent ring-1 ring-accent/40' : 'bg-ink-900 text-ink-400 ring-1 ring-white/[0.12]'
+                }`}
+              >
+                {row.position}
+              </span>
+              <div className="min-w-0 flex-1">
+                {row.next && <span className="mb-0.5 block text-[11px] font-medium text-accent">Next</span>}
+                <Tooltip text={row.text}>
+                  {(tip) => (
+                    <p {...tip} className={`line-clamp-2 break-words whitespace-pre-line ${row.text === '' ? 'text-ink-400' : row.next ? 'text-ink-100' : 'text-ink-300'}`}>
+                      {row.text === '' ? 'Images only' : row.text}
+                    </p>
+                  )}
+                </Tooltip>
+                {(row.images.length > 0 || isEditing) && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {row.images.map((name, position) => (
+                      <Tooltip key={`${name}-${position}`} text={name}>
+                        {(tip) => (
+                          <span {...tip} className="max-w-24 truncate rounded-full border border-white/[0.08] bg-white/[0.05] px-1.5 text-[11px] text-ink-300">
+                            {name}
+                          </span>
+                        )}
+                      </Tooltip>
+                    ))}
+                    {isEditing && <span className="px-1 text-[11.5px] font-medium text-accent">Editing</span>}
+                  </div>
                 )}
-              </Tooltip>
-            ))}
-            {isEditing && <span className="shrink-0 px-1 text-[11.5px] font-medium text-accent">Editing</span>}
-            {queue.steer !== undefined && (
-              <Tooltip text="Put this message into the running turn">
-                {(tip) => (
-                  <button type="button" {...tip} onClick={() => void queue.steer?.(item.id)} className={textButton}>
-                    Steer
-                  </button>
+              </div>
+              {/* Shown on hover or while any control in the row has the focus, so every action stays reachable by keyboard. */}
+              <div className="flex shrink-0 items-start gap-0.5 opacity-0 transition-opacity duration-100 group-focus-within:opacity-100 group-hover:opacity-100 motion-reduce:transition-none">
+                {queue.steer !== undefined && (
+                  <Tooltip text="Put this message into the running turn">
+                    {(tip) => (
+                      <button type="button" {...tip} onClick={() => void queue.steer?.(row.id)} className={textButton}>
+                        Steer
+                      </button>
+                    )}
+                  </Tooltip>
                 )}
-              </Tooltip>
-            )}
-            {index === 0 && queue.sendNow !== undefined && (
-              <Tooltip text="Stop the running turn and send this message now">
-                {(tip) => (
-                  <button type="button" {...tip} onClick={() => queue.sendNow?.(item.id)} className={textButton}>
-                    Send now
-                  </button>
+                {row.next && queue.sendNow !== undefined && (
+                  <Tooltip text="Stop the running turn and send this message now">
+                    {(tip) => (
+                      <button type="button" {...tip} onClick={() => queue.sendNow?.(row.id)} className={textButton}>
+                        Send now
+                      </button>
+                    )}
+                  </Tooltip>
                 )}
-              </Tooltip>
-            )}
-            <Tooltip text="Edit in the composer">
-              {(tip) => (
-                <button type="button" {...tip} onClick={() => onEdit(item)} disabled={isEditing} aria-label="Edit" className={`${iconButton} disabled:opacity-40`}>
-                  <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M10.5 3.5 12.5 5.5M3 13l.6-2.6L10.5 3.5l2 2-6.9 6.9z" />
-                  </svg>
-                </button>
-              )}
-            </Tooltip>
-            <Tooltip text="Remove from the queue">
-              {(tip) => (
-                <button type="button" {...tip} onClick={() => void queue.remove(item.id)} aria-label="Remove" className={iconButton}>
-                  <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                    <path d="M4 4l8 8M12 4l-8 8" />
-                  </svg>
-                </button>
-              )}
-            </Tooltip>
-          </li>
-        )
-      })}
-    </ol>
+                <Tooltip text="Move up (Alt+↑)">
+                  {(tip) => (
+                    <button type="button" {...tip} onClick={() => move(row.id, 'up')} disabled={index === 0} aria-label="Move up" className={`${iconButton} disabled:opacity-40`}>
+                      <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="m5 9.5 3-3 3 3" />
+                      </svg>
+                    </button>
+                  )}
+                </Tooltip>
+                <Tooltip text="Move down (Alt+↓)">
+                  {(tip) => (
+                    <button type="button" {...tip} onClick={() => move(row.id, 'down')} disabled={last} aria-label="Move down" className={`${iconButton} disabled:opacity-40`}>
+                      <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="m5 6.5 3 3 3-3" />
+                      </svg>
+                    </button>
+                  )}
+                </Tooltip>
+                <Tooltip text="Edit in the composer">
+                  {(tip) => (
+                    <button type="button" {...tip} onClick={() => onEdit(item)} disabled={isEditing} aria-label="Edit" className={`${iconButton} disabled:opacity-40`}>
+                      <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M10.5 3.5 12.5 5.5M3 13l.6-2.6L10.5 3.5l2 2-6.9 6.9z" />
+                      </svg>
+                    </button>
+                  )}
+                </Tooltip>
+                <Tooltip text="Remove from the queue">
+                  {(tip) => (
+                    <button type="button" {...tip} onClick={() => void queue.remove(row.id)} aria-label="Remove" className={iconButton}>
+                      <svg viewBox="0 0 16 16" className="size-3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                        <path d="M4 4l8 8M12 4l-8 8" />
+                      </svg>
+                    </button>
+                  )}
+                </Tooltip>
+                <Tooltip text="Drag to reorder (Alt+↑/↓)">
+                  {(tip) => (
+                    <button
+                      type="button"
+                      aria-label="Drag to reorder"
+                      {...tip}
+                      onPointerDown={(event) => onHandleDown(event, row.id)}
+                      onPointerMove={onHandleMove}
+                      onPointerUp={onHandleUp}
+                      onPointerCancel={() => setDrag(null)}
+                      className={`${iconButton} cursor-grab touch-none active:cursor-grabbing`}
+                    >
+                      <svg viewBox="0 0 16 16" className="size-3" fill="currentColor" aria-hidden="true">
+                        <circle cx="6" cy="4" r="1.1" />
+                        <circle cx="10" cy="4" r="1.1" />
+                        <circle cx="6" cy="8" r="1.1" />
+                        <circle cx="10" cy="8" r="1.1" />
+                        <circle cx="6" cy="12" r="1.1" />
+                        <circle cx="10" cy="12" r="1.1" />
+                      </svg>
+                    </button>
+                  )}
+                </Tooltip>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </section>
   )
 }
