@@ -127,9 +127,16 @@ describe("native Appium session store", () => {
     await seed(directory, [{ udid: "one", bundleId: "com.example.app", sessionId: "live-session" }]);
     const processAdapter = processStub();
     await health(directory, processAdapter);
-    const requests = processAdapter.calls.filter((call) => call.command === "curl");
+    const requests = processAdapter.calls.filter((call) => call.command === "curl" && call.args.some((arg) => arg.endsWith("/session/live-session") || arg.endsWith("/source")));
     expect(requests.length).toBeGreaterThan(0);
     expect(requests.every((call) => (call.options?.timeoutMs ?? Infinity) <= 10_000)).toBe(true);
+
+    const newSessionDirectory = await fixture();
+    const creatingProcess = processStub();
+    await health(newSessionDirectory, creatingProcess);
+    const create = creatingProcess.calls.find((call) => call.command === "curl" && call.args.some((arg) => arg === "http://127.0.0.1:4723/session"));
+    expect(create?.args).toContain("660");
+    expect(Number.isFinite(create?.options?.timeoutMs)).toBe(true);
   });
 
   test("drops a dead entry, creates a session, and persists only the new id", async () => {
