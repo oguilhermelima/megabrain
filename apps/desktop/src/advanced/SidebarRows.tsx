@@ -1,5 +1,6 @@
-import { useEffect, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
+import { type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 import type { NativeChat, ProjectSession, ProjectWorktree } from '@/api/schema'
+import { useClock } from '@/lib/clock'
 import { relativeAge } from '@/advanced/projects-model'
 import { CodeIcon } from '@/advanced/chrome'
 import type { MenuItem } from '@/components/ContextMenu'
@@ -158,14 +159,9 @@ export const timerHelp =
   'Claude keeps its prompt cache for one hour after the last activity; after that the next message re-reads the whole context at full price. ' +
   'Claude also compacts an idle session on its own after about 54 minutes when its context is over its token minimum.'
 
-/** The current time, moved forward every interval; the timers count down from it without refetching. */
+/** The current time, moved forward every interval while the window shows; the timers count down from it without refetching. */
 export function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), intervalMs)
-    return () => clearInterval(timer)
-  }, [intervalMs])
-  return now
+  return useClock(intervalMs)
 }
 
 export function TimerChip({ session, now }: { session: ProjectSession; now: number }) {

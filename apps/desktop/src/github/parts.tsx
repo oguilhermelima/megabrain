@@ -1,5 +1,6 @@
 import { isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ImgHTMLAttributes, type ReactNode } from 'react'
 import type { Components } from 'react-markdown'
+import { useClock } from '@/lib/clock'
 import { api } from '@/api'
 import type { GithubCheck, GithubDetail, GithubIssue, GithubPullRequest, GithubReviewers } from '@/api/schema'
 import { httpsUrl } from '@/lib/external'
@@ -146,12 +147,7 @@ export function ago(iso: string | null, now: number): string {
 }
 
 export function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), intervalMs)
-    return () => clearInterval(timer)
-  }, [intervalMs])
-  return now
+  return useClock(intervalMs)
 }
 
 /** Opens a GitHub address in the system's browser; when that fails, the address is copied instead. */
