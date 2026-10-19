@@ -252,7 +252,14 @@ export async function executeWorktreeList(args: readonly string[], environment: 
       if (Array.isArray(value)) { prCache.repositories[repository.path] = { fetchedAt: now, value }; prCacheChanged = true; }
     }
   }
-  if (prCacheChanged) await writePullRequestCache(stateDirectory, prCache);
+  if (prCacheChanged) {
+    for (const [path, entry] of Object.entries(prCache.repositories)) {
+      if (!Number.isFinite(entry.fetchedAt) || entry.fetchedAt > now || now - entry.fetchedAt >= 60_000) {
+        delete prCache.repositories[path];
+      }
+    }
+    await writePullRequestCache(stateDirectory, prCache);
+  }
   const entries: WorktreeListEntry[] = [];
   for (const record of gitRecords) {
     const path = await canonical(record.path);
