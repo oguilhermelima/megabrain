@@ -69,6 +69,18 @@ fn tmux_engine_builds_private_server_commands_for_new_and_existing_sessions() {
 }
 
 #[test]
+fn chat_tmux_sessions_keep_the_exited_pane_and_its_output() {
+    assert_eq!(
+        tmux_create_argv("megabrain-app", "mb-app-test", "/tmp/work", None, Some(&["claude".into(), "--resume".into(), "session id".into()]), true),
+        ["-L", "megabrain-app", "new-session", "-d", "-s", "mb-app-test", "-c", "/tmp/work", "/bin/sh", "-c", "tmux -L megabrain-app set-option -p -t =mb-app-test remain-on-exit on && exec \"$@\"", "megabrain-app-pane", "claude", "--resume", "session id"]
+    );
+    assert_eq!(
+        tmux_create_argv("megabrain-app", "term-test", "/tmp/work", None, Some(&["/bin/zsh".into()]), false),
+        ["-L", "megabrain-app", "new-session", "-d", "-s", "term-test", "-c", "/tmp/work", "/bin/zsh"]
+    );
+}
+
+#[test]
 fn closing_kills_the_process_or_the_tmux_session_and_quitting_only_detaches() {
     assert_eq!(close_action(Engine::Native, CloseReason::Closed), CloseAction::KillProcessTree);
     assert_eq!(close_action(Engine::Native, CloseReason::AppQuit), CloseAction::KillProcessTree);
