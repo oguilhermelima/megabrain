@@ -602,6 +602,16 @@ describe("turns cut short", () => {
 });
 
 describe("a chat in terminal mode", () => {
+  test("starts terminal polling only while a terminal-mode chat needs refresh", async () => {
+    const env = sandbox();
+    const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "60", MEGABRAIN_KNOWLEDGE_SCANNER: "off" });
+    expect(daemon.terminalTimer).toBeUndefined();
+    const chat = await daemon.handle({ operation: "start", agent: "agy", cwd: env.cwd }) as Chat;
+    expect(daemon.terminalTimer).toBeDefined();
+    await daemon.remove(chat.id);
+    expect(daemon.terminalTimer).toBeUndefined();
+  });
+
   test("retains and exposes a terminal refresh failure while later refreshes continue", async () => {
     const env = sandbox();
     let calls = 0;
