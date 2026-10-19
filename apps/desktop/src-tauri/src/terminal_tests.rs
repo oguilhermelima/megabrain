@@ -101,7 +101,7 @@ fn chat_tmux_sessions_keep_the_exited_pane_and_its_output() {
     };
     assert_eq!(pane.1, "1\t7");
     let captured = Command::new("tmux")
-        .args(["-L", &server, "capture-pane", "-p", "-t", &pane.0])
+        .args(["-L", &server, "capture-pane", "-p", "-S", "-", "-t", &pane.0])
         .output()
         .unwrap();
     assert!(captured.status.success());
