@@ -87,19 +87,19 @@ async function request(process: ProcessAdapter, env: Environment, session: strin
   return ok(parsed.body);
 }
 export async function nativeInput(args: readonly string[], env: Environment, process: ProcessAdapter): Promise<Result<string>> {
-  if (args.length === 0 || args.includes("--help") || args.includes("-h")) return ok(`${usageText("native-input")}\nCoordinates use device points; frames report image pixels and pixels per point.\n`);
+  if (args.length === 0 || args.includes("--help") || args.includes("-h")) return ok(`${usageText("native-input")}\n${usageText("native-input-stream")}\nCoordinates use device points; frames report image pixels and pixels per point.\n`);
   const [verb, udid, ...rawRest] = args.filter((arg) => arg !== "--json");
   const worker = rawRest.includes("--worker");
   const durationIndex = rawRest.indexOf("--duration");
   const duration = durationIndex >= 0 ? Number(rawRest[durationIndex + 1]) : 500;
   const rest = durationIndex >= 0 ? rawRest.filter((_, index) => index !== durationIndex && index !== durationIndex + 1) : rawRest;
-  if (!verb || !udid || !SIMULATOR_UDID.test(udid)) return failed("native input requires start|stop|tap|swipe|scroll|type|key|button|frame and a simulator UDID", 2);
+  if (!verb || !udid || !SIMULATOR_UDID.test(udid)) return failed("native input requires start|status|stop|tap|swipe|scroll|type|key|button|frame|stream and a simulator UDID", 2);
   const all = records(env); const old = all.find((entry) => entry.udid === udid);
   if (verb === "status") {
     const status = readStatus(env, udid) ?? (old ? { udid, state: "ready" as const, phase: "ready", startedAt: "", session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) } : { udid, state: "none" as const, phase: "idle" });
     return ok(`${JSON.stringify(status)}\n`);
   }
-  if (verb !== "stop") { const { activeRunForDevice } = await import("../maestro.js"); const activeRun = activeRunForDevice(env, udid); if (activeRun) return failed(`simulator ${udid} is being driven by Maestro run ${activeRun}`); }
+  if (verb !== "stop" && verb !== "stream") { const { activeRunForDevice } = await import("../maestro.js"); const activeRun = activeRunForDevice(env, udid); if (activeRun) return failed(`simulator ${udid} is being driven by Maestro run ${activeRun}`); }
   if (verb === "stop") {
     if (old) { await request(process, env, old.session, "DELETE", "").catch(() => undefined); save(env, all.filter((entry) => entry.udid !== udid)); }
     writeStatus(env, { udid, state: "none", phase: "idle", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString() });
@@ -157,6 +157,24 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
       writeStatus(env, { udid, state: "failed", phase: readStatus(env, udid)?.phase ?? "starting", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString(), error: decisiveAppiumLine(env, message) });
       return failed(message);
     } finally { try { unlinkSync(lock); } catch {} }
+  }
+  if (verb === "stream") {
+    if (!old) return failed(`no input session for ${udid}; run native input start ${udid} first`);
+    const port = appiumInputSessionCapabilities(old.platform, udid)["appium:mjpegServerPort"] as number;
+    try {
+      const jpeg = await mjpegFrame(port);
+      const size = old.pointWidth && old.pointHeight ? { width: old.pointWidth, height: old.pointHeight } : await windowSize(process, env, old.session);
+      if (!size) return failed("could not read simulator point dimensions from Appium");
+      let width = 0; let height = 0;
+      for (let offset = 2; offset + 9 < jpeg.length;) {
+        if (jpeg[offset] !== 0xff) { offset += 1; continue; }
+        const marker = jpeg[offset + 1]!; const length = jpeg.readUInt16BE(offset + 2);
+        if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) { height = jpeg.readUInt16BE(offset + 5); width = jpeg.readUInt16BE(offset + 7); break; }
+        if (length < 2) break; offset += length + 2;
+      }
+      if (width <= 0 || height <= 0) return failed("MJPEG frame did not contain image dimensions");
+      return ok(`${JSON.stringify({ streamUrl: `http://127.0.0.1:${port}/`, width, height, scale: width / size.width })}\n`);
+    } catch (cause) { return failed(`could not read simulator MJPEG stream: ${cause instanceof Error ? cause.message : String(cause)}`); }
   }
   const pending = readStatus(env, udid);
   if (pending?.state === "starting") return failed(`input session for ${udid} state starting (phase: ${pending.phase})`);

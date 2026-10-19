@@ -34,7 +34,7 @@ export function readMaestroRecord(environment: Environment): MaestroRecord | und
 async function javaMajor(javaHome: string, process: ProcessAdapter): Promise<number | undefined> {
   const java = join(javaHome, "bin", "java");
   if (!existsSync(java)) return undefined;
-  const ran = await process.run(java, ["-version"]);
+  const ran = await process.run(java, ["-version"], { timeoutMs: 10_000 });
   // java prints its version on stderr; a failed run still carries it in the error text.
   const text = ran.kind === "ok" ? `${ran.value.stderr}\n${ran.value.stdout}` : ran.error;
   const match = /version "(\d+)(?:\.(\d+))?/.exec(text);
@@ -46,7 +46,7 @@ async function javaMajor(javaHome: string, process: ProcessAdapter): Promise<num
 export async function findJavaHome(environment: Environment, process: ProcessAdapter): Promise<string | undefined> {
   const candidates: string[] = [];
   if (environment.JAVA_HOME !== undefined && environment.JAVA_HOME !== "") candidates.push(environment.JAVA_HOME);
-  const reported = await process.run(environment.MEGABRAIN_JAVA_HOME_TOOL ?? "/usr/libexec/java_home", ["-v", `${MINIMUM_JAVA}+`]);
+  const reported = await process.run(environment.MEGABRAIN_JAVA_HOME_TOOL ?? "/usr/libexec/java_home", ["-v", `${MINIMUM_JAVA}+`], { timeoutMs: 10_000 });
   if (reported.kind === "ok" && reported.value.stdout.trim() !== "") candidates.push(reported.value.stdout.trim());
   for (const candidate of candidates) {
     const major = await javaMajor(candidate, process);

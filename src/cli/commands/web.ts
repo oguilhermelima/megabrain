@@ -4,6 +4,7 @@ import { planWeb, type WebPlan } from "../../core/web.js";
 import { resolvePackageRoot } from "../../core/package-root.js";
 import { usageText } from "../../core/usage.js";
 import { join } from "node:path";
+import { executeWebDevice } from "../../core/web-device.js";
 
 export type WebEnvironment = Readonly<Record<string, string | undefined>>;
 
@@ -13,6 +14,7 @@ function usage(): string {
 
 function helpFor(args: readonly string[]): string {
   const action = args[1]?.startsWith("-") === true ? undefined : args[1];
+  if (args[0] === "device") return usageText(action ? `web-device-${action}` as keyof typeof import("../../core/usage.js").USAGE_LINES : "web-device");
   const key = args[0] === "session" ? "web-session" : args[0] === "viewport" ? (action === undefined ? "web-viewport" : `web-viewport-${action}`) : args[0] === "userscript" ? (action === undefined ? "web-userscript" : `web-userscript-${action}`) : `web-${args[0] ?? ""}`;
   const usageKeys = new Set([
     "web-viewport", "web-userscript", "web-capture", "web-measure", "web-session",
@@ -43,6 +45,7 @@ export async function executeWeb(
   environment: WebEnvironment,
   processAdapter: ProcessAdapter = createProcessAdapter(),
 ): Promise<Result<string>> {
+  if (args[0] === "device") return executeWebDevice(args.slice(1), environment, processAdapter);
   const plan = planWeb(args);
   if (plan.kind === "help") return ok(helpFor(args));
   if (plan.kind === "usage") return failed(plan.message, 2);

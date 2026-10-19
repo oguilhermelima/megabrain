@@ -4,6 +4,7 @@ import { planWeb } from "../../src/core/web.js";
 describe("planWeb", () => {
   test.each([
     [["devices", "list"], { command: "device-list", args: ["--filter", ""] }],
+    [["devices", "list", "--json"], { command: "device-list", args: ["--filter", "", "--json"] }],
     [["devices", "iphone"], { command: "device-list", args: ["--filter", "iphone"] }],
     [["devices", "list", "--orientation", "landscape"], { command: "device-list", args: ["--filter", "", "--orientation", "landscape"] }],
     [["devices", "add", "studio", "--viewport", "1280x720", "--source", "test"], { command: "device-add", args: ["studio", "--viewport", "1280x720", "--source", "test"] }],
@@ -37,5 +38,17 @@ describe("planWeb", () => {
 
   test("returns help without spawning", () => {
     expect(planWeb(["--help"])).toEqual({ kind: "help" });
+  });
+
+  test("formats device presets as the web device page contract", async () => {
+    const moduleUrl = new URL("../../scripts/playwright-web.mjs", import.meta.url).href;
+    const { formatDevicePresets } = await import(moduleUrl);
+    expect(formatDevicePresets([
+      { slug: "iphone16", label: "iPhone 16", kind: "registry", registry: "iPhone 16", category: "mobile", viewport: { width: 393, height: 852 }, deviceScaleFactor: 3, isMobile: true },
+      { slug: "office", label: "office", kind: "custom", category: "desktop", viewport: { width: 1512, height: 982 }, deviceScaleFactor: 2, isMobile: false },
+    ])).toEqual({ devices: [
+      { slug: "iphone16", label: "iPhone 16", category: "mobile", origin: "registry:iPhone 16", width: 393, height: 852, scale: 3, mobile: true },
+      { slug: "office", label: "office", category: "desktop", origin: "custom", width: 1512, height: 982, scale: 2, mobile: false },
+    ] });
   });
 });

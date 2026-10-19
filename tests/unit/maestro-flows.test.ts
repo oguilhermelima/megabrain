@@ -65,6 +65,17 @@ describe("maestro flows", () => {
 });
 
 describe("maestro run", () => {
+  test("runs a url flow on Maestro's own headless Chromium with the web platform argv", async () => {
+    const { worktree, environment, root } = sandbox();
+    writeFileSync(join(worktree, ".maestro", "web.yaml"), "url: data:text/html,<h1>hi</h1>\n---\n- assertVisible: hi\n");
+    const result = await executeMaestro(["run", ".maestro/web.yaml", "--worktree", worktree, "--json"], environment, adapter);
+    expect(result.kind).toBe("ok");
+    const argv = readFileSync(join(root, "args.txt"), "utf8");
+    expect(argv).toContain("--headless");
+    expect(argv).toContain("--platform web");
+    expect(argv).not.toContain("--udid");
+  });
+
   test("streams one event per step and stores artifacts per worktree and run", async () => {
     const { root, worktree, environment } = sandbox();
     const result = await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", worktree, "--device", UDID, "--json"], environment, adapter);

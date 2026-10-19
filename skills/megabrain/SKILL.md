@@ -68,11 +68,11 @@ megabrain commands --agent <claude|codex|grok|agy> --cwd <path> [--json] — rec
 megabrain repo github [--owner <login>] [--orgs] [--json] — recommended when you need to find repositories available through GitHub CLI, or with --orgs the account and organisations that own them.
 megabrain repo discover [--roots <paths>] [--json] — recommended when you need to find git repositories on this machine that are not registered yet.
 megabrain maestro flows [--worktree <path>] [--json] — recommended when you need to list a worktree's Maestro flows (.maestro and maestro folders) with name and app id.
-megabrain maestro run <flow> [--worktree <path>] [--device <udid|name>] [--admission wait|fail] [--json] — recommended when you need to run one Maestro flow on a booted iOS simulator under the resource policy and read per-step events (JSON lines with --json); artifacts are stored in the state directory per worktree and run.
+megabrain maestro run <flow> [--worktree <path>] [--device <udid|name|web-device-id>] [--admission wait|fail] [--json] — recommended when you need to run one Maestro flow on a booted simulator or a headless Chromium web flow and read per-step events; artifacts are stored per worktree and run.
 megabrain maestro status [--worktree <path>] [--json] — recommended when you need the state of a worktree's latest Maestro run.
 megabrain maestro stop [--worktree <path>] [--json] — recommended when you need to stop a worktree's running Maestro run.
 megabrain maestro runs [--worktree <path>] [--json] — recommended when you need every Maestro run of a worktree, newest first, with state and duration.
-megabrain maestro new <name> [--worktree <path>] [--json] — recommended when you need to create .maestro/<name>.yaml from a starter template.
+megabrain maestro new <name> [--web] [--worktree <path>] [--json] — recommended when you need to create a native or web flow starter.
 megabrain port who <port> [--json] — recommended when you need to see which process listens on a port, where it runs, and whether megabrain started it.
 megabrain port free [--from <port>] [--json] — recommended when you need the next port nothing listens on.
 megabrain port kill <port> [--json] — recommended when you need to stop your own process tree that holds a port; another user's process is refused.
@@ -526,7 +526,8 @@ megabrain native sim release <udid> [--json] — recommended when you need to re
 megabrain native sim rename <udid> <name> [--json] — recommended when you need to rename an Apple simulator.
 megabrain native sim idle [--sweep [--all]] [--touch] [--json] — recommended when you need the simulators megabrain booted and when they sleep, or to shut down idle ones.
 megabrain native sim screenshot <udid> [--json] — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
-megabrain native input start|stop|tap|swipe|scroll|type|key|button|frame <udid> ... [--json] — recommended when you need a persistent headless input session or a live frame. Tap, swipe and scroll coordinates are device points; frame width and height are image pixels and scale is pixels per point.
+megabrain native input start|stop|tap|swipe|scroll|type|key|button|frame|stream <udid> ... [--json] — recommended when you need a persistent headless input session, its WDA MJPEG stream or a live frame.
+megabrain native input stream <udid> [--json] — recommended when you need the existing simulator session's WDA MJPEG endpoint and frame dimensions.
 megabrain native sim shutdown <udid> [--json] — recommended when you need to shut down one simulator headlessly.
 megabrain native sim restart <udid> [--timeout <seconds>] [--json] — recommended when you need to restart one simulator headlessly and wait until it boots.
 megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json] — recommended when you need to check which Apple simulator runtimes are installed or available.
@@ -547,6 +548,11 @@ megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill non
 megabrain web [--device SLUG|--category NAME|--viewport WxH] ... — recommended when you need to see browser viewport and visual-testing operations.
 megabrain web viewport set|show|devices ... — recommended when you need to set viewport dimensions, inspect the current settings, or manage device presets.
 megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG — recommended when you need to list, add, or remove named viewport device presets.
+megabrain web device start --url <url> [--device <slug>] [--worktree <path>] | list | stop <id> | input <id> <action> ... [--json] — recommended when you need to manage a headless Chromium device and drive it through its MJPEG stream.
+megabrain web device start --url <url> [--device <slug>] [--worktree <path>] [--json] — recommended when you need to open a persistent headless Chromium device.
+megabrain web device list [--json] — recommended when you need to list the running headless Chromium devices.
+megabrain web device stop <id> [--json] — recommended when you need to stop a headless Chromium device.
+megabrain web device input <id> tap <x> <y> | swipe <x1> <y1> <x2> <y2> [--ms n] | scroll <x> <y> <dx> <dy> | type <text> | key <name> | navigate <url> | back | forward | reload [--json] — recommended when you need to drive a web device.
 megabrain web capture --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options] — recommended when you need to capture a browser screenshot after the page reaches the requested state.
 megabrain web measure --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options] — recommended when you need to measure browser element geometry and computed styles.
 megabrain web session save --url URL --output FILE [options] — recommended when you need to save a headful browser session for a workflow that needs a signed-in profile.

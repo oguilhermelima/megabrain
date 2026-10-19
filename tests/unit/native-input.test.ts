@@ -154,6 +154,16 @@ describe("native input scenarios", () => {
     expect(JSON.parse(await readFile(join(state, "native-input-sessions.json"), "utf8")).sessions).toEqual([]);
   });
 
+  test("rotates the existing Appium session and reports the resulting dimensions", async () => {
+    const state = await fixture(); const { process, calls } = fakeProcess();
+    const result = await nativeInput(["rotate", udid, "landscape", "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+    expect(result.kind).toBe("ok");
+    const rotation = calls.find((call) => call.args.some((arg) => arg.endsWith("/orientation")));
+    expect(rotation?.args).toContain("POST");
+    expect(rotation?.args.at(-1)).toBe(JSON.stringify({ orientation: "LANDSCAPE" }));
+    expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toEqual({ ok: true, orientation: "landscape", width: 393, height: 852 });
+  });
+
   test("rejects input while Maestro owns the simulator and names the active run", async () => {
     const state = await fixture(); const worktree = "/tmp/input-maestro-worktree";
     const key = createHash("sha256").update(worktree).digest("hex").slice(0, 16);

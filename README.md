@@ -1150,6 +1150,8 @@ drive. Each is a module, so you install only what you use and `doctor` tells you
 megabrain install simulator-maestro   # then boot a simulator: xcrun simctl boot <udid>
 megabrain maestro flows --json
 megabrain maestro run .maestro/smoke.yaml --device <udid> --json   # one JSON line per step
+megabrain maestro new web-smoke --web       # url: https://example.com starter
+megabrain maestro run .maestro/web-smoke.yaml --json  # headless Chromium for url: flows
 megabrain maestro status
 megabrain maestro runs --json          # every run of the worktree, newest first
 megabrain maestro new checkout         # .maestro/checkout.yaml from a starter template
@@ -1249,6 +1251,21 @@ megabrain web --device iphone17pro
 megabrain web devices list iphone --orientation portrait
 megabrain web viewport show
 ```
+
+Start a separate headless Chromium device when you need a live page stream and remote input.
+`--device` uses the installed Playwright device preset; stream coordinates use viewport CSS pixels.
+The worker exits after ten minutes without a viewer.
+
+```sh
+megabrain web device start --url https://example.com --device iphone16 --json
+megabrain web device list --json
+megabrain web device input <id> tap 120 240 --json
+megabrain web device stop <id> --json
+```
+
+Maestro flows with a top-level `url:` run with Maestro's own headless Chromium. Maestro 2.11.0
+or newer is required. The web runner cannot attach to a running web device, so `--device <web-id>`
+is accepted for tracking but Maestro opens its own browser and reports that choice.
 
 Categories are testing conventions, not device emulation: they set only the viewport. The
 available categories are mobile (390x844, with mobile-small and mobile-large variants), tablet

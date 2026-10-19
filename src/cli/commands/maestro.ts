@@ -11,10 +11,11 @@ import { usageText } from "../../core/usage.js";
 import { recordSimulatorOwner } from "../../core/native-sim-owner.js";
 import { systemClock } from "../../core/clock.js";
 import { endNativeInputSession } from "./native/input.js";
+import { readWebDevices } from "../../core/web-device.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Emit = (text: string) => void;
-type Flow = Readonly<{ path: string; name: string; appId: string | null }>;
+type Flow = Readonly<{ path: string; name: string; appId: string | null; kind?: "native" | "web"; url?: string }>;
 type RunState = "running" | "passed" | "failed" | "stopped";
 type RunRecord = Readonly<{ runId: string; flow: string; worktree: string; device: string; pid: number; state: RunState; startedAt: string; finishedAt?: string; exitCode?: number }>;
 
@@ -28,7 +29,7 @@ const worktreeRoot = (environment: Environment, worktree: string): string => joi
 
 async function resolveWorktree(explicit: string | undefined, process: ProcessAdapter): Promise<string> {
   if (explicit !== undefined) return resolve(explicit);
-  const top = await process.run("git", ["rev-parse", "--show-toplevel"]);
+  const top = await process.run("git", ["rev-parse", "--show-toplevel"], { timeoutMs: 5_000 });
   return resolve(top.kind === "ok" && top.value.stdout.trim() !== "" ? top.value.stdout.trim() : globalThis.process.cwd());
 }
 
@@ -54,7 +55,10 @@ export function listFlows(worktree: string): Flow[] {
   const flows = FLOW_ROOTS.flatMap((root) => flowFiles(join(worktree, root)));
   return flows.map((file) => {
     const text = readFileSync(file, "utf8");
-    return { path: relative(worktree, file), name: headerValue(text, "name") ?? basename(file, extname(file)), appId: headerValue(text, "appId") };
+    const url = headerValue(text, "url");
+    const value: Flow = url ? { path: relative(worktree, file), name: headerValue(text, "name") ?? basename(file, extname(file)), appId: null, kind: "web", url }
+      : { path: relative(worktree, file), name: headerValue(text, "name") ?? basename(file, extname(file)), appId: headerValue(text, "appId"), kind: "native" };
+    return value;
   }).sort((a, b) => a.path.localeCompare(b.path));
 }
 
@@ -153,6 +157,15 @@ async function resolveDevice(requested: string | undefined, process: ProcessAdap
     : ok(match.udid);
 }
 
+function supportsWebVersion(version: string): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (!match) return false;
+  const actual = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const minimum = [2, 11, 0];
+  for (let index = 0; index < minimum.length; index += 1) if (actual[index] !== minimum[index]) return actual[index]! > minimum[index]!;
+  return true;
+}
+
 function flowsVerb(args: readonly string[], process: ProcessAdapter): Promise<Result<string>> {
   return (async () => {
     const parsed = parseOptions(args, ["--worktree"]);
@@ -160,7 +173,7 @@ function flowsVerb(args: readonly string[], process: ProcessAdapter): Promise<Re
     const worktree = await resolveWorktree(parsed.value.values["--worktree"], process);
     const flows = listFlows(worktree);
     if (parsed.value.json) return ok(`${JSON.stringify(flows, null, 2)}\n`);
-    return ok(flows.length === 0 ? "no flows found under .maestro or maestro\n" : `${flows.map((flow) => `${flow.path}\t${flow.name}\t${flow.appId ?? "-"}`).join("\n")}\n`);
+  return ok(flows.length === 0 ? "no flows found under .maestro or maestro\n" : `${flows.map((flow) => `${flow.path}\t${flow.name}\t${flow.kind === "web" ? "web: " + flow.url : flow.appId ?? "-"}`).join("\n")}\n`);
   })();
 }
 
@@ -179,14 +192,29 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const flowPath = resolve(worktree, positional[0] ?? "");
   const flow = relative(worktree, flowPath);
   if (flow.startsWith("..") || isAbsolute(flow) || !existsSync(flowPath) || !statSync(flowPath).isFile()) return failed(`flow not found in ${worktree}: ${positional[0]}`);
-  const device = await resolveDevice(values["--device"], process);
-  if (device.kind !== "ok") return device;
-  const ownerNotice = await recordSimulatorOwner(device.value, values["--worktree"] ?? worktree, environment, process, systemClock);
+  const webFlow = headerValue(readFileSync(flowPath, "utf8"), "url") !== null;
+  let device: Result<string>;
+  if (webFlow) {
+    const version = await process.run(maestroBinary(environment), ["--version"], { timeoutMs: 10_000, env: maestroEnvironment(environment, javaHome) });
+    if (version.kind !== "ok") return failed(`could not determine Maestro version for web support: ${version.error}`);
+    const actualVersion = /\d+\.\d+\.\d+/.exec(`${version.value.stdout}\n${version.value.stderr}`)?.[0] ?? "unknown";
+    if (!supportsWebVersion(actualVersion)) return failed(`Maestro web flows require version 2.11.0 or newer; found ${actualVersion}. Run megabrain install simulator-maestro to update.`);
+    if (values["--device"] && !readWebDevices(environment).some((item) => item.id === values["--device"])) return failed(`web device not found: ${values["--device"]}`);
+    device = ok(values["--device"] ?? "maestro-web");
+  } else {
+    device = await resolveDevice(values["--device"], process);
+    if (device.kind !== "ok") return device;
+  }
+  const ownerNotice = webFlow ? undefined : await recordSimulatorOwner(device.value, values["--worktree"] ?? worktree, environment, process, systemClock);
   const admitted = await awaitProcAdmission({ name: "maestro-run", worktree, mode: admission ?? "wait" }, environment, process);
   if (admitted.kind !== "ok") return admitted;
 
-  const inputStopped = await endNativeInputSession(environment, process, device.value);
-  if (inputStopped.kind !== "ok") return failed(`could not end native input session for ${device.value} before Maestro: ${inputStopped.error}`);
+  if (!webFlow) {
+    const inputStopped = await endNativeInputSession(environment, process, device.value);
+    if (inputStopped.kind !== "ok") return failed(`could not end native input session for ${device.value} before Maestro: ${inputStopped.error}`);
+  } else if (values["--device"]) {
+    console.error(`Maestro web runs in its own headless Chromium; it cannot attach to ${values["--device"]}.`);
+  }
 
   const runId = `${new Date().toISOString().replace(/[-:.]/g, "")}-${randomUUID().slice(0, 6)}`;
   const directory = join(worktreeRoot(environment, worktree), runId);
@@ -200,7 +228,10 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     if (emit === undefined) collected.push(line); else emit(line);
   };
   const startedMs = Date.now();
-  const child = spawn(maestroBinary(environment), ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, flowPath], {
+  const commandArgs = webFlow
+    ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, flowPath]
+    : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, flowPath];
+  const child = spawn(maestroBinary(environment), commandArgs, {
     cwd: worktree, detached: true, stdio: ["ignore", "pipe", "pipe"],
     env: { ...Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...maestroEnvironment(environment, javaHome) },
   });
@@ -247,8 +278,17 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   child.stdout.on("data", drain);
   child.stderr.on("data", drain);
   const exitCode = await new Promise<number>((resolveCode) => {
-    child.once("error", () => resolveCode(127));
-    child.once("close", (code, signal) => resolveCode(code ?? (signal === null ? 1 : 128)));
+    let settled = false;
+    let timedOut = false;
+    const finish = (code: number) => { if (settled) return; settled = true; clearTimeout(timeout); resolveCode(timedOut ? 124 : code); };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      try { if (child.pid) globalThis.process.kill(-child.pid, "SIGTERM"); else child.kill("SIGTERM"); } catch {}
+      const force = setTimeout(() => { try { if (child.pid) globalThis.process.kill(-child.pid, "SIGKILL"); else child.kill("SIGKILL"); } catch {} }, 5_000);
+      force.unref();
+    }, 30 * 60_000);
+    child.once("error", () => finish(127));
+    child.once("close", (code, signal) => finish(code ?? (signal === null ? 1 : 128)));
   });
   if (pending !== "") onLine(pending);
   flush();
@@ -289,7 +329,13 @@ async function runsVerb(args: readonly string[], environment: Environment, proce
 }
 
 const FLOW_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-const flowTemplate = (name: string): string => `# A Maestro flow: https://docs.maestro.dev
+const flowTemplate = (name: string, web = false): string => web ? `# A Maestro web flow: https://docs.maestro.dev/get-started/supported-platform/web-browser
+url: https://example.com
+name: ${name}
+---
+- launchApp
+- assertVisible: Example Domain
+` : `# A Maestro flow: https://docs.maestro.dev
 appId: com.example.app # the bundle id of the app under test
 name: ${name}
 ---
@@ -298,7 +344,8 @@ name: ${name}
 `;
 
 async function newVerb(args: readonly string[], process: ProcessAdapter): Promise<Result<string>> {
-  const parsed = parseOptions(args, ["--worktree"]);
+  const web = args.includes("--web");
+  const parsed = parseOptions(args.filter((arg) => arg !== "--web"), ["--worktree"]);
   if (parsed.kind !== "ok") return parsed;
   const { values, json, positional } = parsed.value;
   if (positional.length !== 1) return failed(usageText("maestro-new"), 2);
@@ -309,7 +356,7 @@ async function newVerb(args: readonly string[], process: ProcessAdapter): Promis
   const file = join(worktree, path);
   if (existsSync(file)) return failed(`a flow already exists at ${path}`);
   mkdirSync(join(worktree, ".maestro"), { recursive: true });
-  writeFileSync(file, flowTemplate(name), { flag: "wx" });
+  writeFileSync(file, flowTemplate(name, web), { flag: "wx" });
   return ok(json ? `${JSON.stringify({ path })}\n` : `created ${path}\n`);
 }
 
