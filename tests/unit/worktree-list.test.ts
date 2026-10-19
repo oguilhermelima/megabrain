@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { executeWorktreeList } from "../../src/cli/commands/worktree-list.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
+import { openDatabase } from "../../src/db/db.js";
 import {
   formatWorktreeList,
   parseGitWorktrees,
@@ -38,6 +39,9 @@ async function createFixture(): Promise<Fixture> {
   await mkdir(join(repo, ".git"), { recursive: true });
   await mkdir(linked, { recursive: true });
   await writeFile(join(state, "worktree-root"), `${shared}\n`);
+  const database = openDatabase({ MEGABRAIN_STATE_DIR: state });
+  if (database.kind !== "ok") throw new Error(database.error);
+  database.value.close();
   return { root, state, shared, repo, linked };
 }
 
@@ -218,6 +222,23 @@ describe("executeWorktreeList", () => {
 
     expect(result.kind).toBe("failed");
     if (result.kind === "failed") expect(result.error).toContain("missing-repo");
+  });
+
+  test("fails when Git cannot enumerate a repository's worktrees", async () => {
+    const fixture = await createFixture();
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "rev-parse" && gitArgs.includes("--show-toplevel")) return output(`${fixture.repo}\n`);
+      if (gitArgs[0] === "rev-parse" && gitArgs.includes("--git-common-dir")) return output(`${fixture.repo}/.git\n`);
+      if (gitArgs[0] === "worktree") return failed("git worktree list failed");
+      return failed("no parent config");
+    });
+
+    const result = await executeWorktreeList(["--repo", fixture.repo, "--json"], { MEGABRAIN_STATE_DIR: fixture.state }, process);
+
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") expect(result.error).toContain("git worktree list failed");
   });
 
   test("keeps the shared-root scan when no repository is named", async () => {
