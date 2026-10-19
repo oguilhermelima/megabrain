@@ -73,7 +73,7 @@ fn chat_tmux_sessions_keep_the_exited_pane_and_its_output() {
     let server = format!("mb-chat-exit-{}", uuid::Uuid::new_v4());
     let _server = PrivateTmuxServer(server.clone());
     let session = "mb-app-exit-test";
-    let command = ["/bin/sh", "-c", "printf 'agent-output-marker'; exit 7"].map(String::from);
+    let command = ["/bin/sh", "-c", "printf 'agent-output-marker\\n'; exit 7"].map(String::from);
     let created = Command::new("tmux")
         .args(tmux_create_argv(&server, session, "/tmp", None, Some(&command), true))
         .status()
