@@ -290,6 +290,52 @@ describe("single state owner", () => {
     }
   });
 
+  test("a detached owner exits promptly after losing its socket and lock", async () => {
+    const binary = join(process.cwd(), ".build", "megabrain");
+    const environment = { ...process.env, HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root, MEGABRAIN_STATE_OWNER_IDLE_MS: "60000", MEGABRAIN_STATE_OWNER_TEST_MODE: "0" };
+    delete environment.MEGABRAIN_DISPATCH_ID;
+    const first = spawn(binary, ["__state-owner"], { detached: true, stdio: "ignore", env: environment });
+    trackStateOwnerCleanup(root);
+    try {
+      const firstDeadline = Date.now() + 5_000;
+      let firstStatus = await inspectStateOwner(root);
+      while (!firstStatus.running && Date.now() < firstDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        firstStatus = await inspectStateOwner(root);
+      }
+      expect(firstStatus).toMatchObject({ running: true });
+      if (!firstStatus.running) throw new Error("first detached owner did not start");
+
+      // Model a takeover after an external actor removes the stale owner's ownership files.
+      rmSync(stateOwnerSocket(root), { force: true });
+      rmSync(join(root, "state-owner", "owner.lock"), { force: true });
+      const second = spawn(binary, ["__state-owner"], { detached: true, stdio: "ignore", env: environment });
+      const secondDeadline = Date.now() + 5_000;
+      let secondStatus = await inspectStateOwner(root);
+      while ((!secondStatus.running || secondStatus.pid === firstStatus.pid) && Date.now() < secondDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        secondStatus = await inspectStateOwner(root);
+      }
+      expect(secondStatus).toMatchObject({ running: true });
+      expect(secondStatus.running && secondStatus.pid).not.toBe(firstStatus.pid);
+
+      const exitDeadline = Date.now() + 2_500;
+      let firstExited = false;
+      while (!firstExited && Date.now() < exitDeadline) {
+        try { process.kill(firstStatus.pid, 0); }
+        catch (cause: unknown) { firstExited = cause instanceof Error && "code" in cause && cause.code === "ESRCH"; }
+        if (!firstExited) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(firstExited).toBe(true);
+      // The replacement must retain its socket after the stale process exits.
+      expect(await inspectStateOwner(root)).toMatchObject({ running: true, pid: secondStatus.running ? secondStatus.pid : -1 });
+      try { process.kill(second.pid as number, "SIGTERM"); } catch { /* already exited */ }
+    } finally {
+      await cleanupTrackedStateOwners([root]);
+      owner = undefined;
+    }
+  });
+
   test("an owner exits when the worktree build that started it disappears", async () => {
     const executable = join(root, "worktree", ".build", "megabrain");
     mkdirSync(join(root, "worktree", ".build"), { recursive: true });
