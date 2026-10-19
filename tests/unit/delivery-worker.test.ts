@@ -5,12 +5,27 @@ import { join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { ProcessOutput } from "../../src/adapters/proc.js";
-import { executeDeliveryWorker, startDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { executeDeliveryWorker, resumeVerificationAndRecover, startDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
 import { openDatabase, withWrite } from "../../src/db/db.js";
 import { createDispatch } from "../../src/adapters/state/dispatches.js";
 import { callStateOwner, startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
 describe("deferred delivery worker lifecycle", () => {
+  test("recovers promptly and logs when verifier scheduling fails", async () => {
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...values: unknown[]) => { errors.push(values.map(String).join(" ")); };
+    let recovered = false;
+    try {
+      await resumeVerificationAndRecover("outbox-1", async () => { throw new Error("owner unavailable"); }, async () => { recovered = true; });
+    } finally {
+      console.error = originalError;
+    }
+    expect(recovered).toBe(true);
+    expect(errors.join(" ")).toContain("outbox-1");
+    expect(errors.join(" ")).toContain("owner unavailable");
+  });
+
   test("the owner delivers a published row without starting a detached worker", async () => {
     const root = mkdtempSync(join(tmpdir(), "megabrain-delivery-worker-"));
     let starts = 0;

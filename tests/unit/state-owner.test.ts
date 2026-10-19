@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerSocket, stopStateOwner } from "../../src/db/state-owner.js";
+import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerSocket, stopStateOwner, type StateOwnerRequest } from "../../src/db/state-owner.js";
 import { inspectDatabase, openDatabase, openDatabaseReadOnly } from "../../src/db/db.js";
 import { createDispatch } from "../../src/adapters/state/dispatches.js";
 import { getTmuxSession, putTmuxSession } from "../../src/adapters/state/machine.js";
@@ -80,6 +80,39 @@ describe("single state owner", () => {
     expect(log).toContain('"event":"ready"');
     expect(log).toContain('"event":"request-start"');
     expect(log).toContain('"event":"request-committed"');
+  });
+
+  test("renewing an outbox lease extends only the current holder claim", async () => {
+    owner = await startStateOwner(root);
+    expect(createDispatch(owner.handle, { dispatchId: "renew-outbox", state: "running" }).kind).toBe("ok");
+    const now = new Date().toISOString();
+    withWrite(owner.handle, (db) => insertOutbox(db, {
+      id: "renew-outbox-row", dispatchId: "renew-outbox", targetKind: "parent-pointer", target: "parent",
+      payload: {}, status: "pending", attempts: 0, leaseUntil: null, transport: null,
+      createdAt: now, updatedAt: now, leaseHolder: null, detail: null,
+    }));
+    await callStateOwner(root, { operation: "claim-outbox", id: "renew-outbox-row", holder: "holder-a", leaseSeconds: 1 });
+    const renewed = await callStateOwner(root, { operation: "renew-outbox", id: "renew-outbox-row", holder: "holder-a", leaseSeconds: 90 } as StateOwnerRequest);
+    expect(renewed).toBe(true);
+    const lease = owner.handle.db.query<{ lease_until: string | null }>("SELECT lease_until FROM outbox WHERE id = ?").get("renew-outbox-row")?.lease_until;
+    expect(lease === null || lease === undefined ? 0 : Date.parse(lease) - Date.now()).toBeGreaterThan(80_000);
+    expect(await callStateOwner(root, { operation: "renew-outbox", id: "renew-outbox-row", holder: "holder-b", leaseSeconds: 90 } as StateOwnerRequest)).toBe(false);
+  });
+
+  test("a stale outbox holder cannot finish a row reclaimed by another worker", async () => {
+    owner = await startStateOwner(root);
+    expect(createDispatch(owner.handle, { dispatchId: "fenced-outbox", state: "running" }).kind).toBe("ok");
+    const now = new Date().toISOString();
+    withWrite(owner.handle, (db) => insertOutbox(db, {
+      id: "fenced-outbox-row", dispatchId: "fenced-outbox", targetKind: "parent-pointer", target: "parent",
+      payload: {}, status: "pending", attempts: 0, leaseUntil: null, transport: null,
+      createdAt: now, updatedAt: now, leaseHolder: null, detail: null,
+    }));
+    await callStateOwner(root, { operation: "claim-outbox", id: "fenced-outbox-row", holder: "holder-a", leaseSeconds: 90 });
+    owner.handle.db.run("UPDATE outbox SET lease_until = ? WHERE id = ?", ["2000-01-01T00:00:00.000Z", "fenced-outbox-row"]);
+    await callStateOwner(root, { operation: "claim-outbox", id: "fenced-outbox-row", holder: "holder-b", leaseSeconds: 90 });
+    expect(await callStateOwner(root, { operation: "finish-outbox", id: "fenced-outbox-row", holder: "holder-a", status: "failed", detail: "stale" } as StateOwnerRequest)).toBe(false);
+    expect(owner.handle.db.query<{ status: string; lease_holder: string | null }>("SELECT status, lease_holder FROM outbox WHERE id = ?").get("fenced-outbox-row")).toEqual({ status: "sending", lease_holder: "holder-b" });
   });
 
   test("acknowledging a delivered message completes its matching outbox row", async () => {
@@ -257,6 +290,19 @@ describe("single state owner", () => {
     }
   });
 
+  test("an owner exits when the worktree build that started it disappears", async () => {
+    const executable = join(root, "worktree", ".build", "megabrain");
+    mkdirSync(join(root, "worktree", ".build"), { recursive: true });
+    writeFileSync(executable, "test build");
+    owner = await startStateOwner(root, undefined, { ...process.env, MEGABRAIN_STATE_OWNER_EXECUTABLE: executable });
+
+    rmSync(executable);
+    const deadline = Date.now() + 1_500;
+    while (!owner.stopped && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(owner.stopped).toBe(true);
+  });
+
   test("a write held beyond the client timeout returns its committed outcome", async () => {
     await callStateOwner(root, { operation: "setting-write", key: "warmup", value: "ready" });
     const status = await inspectStateOwner(root);
@@ -361,7 +407,7 @@ describe("single state owner", () => {
     expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM messages WHERE dispatch_id = ? AND type IN ('ask', 'done')").get("owner-atomic-report")?.count).toBe(2);
   });
 
-  test("a changed done report creates fresh parent mail while an identical repeat stays protocol", async () => {
+  test("each new done event creates fresh parent mail, including identical text", async () => {
     const seeded = openDatabase({ MEGABRAIN_STATE_DIR: root });
     expect(seeded.kind).toBe("ok");
     if (seeded.kind !== "ok") throw new Error(seeded.error);
@@ -377,8 +423,27 @@ describe("single state owner", () => {
     await append("finished the first part");
     await append("finished the updated report");
     await append("finished the updated report");
-    expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM outbox WHERE dispatch_id = ?").get("dispatch-owner")?.count).toBe(2);
+    expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM outbox WHERE dispatch_id = ?").get("dispatch-owner")?.count).toBe(3);
     expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM messages WHERE dispatch_id = ? AND type = 'done'").get("dispatch-owner")?.count).toBe(3);
+  });
+
+  test("a later done event with the same text creates parent mail while replay stays idempotent", async () => {
+    const seeded = openDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (seeded.kind !== "ok") throw new Error(seeded.error);
+    expect(createDispatch(seeded.value, { dispatchId: "dispatch-repeat-done", state: "running", parentSessionId: "parent" }).kind).toBe("ok");
+    seeded.value.close();
+    owner = await startStateOwner(root);
+    const event = {
+      operation: "append-queue-message" as const,
+      dispatchId: "dispatch-repeat-done",
+      message: { from: "child", type: "done", text: "finished", sessionId: "child", createdAt: "2026-10-19T00:00:00.000Z" },
+      dispatch: { dispatchId: "dispatch-repeat-done", parentSessionId: "parent", agent: "codex" },
+    };
+    await callStateOwner(root, { ...event, requestId: "done-event-first" });
+    await callStateOwner(root, { ...event, requestId: "done-event-first" });
+    await callStateOwner(root, { ...event, requestId: "done-event-second", message: { ...event.message, createdAt: "2026-10-19T00:00:01.000Z" } });
+    expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM outbox WHERE dispatch_id = ?").get("dispatch-repeat-done")?.count).toBe(2);
+    expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM messages WHERE dispatch_id = ? AND type = 'done'").get("dispatch-repeat-done")?.count).toBe(2);
   });
 
   test("delivery claims and acknowledgements are serialized by the owner", async () => {

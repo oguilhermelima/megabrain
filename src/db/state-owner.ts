@@ -71,13 +71,14 @@ export type StateOwnerRequest = Readonly<
   | { operation: "append-parent-reply"; dispatchId: string; message: Readonly<Record<string, unknown>>; options: Readonly<{ supersede: boolean; outbox?: Readonly<{ id: string; dispatchId?: string | null; targetKind: string; target: string; payload: unknown }> }> }
   | { operation: "cancel-queued-message"; dispatchId: string; itemId: string; reason: string; actor: string }
   | { operation: "put-waiter"; waiter: Readonly<{ dispatchId: string; pid: number; parentSessionId: string | null; parentHost: string | null; createdAt: string }> }
-  | { operation: "delete-waiter"; dispatchId: string }
+  | { operation: "delete-waiter"; dispatchId: string; pid?: number; createdAt?: string }
   | { operation: "claim-outbox"; id: string; holder: string; leaseSeconds: number }
+  | { operation: "renew-outbox"; id: string; holder: string; leaseSeconds: number }
   | { operation: "acquire-lease"; key: string; holder: string; seconds: number }
   | { operation: "release-lease"; key: string; holder: string }
   | { operation: "transfer-lease"; key: string; from: string; to: string }
-  | { operation: "finish-outbox"; id: string; status: "sent" | "failed" | "suppressed"; detail?: string | null }
-  | { operation: "finish-notification"; id: string; status: "sent" | "failed" | "suppressed"; event: Readonly<Record<string, unknown>> }
+  | { operation: "finish-outbox"; id: string; holder?: string; status: "sent" | "failed" | "suppressed"; detail?: string | null }
+  | { operation: "finish-notification"; id: string; holder: string; status: "sent" | "failed" | "suppressed"; event: Readonly<Record<string, unknown>> }
   | { operation: "resume-outbox"; id: string }
   | { operation: "dispatch-patch"; dispatchId: string; patch: Readonly<Record<string, unknown>>; expectedState?: string | readonly string[] }
   | { operation: "dispatch-prune"; action: "archive" | "delete"; dispatchId: string; archivedAt?: string }
@@ -91,7 +92,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "settle-closed-parent-backlog" }
   )
 >;
-export type StateOwner = { readonly stateDir: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
+export type StateOwner = { readonly stateDir: string; readonly executablePath: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
 type Response = { ok: true; value: unknown } | { ok: false; error: string };
 
 function ownerLogPath(stateDir: string): string { return join(stateDir, "logs", "state-owner.log"); }
@@ -338,6 +339,7 @@ function stopForLifecycle(owner: StateOwner): void {
 }
 
 export async function startStateOwner(stateDir: string, processAdapter: ProcessAdapter = createProcessAdapter(), environment: Readonly<Record<string, string | undefined>> = process.env): Promise<StateOwner> {
+  const executablePath = environment.MEGABRAIN_STATE_OWNER_EXECUTABLE ?? (process.argv[1] !== undefined && !process.argv[1].startsWith("/$bunfs/") ? resolve(process.argv[1]) : process.execPath);
   const directory = join(stateDir, "state-owner");
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await chmod(directory, 0o700);
@@ -368,6 +370,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
   const opened = openDatabase({ MEGABRAIN_STATE_DIR: stateDir });
   if (opened.kind !== "ok") { logOwner(stateDir, "startup-failed", { error: opened.error }); await unlink(lockPath).catch(() => undefined); throw new Error(`state owner could not open the database: ${opened.error}`); }
   const handle = opened.value;
+  handle.db.exec("PRAGMA wal_autocheckpoint = 10000");
   const initializedRequests = withWrite(handle, (db) => {
     db.run("CREATE TABLE IF NOT EXISTS state_owner_requests (request_id TEXT PRIMARY KEY, result_json TEXT NOT NULL, applied_at TEXT NOT NULL)");
     db.run("CREATE INDEX IF NOT EXISTS state_owner_requests_applied_at ON state_owner_requests(applied_at)");
@@ -376,6 +379,9 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
     db.run("CREATE INDEX IF NOT EXISTS state_dispatches_owner_created_id ON dispatches(owner_session_id, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_dispatches_owner_active_created_id ON dispatches(owner_session_id, archived_at, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_created_id ON outbox(created_at, id)");
+    db.run("CREATE INDEX IF NOT EXISTS state_outbox_dispatch_created_id ON outbox(dispatch_id, created_at, id)");
+    db.run("CREATE INDEX IF NOT EXISTS state_outbox_peer_state_created_id ON outbox(CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END, created_at, id) WHERE detail LIKE 'peer-verification:%'");
+    db.run("CREATE INDEX IF NOT EXISTS state_messages_child_activity ON messages(dispatch_id) WHERE \"from\" = 'child' AND type IN ('received', 'ask', 'done')");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_dispatch_kind_status ON outbox(dispatch_id, target_kind, status)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_detail_nocase ON outbox(detail COLLATE NOCASE)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_dispatch_kind_detail_status ON outbox(dispatch_id, target_kind, detail COLLATE NOCASE, status)");
@@ -387,7 +393,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
   });
   if (initializedRequests.kind !== "ok") { logOwner(stateDir, "startup-failed", { error: initializedRequests.error }); handle.close(); await unlink(lockPath).catch(() => undefined); throw new Error("state owner could not initialize request results: " + initializedRequests.error); }
   const server = createServer();
-  const owner: StateOwner = { stateDir, handle, server, lockPath, processAdapter, environment, pendingDeliveries: new Set(), pendingVerifications: new Set(), deliveryChains: new Map(), scheduledOutbox: new Set(), scheduledVerifications: new Set(), verificationTimers: new Map(), requests: new Map(), clients: 0, stopped: false };
+    const owner: StateOwner = { stateDir, executablePath, handle, server, lockPath, processAdapter, environment, pendingDeliveries: new Set(), pendingVerifications: new Set(), deliveryChains: new Map(), scheduledOutbox: new Set(), scheduledVerifications: new Set(), verificationTimers: new Map(), requests: new Map(), clients: 0, stopped: false };
   // Load the subscriber's transport code before accepting writes, so the first published row
   // does not pay a module-load delay after its transaction commits.
   await import("../cli/commands/delivery-worker.js");
@@ -406,7 +412,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
       await appendFile(environment.MEGABRAIN_STATE_OWNER_TEST_REGISTRY, `${JSON.stringify({ pid: process.pid, stateDir: resolve(stateDir) })}\n`, { mode: 0o600 });
     }
     owner.lifecycleTimer = setInterval(() => {
-      if (!existsSync(owner.stateDir)) { stopForLifecycle(owner); return; }
+      if (!existsSync(owner.stateDir) || !existsSync(owner.executablePath)) { stopForLifecycle(owner); return; }
       const parentPid = owner.environment.MEGABRAIN_STATE_OWNER_TEST_MODE === "1" ? Number(owner.environment.MEGABRAIN_STATE_OWNER_TEST_PARENT_PID) : 0;
       if (!Number.isSafeInteger(parentPid) || parentPid <= 0) return;
       const parentStart = owner.environment.MEGABRAIN_STATE_OWNER_TEST_PARENT_START;

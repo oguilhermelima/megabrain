@@ -17,7 +17,7 @@ import { encode } from "./queries/types.js";
 import { classifyQueueMail, recipientForQueueMessage } from "../core/queue-write.js";
 import { formatDispatchMessage } from "../core/chat-message-format.js";
 import { randomUUID } from "node:crypto";
-import { acquireLease as acquireMailLease, ackDelivery as claimAndAckDelivery, acknowledgeImplicitDelivery as acknowledgeMail, acknowledgeImplicitDeliveryInTransaction as acknowledgeMailInTransaction, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, listDeliveriesInTransaction as listMailDeliveries, putWaiter as putMailWaiter, releaseLease as releaseMailLease, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
+import { acquireLease as acquireMailLease, ackDelivery as claimAndAckDelivery, acknowledgeImplicitDelivery as acknowledgeMail, acknowledgeImplicitDeliveryInTransaction as acknowledgeMailInTransaction, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, listDeliveriesInTransaction as listMailDeliveries, putWaiter as putMailWaiter, releaseLease as releaseMailLease, renewOutboxLease as renewMailOutboxLease, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
 import { createDispatch as createDispatchState, mutateDispatch as mutateDispatchState, noDispatchChange } from "../adapters/state/dispatches.js";
 import { putInstallModule as putInstallState, deleteInstallModule, mutateInstallModule, putTerminal, deleteTerminal, putTmuxSession, deleteTmuxSession, saveModels, type ModelRegistry } from "../adapters/state/machine.js";
 import { recordChannelResult as recordChannelState, type ChannelResult } from "../adapters/state/channels.js";
@@ -268,12 +268,17 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
     return result.value;
   }
   if (request.operation === "delete-waiter") {
-    const result = deleteMailWaiter(owner.handle, request.dispatchId);
+    const result = deleteMailWaiter(owner.handle, request.dispatchId, request.pid, request.createdAt);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }
   if (request.operation === "claim-outbox") {
     const result = claimMailOutbox(owner.handle, request.id, request.holder, request.leaseSeconds);
+    if (result.kind !== "ok") throw new Error(result.error);
+    return result.value;
+  }
+  if (request.operation === "renew-outbox") {
+    const result = renewMailOutboxLease(owner.handle, request.id, request.holder, request.leaseSeconds);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }
@@ -293,12 +298,12 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
     return result.value;
   }
   if (request.operation === "finish-outbox") {
-    const result = finishMailOutbox(owner.handle, request.id, request.status, request.detail);
+    const result = finishMailOutbox(owner.handle, request.id, request.status, request.detail, request.holder);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }
   if (request.operation === "finish-notification") {
-    const result = finishMailNotification(owner.handle, request.id, request.status, request.event as Parameters<typeof finishMailNotification>[3]);
+    const result = finishMailNotification(owner.handle, request.id, request.holder, request.status, request.event as Parameters<typeof finishMailNotification>[4]);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }
@@ -333,9 +338,8 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
   if (request.operation === "append-queue-message") {
     const result = withWrite(owner.handle, (db) => {
       if (request.childReport !== undefined) applyChildReport(owner, request.dispatchId, request.childReport);
-      const priorDone = db.query<{ found: number }>("SELECT 1 AS found FROM messages WHERE dispatch_id = ? AND \"from\" = 'child' AND type = 'done' AND text = ? LIMIT 1").get(request.dispatchId, request.message.text) !== null;
-      const classification = classifyQueueMail(request.message.from, request.message.type, priorDone);
-      const recipient = recipientForQueueMessage(request.message.from, request.message.type, priorDone);
+      const classification = classifyQueueMail(request.message.from, request.message.type, false);
+      const recipient = recipientForQueueMessage(request.message.from, request.message.type, false);
       const sequence = (db.query<{ seq: number | null }>("SELECT max(seq) AS seq FROM messages WHERE dispatch_id = ?").get(request.dispatchId)?.seq ?? 0) + 1;
       insertMessage(db, request.dispatchId, { ...request.message, seq: sequence });
       if (request.message.from === "child") {

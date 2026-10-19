@@ -147,6 +147,18 @@ async function clearOwnComposer(root: string, meta: Meta, process: ProcessAdapte
   return (await runHostSend(host, process, call.value)).kind === "ok";
 }
 
+export async function resumeVerificationAndRecover(outboxId: string, resume: () => Promise<unknown>, recover: () => Promise<unknown>): Promise<void> {
+  try {
+    await resume();
+  } catch (cause: unknown) {
+    console.error(`could not schedule peer verification for ${outboxId}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    try { await recover(); }
+    catch (recoveryCause: unknown) {
+      console.error(`could not start peer verification recovery for ${outboxId}: ${recoveryCause instanceof Error ? recoveryCause.message : String(recoveryCause)}`);
+    }
+  }
+}
+
 export async function executeDeliveryWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter, ownerHandle?: DatabaseHandle): Promise<Result<string>> {
   const [outboxId, holder, leaseKey, deadlineValue, nestedValue] = args;
   if (!outboxId || !holder || !leaseKey || !deadlineValue) return failed("delivery worker requires outbox id, holder, lease key, and deadline", 2);
@@ -166,6 +178,18 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     if (!nested) await callStateOwner(root, { operation: "release-lease", key: leaseKey, holder }).catch(() => undefined);
     return ok("delivery already claimed\n");
   }
+  let outboxLeaseLost = false;
+  let renewalInFlight = false;
+  const leaseHeartbeat = setInterval(() => {
+    if (renewalInFlight || outboxLeaseLost) return;
+    renewalInFlight = true;
+    void callStateOwner(root, { operation: "renew-outbox", id: outboxId, holder, leaseSeconds: DELIVERY_LEASE_SECONDS })
+      .then((renewed) => { if (renewed !== true) outboxLeaseLost = true; })
+      .catch(() => { outboxLeaseLost = true; })
+      .finally(() => { renewalInFlight = false; });
+  }, DELIVERY_LEASE_SECONDS * 1000 / 3);
+  leaseHeartbeat.unref();
+  const outboxLeaseActive = (): boolean => !outboxLeaseLost;
   const targetKind = claimedValue.targetKind;
   const target = claimedValue.target;
   const payload = typeof claimedValue.payload === "object" && claimedValue.payload !== null ? claimedValue.payload as Meta : {};
@@ -203,12 +227,17 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const priorVerification = getOutboxPeerVerification(database.value, outboxId);
   const fallbackOnly = priorVerification.kind === "ok" && priorVerification.value?.state === "fallback-queued";
   const queueVerification = async (channel: string, messageId: string, agentVersion: string, transcript?: string, transcriptOffset?: number): Promise<void> => {
+    if (!outboxLeaseActive()) return;
     const saved = markOutboxPeerSent(database.value, outboxId, holder, {
       state: "pending", messageId, agent: String(meta.agent ?? "unknown"), channel, agentVersion,
       acceptedAt: Date.now(), ...(transcript === undefined ? {} : { transcript, transcriptOffset }),
     });
     if (saved.kind !== "ok" || !saved.value) return;
-    await callStateOwner(root, { operation: "resume-verification", id: outboxId });
+    await resumeVerificationAndRecover(
+      outboxId,
+      () => callStateOwner(root, { operation: "resume-verification", id: outboxId }),
+      () => startSupervisorWorker(root, environment, process),
+    );
     void startSupervisorWorker(root, environment, process).catch(() => undefined);
   };
   const pointer = typeof payload.pointer === "string" ? payload.pointer : "mail: megabrain check";
@@ -243,6 +272,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const localParent = targetKind === "parent-pointer" && meta.runtime === "host" && meta.childHost === "local";
   const threadId = targetKind === "parent-pointer" ? persistedMeta.parentAgentThreadId : persistedMeta.agentThreadId;
   const typed = async (): Promise<boolean | Readonly<{ delivered: boolean; stop?: boolean; detail?: string }>> => {
+    if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
     if (localParent || text === "" || dispatch === "" || sequence < 1) return false;
     const terminal = targetKind === "parent-pointer"
       ? { host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId, workspaceId: meta.parentWorkspaceId }
@@ -320,6 +350,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     text,
     channels: {
       "peer-socket": async () => {
+        if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || choice?.kind !== "socket" || home === undefined || text === "" || dispatch === "" || sequence < 1 || typeof meta.agentSessionId !== "string") return false;
         try {
           peer = await deliverThroughClaudePeer({
@@ -339,6 +370,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         return false;
       },
       "leader-socket": async () => {
+        if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || !direct || meta.agent !== "grok" || typeof meta.grokLeaderSocket !== "string" || typeof meta.grokSessionId !== "string" || text === "") return false;
         peer = await deliverThroughGrokLeader({ database: database.value, socketPath: meta.grokLeaderSocket, sessionId: meta.grokSessionId, text });
         peerChannel = GROK_LEADER_CHANNEL;
@@ -347,6 +379,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         outcome = "verifying"; transport = "ack-verifying"; return true;
       },
       "agy-language-server": async () => {
+        if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || !direct || meta.agent !== "agy" || text === "" || dispatch === "" || sequence < 1) return false;
         try {
           peer = await deliverThroughAgyLanguageServer({
@@ -360,6 +393,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         return false;
       },
       "codex-queue": async () => {
+        if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || typeof threadId !== "string" || threadId === "" || text === "") return false;
         const found = await findCodexProcessByThread(threadId, process);
         if (!("pid" in found)) { peer = { kind: "fallback", reason: found.reason }; return false; }
@@ -374,6 +408,11 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       if (channel === "typed") await recordChannelResultThroughOwner(root, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true });
     },
   });
+  if (!outboxLeaseActive()) {
+    clearInterval(leaseHeartbeat);
+    console.error(`delivery outbox lease lost: ${outboxId}`);
+    return ok("delivery lease lost\n");
+  }
   if (peer !== undefined && (peer.kind === "delivered" || peer.kind === "accepted" || peer.kind === "read")) {
     await decisionLog.record({ dispatchId: dispatch, outboxId, channel: peerChannel, decision: peer.kind === "read" ? "cancelled" : peer.kind === "accepted" ? "ack-verifying" : "peer-delivered", ...(peer.kind === "read" ? {} : { msgId: peer.msgId }) });
   }
@@ -384,8 +423,13 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const reason = receiverGone ? "receiver-gone: receiver is no longer the terminal's foreground agent process" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
   await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && !["failed", "deferred"].includes(transport) ? "full-direction" : undefined });
   const finished = targetKind === "parent-pointer"
-    ? await callStateOwner(root, { operation: "finish-notification", id: outboxId, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", event: { dispatchId: dispatch, pointer, outcome, reason } })
-    : await callStateOwner(root, { operation: "finish-outbox", id: outboxId, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", detail: reason });
+    ? await callStateOwner(root, { operation: "finish-notification", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", event: { dispatchId: dispatch, pointer, outcome, reason } })
+    : await callStateOwner(root, { operation: "finish-outbox", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", detail: reason });
+  if (finished !== true) {
+    clearInterval(leaseHeartbeat);
+    console.error(`delivery outbox lease lost before finish: ${outboxId}`);
+    return ok("delivery lease lost\n");
+  }
   if (!nested) {
     const quietDeadline = Math.min(deadline, Date.now() + 1000);
     while (Date.now() < quietDeadline) {
@@ -400,6 +444,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     }
     await callStateOwner(root, { operation: "release-lease", key: leaseKey, holder }).catch(() => undefined);
   }
+  clearInterval(leaseHeartbeat);
   return ok(`delivery ${transport}\n`);
 }
 
@@ -436,7 +481,7 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
   if (!verifierLease) return ok("peer verification is already running\n");
   try {
   const result = await verifyClaudePeerConsumption({
-    heartbeat: async () => { await callStateOwner(root, { operation: "acquire-lease", key: verifierLeaseKey, holder: verifierHolder, seconds: 90 }); },
+    heartbeat: async () => await callStateOwner(root, { operation: "acquire-lease", key: verifierLeaseKey, holder: verifierHolder, seconds: 90 }).catch(() => false) as boolean,
     acknowledged: async () => {
       const current = listDeliveries(database.value, dispatch);
       return current.kind === "ok" && current.value.some((item) => item.id === delivery.id && item.status === "acknowledged");
@@ -458,6 +503,10 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
       await startDeliveryWorker(root, dispatch, outboxId, retryMeta, process);
     },
   });
+  if (result === "lost") {
+    console.error(`delivery verifier lease lost: ${outboxId}`);
+    return ok("peer verification lease lost\n");
+  }
   if (result === "delivered") {
     if (delivery.recipient === "child" || delivery.recipient === "parent") await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: delivery.recipient });
     await recordChannelResultThroughOwner(root, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });

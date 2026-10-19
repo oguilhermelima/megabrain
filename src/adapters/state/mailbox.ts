@@ -3,7 +3,7 @@ import { addSupersedeSummary, supersedeDelivery, type SupersedeSummary } from ".
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { insertDelivery, listDeliveries as queryDeliveries, toDelivery, type DeliveryRecord } from "../../db/queries/deliveries.js";
-import { insertMessage, listMessages as queryMessages, toMessage, type MessageRecord } from "../../db/queries/messages.js";
+import { getMessage as queryMessage, insertMessage, listMessages as queryMessages, toMessage, type MessageRecord } from "../../db/queries/messages.js";
 import { decode, encode, object, type DatabaseAdapter } from "../../db/queries/types.js";
 import { listLeases as queryLeases, toOutbox, type LeaseRecord as QueryLeaseRecord, type OutboxRecord } from "../../db/queries/outbox-leases.js";
 import type { DatabaseHandle } from "../../db/db.js";
@@ -11,6 +11,8 @@ import { read, write } from "./shared.js";
 
 export type OutboxInput = Readonly<{ id: string; dispatchId?: string | null; targetKind: string; target: string; payload: unknown }>;
 export type OutboxDetails = OutboxRecord & Readonly<{ leaseHolder: string | null; detail: string | null }>;
+export type OutboxCursor = Readonly<{ createdAt: string; id: string }>;
+export type OutboxDetailsPage = Readonly<{ rows: OutboxDetails[]; nextCursor?: OutboxCursor }>;
 export type DeliveryInput = Readonly<Record<string, unknown>>;
 export type NudgeInput = Readonly<{ dispatchId: string; pointer: string; outcome: string; reason: string; createdAt?: string }>;
 export type AppendMessageEffects = Readonly<{ delivery?: DeliveryInput; outbox?: OutboxInput }>;
@@ -65,7 +67,7 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
       seq: nextMessageSequence(db, dispatchId),
       createdAt: typeof message.createdAt === "string" ? message.createdAt : new Date().toISOString(),
     };
-    const previous = queryMessages(db, dispatchId);
+    const previous = options.derive === undefined ? [] : queryMessages(db, dispatchId);
     insertMessage(db, dispatchId, assigned);
     const derived = options.derive?.(previous) ?? {};
     const delivery = options.delivery ?? derived.delivery;
@@ -81,7 +83,9 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
       });
     }
     if (outbox !== undefined) enqueueOutboxValue(db, { ...outbox, dispatchId }, new Date().toISOString());
-    return queryMessages(db, dispatchId).at(-1) as MessageRecord;
+    const inserted = queryMessage(db, dispatchId, assigned.seq);
+    if (inserted === undefined) throw new Error("appended message was not visible");
+    return inserted;
   });
   if (appended.kind === "ok" && message.from === "child") {
     const deliveries = queryDeliveries(handle.db, dispatchId);
@@ -198,6 +202,7 @@ export function cancelQueuedMessage(handle: DatabaseHandle, dispatchId: string, 
           return item.targetKind === "child-delivery" && payload.sequence === sequence;
         });
       }
+      if (outbox?.status === "sent") return { kind: "refused" as const, message: `queued item ${itemId} was already sent` };
       if (outbox?.status === "sending") return { kind: "refused" as const, message: `queued item ${itemId} is currently being delivered` };
       const now = new Date().toISOString();
       const updated = db.run("UPDATE deliveries SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, delivery.id]);
@@ -302,28 +307,36 @@ export function putWaiter(handle: DatabaseHandle, waiter: WaiterRecord): Result<
   });
 }
 
-export function deleteWaiter(handle: DatabaseHandle, dispatchId: string): Result<boolean> {
-  return write(handle, ({ db }) => db.run("DELETE FROM waiters WHERE dispatch_id = ?", [dispatchId]).changes > 0);
+export function deleteWaiter(handle: DatabaseHandle, dispatchId: string, pid?: number, createdAt?: string): Result<boolean> {
+  return write(handle, ({ db }) => pid === undefined
+    ? db.run("DELETE FROM waiters WHERE dispatch_id = ?", [dispatchId]).changes > 0
+    : db.run("DELETE FROM waiters WHERE dispatch_id = ? AND pid = ? AND created_at = ?", [dispatchId, pid, createdAt ?? ""]).changes > 0);
 }
 
 export type NudgeRecord = Readonly<{ id: number; dispatchId: string; pointer: string; outcome: string; reason: string; createdAt: string }>;
 type NudgeRow = Readonly<{ id: number; dispatch_id: string; pointer: string; outcome: string; reason: string; created_at: string }>;
 const nudgeRecord = (row: NudgeRow): NudgeRecord => ({ id: row.id, dispatchId: row.dispatch_id, pointer: row.pointer, outcome: row.outcome, reason: row.reason, createdAt: row.created_at });
+const NUDGE_RETENTION_PER_DISPATCH = 1_000;
 
 export function appendNudge(db: DatabaseAdapter, dispatchId: string, pointer: string, outcome: string, reason: string, createdAt = new Date().toISOString()): Result<void> {
   try {
     const cleanReason = reason.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "unspecified";
     db.run("INSERT INTO nudge_events (dispatch_id, pointer, outcome, reason, created_at) VALUES (?, ?, ?, ?, ?)", [dispatchId, pointer, outcome, cleanReason, createdAt]);
+    const retained = db.query<{ id: number }>("SELECT id FROM nudge_events WHERE dispatch_id = ? ORDER BY id DESC LIMIT 1000").all(dispatchId);
+    const oldestRetained = retained.at(-1);
+    if (oldestRetained !== undefined && retained.length === NUDGE_RETENTION_PER_DISPATCH) {
+      db.run("DELETE FROM nudge_events WHERE dispatch_id = ? AND id < ?", [dispatchId, oldestRetained.id]);
+    }
     return ok(undefined);
   } catch (cause: unknown) { return failed(cause instanceof Error ? cause.message : String(cause)); }
 }
 
 export function listNudges(handle: DatabaseHandle, dispatchId: string): Result<NudgeRecord[]> {
-  return read(handle, ({ db }) => db.query<NudgeRow>("SELECT * FROM nudge_events WHERE dispatch_id = ? ORDER BY id").all(dispatchId).map(nudgeRecord));
+  return read(handle, ({ db }) => db.query<NudgeRow>("SELECT * FROM nudge_events WHERE dispatch_id = ? ORDER BY id LIMIT 1000").all(dispatchId).map(nudgeRecord));
 }
 
 export function nudgeCursor(handle: DatabaseHandle, dispatchId: string): Result<number> {
-  return read(handle, ({ db }) => db.query<{ cursor: number | null }>("SELECT max(id) AS cursor FROM nudge_events WHERE dispatch_id = ?").get(dispatchId)?.cursor ?? 0);
+  return read(handle, ({ db }) => db.query<{ cursor: number | null }>("SELECT id AS cursor FROM nudge_events WHERE dispatch_id = ? ORDER BY id DESC LIMIT 1").get(dispatchId)?.cursor ?? 0);
 }
 
 function outboxRow(db: DatabaseAdapter, id: string): OutboxDetails | undefined {
@@ -360,6 +373,93 @@ export function listOutbox(handle: DatabaseHandle): Result<OutboxDetails[]> {
   });
 }
 
+export function listOutboxPage(handle: DatabaseHandle, options: Readonly<{ dispatchId?: string; after?: OutboxCursor; limit?: number }> = {}): Result<OutboxDetailsPage> {
+  const requestedLimit = options.limit ?? 100;
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(1000, Math.trunc(requestedLimit))) : 100;
+  return read(handle, ({ db }) => {
+    const cursor = options.after;
+    const rows = options.dispatchId === undefined
+      ? cursor === undefined
+        ? db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox ORDER BY created_at, id LIMIT ?").all(limit + 1)
+        : db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE created_at > ? OR (created_at = ? AND id > ?) ORDER BY created_at, id LIMIT ?").all(cursor.createdAt, cursor.createdAt, cursor.id, limit + 1)
+      : cursor === undefined
+        ? db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE dispatch_id = ? ORDER BY created_at, id LIMIT ?").all(options.dispatchId, limit + 1)
+        : db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE dispatch_id = ? AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?").all(options.dispatchId, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
+    const pageRows = rows.slice(0, limit);
+    const records = pageRows.map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail }));
+    const last = pageRows.at(-1);
+    return {
+      rows: records,
+      ...(rows.length > limit && last !== undefined ? { nextCursor: { createdAt: last.created_at, id: last.id } } : {}),
+    };
+  });
+}
+
+export type PendingPeerVerification = Readonly<{ id: string; dispatchId: string | null; status: string; record: PeerVerificationRecord }>;
+export type PendingPeerVerificationPage = Readonly<{ rows: readonly PendingPeerVerification[]; nextCursor?: OutboxCursor }>;
+
+export function listPendingOutboxPeerVerifications(handle: DatabaseHandle, options: Readonly<{ after?: OutboxCursor; limit?: number }> = {}): Result<PendingPeerVerificationPage> {
+  const requestedLimit = options.limit ?? 100;
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(1000, Math.trunc(requestedLimit))) : 100;
+  return read(handle, ({ db }) => {
+    const cursor = options.after;
+    const query = cursor === undefined
+      ? db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' ORDER BY created_at, id LIMIT ?")
+      : db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?");
+    const rows = cursor === undefined
+      ? query.all(`${peerStatePrefix}%`, limit + 1)
+      : query.all(`${peerStatePrefix}%`, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
+    const pageRows = rows.slice(0, limit);
+    const records = pageRows.flatMap((row) => {
+      const record = peerState(row.detail);
+      return record?.state === "pending" ? [{ id: row.id, dispatchId: row.dispatch_id, status: row.status, record }] : [];
+    });
+    const last = pageRows.at(-1);
+    return {
+      rows: records,
+      ...(rows.length > limit && last !== undefined ? { nextCursor: { createdAt: last.created_at, id: last.id } } : {}),
+    };
+  });
+}
+
+export function listOutboxForDispatch(handle: DatabaseHandle, dispatchId: string): Result<OutboxDetails[]> {
+  return read(handle, ({ db }) => {
+    const records: OutboxDetails[] = [];
+    let cursor: { createdAt: string; id: string } | undefined;
+    for (;;) {
+      const rows = cursor === undefined
+        ? db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE dispatch_id = ? ORDER BY created_at, id LIMIT 100").all(dispatchId)
+        : db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE dispatch_id = ? AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT 100").all(dispatchId, cursor.createdAt, cursor.createdAt, cursor.id);
+      records.push(...rows.map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail })));
+      const last = rows.at(-1);
+      if (rows.length < 100 || last === undefined) return records;
+      cursor = { createdAt: last.created_at, id: last.id };
+    }
+  });
+}
+
+export function getQueuedDispatchId(handle: DatabaseHandle, itemId: string): Result<string | undefined> {
+  return read(handle, ({ db }) => {
+    const row = db.query<{ dispatch_id: string | null }>("SELECT dispatch_id FROM deliveries WHERE id = ? UNION ALL SELECT dispatch_id FROM outbox WHERE id = ? LIMIT 1").get(itemId, itemId);
+    return row?.dispatch_id ?? undefined;
+  });
+}
+
+export function listChildAnsweredDispatches(handle: DatabaseHandle, dispatchIds: readonly string[]): Result<ReadonlySet<string>> {
+  return read(handle, ({ db }) => {
+    const answered = new Set<string>();
+    const unique = [...new Set(dispatchIds)].filter((dispatchId) => dispatchId !== "");
+    for (let offset = 0; offset < unique.length; offset += 500) {
+      const batch = unique.slice(offset, offset + 500);
+      if (batch.length === 0) continue;
+      const placeholders = batch.map(() => "?").join(", ");
+      const rows = db.query<{ dispatch_id: string }>(`SELECT DISTINCT dispatch_id FROM messages WHERE dispatch_id IN (${placeholders}) AND "from" = 'child' AND type IN ('received', 'ask', 'done') ORDER BY dispatch_id LIMIT ?`).all(...batch, 500);
+      for (const row of rows) answered.add(row.dispatch_id);
+    }
+    return answered;
+  });
+}
+
 export function listLeases(handle: DatabaseHandle): Result<QueryLeaseRecord[]> {
   return read(handle, ({ db }) => queryLeases(db));
 }
@@ -386,8 +486,8 @@ export function renewOutboxLease(handle: DatabaseHandle, id: string, holder: str
   if (!Number.isFinite(leaseSeconds)) return failed("outbox lease seconds must be finite");
   const now = new Date();
   return write(handle, ({ db }) => db.run(
-    "UPDATE outbox SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ?",
-    [new Date(now.getTime() + leaseSeconds * 1000).toISOString(), now.toISOString(), id, holder],
+    "UPDATE outbox SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ? AND lease_until > ?",
+    [new Date(now.getTime() + leaseSeconds * 1000).toISOString(), now.toISOString(), id, holder, now.toISOString()],
   ).changes > 0);
 }
 
@@ -476,39 +576,37 @@ export function requeueOutboxPeerFallback(handle: DatabaseHandle, id: string): R
   });
 }
 
-export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null): Result<void> {
+export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null, holder?: string): Result<boolean> {
+  if (holder === "") return failed("outbox holder must be non-empty");
   const now = new Date().toISOString();
-  const result = write(handle, ({ db }) => {
+  return write(handle, ({ db }) => {
     const current = outboxRow(db, id);
-    if (current === undefined) return { kind: "missing" as const };
-    if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
+    if (current === undefined) throw new Error(`outbox item not found: ${id}`);
+    if (holder === undefined || current.status !== "sending" || current.leaseHolder !== holder || current.leaseUntil === null || current.leaseUntil <= now) return false;
     const keepPeerState = peerState(current.detail) !== undefined && status === "sent";
-    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, keepPeerState ? current.detail : detail, now, id]);
-    return { kind: "finished" as const };
+    return db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ? AND lease_until > ?", [status, keepPeerState ? current.detail : detail, now, id, holder, now]).changes > 0;
   });
-  if (result.kind !== "ok") return result;
-  if (result.value.kind === "missing") return failed(`outbox item not found: ${id}`);
-  if (result.value.kind === "invalid_state") return failed(`outbox item ${id} cannot finish from status ${result.value.current}`);
-  return ok(undefined);
 }
 
-export function finishNotification(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", event: NudgeInput): Result<void> {
+export function finishNotification(handle: DatabaseHandle, id: string, holder: string, status: "sent" | "failed" | "suppressed", event: NudgeInput): Result<boolean> {
+  if (holder === "") return failed("outbox holder must be non-empty");
   const now = new Date().toISOString();
   const result = write(handle, ({ db }) => {
     const current = outboxRow(db, id);
     if (current === undefined) return { kind: "missing" as const };
-    if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
+    if (current.status !== "sending" || current.leaseHolder !== holder || current.leaseUntil === null || current.leaseUntil <= now) return { kind: "stale" as const };
     if (current.dispatchId !== event.dispatchId) throw new Error("notification event dispatch does not match outbox item");
     const keepPeerState = peerState(current.detail) !== undefined && status === "sent";
-    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, keepPeerState ? current.detail : event.reason, now, id]);
+    const updated = db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ? AND lease_until > ?", [status, keepPeerState ? current.detail : event.reason, now, id, holder, now]);
+    if (updated.changes === 0) return { kind: "stale" as const };
     const appended = appendNudge(db, event.dispatchId, event.pointer, event.outcome, event.reason, event.createdAt ?? now);
     if (appended.kind !== "ok") throw new Error(appended.error);
     return { kind: "finished" as const };
   });
   if (result.kind !== "ok") return result;
+  if (result.value.kind === "stale") return ok(false);
   if (result.value.kind === "missing") return failed("outbox item not found: " + id);
-  if (result.value.kind === "invalid_state") return failed("outbox item " + id + " cannot finish from status " + result.value.current);
-  return ok(undefined);
+  return ok(true);
 }
 
 export type LeaseRecord = Readonly<{ key: string; holder: string; expiresAt: string }>;

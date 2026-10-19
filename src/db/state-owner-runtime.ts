@@ -24,6 +24,13 @@ export function processStartIdentity(pid: number): string | undefined {
   return result.status === 0 ? String(result.stdout).trim() || undefined : undefined;
 }
 
+export function processStartTime(pid: number): number | undefined {
+  const identity = processStartIdentity(pid);
+  if (identity === undefined) return undefined;
+  const timestamp = Date.parse(identity);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
 function ownerIsAlive(stateDir: string): boolean {
   if (!existsSync(stateOwnerSocket(stateDir))) return false;
   try {
@@ -48,12 +55,15 @@ export function ensureStateOwnerForRead(stateDir: string, environment: Readonly<
   const invocation = testRunner && existsSync(builtEntry)
     ? { command: builtEntry, args: ["__state-owner"] }
     : selfInvocation(process.execPath, process.argv, ["__state-owner"]);
+  const ownerSource = process.argv[1] !== undefined && !process.argv[1].startsWith("/$bunfs/") ? resolve(process.argv[1]) : process.execPath;
+  const ownerExecutable = testRunner && existsSync(builtEntry) ? builtEntry : ownerSource;
   const base = scrubAgentEnvironment({ ...process.env, ...environment });
   const testMode = testRunner || base.MEGABRAIN_STATE_OWNER_TEST_REGISTRY !== undefined;
   const ownerEnvironment = {
     ...base,
     MEGABRAIN_STATE_DIR: stateDir,
     MEGABRAIN_STATE_OWNER_DIR: stateDir,
+    MEGABRAIN_STATE_OWNER_EXECUTABLE: ownerExecutable,
     ...(testMode ? {
       MEGABRAIN_STATE_OWNER_TEST_MODE: "1",
       MEGABRAIN_STATE_OWNER_TEST_PARENT_PID: String(testRunner ? process.pid : process.ppid),

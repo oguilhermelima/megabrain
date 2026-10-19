@@ -8,7 +8,22 @@ export type SessionDeliveryResult = Readonly<{ delivered: boolean; channel: Sess
 export type SessionDeliveryHandlers = Partial<Record<SessionSendChannel, () => Promise<boolean | Readonly<{ delivered: boolean; stop?: boolean; detail?: string }>>>>;
 
 const SESSION_CHANNEL_ORDER: readonly SessionSendChannel[] = ["peer-socket", "leader-socket", "agy-language-server", "codex-queue", "typed"];
-const inFlightOrDelivered = new Map<string, Promise<SessionDeliveryResult>>();
+const SESSION_SEND_DEDUPLICATION_TTL_MS = 5 * 60 * 1000;
+const SESSION_SEND_DEDUPLICATION_LIMIT = 1_000;
+type SessionSendEntry = { promise: Promise<SessionDeliveryResult>; settledAt?: number };
+const inFlightOrDelivered = new Map<string, SessionSendEntry>();
+
+function pruneSessionSendCache(now: number): void {
+  for (const [key, entry] of inFlightOrDelivered) {
+    if (entry.settledAt !== undefined && now - entry.settledAt >= SESSION_SEND_DEDUPLICATION_TTL_MS) inFlightOrDelivered.delete(key);
+  }
+  if (inFlightOrDelivered.size <= SESSION_SEND_DEDUPLICATION_LIMIT) return;
+  for (const [key, entry] of inFlightOrDelivered) {
+    if (entry.settledAt === undefined) continue;
+    inFlightOrDelivered.delete(key);
+    if (inFlightOrDelivered.size <= SESSION_SEND_DEDUPLICATION_LIMIT) break;
+  }
+}
 
 /** Select and execute one session transport in the shared, stable priority order. */
 export function sendSessionMessage(input: Readonly<{
@@ -20,11 +35,12 @@ export function sendSessionMessage(input: Readonly<{
   recordChannel: (channel: SessionSendChannel) => Promise<void> | void;
 }>): Promise<SessionDeliveryResult> {
   if (input.messageId === "") return Promise.resolve({ delivered: false, channel: "typed", detail: "message id is required" });
+  pruneSessionSendCache(Date.now());
   // A queue id can be reused by a different session (for example, parent and child queues both
   // use a local sequence). Scope the id to its destination so that does not suppress delivery.
   const deliveryKey = `${input.target.agent}\0${input.target.id ?? "unknown"}\0${input.messageId}`;
   const previous = inFlightOrDelivered.get(deliveryKey);
-  if (previous !== undefined) return previous;
+  if (previous !== undefined) return previous.promise;
   const delivery = (async (): Promise<SessionDeliveryResult> => {
     let detail: string | undefined;
     let attempted = false;
@@ -45,8 +61,15 @@ export function sendSessionMessage(input: Readonly<{
     }
     return { delivered: false, channel: "typed", ...(detail === undefined ? attempted ? {} : { detail: "no delivery channel is available for this session" } : { detail }) };
   })();
-  inFlightOrDelivered.set(deliveryKey, delivery);
-  void delivery.then((result) => { if (!result.delivered && inFlightOrDelivered.get(deliveryKey) === delivery) inFlightOrDelivered.delete(deliveryKey); });
+  const entry: SessionSendEntry = { promise: delivery };
+  inFlightOrDelivered.set(deliveryKey, entry);
+  void delivery.then((result) => {
+    if (!result.delivered && inFlightOrDelivered.get(deliveryKey) === entry) inFlightOrDelivered.delete(deliveryKey);
+    else if (result.delivered) {
+      entry.settledAt = Date.now();
+      pruneSessionSendCache(entry.settledAt);
+    }
+  });
   return delivery;
 }
 export type SessionSendAvailability = Readonly<{

@@ -73,6 +73,38 @@ async function call(endpoint: AgyEndpoint, method: string, body: unknown): Promi
 }
 
 type Trajectory = Readonly<{ config?: unknown; occurrences: number }>;
+type CachedTrajectory = { config: unknown; occurrences: Map<string, number>; expiresAt: number };
+const trajectoryCache = new Map<string, CachedTrajectory>();
+const trajectoryLoads = new Map<string, Promise<Readonly<{ kind: "ok"; value: Trajectory }> | Exclude<Call, { kind: "ok" }>>>();
+const TRAJECTORY_CACHE_TTL_MS = 5 * 60 * 1000;
+const TRAJECTORY_CACHE_LIMIT = 64;
+const TRAJECTORY_TEXT_LIMIT = 256;
+
+function trajectoryKey(endpoint: AgyEndpoint): string {
+  return `${endpoint.address}\0${endpoint.conversationId}\0${endpoint.version}`;
+}
+
+function cachedTrajectory(endpoint: AgyEndpoint): CachedTrajectory | undefined {
+  const key = trajectoryKey(endpoint);
+  const cached = trajectoryCache.get(key);
+  if (cached === undefined) return undefined;
+  if (cached.expiresAt <= Date.now()) {
+    trajectoryCache.delete(key);
+    return undefined;
+  }
+  trajectoryCache.delete(key);
+  trajectoryCache.set(key, cached);
+  return cached;
+}
+
+function pruneTrajectoryCache(now: number): void {
+  for (const [key, entry] of trajectoryCache) if (entry.expiresAt <= now) trajectoryCache.delete(key);
+  while (trajectoryCache.size > TRAJECTORY_CACHE_LIMIT) {
+    const oldest = trajectoryCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    trajectoryCache.delete(oldest);
+  }
+}
 
 function inputTexts(step: unknown): string[] {
   const input = (step as { userInput?: { items?: Array<{ text?: unknown }> } } | undefined)?.userInput;
@@ -96,21 +128,47 @@ export type AgySend =
   | Readonly<{ kind: "broken"; reason: string }>;
 
 export async function sendAgyMessage(endpoint: AgyEndpoint, text: string): Promise<AgySend> {
-  const read = await trajectory(endpoint, text);
-  if (read.kind !== "ok") return { kind: read.kind === "unreachable" ? "unavailable" : "broken", reason: read.reason };
-  if (read.value.config === undefined) return { kind: "unavailable", reason: "agy conversation has no recorded cascade config to send with" };
+  const key = trajectoryKey(endpoint);
+  let state = cachedTrajectory(endpoint);
+  let read = state === undefined ? await trajectoryLoads.get(key) : undefined;
+  if (state === undefined && read === undefined) {
+    const loading = trajectory(endpoint, text);
+    trajectoryLoads.set(key, loading);
+    read = await loading;
+    if (trajectoryLoads.get(key) === loading) trajectoryLoads.delete(key);
+  }
+  if (state === undefined && read?.kind === "ok") {
+    if (read.value.config !== undefined) {
+      state = { config: read.value.config, occurrences: new Map([[text, read.value.occurrences]]), expiresAt: Date.now() + TRAJECTORY_CACHE_TTL_MS };
+      trajectoryCache.set(key, state);
+      pruneTrajectoryCache(Date.now());
+    }
+  }
+  if (state === undefined && read === undefined) return { kind: "unavailable", reason: "agy conversation trajectory could not be loaded" };
+  if (state === undefined && read?.kind !== "ok") return { kind: read?.kind === "unreachable" ? "unavailable" : "broken", reason: read?.reason ?? "agy conversation trajectory could not be loaded" };
+  const before = state?.occurrences.get(text) ?? (read?.kind === "ok" ? read.value.occurrences : 0);
+  const config = state?.config ?? (read?.kind === "ok" ? read.value.config : undefined);
+  if (config === undefined) return { kind: "unavailable", reason: "agy conversation has no recorded cascade config to send with" };
   const sent = await call(endpoint, "SendUserCascadeMessage", {
     cascadeId: endpoint.conversationId,
     items: [{ text }],
     deliveryStrategy: "MESSAGE_DELIVERY_STRATEGY_WHEN_IDLE",
-    cascadeConfig: read.value.config,
+    cascadeConfig: config,
   });
   if (sent.kind !== "ok") return { kind: sent.kind === "unreachable" ? "unavailable" : "broken", reason: sent.reason };
-  return { kind: "queued", before: read.value.occurrences };
+  if (state !== undefined) {
+    state.occurrences.set(text, Math.max(state.occurrences.get(text) ?? before, before) + 1);
+    while (state.occurrences.size > TRAJECTORY_TEXT_LIMIT) {
+      const oldest = state.occurrences.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      state.occurrences.delete(oldest);
+    }
+    state.expiresAt = Date.now() + TRAJECTORY_CACHE_TTL_MS;
+  }
+  return { kind: "queued", before };
 }
 
 // The message is in the conversation once one more user input carries its text than before.
 export async function agyMessageArrived(endpoint: AgyEndpoint, text: string, before: number): Promise<boolean> {
-  const read = await trajectory(endpoint, text);
-  return read.kind === "ok" && read.value.occurrences > before;
+  return (cachedTrajectory(endpoint)?.occurrences.get(text) ?? 0) > before;
 }

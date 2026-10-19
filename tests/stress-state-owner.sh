@@ -118,6 +118,7 @@ pending_outbox="$(sqlite3 -readonly "$state_dir/megabrain.db" "SELECT count(*) F
 delivery_messages="$(sqlite3 -readonly "$state_dir/megabrain.db" "SELECT count(DISTINCT dispatch_id || ':' || message_seq) FROM deliveries WHERE dispatch_id LIKE 'stress-%';")"
 message_counts="$(sqlite3 -readonly "$state_dir/megabrain.db" "SELECT type || '=' || count(*) FROM messages WHERE dispatch_id LIKE 'stress-%' GROUP BY type ORDER BY type;")"
 transaction_metrics="$(MEGABRAIN_STRESS_LOG="$state_dir/logs/state-owner.log" bun -e 'import {readFileSync} from "node:fs"; const path=process.env.MEGABRAIN_STRESS_LOG!; const events=readFileSync(path,"utf8").split("\n").filter(Boolean).flatMap(line=>{try{const event=JSON.parse(line);return event.event==="request-committed"?[event as {operation:string;messageType?:string;transactionMs:number;elapsedMs:number}]:[]}catch{return[]}}); const q=(values:number[],p:number)=>{const sorted=[...values].sort((a,b)=>a-b);return sorted.length?sorted[Math.min(sorted.length-1,Math.ceil(p*sorted.length)-1)]:0}; const lines=[`owner_transactions=${events.length}`,`owner_transaction_ms_p50=${q(events.map(e=>e.transactionMs),0.50).toFixed(3)}`,`owner_transaction_ms_p99=${q(events.map(e=>e.transactionMs),0.99).toFixed(3)}`]; for(const operation of [...new Set(events.map(e=>e.operation))].sort()){const selected=events.filter(e=>e.operation===operation); lines.push(`${operation}_transactions=${selected.length}`,`${operation}_transaction_ms_p50=${q(selected.map(e=>e.transactionMs),0.50).toFixed(3)}`,`${operation}_transaction_ms_p99=${q(selected.map(e=>e.transactionMs),0.99).toFixed(3)}`)} for(const type of ["ask","reply","done"]){const selected=events.filter(e=>e.messageType===type); lines.push(`${type}_owner_calls=${selected.length}`,`${type}_owner_ms_p50=${q(selected.map(e=>e.elapsedMs),0.50).toFixed(3)}`,`${type}_owner_ms_p99=${q(selected.map(e=>e.elapsedMs),0.99).toFixed(3)}`)} const slow=[...events].sort((a,b)=>b.transactionMs-a.transactionMs).slice(0,5); lines.push(`slow_transactions=${slow.map(e=>`${e.operation}:${e.transactionMs.toFixed(3)}ms`).join(",")}`); console.log(lines.join("\n"));')"
+transaction_p99="$(printf '%s\n' "$transaction_metrics" | sed -n 's/^owner_transaction_ms_p99=//p')"
 delivery_counts="rows=$delivery_rows, distinct_messages=$delivery_messages"
 
 printf 'duration_seconds=30\nworkers=20\nlock_errors=%s\nask_success=%s\nreply_success=%s\ndone_success=%s\nwatch_success=%s\nstatus_success=%s\nsettings_success=%s\npending_outbox=%s\n%s\n%s\n%s\n' \
@@ -137,5 +138,9 @@ if [[ "$ask_success" != "$ask_rows" || "$reply_success" != "$reply_rows" || "$do
 fi
 if [[ "$delivery_rows" != "$delivery_messages" || "$delivery_rows" != "$((ask_rows + reply_rows + done_rows))" ]]; then
   echo "messages were not recorded in exactly one delivery row each" >&2
+  exit 1
+fi
+if ! awk -v value="$transaction_p99" 'BEGIN { if (value == "" || value + 0 > 5.0) exit 1; exit 0 }'; then
+  echo "state owner transaction p99 exceeded the 5 ms target: ${transaction_p99:-missing} ms" >&2
   exit 1
 fi

@@ -27,6 +27,16 @@ describe("central session delivery", () => {
     expect(calls).toEqual(["peer-socket"]);
   });
 
+  test("evicts old successful entries after the bounded deduplication window fills", async () => {
+    const calls: string[] = [];
+    const input = (messageId: string) => ({ caller: "reply" as const, messageId, target: { agent: "claude" }, text: "hello", channels: handlers(calls), recordChannel: async () => undefined });
+    for (let index = 0; index < 1_001; index += 1) await sendSessionMessage(input(`bounded-${index}`));
+
+    await sendSessionMessage(input("bounded-0"));
+
+    expect(calls).toHaveLength(1_002);
+  });
+
   test("falls through to typed submit after direct channels fail", async () => {
     const calls: string[] = [];
     const result = await sendSessionMessage({ caller: "reply", messageId: "fallback-message", target: { agent: "claude" }, text: "hello", channels: handlers(calls, "typed"), recordChannel: async () => undefined });

@@ -13,6 +13,7 @@ import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { claimOutbox, finishNotification, getDispatch, listDispatches, readOnlyStateDatabase, getWaiter, setDeliveryTransport } from "../../adapters/state-db.js";
 import { callStateOwner, recordChannelResultThroughOwner } from "../../db/state-owner.js";
+import { processStartTime } from "../../db/state-owner-runtime.js";
 import { deliverCodexQueue, findCodexProcess } from "../../core/codex-delivery.js";
 import { sendSessionMessage } from "../../core/session-send.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
@@ -249,14 +250,20 @@ export async function parentContextMatches(root: string, meta: JsonRecord, proce
 
 // Exported for the turn-end hook, which suppresses its own parent nudges the same way
 // (megabrain_parent_notify_waiter_active) when a live `megabrain orchestrate watch` is already polling.
-export async function waiterIsActive(root: string, dispatch: string): Promise<boolean> {
+export async function waiterIsActive(root: string, dispatch: string, processStartedAt: (pid: number) => number | undefined = processStartTime): Promise<boolean> {
   const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return false;
   const result = getWaiter(database.value, dispatch);
   const waiter = result.kind === "ok" ? result.value : undefined;
   const pid = waiter?.pid ?? NaN;
   if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch { await callStateOwner(root, { operation: "delete-waiter", dispatchId: dispatch }).catch(() => undefined); return false; }
+  const startedAt = processStartedAt(pid);
+  const registeredAt = waiter === undefined ? Number.NaN : Date.parse(waiter.createdAt);
+  if (startedAt !== undefined && Number.isFinite(registeredAt) && startedAt <= registeredAt + 2_000) {
+    try { process.kill(pid, 0); return true; } catch { /* the registered process has exited */ }
+  }
+  await callStateOwner(root, { operation: "delete-waiter", dispatchId: dispatch, pid, createdAt: waiter?.createdAt }).catch(() => undefined);
+  return false;
 }
 
 // The channel-resolution-and-send tail of megabrain_parent_notify: given a pointer line, find the

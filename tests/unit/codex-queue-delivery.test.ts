@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { findCodexProcess, deliverCodexQueue } from "../../src/core/codex-delivery.js";
+import { findCodexProcess, findCodexProcessByThread, deliverCodexQueue } from "../../src/core/codex-delivery.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 const thread = "01a12a8a-ee5c-7d51-bd86-3e135704fe17";
@@ -38,6 +38,27 @@ function processForTmux({ tree = processTree(), lsof = rollout, queueOk = true }
 }
 
 describe("Codex queue delivery", () => {
+  test("bounds process candidates and lsof timeouts during thread discovery", async () => {
+    let lsofCalls = 0;
+    const timeouts: number[] = [];
+    const process: ProcessAdapter = {
+      async run(command, _args, options) {
+        if (command === "ps") return ok({ stdout: Array.from({ length: 50 }, (_, index) => `${10_000 + index} /usr/local/bin/codex`).join("\n"), stderr: "", exitCode: 0 });
+        if (command === "lsof") { lsofCalls += 1; if (options?.timeoutMs !== undefined) timeouts.push(options.timeoutMs); return ok({ stdout: "", stderr: "", exitCode: 0 }); }
+        return failed(`unexpected command: ${command}`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return lsofCalls; },
+    };
+
+    const result = await findCodexProcessByThread(thread, process);
+
+    expect(result).toMatchObject({ reason: expect.stringContaining("no Codex process holds") });
+    expect(lsofCalls).toBeLessThanOrEqual(16);
+    expect(timeouts.length).toBe(lsofCalls);
+    expect(timeouts.every((timeout) => timeout > 0 && timeout <= 1_500)).toBe(true);
+  });
+
   test("queues only when a Codex descendant of the verified pane holds the matching rollout", async () => {
     const process = processForTmux();
     const found = await findCodexProcess(thread, tmuxScope(), process);

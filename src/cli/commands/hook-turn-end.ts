@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { checkDispatchTransition, openDispatchStates } from "../../core/dispatch-states.js";
 import { unhandledParentMail, type CheckDelivery } from "../../core/check.js";
@@ -9,7 +10,7 @@ import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-te
 import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
-import { getDispatch, listDeliveries, listDispatches, listMessages, listOutbox, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDeliveries, listDispatches, listMessages, listOutboxForDispatch, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { callStateOwner, recordChannelResultThroughOwner } from "../../db/state-owner.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { backgroundTasks } from "../../core/supervise.js";
@@ -427,8 +428,8 @@ async function parentMailLines(root: string, database: DatabaseHandle, dispatchI
   const closed = dispatch.value.state === "closed";
   const deliveries = listDeliveries(database, dispatchId);
   const messages = listMessages(database, dispatchId);
-  const outbox = listOutbox(database);
-  if (deliveries.kind !== "ok" || messages.kind !== "ok") return { failed: [], pending: [] };
+  const outbox = listOutboxForDispatch(database, dispatchId);
+  if (deliveries.kind !== "ok" || messages.kind !== "ok" || outbox.kind !== "ok") return { failed: [], pending: [] };
   const failed: string[] = [];
   const pending: string[] = [];
   const subscriberAlive = supervisorWatcher(database).running;
@@ -441,7 +442,7 @@ async function parentMailLines(root: string, database: DatabaseHandle, dispatchI
     const message = item.messages[0];
     if (message === undefined) continue;
     const line = `${message.type || "mail"} ${parentMailSummary(message.text)} — megabrain orchestrate watch ${dispatchId}`;
-    const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((entry) => entry.dispatchId === dispatchId && entry.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(entry, sequences, outstandingParentDeliveryCount === 1)) : [];
+    const matchingOutbox = outbox.value.filter((entry) => entry.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(entry, sequences, outstandingParentDeliveryCount === 1));
     if (delivery.transport !== "deferred" && matchingOutbox.some((item) => item.status === "sending" && item.detail?.startsWith("peer-sent:"))) continue;
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
     if (closed && (message.type !== "done" || !pendingOutbox || subscriberAlive || !parentMailWaitedTooLong(delivery, matchingOutbox))) continue;
@@ -550,9 +551,38 @@ function parsePayload(raw: string): Readonly<{ text: string; transcriptPath: str
 // last 8000 bytes (not characters — a byte cut can land inside a multi-byte UTF-8 sequence, same
 // as the shell).
 async function tailTranscript(path: string): Promise<string> {
-  const content = await readFile(path, "utf8").catch(() => undefined);
-  if (content === undefined) return "";
-  const lastLines = content.split("\n").slice(-20).join("\n");
+  let file: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    const openedFile = await open(path, "r");
+    file = openedFile;
+    const { size } = await openedFile.stat();
+    return await tailTranscriptFromFile(size, async (position, length) => {
+      const buffer = Buffer.alloc(length);
+      const { bytesRead } = await openedFile.read(buffer, 0, length, position);
+      return buffer.subarray(0, bytesRead);
+    });
+  } catch {
+    return "";
+  } finally {
+    await file?.close().catch(() => undefined);
+  }
+}
+
+export async function tailTranscriptFromFile(size: number, readAt: (position: number, length: number) => Promise<Uint8Array>): Promise<string> {
+  if (!Number.isSafeInteger(size) || size <= 0) return "";
+  const windowStart = Math.max(0, size - 8_000);
+  const chunkSize = 1_024;
+  let position = size;
+  let tail = Buffer.alloc(0);
+  while (position > windowStart) {
+    const length = Math.min(chunkSize, position - windowStart);
+    const start = position - length;
+    const chunk = Buffer.from(await readAt(start, length));
+    tail = Buffer.concat([chunk, tail]);
+    position = start;
+    if (tail.toString("utf8").split("\n").length - 1 >= 20) break;
+  }
+  const lastLines = tail.toString("utf8").split("\n").slice(-20).join("\n");
   const buffer = Buffer.from(lastLines, "utf8");
   const truncated = buffer.length > 8000 ? buffer.subarray(buffer.length - 8000) : buffer;
   return truncated.toString("utf8");
@@ -590,6 +620,7 @@ export async function executeHookTurnEnd(
     }
 
     const root = resolveChildStateDirectory(environment);
+    if (!existsSync(root)) return finish(defaultText);
     const session = await computeSessionId(environment, processAdapter);
     if (session === undefined) return finish(defaultText);
 
@@ -653,9 +684,9 @@ export async function executeHookTurnEnd(
 
     await appendMessage(root, dispatchId, "child", "stalled", text, session.id, environment, processAdapter);
     return finish(defaultText);
-  } catch {
-    // A hook must never fail or block the agent's turn (megabrain_hook_finish's contract):
-    // whatever went wrong, print the same default response any other early bail would have.
+  } catch (cause: unknown) {
+    try { console.error(`turn-end hook failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+    catch { /* Diagnostics cannot change the hook's never-fail contract. */ }
     return finish(defaultText);
   }
 }

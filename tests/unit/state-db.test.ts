@@ -5,11 +5,14 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { latestSchemaVersion } from "../../src/db/db.js";
+import type { DatabaseHandle } from "../../src/db/db.js";
+import type { DatabaseAdapter } from "../../src/db/queries/types.js";
 import { updateDispatch, type DispatchRow } from "../../src/db/queries/dispatches.js";
 import {
   ackDelivery,
   acquireLease,
   appendMessage,
+  appendNudge,
   archiveDispatch,
   claimOutbox,
   createDelivery,
@@ -20,7 +23,14 @@ import {
   listDeliveries,
   listMessages,
   listOutbox,
+  listOutboxForDispatch,
+  getQueuedDispatchId,
+  listOutboxPage,
+  listPendingOutboxPeerVerifications,
+  listChildAnsweredDispatches,
   mutateDispatch,
+  listNudges,
+  nudgeCursor,
   stateDatabase,
 } from "../../src/adapters/state-db.js";
 
@@ -43,6 +53,155 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 }
 
 describe("state database facade", () => {
+  test("loads child answer state for many dispatches in one bounded query", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    for (const dispatchId of ["child-a", "child-b", "child-c"]) requireOk(createDispatch(db, { dispatchId, state: "running" }));
+    requireOk(appendMessage(db, "child-b", { from: "child", type: "received", text: "ready" }));
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    expect(requireOk(listChildAnsweredDispatches(handle, ["child-a", "child-b", "child-c"]))).toEqual(new Set(["child-b"]));
+    expect(query).toContain("dispatch_id IN");
+    expect(query).toContain("LIMIT ?");
+  });
+
+  test("bounds nudge retention without resetting the active cursor", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "nudge-retention", state: "running" }));
+    requireOk(appendNudge(db.db, "nudge-retention", "check", "sent", "initial"));
+    const oldCursor = requireOk(nudgeCursor(db, "nudge-retention"));
+    for (let index = 0; index < 1_001; index += 1) {
+      requireOk(appendNudge(db.db, "nudge-retention", "check", "sent", `event ${index}`));
+    }
+
+    const retained = requireOk(listNudges(db, "nudge-retention"));
+    expect(retained).toHaveLength(1_000);
+    expect(retained[0]?.id).toBeGreaterThan(oldCursor);
+    expect(requireOk(nudgeCursor(db, "nudge-retention"))).toBeGreaterThan(oldCursor);
+  });
+
+  test("discovers only pending peer verifications through a bounded cursor", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "peer-scan", state: "running" }));
+    const record = (state: string) => `peer-verification:${JSON.stringify({ state, messageId: state, agentVersion: "v1", acceptedAt: 1 })}`;
+    for (const [id, state] of [["peer-pending", "pending"], ["peer-done", "delivered"]]) {
+      db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, detail, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'sent', 0, ?, ?, ?)", [id, "peer-scan", "parent-pointer", "parent", "{}", record(state), id, id]);
+    }
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    const page = requireOk(listPendingOutboxPeerVerifications(handle, { limit: 1 }));
+    expect(page.rows.map((row) => row.id)).toEqual(["peer-pending"]);
+    expect(query).toContain("LIMIT ?");
+    expect(query).not.toContain("OFFSET");
+  });
+
+  test("provides bounded outbox pages with a stable cursor", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "page-dispatch", state: "running" }));
+    for (const [id, createdAt] of [["page-a", "2026-01-01"], ["page-b", "2026-01-02"]]) {
+      db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", [id, "page-dispatch", "parent-pointer", "parent", "{}", createdAt, createdAt]);
+    }
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    const first = requireOk(listOutboxPage(handle, { dispatchId: "page-dispatch", limit: 1 }));
+    expect(first.rows.map((row) => row.id)).toEqual(["page-a"]);
+    expect(first.nextCursor).toEqual({ createdAt: "2026-01-01", id: "page-a" });
+    expect(query).toContain("LIMIT ?");
+    expect(query).not.toContain("OFFSET");
+    const second = requireOk(listOutboxPage(handle, { dispatchId: "page-dispatch", limit: 1, after: first.nextCursor }));
+    expect(second.rows.map((row) => row.id)).toEqual(["page-b"]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
+  test("finds a queued item's dispatch with direct bounded key lookups", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "queued-lookup", state: "running" }));
+    db.db.run("INSERT INTO deliveries (id, dispatch_id, message_seqs, status, created_at, updated_at, extra) VALUES (?, ?, ?, ?, ?, ?, ?)", ["delivery-key", "queued-lookup", "[]", "outstanding", "2026-01-01", "2026-01-01", "{}"]);
+    db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", ["outbox-key", "queued-lookup", "parent-pointer", "parent", "{}", "2026-01-01", "2026-01-01"]);
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    expect(requireOk(getQueuedDispatchId(handle, "delivery-key"))).toBe("queued-lookup");
+    expect(query).toContain("LIMIT 1");
+    expect(requireOk(getQueuedDispatchId(handle, "outbox-key"))).toBe("queued-lookup");
+    expect(query).toContain("LIMIT 1");
+  });
+
+  test("lists outbox rows through an indexed dispatch scoped page", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "outbox-scope-a", state: "running" }));
+    requireOk(createDispatch(db, { dispatchId: "outbox-scope-b", state: "running" }));
+    db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", ["a", "outbox-scope-a", "parent-pointer", "parent", "{}", "2026-01-01", "2026-01-01"]);
+    db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", ["b", "outbox-scope-b", "parent-pointer", "parent", "{}", "2026-01-01", "2026-01-01"]);
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    const rows = requireOk(listOutboxForDispatch(handle, "outbox-scope-a"));
+
+    expect(rows.map((row) => row.id)).toEqual(["a"]);
+    expect(query).toContain("dispatch_id = ?");
+    expect(query).toContain("LIMIT");
+  });
+
+  test("append without derivation does not load the dispatch history", () => {
+    const database = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(database, { dispatchId: "append-bounded", state: "running" }));
+    let historyReads = 0;
+    const tracked = new Proxy(database.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => {
+          if (sql === "SELECT * FROM messages WHERE dispatch_id = ? ORDER BY seq") historyReads += 1;
+          return target.query<T>(sql);
+        };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: database.path, db: tracked, close: () => database.close() };
+
+    const appended = appendMessage(handle, "append-bounded", { from: "child", type: "ask", text: "question" });
+
+    expect(requireOk(appended)).toMatchObject({ seq: 1, text: "question" });
+    expect(historyReads).toBe(0);
+  });
+
   test("mutateDispatch retries a version conflict and keeps all patches", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "retry", state: "running", counter: 0, other: 0 }));
@@ -134,7 +293,7 @@ describe("state database facade", () => {
     expect(requireOk(claimOutbox(db, "outbox-claim", "holder-b", 60))).toBeUndefined();
     db.db.run("UPDATE outbox SET lease_until = ? WHERE id = ?", ["2000-01-01T00:00:00.000Z", "outbox-claim"]);
     expect(requireOk(claimOutbox(db, "outbox-claim", "holder-b", 60))?.status).toBe("sending");
-    expect(finishOutbox(db, "outbox-claim", "failed", "retryable").kind).toBe("ok");
+    expect(finishOutbox(db, "outbox-claim", "failed", "retryable", "holder-b").kind).toBe("ok");
     expect(finishOutbox(db, "missing", "sent").kind).toBe("failed");
   });
 

@@ -2,7 +2,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { openDispatchStates } from "../../core/dispatch-states.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { ownsDispatch } from "../../core/context.js";
-import { listDeliveries, listDispatches, listMessages, listOutbox, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, getQueuedDispatchId, listDeliveries, listDispatches, listMessages, listOutboxForDispatch, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { callStateOwner } from "../../db/state-owner.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { resolveCaller } from "./queue-write.js";
@@ -34,14 +34,13 @@ function itemState(outboxState: string | undefined, deliveryState: string): stri
 }
 
 export function queueItems(database: Parameters<typeof listDispatches>[0], dispatchIds: readonly string[]): Result<QueueItem[]> {
-  const outboxResult = listOutbox(database);
-  if (outboxResult.kind !== "ok") return outboxResult;
   const dispatchResult = listDispatches(database);
   if (dispatchResult.kind !== "ok") return dispatchResult;
   const dispatchRecords = new Map(dispatchResult.value.map((record) => [record.dispatchId, record]));
-  const outbox = outboxResult.value;
   const items: QueueItem[] = [];
   for (const dispatchId of dispatchIds) {
+    const outboxResult = listOutboxForDispatch(database, dispatchId);
+    if (outboxResult.kind !== "ok") return outboxResult;
     const record = dispatchRecords.get(dispatchId);
     if (record?.state === "queued") items.push({
       id: dispatchId, kind: "spawn", dispatch: dispatchId, type: "spawn", createdAt: String(record.queuedAt ?? record.createdAt ?? ""),
@@ -52,7 +51,7 @@ export function queueItems(database: Parameters<typeof listDispatches>[0], dispa
     const deliveriesResult = listDeliveries(database, dispatchId);
     if (deliveriesResult.kind !== "ok") return deliveriesResult;
     const messages = messagesResult.value;
-    const dispatchOutbox = outbox.filter((entry) => entry.dispatchId === dispatchId);
+    const dispatchOutbox = outboxResult.value;
     const associated = new Set<string>();
     for (const delivery of deliveriesResult.value) {
       if (delivery.recipient !== "child" || (delivery.status !== "outstanding" && delivery.status !== "superseded")) continue;
@@ -114,9 +113,9 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     }
     const db = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
     if (db.kind !== "ok") return db;
-    const all = listDispatches(db.value, { includeArchived: true });
-    if (all.kind !== "ok") return all;
-    const queuedSpawn = all.value.find((entry) => entry.dispatchId === itemId && entry.state === "queued");
+    const candidate = getDispatch(db.value, itemId);
+    if (candidate.kind !== "ok") return candidate;
+    const queuedSpawn = candidate.value?.state === "queued" ? candidate.value : undefined;
     if (queuedSpawn !== undefined) {
       const owner = resolveParentDispatchId(db.value, queuedSpawn.dispatchId, caller);
       if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
@@ -131,15 +130,10 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
       if (typeof cancelled === "object" && cancelled !== null && "updated" in cancelled && cancelled.updated === false) return failed(`queued spawn ${itemId} started before cancellation`);
       return ok(json ? `${JSON.stringify({ id: itemId, dispatch: owner.value, kind: "spawn", type: "spawn", createdAt: String(queuedSpawn.queuedAt ?? queuedSpawn.createdAt ?? ""), state: "cancelled", text: firstLine(queuedSpawn.admissionReason), reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
     }
-    const requested = all.value.flatMap((entry) => {
-      const deliveries = listDeliveries(db.value, entry.dispatchId);
-      const outbox = listOutbox(db.value);
-      if (deliveries.kind !== "ok" || outbox.kind !== "ok") return [];
-      const found = deliveries.value.some((item) => item.id === itemId) || outbox.value.some((item) => item.dispatchId === entry.dispatchId && item.id === itemId);
-      return found ? [entry.dispatchId] : [];
-    })[0];
-    if (requested === undefined) return failed(`queued item ${itemId} not found`);
-    const owner = resolveParentDispatchId(db.value, requested, caller);
+    const requested = getQueuedDispatchId(db.value, itemId);
+    if (requested.kind !== "ok") return requested;
+    if (requested.value === undefined) return failed(`queued item ${itemId} not found`);
+    const owner = resolveParentDispatchId(db.value, requested.value, caller);
     if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
     const original = listMessages(db.value, owner.value);
     if (original.kind !== "ok") return original;

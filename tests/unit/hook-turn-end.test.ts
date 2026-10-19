@@ -5,14 +5,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
-import { executeHookTurnEnd, type HookEnvironment } from "../../src/cli/commands/hook-turn-end.js";
+import { executeHookTurnEnd, tailTranscriptFromFile, type HookEnvironment } from "../../src/cli/commands/hook-turn-end.js";
 import { executeCheck } from "../../src/cli/commands/check.js";
-import { appendMessage } from "../../src/cli/commands/queue-write.js";
+import { appendMessage, waiterIsActive } from "../../src/cli/commands/queue-write.js";
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { appendMessage as appendDatabaseMessage, claimOutbox, createDispatch, finishNotification, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 type Behavior = (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>;
@@ -39,6 +40,32 @@ function environment(root: string, extra: Record<string, string | undefined> = {
   // No fake here starts an agent, so a spawned brief can only arrive through the paste fallback.
   return { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ...extra };
 }
+
+test("transcript tail reads only the bounded suffix", async () => {
+  const content = Buffer.from(Array.from({ length: 50 }, (_, index) => `line-${index.toString().padStart(3, "0")}-${"x".repeat(200)}\n`).join(""));
+  const reads: Array<Readonly<{ position: number; length: number }>> = [];
+  const result = await tailTranscriptFromFile(content.length, async (position, length) => {
+    reads.push({ position, length });
+    return content.subarray(position, position + length);
+  });
+
+  expect(reads.reduce((total, read) => total + read.length, 0)).toBeLessThanOrEqual(8_000);
+  expect(reads.every((read) => read.position >= content.length - 8_000)).toBe(true);
+  expect(result).toBe(content.toString("utf8").split("\n").slice(-20).join("\n"));
+});
+
+test("transcript tail caps reads for a huge file with no line breaks", async () => {
+  const fileSize = 100_000_000;
+  const reads: Array<Readonly<{ position: number; length: number }>> = [];
+  const result = await tailTranscriptFromFile(fileSize, async (position, length) => {
+    reads.push({ position, length });
+    return Buffer.alloc(length, "x");
+  });
+
+  expect(reads.reduce((total, read) => total + read.length, 0)).toBeLessThanOrEqual(8_000);
+  expect(reads.every((read) => read.position >= fileSize - 8_000)).toBe(true);
+  expect(Buffer.byteLength(result)).toBeLessThanOrEqual(8_000);
+});
 
 async function writeMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
   const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -167,6 +194,40 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       const fake = fakeProcess();
       await executeHookTurnEnd([], parentEnv(root), fake, noStdin);
       expect(fake.calls.some((call) => call.args.includes("send"))).toBe(false);
+    });
+  });
+
+  test("removes a waiter whose PID now belongs to a different process", async () => {
+    await withRoot("reused-waiter", async (root) => {
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const now = Date.now();
+      const entries = [
+        { dispatchId: "reused", pid: process.pid, createdAt: new Date(now).toISOString(), startTime: now + 5_000 },
+        { dispatchId: "active", pid: process.pid, createdAt: new Date(now).toISOString(), startTime: now - 5_000 },
+        { dispatchId: "exited", pid: 2_000_000_000, createdAt: new Date(now).toISOString(), startTime: undefined },
+      ];
+      for (const entry of entries) {
+        const dispatch = createDispatch(database.value, { dispatchId: entry.dispatchId, state: "running" });
+        if (dispatch.kind !== "ok") throw new Error(dispatch.error);
+        const waiter = putWaiter(database.value, {
+          dispatchId: entry.dispatchId, pid: entry.pid, parentSessionId: "coord-term", parentHost: "orca", createdAt: entry.createdAt,
+        });
+        if (waiter.kind !== "ok") throw new Error(waiter.error);
+      }
+
+      const startFor = (expected: number | undefined) => (_pid: number): number | undefined => expected;
+      database.value.close();
+      const owner = await startStateOwner(root);
+      try {
+        expect(await waiterIsActive(root, "reused", startFor(entries[0]?.startTime))).toBe(false);
+        expect(await waiterIsActive(root, "active", startFor(entries[1]?.startTime))).toBe(true);
+        expect(await waiterIsActive(root, "exited", startFor(entries[2]?.startTime))).toBe(false);
+        expect(owner.handle.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("reused")).toBeNull();
+        expect(owner.handle.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("exited")).toBeNull();
+      } finally {
+        await stopStateOwner(owner);
+      }
     });
   });
 
@@ -311,7 +372,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       if (appended.kind !== "ok") throw new Error(appended.error);
       const claimed = claimOutbox(database.value, "held-outbox", "test-holder", 30);
       if (claimed.kind !== "ok" || claimed.value === undefined) throw new Error("could not claim outbox");
-      const finished = finishNotification(database.value, "held-outbox", "failed", {
+      const finished = finishNotification(database.value, "held-outbox", "test-holder", "failed", {
         dispatchId: "d1", pointer: "megabrain check", outcome: "failed", reason: detail,
       });
       if (finished.kind !== "ok") throw new Error(finished.error);
@@ -826,6 +887,25 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
 });
 
 describe("executeHookTurnEnd: never fails or blocks the agent", () => {
+  test("records the cause when the hook falls back to its default response", async () => {
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...values: unknown[]) => { errors.push(values.map(String).join(" ")); };
+    const environmentWithFailure = new Proxy(environment("/unused"), {
+      get(target, property, receiver) {
+        if (property === "SUPERSET_TERMINAL_ID") throw new Error("identity lookup failed");
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    try {
+      const result = await executeHookTurnEnd([], environmentWithFailure, fakeProcess(), noStdin);
+      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+    } finally {
+      console.error = originalError;
+    }
+    expect(errors.join(" ")).toContain("identity lookup failed");
+  });
+
   test("still resolves ok() with the default response when every process call throws", async () => {
     await withRoot("throwing", async (root) => {
       await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
