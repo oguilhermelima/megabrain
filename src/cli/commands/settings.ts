@@ -408,8 +408,8 @@ export async function executeSettings(args: readonly string[], environment: Envi
     else if (arg === "-h" || arg === "--help") return ok(usageText("settings"));
     else return failed(`unknown settings option: ${arg}`, 2);
   }
+  if (only !== null && !asJson) return failed("settings --only needs --json", 2);
   const result = await readSettings(environment, processAdapter, only);
   if (result.kind !== "ok") return result;
-  if (only !== null && !asJson) return failed("settings --only needs --json", 2);
   return ok(asJson ? `${JSON.stringify(result.value, null, 2)}\n` : summary(result.value as SettingsValue));
 }
