@@ -188,7 +188,7 @@ async function routeCommand(
   }
   const knownCommands = new Set(["context", "doctor", "db", "install", "check", "model", "chain", "web", "native", "tv", "tmux", "orchestrate", "ack", "acknowledge", "worktree", "stack", "terminal", "received", "ask", "done", "hook", "supervise", "resources", "proc", "status", "repo", "projects", "github", "settings", "code", "app", "send", "session", "commands", "chat", "agent", "sessions", "port", "usage", "maestro", "summaries", "knowledge", "artifact"]);
   if (!knownCommands.has(command)) return failed(`unknown command: ${command}`, 2);
-  const statelessCommand = command === "context" || command === "port" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "summaries" || command === "knowledge" || command === "artifact" || command === "sessions" || command === "settings" && commandArgs[0] === "set" && commandArgs[1] === "terminal-engine";
+  const statelessCommand = command === "context" || command === "port" || command === "agent" || command === "web" || command === "tv" || command === "tmux" || command === "chat" || command === "summaries" || command === "knowledge" || command === "artifact" || command === "sessions" || command === "settings" && (commandArgs[0] === "get" || commandArgs[0] === "set" && commandArgs[1] === "terminal-engine");
   if (!statelessCommand && command !== "db" && !commandArgs.includes("-h") && !commandArgs.includes("--help")) {
     const cutover = await ensureAutomaticCutover(dependencies.environment);
     if (cutover.kind !== "ok") return failed(cutover.error, cutover.exitCode);
