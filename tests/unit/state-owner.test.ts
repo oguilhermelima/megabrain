@@ -414,6 +414,25 @@ describe("single state owner", () => {
     expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM messages WHERE dispatch_id = ? AND type = 'done'").get("dispatch-owner")?.count).toBe(3);
   });
 
+  test("a later done event with the same text creates parent mail while replay stays idempotent", async () => {
+    const seeded = openDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (seeded.kind !== "ok") throw new Error(seeded.error);
+    expect(createDispatch(seeded.value, { dispatchId: "dispatch-repeat-done", state: "running", parentSessionId: "parent" }).kind).toBe("ok");
+    seeded.value.close();
+    owner = await startStateOwner(root);
+    const event = {
+      operation: "append-queue-message" as const,
+      dispatchId: "dispatch-repeat-done",
+      message: { from: "child", type: "done", text: "finished", sessionId: "child", createdAt: "2026-10-19T00:00:00.000Z" },
+      dispatch: { dispatchId: "dispatch-repeat-done", parentSessionId: "parent", agent: "codex" },
+    };
+    await callStateOwner(root, { ...event, requestId: "done-event-first" });
+    await callStateOwner(root, { ...event, requestId: "done-event-first" });
+    await callStateOwner(root, { ...event, requestId: "done-event-second", message: { ...event.message, createdAt: "2026-10-19T00:00:01.000Z" } });
+    expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM outbox WHERE dispatch_id = ?").get("dispatch-repeat-done")?.count).toBe(2);
+    expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM messages WHERE dispatch_id = ? AND type = 'done'").get("dispatch-repeat-done")?.count).toBe(2);
+  });
+
   test("delivery claims and acknowledgements are serialized by the owner", async () => {
     const seeded = openDatabase({ MEGABRAIN_STATE_DIR: root });
     expect(seeded.kind).toBe("ok");
