@@ -18,7 +18,7 @@ import { discoverSessionId, parseAgyLog, parseClaudeLog, parseCodexRollout, pars
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from ".././subagents.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { KnowledgePipeline } from "../../knowledge/pipeline.js";
-import { ChatSummarizer } from ".././summaries.js";
+import { ChatSummarizer, updateSummaryTitle } from ".././summaries.js";
 import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFingerprint, listChatArtifacts, listClaudeChatArtifacts, listMegabrainChatArtifacts, type ChatArtifact } from ".././artifacts.js";
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import type { ChatDaemon } from "../daemon.js";
@@ -32,6 +32,7 @@ export async function rename(daemon: ChatDaemon, id: string, title: string): Pro
     chat.title = named;
     chat.titleSource = "person";
     await daemon.save(chat);
+    updateSummaryTitle(daemon.stateDir, chat.id, chat.title);
     await daemon.publish(chat, daemon.stateEvent(chat));
     return chat;
   }
