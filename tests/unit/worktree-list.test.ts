@@ -241,6 +241,66 @@ describe("executeWorktreeList", () => {
     if (result.kind === "failed") expect(result.error).toContain("git worktree list failed");
   });
 
+  test("lists healthy repositories and reports failures in partial JSON results", async () => {
+    const fixture = await createFixture();
+    const healthy = join(fixture.shared, "healthy");
+    const broken = join(fixture.shared, "broken");
+    await mkdir(join(healthy, ".git"), { recursive: true });
+    await mkdir(join(broken, ".git"), { recursive: true });
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") {
+        return path === broken ? failed("broken repo git failure") : output(gitWorktrees(healthy, fixture.linked));
+      }
+      if (gitArgs[0] === "config") return failed("no parent config");
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList(["--json"], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/missing" }, process);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(JSON.parse(result.value)).toEqual({
+        worktrees: expect.arrayContaining([
+          expect.objectContaining({ path: healthy }),
+          expect.objectContaining({ path: fixture.linked }),
+        ]),
+        errors: [{ repository: broken, message: "broken repo git failure" }],
+      });
+    }
+  });
+
+  test("prints partial list errors to stderr and gives worktree enumeration ten seconds", async () => {
+    const fixture = await createFixture();
+    const healthy = join(fixture.shared, "healthy");
+    const broken = join(fixture.shared, "broken");
+    await mkdir(join(healthy, ".git"), { recursive: true });
+    await mkdir(join(broken, ".git"), { recursive: true });
+    const worktreeTimeouts: Array<number | undefined> = [];
+    const process = processFor((command, args, options) => {
+      if (command !== "git") return commandOutput(command);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") {
+        worktreeTimeouts.push(options?.timeoutMs);
+        return path === broken ? failed("broken repo git failure") : output(gitWorktrees(healthy, fixture.linked));
+      }
+      if (gitArgs[0] === "config") return failed("no parent config");
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList([], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/missing" }, process);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.value).toContain(healthy);
+      expect(result.stderr).toContain(`${broken}: broken repo git failure`);
+    }
+    expect(worktreeTimeouts).toEqual([10_000, 10_000]);
+  });
+
   test("fails on Git configuration errors other than a missing match", async () => {
     const fixture = await createFixture();
     const process = processFor((command, args) => {
