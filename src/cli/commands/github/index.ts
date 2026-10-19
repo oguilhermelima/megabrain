@@ -52,7 +52,7 @@ import { executeProjectStatus, executeProjectStatusCreate } from "./project-stat
 import { executeProjectWorkflows } from "./project-workflows.js";
 export { executeProjects, PROJECTS_QUERY, PROJECT_QUERY } from "./projects.js";
 export { executeProjectMove, PROJECT_METADATA_QUERY, PROJECT_MOVE_QUERY } from "./project-move.js";
-export { executeProjectStatus, executeProjectStatusCreate, PROJECT_STATUS_QUERY, CREATE_PROJECT_STATUS_UPDATE, PROJECT_STATUS_VALUES } from "./project-status.js";
+export { executeProjectStatus, executeProjectStatusCreate, PROJECT_STATUS_QUERY, PROJECT_STATUS_PROJECT_QUERY, CREATE_PROJECT_STATUS_UPDATE, PROJECT_STATUS_VALUES } from "./project-status.js";
 export { executeProjectWorkflows, PROJECT_WORKFLOWS_QUERY } from "./project-workflows.js";
 export type { Project, ProjectItem, ProjectStatusField, ProjectStatusOption } from "./projects.js";
 

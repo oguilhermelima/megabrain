@@ -23,6 +23,9 @@ export const PROJECT_STATUS_QUERY = `query($owner: String!, $number: Int!, $afte
     id number statusUpdates(first: 100, after: $after) { nodes { ${STATUS_UPDATE_FIELDS} } pageInfo { hasNextPage endCursor } }
   } } }
 }`
+export const PROJECT_STATUS_PROJECT_QUERY = `query($owner: String!, $number: Int!) {
+  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { id } } }
+}`
 export const CREATE_PROJECT_STATUS_UPDATE = `mutation($projectId: ID!, $status: ProjectV2StatusUpdateStatus!, $body: String, $startDate: Date, $targetDate: Date) {
   createProjectV2StatusUpdate(input: { projectId: $projectId, status: $status, body: $body, startDate: $startDate, targetDate: $targetDate }) {
     statusUpdate { ${STATUS_UPDATE_FIELDS} }
@@ -75,7 +78,7 @@ function normalizeStatusUpdate(value: unknown): ProjectStatusUpdate | null {
 }
 
 async function projectMetadata(owner: string, number: number, process: ProcessAdapter) {
-  const answer = await graphqlCall(process, 'gh api graphql', PROJECT_STATUS_QUERY, { owner, number })
+  const answer = await graphqlCall(process, 'gh api graphql', PROJECT_STATUS_PROJECT_QUERY, { owner, number })
   if (answer.kind !== 'ok') return answer
   const project = record(answer.value.data.repositoryOwner)?.projectV2
   const entry = record(project)
