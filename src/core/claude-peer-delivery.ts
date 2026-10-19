@@ -58,18 +58,18 @@ export async function verifyClaudePeerConsumption(input: Readonly<{
   status: () => Promise<PeerSessionStatus>;
   scan: () => Promise<PeerConsumption>;
   fallback: () => Promise<void>;
-  heartbeat?: () => Promise<void>;
+  heartbeat?: () => Promise<boolean | void>;
   sleep: (milliseconds: number) => Promise<void>;
   now?: () => number;
   idleWindowMs?: number;
   pollIntervalMs?: number;
-}>): Promise<"delivered" | "fallback"> {
+}>): Promise<"delivered" | "fallback" | "lost"> {
   const now = input.now ?? Date.now;
   const idleWindowMs = input.idleWindowMs ?? 20_000;
   const pollIntervalMs = input.pollIntervalMs ?? 250;
   let idleSince: number | undefined;
   for (;;) {
-    await input.heartbeat?.();
+    if (await input.heartbeat?.() === false) return "lost";
     if (await input.acknowledged()) return "delivered";
     const status = await input.status();
     if (status === "ended") break;

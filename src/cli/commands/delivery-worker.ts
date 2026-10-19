@@ -465,7 +465,7 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
   if (!verifierLease) return ok("peer verification is already running\n");
   try {
   const result = await verifyClaudePeerConsumption({
-    heartbeat: async () => { await callStateOwner(root, { operation: "acquire-lease", key: verifierLeaseKey, holder: verifierHolder, seconds: 90 }); },
+    heartbeat: async () => await callStateOwner(root, { operation: "acquire-lease", key: verifierLeaseKey, holder: verifierHolder, seconds: 90 }).catch(() => false) as boolean,
     acknowledged: async () => {
       const current = listDeliveries(database.value, dispatch);
       return current.kind === "ok" && current.value.some((item) => item.id === delivery.id && item.status === "acknowledged");
@@ -487,6 +487,10 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
       await startDeliveryWorker(root, dispatch, outboxId, retryMeta, process);
     },
   });
+  if (result === "lost") {
+    console.error(`delivery verifier lease lost: ${outboxId}`);
+    return ok("peer verification lease lost\n");
+  }
   if (result === "delivered") {
     if (delivery.recipient === "child" || delivery.recipient === "parent") await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: delivery.recipient });
     await recordChannelResultThroughOwner(root, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });
