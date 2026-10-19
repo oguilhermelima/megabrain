@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { normalizeProjectItem, normalizeProjectViews, normalizeProjectFields } from '../../src/cli/commands/github/projects.js'
+import { normalizeProjectItem, normalizeProjectViews, normalizeProjectFields } from '../../src/cli/commands/github.js'
 
 describe('GitHub project view and field normalization', () => {
   test('normalizes view configuration including grouping, sorting and visible fields', () => {
