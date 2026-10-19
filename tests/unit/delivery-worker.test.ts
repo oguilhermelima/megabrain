@@ -6,11 +6,15 @@ import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { ProcessOutput } from "../../src/adapters/proc.js";
 import { executeDeliveryWorker, startDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { openDatabase, withWrite } from "../../src/db/db.js";
+import { createDispatch } from "../../src/adapters/state/dispatches.js";
+import { callStateOwner, startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
 describe("deferred delivery worker lifecycle", () => {
-  test("keeps the target lease held while parent delivery is deferred", async () => {
+  test("the owner delivers a published row without starting a detached worker", async () => {
     const root = mkdtempSync(join(tmpdir(), "megabrain-delivery-worker-"));
     let starts = 0;
+    let owner: Awaited<ReturnType<typeof startStateOwner>> | undefined;
     const process: ProcessAdapter = {
       async run(command, args) { return failed(`${command} ${args.join(" ")} was not expected`); },
       async startDetached() { starts += 1; return ok<ProcessOutput>({ stdout: "", stderr: "", exitCode: 0 }); },
@@ -18,11 +22,31 @@ describe("deferred delivery worker lifecycle", () => {
     };
 
     try {
-      const meta = { targetKind: "parent-pointer", parentHost: "tmux", parentTmuxSession: "private", parentTmuxPane: "%1" };
-      expect(await startDeliveryWorker(root, "d1", "ob1", meta, process)).toBe("started");
-      expect(await startDeliveryWorker(root, "d1", "ob2", meta, process)).toBe("already-running");
-      expect(starts).toBe(1);
+      const seeded = openDatabase({ MEGABRAIN_STATE_DIR: root });
+      expect(seeded.kind).toBe("ok");
+      if (seeded.kind !== "ok") throw new Error(seeded.error);
+      expect(createDispatch(seeded.value, { dispatchId: "d1", state: "running", parentHost: "local" }).kind).toBe("ok");
+      seeded.value.close();
+      owner = await startStateOwner(root);
+      const result = await callStateOwner(root, {
+        operation: "append-queue-message",
+        dispatchId: "d1",
+        message: { from: "child", type: "done", text: "finished", sessionId: "child", createdAt: new Date().toISOString() },
+        dispatch: { dispatchId: "d1", parentHost: "local", parentSessionId: "parent", agent: "codex" },
+      }) as { sequence: number; outboxId: string };
+      expect(result.sequence).toBe(1);
+      expect(result.outboxId).toBeString();
+      expect(await startDeliveryWorker(root, "d1", result.outboxId, { targetKind: "parent-pointer", parentHost: "local", parentSessionId: "parent" }, process)).toBe("already-running");
+      const deadline = Date.now() + 5_000;
+      let status = "pending";
+      while (Date.now() < deadline && (status === "pending" || status === "sending")) {
+        status = owner.handle.db.query<{ status: string }>("SELECT status FROM outbox WHERE id = ?").get(result.outboxId)?.status ?? "missing";
+        if (status === "pending" || status === "sending") await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(["sent", "failed", "suppressed"]).toContain(status);
+      expect(starts).toBe(0);
     } finally {
+      if (owner !== undefined) await stopStateOwner(owner);
       rmSync(root, { recursive: true, force: true });
     }
   });

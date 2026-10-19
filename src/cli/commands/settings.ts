@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { readProjectAppearance, setProjectAppearance, type AppearancePatch } from "../../core/project-appearance.js";
 import { writePrivateJson } from "../../core/private-json.js";
-import { readAdmissionPolicy, resourceHistoryEnabled, stateDatabase } from "../../adapters/state-db.js";
+import { readAdmissionPolicy, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { detectTerminal, OPENERS, type Platform } from "../../core/terminal-openers.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -18,6 +18,7 @@ import { defaultSummarySettings, parseSummarySettings } from "../../chat/summari
 import { defaultKnowledgeSettings, parseKnowledgeSettings, readKnowledgeSettings } from "../../knowledge/settings.js";
 import { emptyModelSettings, modelEnabled, modelSettingsFile, parseModelSettings, type ModelSettings } from "../../core/model-settings.js";
 import { agentUpdateStatus, readAgentAutoUpdateSettings, writeAgentAutoUpdateSettings } from "../../core/agent-update.js";
+import { loadAndPersistModelRegistry } from "../../core/model.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -278,7 +279,9 @@ type SettingsKey = typeof SETTINGS_KEYS[number];
 /** `only` limits the read to those top-level keys, so one page of the desktop window never pays for another's (limits go to the network). */
 async function readSettings(environment: Environment, processAdapter: ProcessAdapter, only: ReadonlySet<SettingsKey> | null = null): Promise<Result<Partial<SettingsValue>>> {
   const want = (key: SettingsKey): boolean => only === null || only.has(key);
-  const database = stateDatabase(environment);
+  const registryStatus = await loadAndPersistModelRegistry(environment);
+  if (registryStatus.kind !== "loaded") return failed(registryStatus.error, registryStatus.exitCode);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
 
   const chainConfig = readConfig(environment);

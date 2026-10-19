@@ -1,5 +1,5 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { listDispatches, readAdmissionPolicy, resourceHistoryEnabled, setResourceHistory, stateDatabase, writeAdmissionPolicy, type StoredAdmissionPolicy } from "../../adapters/state-db.js";
+import { listDispatches, readAdmissionPolicy, resourceHistoryEnabled, setResourceHistory, readOnlyStateDatabase, writeAdmissionPolicy, type StoredAdmissionPolicy } from "../../adapters/state-db.js";
 import { readDockerResources, readMachineResources, sampleProcessTree, type DockerResource, type MachineResources, type ProcessResources } from "../../core/resources.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
@@ -15,7 +15,7 @@ const OPEN = new Set(["queued", "spawning", "running", "waiting_for_reply", "orp
 // pass withDocker = false and get null for it.
 export async function collectResources(environment: Environment, process: ProcessAdapter, all = false, withDocker = true): Promise<ResourceSnapshot> {
   const [machine, docker] = await Promise.all([readMachineResources(process), withDocker ? readDockerResources(process) : Promise.resolve(undefined)]);
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return { machine: machine ?? null, docker: docker ?? null, dispatches: [] };
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return { machine: machine ?? null, docker: docker ?? null, dispatches: [] };
@@ -89,8 +89,6 @@ export async function executeResources(args: readonly string[], environment: Env
     }
     return failed("resources policy accepts show|set [limits]|off", 2);
   }
-  const database = stateDatabase(environment);
-  if (database.kind !== "ok") return failed(database.error, database.exitCode);
   if (args.length === 1 && (args[0] === "enable" || args[0] === "disable")) {
     const enabled = args[0] === "enable";
     await setResourceHistory(environment, enabled);

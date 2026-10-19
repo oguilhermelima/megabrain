@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { openDatabase, withWrite } from "../../db/db.js";
+import { openDatabaseReadOnly } from "../../db/db.js";
 import { listWorktrees } from "../../db/queries/worktrees.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 
@@ -173,7 +173,7 @@ async function dataFor(process: ProcessAdapter, environment: Environment, repoOp
   const repo = cwdRepo.value;
   const slug = await repositorySlug(process, repo);
   if (slug.kind !== "ok") return slug;
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return failed(opened.error);
   try {
     const base = await defaultBranch(process, repo);
@@ -603,12 +603,6 @@ export async function executeStack(args: readonly string[], environment: Environ
     if (repo.kind !== "ok") return repo;
     const created = await executeWorktreeCreate(["--repo", repo.value.repo, "--branch", branch, "--parent", `branch:${parent}`, "--base", parent, "--json"], environment, process);
     if (created.kind !== "ok") return created;
-    const opened = openDatabase(environment);
-    if (opened.kind !== "ok") return failed(opened.error);
-    try {
-      const saved = withWrite(opened.value, (db) => db.run("UPDATE worktrees SET parent_branch = ? WHERE branch = ? AND repo = ?", [parent, branch, repo.value.repo]));
-      if (saved.kind !== "ok") return failed(saved.error);
-    } finally { opened.value.close(); }
     return created;
   }
   if (action === "show") return show(process, environment, repoOption, member, json, provider);

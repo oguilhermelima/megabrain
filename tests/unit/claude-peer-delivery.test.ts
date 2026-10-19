@@ -2,11 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
-import { appendMessage, createDelivery, createDispatch, getDeliveryChannel, listDeliveries, listDeliveryChannels, listOutbox, recordChannelResult, stateDatabase } from "../../src/adapters/state-db.js";
+import { createDispatch, getDeliveryChannel, listDeliveries, listDeliveryChannels, listOutbox, recordChannelResult, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { claudePeerContent, resolveClaudePeer, sendClaudePeer } from "../../src/agents/claude-peer.js";
 import { executeDatabase } from "../../src/cli/commands/db.js";
-import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { callStateOwner, startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
+import { insertLease } from "../../src/db/queries/outbox-leases.js";
 import { channelVerdict, nextRetryAt } from "../../src/core/delivery-channel.js";
 import { choosePeerChannel, senderPermissionClass } from "../../src/core/claude-peer-delivery.js";
 import { failed, ok } from "../../src/core/result.js";
@@ -71,18 +72,20 @@ describe("channel table", () => {
 });
 
 type Frame = Record<string, unknown>;
-type Inbox = { connections: number; frames: Frame[][] };
+type Inbox = { connections: number; frames: Frame[][]; processing: Promise<void>[]; receivedAt?: number };
 
 async function startInbox(path: string, onFrames: (frames: Frame[]) => Promise<void> | void = () => undefined): Promise<Inbox> {
-  const inbox: Inbox = { connections: 0, frames: [] };
+  const inbox: Inbox = { connections: 0, frames: [], processing: [] };
   const server: Server = createServer((socket) => {
     inbox.connections += 1;
     let buffer = "";
-    socket.on("data", (chunk) => { buffer += chunk.toString(); });
+    socket.on("data", (chunk) => { inbox.receivedAt ??= Date.now(); buffer += chunk.toString(); });
     socket.on("end", () => {
       const frames = buffer.split("\n").filter((line) => line !== "").map((line) => JSON.parse(line) as Frame);
       inbox.frames.push(frames);
-      void Promise.resolve(onFrames(frames)).finally(() => socket.end());
+      const processing = Promise.resolve(onFrames(frames));
+      inbox.processing.push(processing);
+      void processing.finally(() => socket.end());
     });
   });
   await new Promise<void>((resolve) => server.listen(path, resolve));
@@ -93,6 +96,7 @@ async function startInbox(path: string, onFrames: (frames: Frame[]) => Promise<v
 async function received(inbox: Inbox, count = 1): Promise<void> {
   const deadline = Date.now() + 2000;
   while (inbox.frames.length < count && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  await Promise.all(inbox.processing);
 }
 
 type Scene = {
@@ -208,16 +212,12 @@ describe("claude peer socket", () => {
   });
 });
 
-async function runWorker(current: Scene, env: Record<string, string> = {}, child: Record<string, unknown> = {}, messageType = "done") {
+async function runWorker(current: Scene, env: Record<string, string> = {}, child: Record<string, unknown> = {}, messageType = "done", supervisorDelayMs = 0, holdTargetLease = false) {
   const db = stateDatabase({ HOME: current.root, MEGABRAIN_STATE_DIR: current.root });
   if (db.kind !== "ok") throw new Error(db.error);
   const meta = { agent: "codex", agentPid: 1, parentAgent: "claude", parentAgentPid: 41414, parentAgentSessionId: current.session.sessionId, parentHost: "orca", parentWorkspaceId: "workspace", parentTerminalId: "parent-terminal", ...child };
   createDispatch(db.value, { dispatchId: "d-peer", state: "running", ...meta });
   const messageText = messageType === "ask" ? "Need a decision" : "finished";
-  appendMessage(db.value, "d-peer", { from: "child", type: messageType, text: messageType === "ask" ? "Need a decision" : "finished" }, {
-    outbox: { id: "ob-peer", targetKind: "parent-pointer", target: "orca:parent-terminal", payload: { dispatchId: "d-peer", sequence: 1, meta, pointer: "megabrain check", fullMessage: messageType === "ask" ? `❓ codex · ${messageText}` : "✅ codex · lane finished" } },
-  });
-  createDelivery(db.value, { id: "dl-peer", dispatchId: "d-peer", messageSeqs: [1], status: "outstanding" });
   const screen = JSON.parse(await fixture("orca-terminal-screen-claude-idle.json")) as unknown;
   const sends: string[] = [];
   const process: ProcessAdapter = {
@@ -228,10 +228,27 @@ async function runWorker(current: Scene, env: Record<string, string> = {}, child
       if (command === "orca" && args[1] === "send") { sends.push(args.join(" ")); return ok<ProcessOutput>({ stdout: "{}", stderr: "", exitCode: 0 }); }
       return failed(`unexpected ${command} ${args.join(" ")}`);
     },
-    async startDetached() { return failed("not used"); },
+    async startDetached() {
+      if (supervisorDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, supervisorDelayMs));
+      return failed("not used");
+    },
     invocationCount() { return 0; },
   };
-  await executeDeliveryWorker(["ob-peer", "holder", "delivery-target:orca:parent-terminal", String(Date.now() + 5000)], { HOME: current.root, MEGABRAIN_STATE_DIR: current.root, MEGABRAIN_PEER_IDLE_DROP_MS: "300", ...env }, process);
+  const ownerEnvironment = { HOME: current.root, MEGABRAIN_STATE_DIR: current.root, MEGABRAIN_PEER_IDLE_DROP_MS: "300", MEGABRAIN_DELIVERY_TIMEOUT_MS: "5000", ...env };
+  const owner = await startStateOwner(current.root, process, ownerEnvironment);
+  if (holdTargetLease) insertLease(db.value.db, { key: "delivery-target:orca:parent-terminal", holder: "legacy-delivery-worker", expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  const publishedAt = Date.now();
+  try {
+    await callStateOwner(current.root, { operation: "append-message", dispatchId: "d-peer", message: { from: "child", type: messageType, text: messageText }, delivery: { id: "dl-peer", recipient: "parent", status: "outstanding" }, outbox: { id: "ob-peer", targetKind: "parent-pointer", target: "orca:parent-terminal", payload: { dispatchId: "d-peer", sequence: 1, meta, pointer: "megabrain check", fullMessage: messageType === "ask" ? `❓ codex · ${messageText}` : "✅ codex · lane finished" } } });
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const currentOutbox = listOutbox(owner.handle);
+      if (currentOutbox.kind === "ok" && currentOutbox.value.find((item) => item.id === "ob-peer")?.status !== "pending") break;
+      if (owner.pendingDeliveries.size > 0) await Promise.all([...owner.pendingDeliveries]);
+      else await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } finally { await stopStateOwner(owner); }
   const outbox = listOutbox(db.value);
   const deliveries = listDeliveries(db.value, "d-peer");
   const channel = getDeliveryChannel(db.value, "claude", "peer-socket");
@@ -240,6 +257,7 @@ async function runWorker(current: Scene, env: Record<string, string> = {}, child
     outbox: outbox.kind === "ok" ? outbox.value : [],
     deliveries: deliveries.kind === "ok" ? deliveries.value : [],
     channel: channel.kind === "ok" ? channel.value : undefined,
+    elapsedMs: Date.now() - publishedAt,
     db: db.value,
   };
 }
@@ -279,10 +297,21 @@ describe("parent notice to a Claude parent", () => {
     expect(run.outbox[0]?.status).toBe("sent");
   });
 
+  test("publishes to the peer socket in 50ms despite a legacy target lease and slow supervisor startup", async () => {
+    const current = await scene();
+    const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
+    const run = await runWorker(current, {}, {}, "ask", 2_500, true);
+    expect(inbox.connections).toBe(1);
+    expect(run.outbox[0]?.status).toBe("sent");
+    expect(inbox.receivedAt).toBeDefined();
+    expect((inbox.receivedAt ?? Date.now()) - Date.parse(String(run.outbox[0]?.createdAt))).toBeLessThan(50);
+  });
+
   test("a notice from a child launched without prompts attests bypass, so a bypass parent accepts it", async () => {
     const current = await scene();
     const inbox = await startInbox(String(current.session.messagingSocketPath), consume(current));
     await runWorker(current);
+    await received(inbox);
     expect(String(((inbox.frames[0]?.[1])?.message as Frame).content)).toStartWith('<cross-session-message from-name="megabrain" from-mode="bypass">');
   });
 

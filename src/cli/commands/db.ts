@@ -1,15 +1,17 @@
-import { backupDatabase, inspectDatabase, openDatabase, readSnapshot, withWrite } from "../../db/db.js";
+import { backupDatabase, inspectDatabase, openDatabaseReadOnly, readSnapshot } from "../../db/db.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { StateEnvironment } from "../../core/state.js";
 import { usageText } from "../../core/usage.js";
-import { parseJsonState, applyJsonStateImport } from "../../db/import/json-state.js";
+import { parseJsonState, type AtomicImportReport } from "../../db/import/json-state.js";
 import { getDispatch, listDispatches, type DispatchRow } from "../../db/queries/dispatches.js";
 import { listMessages } from "../../db/queries/messages.js";
 import { listDeliveries } from "../../db/queries/deliveries.js";
 import { getInstallState, getTerminal, getTmuxSession, listInstallState, listModels } from "../../db/queries/aux-state.js";
-import { dryRunLegacyMigration, markExplicitImport, migrateLegacyState } from "../../db/cutover.js";
+import { dryRunLegacyMigration, migrateLegacyState } from "../../db/cutover.js";
 import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
 import { queryDeliveryChannels } from "../../adapters/state/channels.js";
+import { callStateOwner } from "../../db/state-owner.js";
+import { resolveStateDirectory } from "../../core/state.js";
 
 function parseJson(args: readonly string[]): Result<boolean> {
   let json = false;
@@ -35,7 +37,7 @@ function check(environment: StateEnvironment, json: boolean): Result<string> {
 }
 
 function backup(environment: StateEnvironment, json: boolean): Result<string> {
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   try {
     const result = backupDatabase(opened.value);
@@ -70,23 +72,15 @@ async function importState(args: readonly string[], environment: StateEnvironmen
     else source = arg;
   }
   if (source === undefined) return failed(usageText("db-import").trimEnd(), 2);
-  const opened = openDatabase(environment);
-  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   try {
     const parsed = await parseJsonState(source);
-    const result = withWrite(opened.value, (db) => applyJsonStateImport(db, parsed, replace));
-    if (result.kind !== "ok") return failed(result.error, result.exitCode);
-    const report = result.value;
+    const report = await callStateOwner(resolveStateDirectory(environment), { operation: "json-state-import", parsed, replace }) as AtomicImportReport;
     if (report.malformed.length > 0) return failed(`malformed input:\n${report.malformed.map(({ path, reason }) => `  ${path}: ${reason}`).join("\n")}`);
     if (report.conflicts.length > 0) return failed(`conflicting records: ${report.conflicts.join(", ")}`);
-    const marked = markExplicitImport(opened.value, report.imported);
-    if (marked.kind !== "ok") return failed(marked.error, marked.exitCode);
     const summary = { imported: report.imported, skippedIdentical: report.skippedIdentical, replaced: report.replaced, malformed: report.malformed };
     return ok(json ? `${JSON.stringify(summary, null, 2)}\n` : `imported ${countRecords(report.imported)}, skipped identical ${countRecords(report.skippedIdentical)}, replaced ${countRecords(report.replaced)}, malformed ${report.malformed.length}\n`);
   } catch (error: unknown) {
     return failed(`import failed: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    opened.value.close();
   }
 }
 
@@ -126,7 +120,7 @@ function showState(args: readonly string[], environment: StateEnvironment): Resu
     else id = arg;
   }
   if (!validShowRequest(mode, id)) return failed(usageText("db-show").trimEnd(), 2);
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   try {
     const result = readSnapshot(opened.value, (db) => {

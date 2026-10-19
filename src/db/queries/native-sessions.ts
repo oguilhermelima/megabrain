@@ -18,7 +18,7 @@ function insert(db: DatabaseHandle, session: NativeSession): void {
 }
 
 export function listNativeSessions(db: DatabaseHandle): NativeSession[] {
-  return db.db.query<NativeSessionRow>("SELECT udid, bundle_id, session_id FROM native_sessions ORDER BY rowid").all().map((row) => ({
+  return db.db.query<NativeSessionRow>("SELECT udid, bundle_id, session_id FROM native_sessions ORDER BY udid, bundle_id").all().map((row) => ({
     udid: row.udid,
     bundleId: row.bundle_id,
     sessionId: row.session_id,

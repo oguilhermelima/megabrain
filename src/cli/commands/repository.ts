@@ -6,13 +6,14 @@ import { expandRepositoryUrl, repositoryCheckout } from "../../core/project-regi
 import { projectScripts, setProjectScripts, type SavedProjectScripts } from "../../core/project-scripts.js";
 import { detectScriptPort } from "../../core/script-port.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { openDatabase, withWrite, type DatabaseAdapter, type Synchronous } from "../../db/db.js";
-import { listRepositories, registerRepository, removeRepository, type RepositoryRecord } from "../../db/queries/repositories.js";
+import { openDatabaseReadOnly, type DatabaseAdapter } from "../../db/db.js";
+import { listRepositories, type RepositoryRecord } from "../../db/queries/repositories.js";
+import { resolveStateDirectory } from "../../core/state.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import { executeRepoRun, executeRepoStop, resolveRepositoryPath } from "./repo-run.js";
 import { backfillProjectHistory } from "./projects.js";
 import { usageText } from "../../core/usage.js";
 import { defaultRoots, discoverRepositories } from "../../core/repository-discovery.js";
-import { setHiddenItem } from "../../db/queries/hidden-items.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type GithubRepository = Readonly<{ nameWithOwner: string; url: string; description: string | null; isPrivate: boolean; updatedAt: string | null; primaryLanguage?: { name: string } | null; stargazerCount?: number }>;
@@ -24,16 +25,8 @@ function parseRepository(record: Readonly<{ name: string; path: string; remote: 
   return json ? `${JSON.stringify(record, null, 2)}\n` : `${record.name}\t${record.path}\n`;
 }
 
-function databaseAction<T>(environment: Environment, action: Synchronous<T>): Result<T> {
-  const opened = openDatabase(environment);
-  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
-  try {
-    return withWrite(opened.value, action);
-  } finally { opened.value.close(); }
-}
-
 function databaseRead<T>(environment: Environment, action: (database: DatabaseAdapter) => T): Result<T> {
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   try { return ok(action(opened.value.db)); }
   catch (cause: unknown) { return failed(cause instanceof Error ? cause.message : String(cause)); }
@@ -43,7 +36,9 @@ function databaseRead<T>(environment: Environment, action: (database: DatabaseAd
 async function addRepository(path: string, source: "megabrain" | "import", environment: Environment, process: ProcessAdapter): Promise<Result<RepositoryRecord>> {
   const checkout = await repositoryCheckout(path, process);
   if (checkout.kind !== "ok") return checkout;
-  return databaseAction(environment, (db) => registerRepository(db, { ...checkout.value, source, addedAt: new Date().toISOString() }));
+  try {
+    return { kind: "ok", value: await callStateOwner(resolveStateDirectory(environment), { operation: "repository-register", repository: { ...checkout.value, source, addedAt: new Date().toISOString() } }) as RepositoryRecord };
+  } catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
 }
 
 export async function executeRepository(args: readonly string[], environment: Environment, process = createProcessAdapter()): Promise<Result<string>> {
@@ -126,31 +121,33 @@ export async function executeRepository(args: readonly string[], environment: En
     const selector = rest.find((argument) => !argument.startsWith("-"));
     if (selector === undefined) return failed("Usage: megabrain repo remove <name|path> [--json]", 2);
     const pathSelector = await realpath(selector).catch(() => selector);
-    const removed = databaseAction(environment, (db) => {
-      const exactPath = listRepositories(db).find((repository) => repository.path === pathSelector);
-      const matches = exactPath === undefined ? listRepositories(db).filter((repository) => repository.name === selector) : [exactPath];
-      if (matches.length > 1) throw new Error(`repository name is ambiguous: ${selector}; use a path`);
-      return matches[0] === undefined ? undefined : removeRepository(db, matches[0].path);
-    });
-    if (removed.kind !== "ok") return removed;
-    if (removed.value === undefined) return failed(`repository not found: ${selector}`);
-    return ok(json ? `${JSON.stringify({ removed: removed.value }, null, 2)}\n` : `removed ${removed.value.name} from registry\n`);
+    const records = databaseRead(environment, listRepositories);
+    if (records.kind !== "ok") return records;
+    const exactPath = records.value.find((repository) => repository.path === pathSelector);
+    const matches = exactPath === undefined ? records.value.filter((repository) => repository.name === selector) : [exactPath];
+    if (matches.length > 1) return failed(`repository name is ambiguous: ${selector}; use a path`);
+    if (matches[0] === undefined) return failed(`repository not found: ${selector}`);
+    try {
+      const removed = await callStateOwner(resolveStateDirectory(environment), { operation: "repository-remove", path: matches[0].path }) as RepositoryRecord | null;
+      if (removed === null) return failed(`repository not found: ${selector}`);
+      return ok(json ? `${JSON.stringify({ removed }, null, 2)}\n` : `removed ${removed.name} from registry\n`);
+    } catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   }
   if (verb === "hide" || verb === "unhide") {
     const selector = rest.find((argument) => !argument.startsWith("-"));
     if (selector === undefined) return failed(`Usage: megabrain repo ${verb} <name|path>`, 2);
     const pathSelector = await realpath(selector).catch(() => selector);
-    const changed = databaseAction(environment, (db) => {
-      const exact = listRepositories(db).find((repository) => repository.path === pathSelector);
-      const matches = exact === undefined ? listRepositories(db).filter((repository) => repository.name === selector) : [exact];
-      if (matches.length > 1) throw new Error(`repository name is ambiguous: ${selector}; use a path`);
-      const repository = matches[0];
-      if (repository === undefined) return undefined;
-      setHiddenItem(db, "repo", repository.path, verb === "hide");
-      return repository;
-    });
-    if (changed.kind !== "ok") return changed;
-    return changed.value === undefined ? failed(`repository not found: ${selector}`) : ok(`${verb === "hide" ? "hidden" : "shown"} ${changed.value.name}\n`);
+    const records = databaseRead(environment, listRepositories);
+    if (records.kind !== "ok") return records;
+    const exact = records.value.find((repository) => repository.path === pathSelector);
+    const matches = exact === undefined ? records.value.filter((repository) => repository.name === selector) : [exact];
+    if (matches.length > 1) return failed(`repository name is ambiguous: ${selector}; use a path`);
+    const repository = matches[0];
+    if (repository === undefined) return failed(`repository not found: ${selector}`);
+    try {
+      await callStateOwner(resolveStateDirectory(environment), { operation: "hidden-item-write", kind: "repo", path: repository.path, hidden: verb === "hide" });
+      return ok(`${verb === "hide" ? "hidden" : "shown"} ${repository.name}\n`);
+    } catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   }
   if (verb === "github") {
     let owner: string | undefined;

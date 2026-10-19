@@ -10,6 +10,7 @@ import { getTmux, registerTmux, unregisterTmux } from "../../src/hosts/tmux.js";
 import { getHost, registerHost } from "../../src/hosts/index.js";
 import type { HostProvider } from "../../src/hosts/types.js";
 import { executeOrchestrateStop } from "../../src/cli/commands/orchestrate-stop-reconcile.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -26,6 +27,7 @@ const interruptedCodex = [
 const codexWorking = "• Working (1s • esc to interrupt)\n› Ask Codex to do anything";
 const direction = "Use the existing parser, preserve the current behavior, and update the docs.";
 const formatted = `🔀 codex · megabrain/main new direction\nStop the approach you were on and follow this instead:\n${direction}\n(The same text is available with megabrain check.)`;
+let stateOwner: Awaited<ReturnType<typeof startStateOwner>> | undefined;
 
 function requireOk<T>(result: Result<T>): T {
   if (result.kind !== "ok") throw new Error(result.error);
@@ -65,19 +67,22 @@ function meta(overrides: JsonRecord = {}): JsonRecord {
   };
 }
 
-async function writeDispatch(root: string, overrides: JsonRecord = {}): Promise<void> {
+async function writeDispatch(root: string, overrides: JsonRecord = {}, process = processAdapter()): Promise<void> {
   const db = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
   requireOk(createDispatch(db, meta(overrides)));
+  stateOwner = await startStateOwner(root, process, { MEGABRAIN_STATE_DIR: root });
 }
 
 function environment(root: string, overrides: Record<string, string> = {}): Record<string, string> {
   return { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "parent-terminal", ...overrides };
 }
 
-function processAdapter(): ProcessAdapter {
+function processAdapter(shellReceiver = false): ProcessAdapter {
   return {
     async run(command, args) {
-      if (command === "ps" && args[0] === "-ww") return ok({ stdout: "999 999 999 /usr/local/bin/codex --resume child\n", stderr: "", exitCode: 0 });
+      if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal", pid: 100 }] } }), stderr: "", exitCode: 0 });
+      if (command === "ps" && args[0] === "-axo") return ok({ stdout: `100 1 200 200 orca terminal\n999 100 ${shellReceiver ? 201 : 200} 200 ${shellReceiver ? "-zsh" : "/usr/local/bin/codex --resume child"}\n1000 999 1000 200 helper\n`, stderr: "", exitCode: 0 });
+      if (command === "ps" && args[0] === "-ww") return ok({ stdout: shellReceiver ? "999 999 999 -zsh\n" : "999 999 999 /usr/local/bin/codex --resume child\n", stderr: "", exitCode: 0 });
       if (command === "ps" && args[0] === "-p") return ok({ stdout: "pts/7\n", stderr: "", exitCode: 0 });
       if (command === "ps" && args[0] === "eww") return ok({ stdout: "999 1 child MEGABRAIN_DISPATCH_ID=change\n", stderr: "", exitCode: 0 });
       return ok({ stdout: "", stderr: "", exitCode: 0 });
@@ -145,13 +150,25 @@ function installOrcaHost(processCalls: string[]) {
   return () => registerHost(original);
 }
 
-afterEach(() => {
+afterEach(async () => {
+  if (stateOwner !== undefined) await stopStateOwner(stateOwner);
+  stateOwner = undefined;
   unregisterTmux("tmux");
   registerTmux(getTmux());
 });
 
 describe("orchestrate change delivery", () => {
-  test("interrupts a busy child once and delivers without waiting for idle", async () => {
+  test("refuses delivery when a shell, rather than Codex, owns the receiver process", async () => {
+    const root = await tempStateDir();
+    try {
+      await writeDispatch(root, {}, processAdapter(true));
+      const result = await executeOrchestrateChange(["change", "--text", direction, "--json"], environment(root), processAdapter(true));
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: false, status: "queued" });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  test("delivers to a busy child without waiting for idle or interrupting it", async () => {
     const root = await tempStateDir();
     const harness = installTmux({ alwaysBusy: true });
     try {
@@ -160,17 +177,16 @@ describe("orchestrate change delivery", () => {
       expect(result.kind).toBe("ok");
       const output = result.kind === "ok" ? JSON.parse(result.value) as JsonRecord : {};
       expect(output).toMatchObject({ attempts: 1, idleReached: false, delivered: true, confirmed: true });
-      expect(harness.events[0]).toBe("key:Escape");
-      expect(harness.events[1]).toStartWith(`text:${formatted}`);
-      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
-      expect(harness.events[2]).toBe("key:Enter");
+      expect(harness.events[0]).toStartWith(`text:${formatted}`);
+      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("interrupts once before delivering into an empty idle composer", async () => {
+  test("delivers into an empty idle composer without interrupting the child", async () => {
     const root = await tempStateDir();
     const harness = installTmux();
     try {
@@ -179,10 +195,9 @@ describe("orchestrate change delivery", () => {
       expect(result.kind).toBe("ok");
       const output = result.kind === "ok" ? JSON.parse(result.value) as JsonRecord : {};
       expect(output).toMatchObject({ attempts: 1, idleReached: false, delivered: true, confirmed: true, supersededQueued: 0, supersededDelivered: 0 });
-      expect(harness.events[0]).toBe("key:Escape");
-      expect(harness.events[1]).toStartWith(`text:${formatted}`);
-      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
-      expect(harness.events[2]).toBe("key:Enter");
+      expect(harness.events[0]).toStartWith(`text:${formatted}`);
+      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[1]).toBe("key:Enter");
       const messages = await readMessages(root);
       expect(messages.map((message) => message.type)).toEqual(["reply", "composer-clear", "delivery-result", "delivery-confirmation"]);
       expect((messages[0] as JsonRecord).text).toBe(direction);
@@ -203,17 +218,16 @@ describe("orchestrate change delivery", () => {
       const db = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
       expect(requireOk(listOutbox(db))).toMatchObject([{ status: "sent" }]);
       expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "typed" });
-      expect(harness.events[0]).toBe("key:Escape");
-      expect(harness.events[1]).toStartWith(`text:${formatted}`);
-      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
-      expect(harness.events[2]).toBe("key:Enter");
+      expect(harness.events[0]).toStartWith(`text:${formatted}`);
+      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("interrupts once and delivers to a busy child immediately", async () => {
+  test("delivers to a busy child immediately", async () => {
     const root = await tempStateDir();
     const harness = installTmux({ idleAfterInterrupt: 2 });
     try {
@@ -221,10 +235,9 @@ describe("orchestrate change delivery", () => {
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--attempts", "3", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
-      expect(harness.events[0]).toBe("key:Escape");
-      expect(harness.events[1]).toStartWith(`text:${formatted}`);
-      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
-      expect(harness.events[2]).toBe("key:Enter");
+      expect(harness.events[0]).toStartWith(`text:${formatted}`);
+      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });
@@ -287,8 +300,9 @@ describe("orchestrate change delivery", () => {
     const fakeProcess: ProcessAdapter = {
       async run(command, args) {
         calls.push(`${command} ${args.join(" ")}`);
+        if (command === "ps" && args[0] === "-axo") return ok({ stdout: "100 1 200 200 orca terminal\n999 100 200 200 /usr/local/bin/codex --resume child\n1000 999 1000 200 helper\n", stderr: "", exitCode: 0 });
         if (command === "ps" && args[0] === "-ww") return ok({ stdout: "999 999 999 /usr/local/bin/codex --resume child\n", stderr: "", exitCode: 0 });
-        if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal" }] } }), stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal", pid: 100 }] } }), stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "read") {
           screenReads += 1;
           const tail = screenReads === 1 ? codexWorking : codexIdle;
@@ -300,7 +314,7 @@ describe("orchestrate change delivery", () => {
       invocationCount() { return calls.length; },
     };
     try {
-      await writeDispatch(root, { runtime: "host", tmuxSession: null, tmuxPane: null });
+      await writeDispatch(root, { runtime: "host", tmuxSession: null, tmuxPane: null }, fakeProcess);
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), fakeProcess);
       expect(result.kind).toBe("ok");
       expect(calls.filter((call) => call.includes("\u001b"))).toHaveLength(1);
@@ -328,7 +342,7 @@ describe("orchestrate change delivery", () => {
     }
   });
 
-  test("interrupts once before delivering into the dim Codex placeholder", async () => {
+  test("delivers into the dim Codex placeholder without interrupting the child", async () => {
     const root = await tempStateDir();
     const harness = installTmux({ initialComposer: interruptedCodex });
     try {
@@ -336,10 +350,9 @@ describe("orchestrate change delivery", () => {
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
-      expect(harness.events[0]).toBe("key:Escape");
-      expect(harness.events[1]).toStartWith(`text:${formatted}`);
-      expect(harness.events[1]).toContain("acknowledge with: megabrain ack");
-      expect(harness.events[2]).toBe("key:Enter");
+      expect(harness.events[0]).toStartWith(`text:${formatted}`);
+      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
       await rm(root, { recursive: true, force: true });

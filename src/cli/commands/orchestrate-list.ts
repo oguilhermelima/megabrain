@@ -3,7 +3,7 @@ import { decorateDispatchRecord, filterDispatchRecords, formatDispatchList, pars
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveCaller } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
-import { stateDatabase, listDispatchEntries, listDeliveries, listMessages } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, listDispatchEntries, listDeliveries, listMessages } from "../../adapters/state-db.js";
 import { unhandledParentMail, type CheckDelivery } from "../../core/check.js";
 
 export type OrchestrateListEnvironment = Readonly<Record<string, string | undefined>>;
@@ -45,7 +45,7 @@ export async function executeOrchestrateList(args: readonly string[], environmen
   if (parsedArgs.kind !== "ok") return parsedArgs;
   if (args.includes("-h") || args.includes("--help")) return ok(usageText("orchestrate-list"));
   const caller = await callerFromEnvironment(environment, process);
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const entries = listDispatchEntries(database.value, { includeArchived: true });
   if (entries.kind !== "ok") return failed(entries.error, entries.exitCode);

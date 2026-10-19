@@ -562,6 +562,7 @@ describe("megabrain settings with a stale chain model", () => {
     const result = await route(["model", "refresh", "agy", "--json"], { environment: { HOME: env.home, MEGABRAIN_STATE_DIR: env.state, MEGABRAIN_ROOT: env.root }, processAdapter: agy });
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") return;
+    expect(readFileSync(join(env.state, "logs", "state-owner.log"), "utf8")).toContain('"operation":"model-registry-write"');
     expect(result.stderr).toContain("agy/gemini-old");
     expect(JSON.parse(result.value).staleSteps).toEqual([{ chain: "agy", step: 1, agent: "agy", model: "gemini-old" }]);
   });

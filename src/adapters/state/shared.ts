@@ -2,11 +2,12 @@ import { resolve } from "node:path";
 import { failed, type Result } from "../../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../../core/state.js";
 import { resolveDispatchId } from "../../core/dispatch-paths.js";
-import { openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../../db/db.js";
+import { openDatabase, openDatabaseReadOnly, readSnapshot, withWrite, type DatabaseHandle } from "../../db/db.js";
 
 const handles = new Map<string, DatabaseHandle>();
+const readHandles = new Map<string, DatabaseHandle>();
 
-export function stateDatabase(environment: StateEnvironment): Result<DatabaseHandle> {
+function stateDirectory(environment: StateEnvironment): Result<string> {
   let directory: string;
   try {
     const configured = environment.MEGABRAIN_STATE_DIR ?? environment.HOME;
@@ -15,10 +16,28 @@ export function stateDatabase(environment: StateEnvironment): Result<DatabaseHan
   } catch (cause: unknown) {
     return failed(`resolve failed: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
+  return { kind: "ok", value: directory };
+}
+
+export function stateDatabase(environment: StateEnvironment): Result<DatabaseHandle> {
+  const resolved = stateDirectory(environment);
+  if (resolved.kind !== "ok") return resolved;
+  const directory = resolved.value;
   const cached = handles.get(directory);
   if (cached !== undefined) return { kind: "ok", value: cached };
   const opened = openDatabase({ MEGABRAIN_STATE_DIR: directory, HOME: environment.HOME });
   if (opened.kind === "ok") handles.set(directory, opened.value);
+  return opened;
+}
+
+export function readOnlyStateDatabase(environment: StateEnvironment): Result<DatabaseHandle> {
+  const resolved = stateDirectory(environment);
+  if (resolved.kind !== "ok") return resolved;
+  const directory = resolved.value;
+  const cached = readHandles.get(directory);
+  if (cached !== undefined) return { kind: "ok", value: cached };
+  const opened = openDatabaseReadOnly({ MEGABRAIN_STATE_DIR: directory, HOME: environment.HOME });
+  if (opened.kind === "ok") readHandles.set(directory, opened.value);
   return opened;
 }
 

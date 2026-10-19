@@ -18,7 +18,8 @@ import { createTmuxSession, dispatchTmuxProcess, getTmux, onAppTmuxServer, sendT
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
@@ -36,7 +37,7 @@ import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/s
 import { readMachineResources } from "../../core/resources.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
 
-import { type SpawnEnvironment, type SpawnOptions, type SpawnWorktree, type RecordValue, stringValue, shellQuote, TERMINAL_CREATE_MAX_ATTEMPTS, TERMINAL_CREATE_DEADLINE_MS, TERMINAL_CREATE_BACKOFF_MS } from "./orchestrate-spawn-options.js";
+import { type SpawnEnvironment, type SpawnOptions, type SpawnWorktree, type RecordValue, stringValue, shellQuote, TERMINAL_CREATE_MAX_ATTEMPTS, TERMINAL_CREATE_DEADLINE_MS, TERMINAL_CREATE_BACKOFF_MS, TERMINAL_CREATE_TIMEOUT_MS } from "./orchestrate-spawn-options.js";
 import { resultError } from "./orchestrate-spawn-state.js";
 async function runGit(process: ProcessAdapter, args: readonly string[]): Promise<Result<string>> {
   const result = await process.run("git", args);
@@ -127,7 +128,7 @@ function terminalCreateFailure(call: HostCommand, response: Result<unknown>, att
 export async function createHostTerminal(host: Pick<HostProvider, "terminalIdentity">, call: HostCommand, process: ProcessAdapter): Promise<Result<HostTerminalCreation>> {
   const started = Date.now();
   for (let attempts = 1; attempts <= TERMINAL_CREATE_MAX_ATTEMPTS; attempts += 1) {
-    const response = await process.run(call.command, call.args);
+    const response = await process.run(call.command, call.args, { timeoutMs: TERMINAL_CREATE_TIMEOUT_MS });
     if (response.kind === "ok") {
       const terminalId = host.terminalIdentity(JSON.parse(response.value.stdout || "{}")) ?? "";
       if (terminalId === "") return failed("terminal create returned no terminal identity");
@@ -158,7 +159,7 @@ async function stableTmuxSessionId(session: string, process: ProcessAdapter): Pr
   return /^\$\d+$/.test(id) ? id : null;
 }
 
-export async function removeStaleStableSession(handle: DatabaseHandle, session: string, stableSessionId: string, process: ProcessAdapter): Promise<Result<void>> {
+export async function removeStaleStableSession(root: string, handle: DatabaseHandle, session: string, stableSessionId: string, process: ProcessAdapter): Promise<Result<void>> {
   const indexed = getTmuxSessionByStableId(handle, stableSessionId);
   if (indexed.kind !== "ok") return indexed;
   const priorSession = stringValue(indexed.value?.tmuxSession);
@@ -168,13 +169,17 @@ export async function removeStaleStableSession(handle: DatabaseHandle, session: 
   if (live.kind === "ok" && live.value.stdout.trim() === stableSessionId) return ok(undefined);
   if (live.kind !== "ok" && !/can't find session|session not found|no such session/i.test(live.error)) return ok(undefined);
 
-  const removed = deleteTmuxSession(handle, priorSession);
-  return removed.kind === "ok" ? ok(undefined) : removed;
+  try {
+    await callStateOwner(root, { operation: "tmux-session-write", action: "remove", session: priorSession });
+    return ok(undefined);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
 }
 
 export async function existingTmuxSessionForWorktree(root: string, worktreePath: string, process: ProcessAdapter): Promise<TmuxWorktreeSession | undefined> {
   const target = await canonicalPath(worktreePath);
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return undefined;
   const sessions = listTmuxSessions(database.value);
   if (sessions.kind !== "ok") return undefined;
@@ -209,14 +214,13 @@ export async function existingTmuxSessionForWorktree(root: string, worktreePath:
 async function acquireWorktreeSessionLock(root: string, worktreePath: string): Promise<Result<() => Promise<void>>> {
   const key = createHash("sha256").update(worktreePath).digest("hex");
   const lock = `tmux-sessions/${key}`;
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-  if (database.kind !== "ok") return database;
   const holder = `${process.pid}:${randomUUID()}`;
   const deadline = Date.now() + 10000;
   while (true) {
-    const acquired = acquireLease(database.value, lock, holder, 120);
-    if (acquired.kind !== "ok") return acquired;
-    if (acquired.value) return ok(async () => { releaseLease(database.value, lock, holder); });
+    let acquired: unknown;
+    try { acquired = await callStateOwner(root, { operation: "acquire-lease", key: lock, holder, seconds: 120 }); }
+    catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+    if (acquired === true) return ok(async () => { await callStateOwner(root, { operation: "release-lease", key: lock, holder }); });
     if (Date.now() >= deadline) return failed(`timed out waiting for tmux session lock for ${worktreePath}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
@@ -231,7 +235,7 @@ async function attachHostToWorktreeSession(
   parentWorkspace: string | null,
   options: SpawnOptions,
   process: ProcessAdapter,
-): Promise<Readonly<{ terminalId: string | null; host: string | null; warning: string | null }>> {
+): Promise<Result<Readonly<{ terminalId: string | null; host: string | null; warning: string | null }>>> {
   let terminalId = stringValue(record.hostTerminalId) || stringValue(record.tmuxHostTerminalId) || null;
   let host = stringValue(record.hostTerminalHost) || stringValue(record.tmuxHostTerminalHost) || null;
   let warning: string | null = null;
@@ -252,18 +256,8 @@ async function attachHostToWorktreeSession(
       }
     }
   }
-  const sessionRecord = {
-    ...record,
-    tmuxSession: session,
-    workingDirectory: await canonicalPath(worktree.path),
-    megabrainOwned: record.megabrainOwned === true || record.tmuxSessionOwned === true,
-    hostTerminalId: terminalId,
-    hostTerminalHost: host,
-    workspaceId: worktree.workspaceId ?? parentWorkspace,
-  };
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-  if (database.kind === "ok") putTmuxSession(database.value, sessionRecord, await stableTmuxSessionId(session, process));
-  return { terminalId, host, warning };
+  // The caller persists this record after it has removed any stale stable-session mapping.
+  return ok({ terminalId, host, warning });
 }
 
 type TmuxTarget = Readonly<{
@@ -292,14 +286,15 @@ export async function openWorktreeTmuxTarget(
       const split = await splitTmuxWorktreePane(existing.session, worktree.path, process);
       if (split.kind !== "ok") return split;
       const attached = await attachHostToWorktreeSession(root, existing.session, existing.record, worktree, parentContext, parentWorkspace, options, process);
+      if (attached.kind !== "ok") return attached;
       return ok({
         session: existing.session,
         pane: split.value,
         sessionOwned: existing.record.megabrainOwned === true || existing.record.tmuxSessionOwned === true || existing.session === `megabrain-${stringValue(existing.record.dispatchId)}`,
         sessionCreated: false,
-        hostTerminalId: attached.terminalId,
-        hostTerminalHost: attached.host,
-        warning: attached.warning,
+        hostTerminalId: attached.value.terminalId,
+        hostTerminalHost: attached.value.host,
+        warning: attached.value.warning,
       });
     }
 
@@ -326,7 +321,8 @@ export async function openWorktreeTmuxTarget(
       stableSessionId: await stableTmuxSessionId(session, process),
     };
     const attached = await attachHostToWorktreeSession(root, session, record, worktree, parentContext, parentWorkspace, options, process);
-    return ok({ session, pane: panes.value[0], sessionOwned: true, sessionCreated: true, hostTerminalId: attached.terminalId, hostTerminalHost: attached.host, warning: attached.warning });
+    if (attached.kind !== "ok") return attached;
+    return ok({ session, pane: panes.value[0], sessionOwned: true, sessionCreated: true, hostTerminalId: attached.value.terminalId, hostTerminalHost: attached.value.host, warning: attached.value.warning });
   } finally {
     await acquired.value();
   }

@@ -146,6 +146,20 @@ describe("state database facade", () => {
     expect(requireOk(acquireLease(db, "delivery-target:parent", "new-holder", 60))).toBe(true);
   });
 
+  test("a lease held by an exited process is reclaimed before its expiry", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "dead-holder-lease", state: "running" }));
+    expect(requireOk(acquireLease(db, "delivery-target:dead", "2147483000-worker", 60))).toBe(true);
+    expect(requireOk(acquireLease(db, "delivery-target:dead", `${process.pid}-replacement`, 60))).toBe(true);
+  });
+
+  test("a lease held by a live process remains exclusive before its expiry", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "live-holder-lease", state: "running" }));
+    expect(requireOk(acquireLease(db, "delivery-target:live", `${process.pid}-worker`, 60))).toBe(true);
+    expect(requireOk(acquireLease(db, "delivery-target:live", `${process.pid + 1}-other`, 60))).toBe(false);
+  });
+
   test("delivery ack and fence preserve consumer and generation rules", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "deliveries", state: "running" }));

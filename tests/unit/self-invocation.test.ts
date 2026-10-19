@@ -75,16 +75,14 @@ describe("detached workers run through the helper", () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
-  test("the delivery worker command is the helper's", async () => {
+  test("delivery resumes through the owner without starting a detached worker", async () => {
     const root = mkdtempSync(join(tmpdir(), "megabrain-selfinv-"));
     try {
       const calls: Array<{ command: string; args: readonly string[] }> = [];
       const adapter = { async run() { return ok({ stdout: "", stderr: "", exitCode: 0 }); }, async startDetached(command: string, args: readonly string[]) { calls.push({ command, args }); return ok({ pid: 1 }); }, invocationCount() { return 0; } };
       const meta = { targetKind: "parent-pointer", parentHost: "tmux", parentTmuxSession: "private", parentTmuxPane: "%1" };
-      expect(await startDeliveryWorker(root, "d1", "ob1", meta, adapter as never)).toBe("started");
-      const expected = selfInvocation(process.execPath, process.argv, ["__delivery-worker"]);
-      expect(calls[0]?.command).toBe(expected.command);
-      expect(calls[0]?.args.slice(0, expected.args.length)).toEqual(expected.args);
+      expect(await startDeliveryWorker(root, "d1", "ob1", meta, adapter as never)).not.toBe("failed");
+      expect(calls).toEqual([]);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });

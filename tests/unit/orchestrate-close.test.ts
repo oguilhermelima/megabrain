@@ -1,6 +1,6 @@
 import { guardedStateDatabase, guardedOpenDatabase } from "./state-db-guard.js";
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDecision, closeOutput, hostCloseReason, parseCloseArgs } from "../../src/core/orchestrate-close.js";
@@ -76,6 +76,7 @@ describe("orchestrate close: Grok leader", () => {
       expect(result.kind).toBe("ok");
       expect(calls).toContain("kill 76904");
       expect(dispatch(root, "grokd").state).toBe("closed");
+      expect(await readFile(join(root, "logs", "state-owner.log"), "utf8")).toContain('"operation":"dispatch-patch"');
     } finally {
       await rm(root, { recursive: true, force: true });
     }

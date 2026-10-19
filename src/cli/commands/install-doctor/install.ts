@@ -35,17 +35,20 @@ export async function installOne(module: string, environment: Environment, proce
   if (current.status === "unsupported") return failed(`${module}: ${current.reason}`);
   const step = await runInstallStep(module, environment, processAdapter, options);
   if (step.kind !== "ok") {
-    writeInstalledState(environment, module, false, step.error);
+    const saved = await writeInstalledState(environment, module, false, step.error);
+    if (saved.kind !== "ok") return saved;
     return failed(`${module}: ${step.error}`);
   }
   const after = await report(module, environment, processAdapter);
   // Orchestration installs nothing of its own: it is usable as soon as one runtime is. Leftover
   // dispatch records that need review are worth reporting, but they are not a failed install.
   if (module === "orchestration" && after.status === "misconfigured" && typeof after.usableRuntimes === "number" && after.usableRuntimes > 0) {
-    writeInstalledState(environment, module, true, after.reason);
+    const saved = await writeInstalledState(environment, module, true, after.reason);
+    if (saved.kind !== "ok") return saved;
     return ok(`${module}: ok (warning: ${after.reason})\n`);
   }
-  writeInstalledState(environment, module, after.status === "ok", after.reason);
+  const saved = await writeInstalledState(environment, module, after.status === "ok", after.reason);
+  if (saved.kind !== "ok") return saved;
   const movedLegacyAgy = module === "orchestration-hooks" && readHookInstallState(environment).movedLegacyAgy === true;
   const migration = movedLegacyAgy
     ? `agy hook moved from ${legacyAgyHookConfig(environment)} to ${hookConfig(environment, "agy")}\n`
@@ -153,8 +156,8 @@ export async function installModuleCommand(
   if (revert) {
     if (module === "resource-hooks") return revertEntryHooks(environment, resourceEntryHook);
     if (module === "summaries-context") return revertEntryHooks(environment, summariesEntryHook);
-    if (module === "simulator-maestro") { writeInstalledState(environment, module, false, "reverted"); return revertMaestro(environment); }
-    if (module === "artifacts-diagram") { writeInstalledState(environment, module, false, "reverted"); return revertArtifactsDiagram(environment); }
+    if (module === "simulator-maestro") { const saved = await writeInstalledState(environment, module, false, "reverted"); return saved.kind === "ok" ? revertMaestro(environment) : saved; }
+    if (module === "artifacts-diagram") { const saved = await writeInstalledState(environment, module, false, "reverted"); return saved.kind === "ok" ? revertArtifactsDiagram(environment) : saved; }
     if (module !== "orchestration-hooks") return failed(`module cannot be reverted: ${module}`, 2);
     return revertOrchestrationHooks(environment);
   }

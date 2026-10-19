@@ -6,9 +6,10 @@ import { appendMessage, createDelivery, createDispatch, listDeliveries, listOutb
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { sweepGrokLeaders } from "../../src/agents/grok-leader.js";
 import { deliveryComposer, deliveryHasKeystrokeDialog } from "../../src/cli/commands/delivery-screen.js";
-import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { deliverWithOwner } from "./owner-delivery.js";
 import { executeOrchestrateClose } from "../../src/cli/commands/orchestrate-close.js";
 import { superviseOnce } from "../../src/cli/commands/supervise.js";
+import { deliverWithOwner } from "./owner-delivery.js";
 import { composerReadback } from "../../src/core/composer-proof.js";
 import { failed, ok } from "../../src/core/result.js";
 
@@ -81,7 +82,7 @@ describe("Grok's boxed composer", () => {
       async startDetached() { return failed("not used"); },
       invocationCount() { return 0; },
     };
-    await executeDeliveryWorker(["ob-typed", "holder", "delivery-target:orca:child-terminal", String(Date.now() + 4000)], { HOME: root, MEGABRAIN_STATE_DIR: root }, process);
+    await deliverWithOwner(root, process, { HOME: root }, "ob-typed", 4000);
     const deliveries = listDeliveries(db.value, "d-typed");
     const outbox = listOutbox(db.value);
     expect(sends).toHaveLength(1);
@@ -161,7 +162,7 @@ describe("orphaned Grok leaders", () => {
 });
 
 describe("parent pointer recovery", () => {
-  test("supervision restarts a pending ask for a Claude parent", async () => {
+  test("the owner resumes a pending ask for a Claude parent without a detached worker", async () => {
     const root = await tempRoot();
     const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
     if (db.kind !== "ok") throw new Error(db.error);
@@ -185,8 +186,9 @@ describe("parent pointer recovery", () => {
       invocationCount() { return 0; },
     };
 
-    await superviseOnce(root, db.value, { HOME: root, MEGABRAIN_STATE_DIR: root }, process, Date.now());
-
-    expect(starts.some((args) => args.includes("__delivery-worker") && args.includes("ob-parent-ask"))).toBe(true);
+    await deliverWithOwner(root, process, { HOME: root, MEGABRAIN_STATE_DIR: root }, "ob-parent-ask", 2000);
+    const outbox = listOutbox(db.value);
+    expect(starts).toHaveLength(0);
+    expect(outbox.kind === "ok" ? outbox.value.find((item) => item.id === "ob-parent-ask")?.status : undefined).toBe("failed");
   });
 });

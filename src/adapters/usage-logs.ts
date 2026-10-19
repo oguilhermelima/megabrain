@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { aggregateUsage, claudeParser, codexParser, dayReader, parseGrokUsage, rangeStart, type FileUsage, type LineParser, type UsageProvider, type UsageReport } from "../core/usage-stats.js";
-import { stateDatabase } from "./state-db.js";
+import { readOnlyStateDatabase } from "./state-db.js";
 import { read } from "./state/shared.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -133,7 +133,7 @@ async function megabrainUsage(environment: Environment, stateDir: string, option
     const day = dayOf(timestamp);
     return day !== null && (from === null || day >= from) && day <= today;
   };
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return null;
   const rows = read(database.value, ({ db }) => db.query<{ created_at: string | null; ended_at: string | null }>(
     `SELECT d.created_at, (SELECT MAX(m.created_at) FROM messages m WHERE m.dispatch_id = d.id AND m."from" = 'child') AS ended_at FROM dispatches d WHERE d.created_at IS NOT NULL`,

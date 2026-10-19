@@ -8,9 +8,11 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { isAgentSessionId, isLocalProcessOwner } from "../../core/context.js";
 import { resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
-import { stateDatabase, getDispatch, listDispatches, mutateDispatch, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, getDispatch, listDispatches } from "../../adapters/state-db.js";
 import { findCodexProcess } from "../../core/codex-delivery.js";
 import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
+import { resolveStateDirectory } from "../../core/state.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 type AdoptionLiveness = "alive" | "not-alive" | "unknown";
 type Meta = Record<string, unknown>;
@@ -102,7 +104,8 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
   const current = await resolveCaller(environment, processAdapter);
   if (current.id === "" || (!isAgentSessionId(current.id) && current.host !== "local")) return failed("orchestrate adopt requires a session identity: an agent session, or set MEGABRAIN_SESSION_ID to name this caller");
 
-  const database = stateDatabase(environment);
+  const root = resolveStateDirectory(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const dispatches = listDispatches(database.value, { includeArchived: true });
   if (dispatches.kind !== "ok") return dispatches;
@@ -122,9 +125,8 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
   const deadline = Date.now() + Math.max(0, Number(environment.MEGABRAIN_LOCK_WAIT_SECONDS ?? "15")) * 1000;
   let locked = false;
   while (!locked) {
-    const acquired = acquireLease(database.value, lockPath, holder, Math.max(1, Number(environment.MEGABRAIN_LOCK_STALE_SECONDS ?? "30")));
-    if (acquired.kind !== "ok") return acquired;
-    locked = acquired.value;
+    try { locked = await callStateOwner(root, { operation: "acquire-lease", key: lockPath, holder, seconds: Math.max(1, Number(environment.MEGABRAIN_LOCK_STALE_SECONDS ?? "30")) }) as boolean; }
+    catch (cause: unknown) { return failed(`state owner could not acquire adoption lease: ${cause instanceof Error ? cause.message : String(cause)}`); }
     if (locked) break;
     if (Date.now() >= deadline) return failed(`mailbox lock is held by another writer: ${lockPath}`);
     await delay(20);
@@ -157,10 +159,10 @@ export async function executeOrchestrateAdopt(args: readonly string[], environme
       adoptions: [...adoptions, { previousOwner, adoptedBy: current.id, adoptedAt: now }],
       updatedAt: now,
     };
-    const updated = mutateDispatch(database.value, dispatchId, () => next);
-    if (updated.kind !== "ok") return failed(`could not record dispatch adoption: ${updated.error}`);
+    try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId, patch: { parentHost: next.parentHost, parentSessionId: next.parentSessionId, adoptions: next.adoptions } }); }
+    catch (cause: unknown) { return failed(`could not record dispatch adoption through state owner: ${cause instanceof Error ? cause.message : String(cause)}`); }
     return ok(output(dispatchId, true, current.id, parsed.value.json));
   } finally {
-    releaseLease(database.value, lockPath, holder);
+    await callStateOwner(root, { operation: "release-lease", key: lockPath, holder }).catch(() => undefined);
   }
 }

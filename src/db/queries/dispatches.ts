@@ -80,18 +80,67 @@ export function getDispatch(db: DatabaseAdapter, id: string): DispatchRecord | u
   return row === null ? undefined : toMeta(row);
 }
 
-export function listDispatches(db: DatabaseAdapter, options: Readonly<{ includeArchived?: boolean }> = {}): DispatchRecord[] {
+export type DispatchCursor = Readonly<{ createdAt: string | null; id: string }>;
+export type DispatchPage = Readonly<{ rows: DispatchRecord[]; nextCursor?: DispatchCursor }>;
+
+export function listDispatchesPage(db: DatabaseAdapter, options: Readonly<{ includeArchived?: boolean; after?: DispatchCursor; limit?: number }> = {}): DispatchPage {
+  const limit = Math.max(1, Math.min(1_000, Math.trunc(options.limit ?? 100)));
+  const after = options.after;
   const rows = options.includeArchived === true
-    ? db.query<DispatchRow>("SELECT * FROM dispatches ORDER BY created_at, id").all()
-    : db.query<DispatchRow>("SELECT * FROM dispatches WHERE archived_at IS NULL ORDER BY created_at, id").all();
-  return rows.map(toMeta);
+    ? after === undefined
+      ? db.query<DispatchRow>("SELECT * FROM dispatches ORDER BY created_at, id LIMIT ?").all(limit)
+      : after.createdAt === null
+        ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE (created_at IS NULL AND id > ?) OR created_at IS NOT NULL ORDER BY created_at, id LIMIT ?").all(after.id, limit)
+        : db.query<DispatchRow>("SELECT * FROM dispatches WHERE created_at > ? OR (created_at = ? AND id > ?) ORDER BY created_at, id LIMIT ?").all(after.createdAt, after.createdAt, after.id, limit)
+    : after === undefined
+      ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE archived_at IS NULL ORDER BY created_at, id LIMIT ?").all(limit)
+      : after.createdAt === null
+        ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE archived_at IS NULL AND ((created_at IS NULL AND id > ?) OR created_at IS NOT NULL) ORDER BY created_at, id LIMIT ?").all(after.id, limit)
+        : db.query<DispatchRow>("SELECT * FROM dispatches WHERE archived_at IS NULL AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?").all(after.createdAt, after.createdAt, after.id, limit);
+  const records = rows.map(toMeta);
+  const last = rows.at(-1);
+  return { rows: records, ...(rows.length === limit && last !== undefined ? { nextCursor: { createdAt: last.created_at, id: last.id } } : {}) };
+}
+
+export function listDispatches(db: DatabaseAdapter, options: Readonly<{ includeArchived?: boolean }> = {}): DispatchRecord[] {
+  const records: DispatchRecord[] = [];
+  let after: DispatchCursor | undefined;
+  for (;;) {
+    const page = listDispatchesPage(db, { ...options, after });
+    records.push(...page.rows);
+    if (page.nextCursor === undefined) return records;
+    after = page.nextCursor;
+  }
 }
 
 export function listDispatchesByOwner(db: DatabaseAdapter, ownerSessionId: string, options: Readonly<{ includeArchived?: boolean }> = {}): DispatchRecord[] {
+  const records: DispatchRecord[] = [];
+  let after: DispatchCursor | undefined;
+  for (;;) {
+    const page = listDispatchesByOwnerPage(db, ownerSessionId, { ...options, after });
+    records.push(...page.rows);
+    if (page.nextCursor === undefined) return records;
+    after = page.nextCursor;
+  }
+}
+
+export function listDispatchesByOwnerPage(db: DatabaseAdapter, ownerSessionId: string, options: Readonly<{ includeArchived?: boolean; after?: DispatchCursor; limit?: number }> = {}): DispatchPage {
+  const limit = Math.max(1, Math.min(1_000, Math.trunc(options.limit ?? 100)));
+  const after = options.after;
   const rows = options.includeArchived === true
-    ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? ORDER BY created_at, id").all(ownerSessionId)
-    : db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? AND archived_at IS NULL ORDER BY created_at, id").all(ownerSessionId);
-  return rows.map(toMeta);
+    ? after === undefined
+      ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? ORDER BY created_at, id LIMIT ?").all(ownerSessionId, limit)
+      : after.createdAt === null
+        ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? AND ((created_at IS NULL AND id > ?) OR created_at IS NOT NULL) ORDER BY created_at, id LIMIT ?").all(ownerSessionId, after.id, limit)
+        : db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?").all(ownerSessionId, after.createdAt, after.createdAt, after.id, limit)
+    : after === undefined
+      ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? AND archived_at IS NULL ORDER BY created_at, id LIMIT ?").all(ownerSessionId, limit)
+      : after.createdAt === null
+        ? db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? AND archived_at IS NULL AND ((created_at IS NULL AND id > ?) OR created_at IS NOT NULL) ORDER BY created_at, id LIMIT ?").all(ownerSessionId, after.id, limit)
+        : db.query<DispatchRow>("SELECT * FROM dispatches WHERE owner_session_id = ? AND archived_at IS NULL AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?").all(ownerSessionId, after.createdAt, after.createdAt, after.id, limit);
+  const records = rows.map(toMeta);
+  const last = rows.at(-1);
+  return { rows: records, ...(rows.length === limit && last !== undefined ? { nextCursor: { createdAt: last.created_at, id: last.id } } : {}) };
 }
 
 export function findDispatchByTmuxIdentity(db: DatabaseAdapter, sessionId: string, pane: string): DispatchRecord[] {

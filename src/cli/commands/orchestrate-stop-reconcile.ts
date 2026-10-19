@@ -11,11 +11,12 @@ import { interruptKey } from "../../agents/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { readDeliveryScreen } from "./delivery-screen.js";
 import { usageText } from "../../core/usage.js";
-import { stateDatabase, getDispatch, listDispatches, listMessages, mutateDispatch } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, getDispatch, listDispatches, listMessages } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 const value = (input: unknown): string => typeof input === "string" ? input : "";
 
@@ -72,8 +73,8 @@ function hasChildIdentityProof(messages: readonly RecordValue[]): boolean {
   return messages.some((message) => message.from === "child" && (message.type === "received" || message.type === "ask" || message.type === "done"));
 }
 
-function syncPromptReceipt(database: DatabaseHandle, dispatch: string, meta: RecordValue, messages: readonly RecordValue[]): RecordValue {
-  if (!messages.some((message) => message.from === "child" && message.type === "received")) return meta;
+async function syncPromptReceipt(root: string, dispatch: string, meta: RecordValue, messages: readonly RecordValue[]): Promise<Result<RecordValue>> {
+  if (!messages.some((message) => message.from === "child" && message.type === "received")) return ok(meta);
   const delivery = value(meta.promptDelivery) || "pending";
   const next: RecordValue = {
     ...meta,
@@ -82,22 +83,23 @@ function syncPromptReceipt(database: DatabaseHandle, dispatch: string, meta: Rec
     promptState: "confirmed",
     updatedAt: new Date().toISOString(),
   };
-  const updated = mutateDispatch(database, dispatch, () => next);
-  return updated.kind === "ok" ? updated.value as RecordValue : meta;
+  try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: next }); return ok(next); }
+  catch (cause: unknown) { return failed(`state owner could not sync prompt receipt: ${cause instanceof Error ? cause.message : String(cause)}`); }
 }
 
-async function reconcileOne(database: DatabaseHandle, dispatch: string, process: ProcessAdapter): Promise<Result<RecordValue>> {
+async function reconcileOne(database: DatabaseHandle, root: string, dispatch: string, process: ProcessAdapter): Promise<Result<RecordValue>> {
   const loaded = getDispatch(database, dispatch);
   if (loaded.kind !== "ok") return loaded;
   if (loaded.value === undefined) return failed(`dispatch not found: ${dispatch}`);
   let meta = normalize(loaded.value as RecordValue);
   if (JSON.stringify(meta) !== JSON.stringify(loaded.value)) {
-    const updated = mutateDispatch(database, dispatch, () => meta);
-    if (updated.kind !== "ok") return updated;
-    meta = updated.value as RecordValue;
+    try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: meta }); }
+    catch (cause: unknown) { return failed(`state owner could not normalize dispatch: ${cause instanceof Error ? cause.message : String(cause)}`); }
   }
   const messages = childMessages(database, dispatch);
-  meta = syncPromptReceipt(database, dispatch, meta, messages);
+  const synced = await syncPromptReceipt(root, dispatch, meta, messages);
+  if (synced.kind !== "ok") return synced;
+  meta = synced.value;
   const state = value(meta.state);
   if (state === "closed" || state === "circuit_broken") return ok({ ...meta, reconcileResult: "unchanged" });
   const terminal = await terminalStatus(meta, process);
@@ -107,8 +109,8 @@ async function reconcileOne(database: DatabaseHandle, dispatch: string, process:
   const decision = reconcileDecision(meta, proven ? "proven" : terminal, parent);
   const next = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
   if (decision.outcome !== "unchanged") {
-    const updated = mutateDispatch(database, dispatch, () => next);
-    if (updated.kind !== "ok") return updated;
+    try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: next }); }
+    catch (cause: unknown) { return failed(`state owner could not reconcile dispatch: ${cause instanceof Error ? cause.message : String(cause)}`); }
     if (next.state !== meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
       await setTmuxChatPane(next.tmuxPane, value(next.agent) || "unknown", value(next.chatName) || value(next.branch) || dispatch, value(next.state) || "idle", process);
     }
@@ -119,7 +121,7 @@ async function reconcileOne(database: DatabaseHandle, dispatch: string, process:
 export async function executeOrchestrateStop(args: readonly string[], env: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-stop"));
   const parsed = parseStopArgs(args); if (parsed.kind !== "ok") return parsed;
-  const root = resolveStateDirectory(env); const database = stateDatabase(env); if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const root = resolveStateDirectory(env); const database = readOnlyStateDatabase(env); if (database.kind !== "ok") return failed(database.error, database.exitCode);
   let dispatchId = parsed.value.dispatchId;
   const parent = await parentMeta(database.value, dispatchId, env, process); if (parent.kind !== "ok") return parent;
   dispatchId = parent.value.dispatchId;
@@ -164,7 +166,7 @@ export async function executeOrchestrateReconcile(args: readonly string[], env: 
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-reconcile"));
   let dispatch = ""; let all = false; let json = false;
   for (const arg of args) { if (arg === "--all") all = true; else if (arg === "--json") json = true; else if (dispatch === "") dispatch = arg; else return failed(`unknown reconcile option: ${arg}`, 2); }
-  const database = stateDatabase(env); if (database.kind !== "ok") return failed(database.error, database.exitCode);
+  const root = resolveStateDirectory(env); const database = readOnlyStateDatabase(env); if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const live = listDispatches(database.value); if (live.kind !== "ok") return live;
   if (!all && dispatch === "") return failed(usageText("orchestrate-reconcile"), 2);
   let ids: string[];
@@ -182,7 +184,7 @@ export async function executeOrchestrateReconcile(args: readonly string[], env: 
     const stored = getDispatch(database.value, id); if (stored.kind !== "ok") return stored;
     if (stored.value === undefined) { if (all) continue; return failed(`dispatch not found: ${id}`); }
     if (!all && !live.value.some((record) => record.dispatchId === id)) return failed(`dispatch ${id} is archived; refusing to reconcile it`);
-    const result = await reconcileOne(database.value, id, process); if (result.kind !== "ok") return result; entries.push(result.value);
+    const result = await reconcileOne(database.value, root, id, process); if (result.kind !== "ok") return result; entries.push(result.value);
   }
   if (json) return ok(`${JSON.stringify(entries.length === 1 ? entries[0] : entries, null, 2)}\n`);
   return ok(entries.map((item) => `dispatch: ${value(item.dispatchId)}\nresult: ${value(item.reconcileResult)}\nstate: ${value(item.state)}\nprocess: ${value(item.processState)}\nterminal: ${value(item.terminalState)}\n`).join(""));

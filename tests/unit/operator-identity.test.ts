@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -124,6 +124,7 @@ describe("--operator", () => {
     const result = await run(["orchestrate", "queue", "cancel", "dispatch-20261015000000000-1-cdcdcdcd", "--reason", "not needed", "--operator", "--json"], app(root));
     expect(result.kind).toBe("ok");
     expect(record(root, "dispatch-20261015000000000-1-cdcdcdcd")).toMatchObject({ state: "closed", cancelledBy: "operator", parentSessionId: foreignOwner });
+    expect(await readFile(`${root}/logs/state-owner.log`, "utf8")).toContain('"operation":"dispatch-patch"');
   });
 
   test("an owner's own cancel records no operator", async () => {

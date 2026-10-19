@@ -6,6 +6,8 @@ import { appendMessage, createDelivery, createDispatch, enqueueOutbox, listDeliv
 import { failed, ok } from "../../src/core/result.js";
 import { openDatabase } from "../../src/db/db.js";
 import { listLeases } from "../../src/adapters/state-db.js";
+import { acquireLease } from "../../src/adapters/state-db.js";
+import { callStateOwner, inspectStateOwner } from "../../src/db/state-owner.js";
 import { acquireSupervisorLease, hasOpenDispatches, isLiveProcessState, mayAutoRecover, shouldNotifyFinding } from "../../src/core/supervise.js";
 import { getHost, registerHost } from "../../src/hosts/index.js";
 import type { HostProvider } from "../../src/hosts/types.js";
@@ -159,7 +161,7 @@ describe("supervisor lifecycle decisions", () => {
 });
 
 describe("supervisor queued child answers", () => {
-  test("delivers a queued reply while the child is busy at an empty composer", async () => {
+  test("leaves a queued reply for the state owner when another delivery holds the target lease", async () => {
     const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-answer-`);
     const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
     const opened = openDatabase(environment);
@@ -182,6 +184,7 @@ describe("supervisor queued child answers", () => {
       payload: { ...meta, meta, dispatchId: "idle-answer", targetKind: "child-delivery", sequence: appended.value.seq, fullMessage: "continue with the stable branch", pointer: "megabrain check" },
     });
     if (queued.kind !== "ok") throw new Error(queued.error);
+    expect(acquireLease(opened.value, "delivery-target:orca:child-terminal", "test-holder", 90)).toEqual({ kind: "ok", value: true });
 
     const original = getHost("orca") as HostProvider;
     const host: HostProvider = {
@@ -197,8 +200,8 @@ describe("supervisor queued child answers", () => {
       async run(command: string, args: readonly string[]) {
         calls.push(`${command} ${args.join(" ")}`);
         if (command === "ps" && args[0] === "-p") return ok({ stdout: "123\n", stderr: "", exitCode: 0 });
-        if (command === "ps" && args[0] === "-ww") return ok({ stdout: "123 123 123 /usr/local/bin/codex agent\n", stderr: "", exitCode: 0 });
-        if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal" }] } }), stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "-axo") return ok({ stdout: "120 1 120 123 /usr/bin/login\n121 120 121 123 -/bin/zsh -l\n123 121 123 123 /usr/local/bin/codex agent\n", stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal", pid: 120 }] } }), stderr: "", exitCode: 0 });
         if (command === "orca" && args[1] === "read") return ok({ stdout: JSON.stringify({ result: { terminal: { tail: ["Working (1s)", "esc to interrupt", "› Ask Codex to do anything"] } } }), stderr: "", exitCode: 0 });
         return ok({ stdout: "", stderr: "", exitCode: 0 });
       },
@@ -212,11 +215,13 @@ describe("supervisor queued child answers", () => {
     try {
       await superviseOnce(directory, opened.value, environment, process, Date.now());
       const outbox = listOutbox(opened.value);
-      const deliveries = listDeliveries(opened.value, "idle-answer");
-      expect(calls.some((call) => call.includes("--text continue with the stable branch"))).toBe(true);
-      expect(outbox).toMatchObject({ kind: "ok", value: [{ id: "idle-answer-outbox", status: "sent" }] });
-      expect(deliveries).toMatchObject({ kind: "ok", value: [{ transport: "typed" }] });
+      expect(calls.some((call) => call.includes("--text continue with the stable branch"))).toBe(false);
+      expect(outbox).toMatchObject({ kind: "ok", value: [{ id: "idle-answer-outbox", status: "pending" }] });
+      expect((await inspectStateOwner(directory)).running).toBe(true);
     } finally {
+      await callStateOwner(directory, { operation: "claim-outbox", id: "idle-answer-outbox", holder: "test-cleanup", leaseSeconds: 90 });
+      await callStateOwner(directory, { operation: "finish-outbox", id: "idle-answer-outbox", status: "suppressed", detail: "test cleanup" });
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
       registerHost(original);
       opened.value.close();
       await rm(directory, { recursive: true, force: true });
@@ -250,6 +255,27 @@ describe("closed parent delivery backlog", () => {
 });
 
 describe("supervisor worker", () => {
+  test("records why the worker exits after its last dispatch finishes", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-exit-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_SUPERVISE_INTERVAL_SECONDS: "1" };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const created = createDispatch(opened.value, { dispatchId: "finished", state: "done" });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const starter = "123-00000000-0000-0000-0000-000000000000";
+    const lease = acquireSupervisorLease(opened.value, starter, 30);
+    if (lease.kind !== "ok" || !lease.value) throw new Error("could not acquire supervisor lease");
+    const process: ProcessAdapter = { async run() { return failed("not used"); }, async startDetached() { return failed("not used"); }, invocationCount() { return 0; } };
+    try {
+      await executeSupervisorWorker([starter], environment, process);
+      const log = await readFile(`${directory}/supervise.log`, "utf8");
+      expect(log).toContain("no work remains");
+    } finally {
+      opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("exits when its state directory is deleted underneath it", async () => {
     const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-gone-`);
     const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_SUPERVISE_INTERVAL_SECONDS: "1" };

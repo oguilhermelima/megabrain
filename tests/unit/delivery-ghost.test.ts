@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { appendMessage, createDelivery, createDispatch, listDeliveries, listOutbox, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { deliveryComposer, readDeliveryScreen } from "../../src/cli/commands/delivery-screen.js";
-import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { deliverWithOwner } from "./owner-delivery.js";
 import { failed, ok } from "../../src/core/result.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 
@@ -115,7 +115,7 @@ async function orcaRun(composer: (read: number, pasted: boolean) => string, env:
     invocationCount() { return 0; },
   };
   try {
-    await executeDeliveryWorker(["ob-ghost", "holder", "delivery-target:orca:parent-terminal", String(Date.now() + deadlineMs)], { HOME: root, MEGABRAIN_STATE_DIR: root, ...env }, process);
+    await deliverWithOwner(root, process, { HOME: root, ...env }, "ob-ghost", deadlineMs);
     const outbox = listOutbox(db.value);
     const deliveries = listDeliveries(db.value, "d-ghost");
     const log = (await readFile(join(root, "delivery-decisions.jsonl"), "utf8").catch(() => "")).trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as Record<string, unknown>);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveTerminalSelector, type TerminalLifecycleRecord } from "../../src/core/terminal-lifecycle.js";
@@ -66,6 +66,7 @@ describe("terminal create reads the Orca handle, not the request id", () => {
     if (result.kind !== "ok") return;
     const parsed = JSON.parse(result.value) as { terminalId: string };
     expect(parsed.terminalId).toBe("orca-handle-1");
+    expect(await readFile(join(stateDir, "logs", "state-owner.log"), "utf8")).toContain('"operation":"terminal-write"');
   });
 
   test("creates from an Orca-backed tmux child when Orca does not stream startup output", async () => {

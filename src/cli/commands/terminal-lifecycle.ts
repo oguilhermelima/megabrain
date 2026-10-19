@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { deleteTerminal, listTerminals, putTerminal, stateDatabase } from "../../adapters/state-db.js";
+import { listTerminals, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { resolveStateDirectory } from "../../core/state.js";
 import { resolveTerminalSelector, type TerminalLifecycleRecord } from "../../core/terminal-lifecycle.js";
 import { getHost, type HostCommand } from "../../hosts/index.js";
 import { usageText } from "../../core/usage.js";
@@ -91,7 +93,7 @@ function recordFrom(value: unknown): TerminalLifecycleRecord | undefined {
 }
 
 function withState<T>(env: Environment, operation: (database: DatabaseHandle) => Result<T>): Result<T> {
-  const opened = stateDatabase(env);
+  const opened = readOnlyStateDatabase(env);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   return operation(opened.value);
 }
@@ -177,18 +179,22 @@ async function workspaceId(process: ProcessAdapter, worktreePath: string): Promi
   return undefined;
 }
 
-function save(env: Environment, record: TerminalLifecycleRecord): Result<void> {
-  return withState(env, (database) => {
-    const stored = putTerminal(database, { ...record, status: "active" });
-    return stored.kind === "ok" ? ok(undefined) : stored;
-  });
+async function save(env: Environment, record: TerminalLifecycleRecord): Promise<Result<void>> {
+  try {
+    await callStateOwner(resolveStateDirectory(env), { operation: "terminal-write", action: "upsert", record: { ...record, status: "active" } });
+    return ok(undefined);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
 }
 
-function remove(env: Environment, terminalId: string): Result<void> {
-  return withState(env, (database) => {
-    const deleted = deleteTerminal(database, terminalId);
-    return deleted.kind === "ok" ? ok(undefined) : deleted;
-  });
+async function remove(env: Environment, terminalId: string): Promise<Result<void>> {
+  try {
+    await callStateOwner(resolveStateDirectory(env), { operation: "terminal-write", action: "remove", terminalId });
+    return ok(undefined);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
 }
 
 function output(value: unknown, json: boolean): string { return json ? `${JSON.stringify(value, null, 2)}\n` : `${String(value)}\n`; }
@@ -418,7 +424,7 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
       const opened = await createTmuxTerminal(process, env, path.value, resolvedCommand);
       if (opened.kind !== "ok") return opened;
       const tmuxRecord: TerminalLifecycleRecord = { terminalId: opened.value.terminalId, host: "tmux", workspaceId: null, worktree: path.value, title, command: resolvedCommand, createdAt: new Date().toISOString(), pid: opened.value.pid, rootPid: opened.value.pid, port: port ?? null };
-      const savedTmux = save(env, tmuxRecord);
+      const savedTmux = await save(env, tmuxRecord);
       if (savedTmux.kind !== "ok") return savedTmux;
       const callerInTmux = [env.TMUX, env.TMUX_PANE].every((value) => value !== undefined && value !== "");
       const viewer = await openViewer({ session: opened.value.session, flag: terminal, automatic: !callerInTmux, env, process });
@@ -438,7 +444,7 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
       return failed(`${currentHost} terminal create did not publish a process identity`);
     }
     const record: TerminalLifecycleRecord = { terminalId: id, host: currentHost, workspaceId: workspace ?? null, worktree: path.value, title, command: resolvedCommand, createdAt: new Date().toISOString(), pid, rootPid: jsonNumber(created.value.value, [["rootPid"], ["processRootPid"], ["terminal", "rootPid"], ["result", "rootPid"]]) ?? pid, port: port ?? jsonNumber(created.value.value, [["port"], ["terminal", "port"], ["result", "port"]]) };
-    const saved = save(env, record);
+    const saved = await save(env, record);
     if (saved.kind !== "ok") return saved;
     return ok(json ? output({ host: currentHost, worktree: path.value, title, terminalId: id, pid: record.pid, rootPid: record.rootPid, port: record.port }, true) : created.value.stdout);
   }
@@ -459,7 +465,7 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
   if (operation === "close" && record.host === "tmux") {
     const closedPane = await closeTmuxTerminal(process, record.terminalId);
     if (closedPane.kind !== "ok") return closedPane;
-    const removedTmux = remove(env, record.terminalId);
+    const removedTmux = await remove(env, record.terminalId);
     if (removedTmux.kind !== "ok") return failed(`tmux terminal ${record.terminalId} closed but its record could not be removed`);
     const status = closedPane.value ? "closed" : "stale";
     return ok(json ? output({ selector, terminalId: record.terminalId, status, recordRemoved: true }, true) : `selector: ${selector}\nterminal: ${record.terminalId}\nstatus: ${status}\nrecord removed: true\n`, closedPane.value ? 0 : 1);
@@ -470,13 +476,13 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
     const listed = await hostList(process, record);
     if (listed === undefined) return failed(`could not verify host terminal ${record.terminalId} before close`);
     if (!listed.some((item) => hostId(item) === record.terminalId)) {
-      const removed = remove(env, record.terminalId);
+      const removed = await remove(env, record.terminalId);
       if (removed.kind !== "ok") return failed(`host no longer knows terminal ${record.terminalId}, but its record could not be removed`);
       return ok(json ? output({ selector, terminalId: record.terminalId, status: "stale", recordRemoved: true, message: "host no longer knows this terminal" }, true) : `selector: ${selector}\nterminal: ${record.terminalId}\nstatus: stale\nrecord removed: true\nhost no longer knows this terminal\n`, 1);
     }
     const result = await process.run(call.command, call.args);
     if (result.kind !== "ok") return failed(`could not close host terminal ${record.terminalId}; record retained`);
-    const removed = remove(env, record.terminalId);
+    const removed = await remove(env, record.terminalId);
     if (removed.kind !== "ok") return failed(`host terminal ${record.terminalId} closed but its record could not be removed`);
     const identity = record.rootPid !== null || record.pid !== null ? "recorded" : "unavailable";
     return ok(json ? output({ selector, terminalId: record.terminalId, status: "closed", identity, recordRemoved: true }, true) : `selector: ${selector}\nterminal: ${record.terminalId}\nstatus: closed\nidentity: ${identity}\nrecord removed: true\n`);
@@ -490,10 +496,10 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
     const reopened = await createTmuxTerminal(process, env, record.worktree, command ?? record.command, target.session);
     if (reopened.kind !== "ok") return reopened;
     const replacementRecord: TerminalLifecycleRecord = { ...record, terminalId: reopened.value.terminalId, pid: reopened.value.pid, rootPid: reopened.value.pid };
-    const savedReplacement = save(env, replacementRecord);
+    const savedReplacement = await save(env, replacementRecord);
     if (savedReplacement.kind !== "ok") return savedReplacement;
     if (replacementRecord.terminalId !== record.terminalId) {
-      const removedOld = remove(env, record.terminalId);
+      const removedOld = await remove(env, record.terminalId);
       if (removedOld.kind !== "ok") return failed("terminal was restarted but the old record could not be removed");
     }
     return ok(json
@@ -511,10 +517,10 @@ export async function executeTerminalLifecycle(args: readonly string[], env: Env
   if (targetPort !== null && !(await waitForPort(process, targetPort, "free", timeout))) return failed(`timed out waiting for port ${targetPort} to become free`);
   const replacement = await recreate(process, record, command ?? record.command);
   if (replacement.kind !== "ok") return replacement;
-  const saved = save(env, replacement.value.record);
+  const saved = await save(env, replacement.value.record);
   if (saved.kind !== "ok") return saved;
   if (replacement.value.record.terminalId !== record.terminalId) {
-    const removed = remove(env, record.terminalId);
+    const removed = await remove(env, record.terminalId);
     if (removed.kind !== "ok") return failed(`terminal was restarted but the old record could not be removed`);
   }
   const waitedPort = waitPort;

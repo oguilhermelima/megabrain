@@ -8,6 +8,7 @@ import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { classifyLiveness, startupDialogCause, waitForStableIdle } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import type { DatabaseHandle } from "../../db/db.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { CALLER_IDENTITY_ENV_VARS, type CallerIdentity } from "../../core/context.js";
 import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
@@ -18,7 +19,7 @@ import { createTmuxSession, dispatchTmuxProcess, getTmux, onAppTmuxServer, sendT
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
@@ -62,17 +63,15 @@ export async function waitForTmuxReadiness(agentId: string, pane: string, timeou
 
 export const READINESS_FRAME_MAX_LINES = 60;
 
-export function recordFrame(root: string, id: string, type: string, text: string): void {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-  if (database.kind !== "ok") return;
-  appendDatabaseMessage(database.value, id, { from: "megabrain", type, text, createdAt: new Date().toISOString(), sessionId: "" });
+export async function recordFrame(root: string, id: string, type: string, text: string): Promise<void> {
+  await callStateOwner(root, { operation: "append-message", dispatchId: id, message: { from: "megabrain", type, text, createdAt: new Date().toISOString(), sessionId: "" } });
 }
 
 // The frame readiness rejected is the only evidence of why a spawn that retries fine failed once,
 // so it is kept in the dispatch's own messages rather than lost with the pane.
-export function recordRejectedReadinessFrame(root: string, id: string, agent: string, timeoutMs: number, frame: string): void {
+export async function recordRejectedReadinessFrame(root: string, id: string, agent: string, timeoutMs: number, frame: string): Promise<void> {
   const shown = frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd();
   const status = startupDialogCause(agent, frame) ?? classifyLiveness(agent, frame).status;
-  recordFrame(root, id, "readiness-frame", `readiness never saw a stable idle ${agent} frame within ${timeoutMs}ms (last classified: ${status}); last frame:\n${shown}`);
+  await recordFrame(root, id, "readiness-frame", `readiness never saw a stable idle ${agent} frame within ${timeoutMs}ms (last classified: ${status}); last frame:\n${shown}`);
 }
 

@@ -30,7 +30,7 @@ import {
 import { repoFromOrca } from "./repository-selector.js";
 import { resolveCaller } from "./queue-write.js";
 import { usageMessage, usageText } from "../../core/usage.js";
-import { openDatabase, withWrite } from "../../db/db.js";
+import { openDatabaseReadOnly } from "../../db/db.js";
 import { insertWorktree, finishWorktree } from "../../db/queries/worktrees.js";
 import { listRepositories } from "../../db/queries/repositories.js";
 import {
@@ -215,7 +215,7 @@ async function lookupRepositories(
   environment: Environment,
 ): Promise<string[]> {
   const candidates: string[] = [];
-  const registry = openDatabase(environment);
+  const registry = openDatabaseReadOnly(environment);
   if (registry.kind === "ok") {
     try {
       for (const item of listRepositories(registry.value.db)) candidates.push(item.path);

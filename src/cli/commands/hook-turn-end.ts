@@ -9,7 +9,8 @@ import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-te
 import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
-import { getDispatch, listDeliveries, listDispatches, listMessages, listOutbox, mutateDispatch, noDispatchChange, recordChannelResult, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDeliveries, listDispatches, listMessages, listOutbox, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { callStateOwner, recordChannelResultThroughOwner } from "../../db/state-owner.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { backgroundTasks } from "../../core/supervise.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
@@ -18,9 +19,10 @@ import { waitForStableIdle } from "../../core/liveness.js";
 import { sendSessionMessage } from "../../core/session-send.js";
 import { readContextMeter } from "../../core/context-meter.js";
 import { decideLoopTurn, evaluateContextThreshold, hasCeilingThreshold, hasCompactThreshold, type ContextPolicy, type ContextThresholdState } from "../../core/context-policy.js";
-import { contextWindowOf, loadModelRegistry } from "../../core/model.js";
+import { contextWindowOf, loadAndPersistModelRegistry } from "../../core/model.js";
 import { getAgent } from "../../agents/index.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
+import { supervisorWatcher } from "./supervise.js";
 
 export type HookEnvironment = QueueEnvironment;
 type JsonRecord = Record<string, unknown>;
@@ -70,7 +72,7 @@ function pointerForFinishedDispatches(count: number, ids: string): string {
 
 // megabrain_dispatch_has_prompt_receipt: has the child ever sent a "received" message.
 async function hasPromptReceipt(root: string, dispatchId: string): Promise<boolean> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return false;
   const messages = listMessages(database.value, dispatchId);
   return messages.kind === "ok" && messages.value.some((message) => message.from === "child" && message.type === "received");
@@ -82,7 +84,7 @@ async function hasPromptReceipt(root: string, dispatchId: string): Promise<boole
 const LIVE_ACTIVITY_WINDOW_SECONDS = 60;
 
 async function hasRecentChildActivity(root: string, dispatchId: string): Promise<boolean> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return false;
   const result = listMessages(database.value, dispatchId);
   if (result.kind !== "ok") return false;
@@ -153,7 +155,7 @@ async function sendContextInput(root: string, meta: RecordValue, text: string, e
       const result = await runHostSend(hostId, processAdapter, call.value);
       return result.kind === "ok" ? true : { delivered: false, detail: result.kind === "failed" ? result.error : result.reason };
     } },
-    recordChannel: (channel) => { const database = stateDatabase({ MEGABRAIN_STATE_DIR: root }); if (database.kind === "ok") recordChannelResult(database.value, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true }); },
+    recordChannel: async (channel) => { await recordChannelResultThroughOwner(root, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true }); },
   });
   return sent.delivered ? ok(undefined) : failed(sent.detail ?? "context action could not be sent");
 }
@@ -176,14 +178,14 @@ function policyStateValue(value: unknown): RecordValue {
 }
 
 async function finishContextAction(root: string, dispatchId: string, eventId: string, outcome: string): Promise<void> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return;
-  mutateDispatch(database.value, dispatchId, (current) => {
-    const previous = policyStateValue(current.contextPolicyState);
-    const actions = Array.isArray(previous.actions) ? previous.actions as RecordValue[] : [];
-    const nextActions = actions.map((action) => action.id === eventId ? { ...action, outcome } : action);
-    return { ...current, contextPolicyState: { ...previous, actions: nextActions }, updatedAt: new Date().toISOString() };
-  });
+  const current = getDispatch(database.value, dispatchId);
+  if (current.kind !== "ok" || current.value === undefined) return;
+  const previous = policyStateValue(current.value.contextPolicyState);
+  const actions = Array.isArray(previous.actions) ? previous.actions as RecordValue[] : [];
+  const nextActions = actions.map((action) => action.id === eventId ? { ...action, outcome } : action);
+  await callStateOwner(root, { operation: "dispatch-patch", dispatchId, patch: { contextPolicyState: { ...previous, actions: nextActions }, updatedAt: new Date().toISOString() } });
 }
 
 type ContextPolicyEffect = Readonly<{ response: string | null; handled: boolean }>;
@@ -200,7 +202,7 @@ async function applyContextPolicy(
   if (!hasCeilingThreshold(policy) && !hasCompactThreshold(policy) && policy.loop !== true) return { response: null, handled: false };
   const agentId = typeof meta.agent === "string" ? meta.agent : "";
   const home = environment.HOME ?? "";
-  const registry = typeof meta.model === "string" && meta.model !== "" ? loadModelRegistry({ ...environment, MEGABRAIN_STATE_DIR: root }) : undefined;
+  const registry = typeof meta.model === "string" && meta.model !== "" ? await loadAndPersistModelRegistry({ ...environment, MEGABRAIN_STATE_DIR: root }) : undefined;
   const contextWindow = registry?.kind === "loaded" ? contextWindowOf(registry.registry, agentId, String(meta.model)) : undefined;
   const meter = home === "" ? { status: "unknown" as const } : await readContextMeter({
     agent: agentId,
@@ -211,7 +213,7 @@ async function applyContextPolicy(
     ...(environment.GROK_HOME === undefined ? {} : { grokHome: environment.GROK_HOME }),
     ...(typeof meta.agyLogFile === "string" ? { agyLogFile: meta.agyLogFile } : {}),
   }, home);
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return { response: null, handled: false };
   const messages = listMessages(database.value, dispatchId);
   const done = messages.kind === "ok" && messages.value.some((message) => message.from === "child" && message.type === "done");
@@ -222,66 +224,67 @@ async function applyContextPolicy(
   let plannedPolicy = policy;
   let action: "stop" | "compact" | "continue" | "none" = "none";
   let stopReason = "";
-  const updated = mutateDispatch(database.value, dispatchId, (current) => {
-    plannedPolicy = policyValue(current.contextPolicy);
-    if (!hasCeilingThreshold(plannedPolicy) && !hasCompactThreshold(plannedPolicy) && plannedPolicy.loop !== true) return noDispatchChange;
-    const previous = policyStateValue(current.contextPolicyState);
-    const thresholdState: ContextThresholdState = {
-      ceilingLatched: previous.ceilingLatched === true,
-      compactLatched: previous.compactLatched === true,
-    };
-    const threshold = evaluateContextThreshold(plannedPolicy, thresholdState, meter);
-    const previousIterations = typeof previous.loopIterations === "number" && Number.isSafeInteger(previous.loopIterations) ? previous.loopIterations : 0;
-    const nextIterations = plannedPolicy.loop === true ? previousIterations + 1 : previousIterations;
-    const loopDecision = plannedPolicy.loop === true ? decideLoopTurn(false, nextIterations, plannedPolicy.maxIterations) : { action: "done" as const, completedIterations: previousIterations };
-    const ceilingStop = threshold.action === "stop";
-    const budgetStop = !ceilingStop && plannedPolicy.loop === true && loopDecision.action === "stop";
-    const unknownBudgetStop = !ceilingStop && !budgetStop && plannedPolicy.loop === true && plannedPolicy.maxIterations === undefined && meter.status === "unknown";
-    if (ceilingStop) { action = "stop"; stopReason = "context ceiling reached"; }
-    else if (budgetStop) { action = "stop"; stopReason = "loop iteration budget reached"; }
-    else if (unknownBudgetStop) { action = "stop"; stopReason = "context meter unavailable for the loop budget"; }
-    else if (threshold.action === "compact") action = "compact";
-    else if (plannedPolicy.loop === true) action = "continue";
-    if (action === "none" && threshold.state.ceilingLatched === thresholdState.ceilingLatched && threshold.state.compactLatched === thresholdState.compactLatched) return noDispatchChange;
+  const stored = getDispatch(database.value, dispatchId);
+  if (stored.kind !== "ok" || stored.value === undefined) return { response: null, handled: false };
+  const current = stored.value;
+  plannedPolicy = policyValue(current.contextPolicy);
+  if (!hasCeilingThreshold(plannedPolicy) && !hasCompactThreshold(plannedPolicy) && plannedPolicy.loop !== true) return { response: null, handled: false };
+  const previous = policyStateValue(current.contextPolicyState);
+  const thresholdState: ContextThresholdState = {
+    ceilingLatched: previous.ceilingLatched === true,
+    compactLatched: previous.compactLatched === true,
+  };
+  const threshold = evaluateContextThreshold(plannedPolicy, thresholdState, meter);
+  const previousIterations = typeof previous.loopIterations === "number" && Number.isSafeInteger(previous.loopIterations) ? previous.loopIterations : 0;
+  const nextIterations = plannedPolicy.loop === true ? previousIterations + 1 : previousIterations;
+  const loopDecision = plannedPolicy.loop === true ? decideLoopTurn(false, nextIterations, plannedPolicy.maxIterations) : { action: "done" as const, completedIterations: previousIterations };
+  const ceilingStop = threshold.action === "stop";
+  const budgetStop = !ceilingStop && plannedPolicy.loop === true && loopDecision.action === "stop";
+  const unknownBudgetStop = !ceilingStop && !budgetStop && plannedPolicy.loop === true && plannedPolicy.maxIterations === undefined && meter.status === "unknown";
+  if (ceilingStop) { action = "stop"; stopReason = "context ceiling reached"; }
+  else if (budgetStop) { action = "stop"; stopReason = "loop iteration budget reached"; }
+  else if (unknownBudgetStop) { action = "stop"; stopReason = "context meter unavailable for the loop budget"; }
+  else if (threshold.action === "compact") action = "compact";
+  else if (plannedPolicy.loop === true) action = "continue";
+  if (action === "none" && threshold.state.ceilingLatched === thresholdState.ceilingLatched && threshold.state.compactLatched === thresholdState.compactLatched) return { response: null, handled: false };
 
-    const actions = Array.isArray(previous.actions) ? previous.actions as RecordValue[] : [];
-    const patch: RecordValue = {
-      ceilingLatched: threshold.state.ceilingLatched,
-      compactLatched: threshold.state.compactLatched,
-      loopIterations: nextIterations,
-      actions,
+  const actions = Array.isArray(previous.actions) ? previous.actions as RecordValue[] : [];
+  const nextPolicyState: RecordValue = {
+    ceilingLatched: threshold.state.ceilingLatched,
+    compactLatched: threshold.state.compactLatched,
+    loopIterations: nextIterations,
+    actions,
+  };
+  if (action !== "none") {
+    eventId = randomUUID();
+    event = {
+      id: eventId,
+      action,
+      reason: action === "stop" ? stopReason : action === "compact" ? "context threshold reached" : "loop prompt re-injected",
+      percentUsed: meter.status === "known" ? meter.percentUsed ?? null : null,
+      usedTokens: meter.status === "known" ? meter.usedTokens : null,
+      sourceFrame: meter.status === "known" ? meter.sourceFrame.slice(0, 500) : null,
+      reading: meter.status,
+      outcome: "pending",
+      createdAt: new Date().toISOString(),
     };
-    if (action !== "none") {
-      eventId = randomUUID();
-      event = {
-        id: eventId,
-        action,
-        reason: action === "stop" ? stopReason : action === "compact" ? "context threshold reached" : "loop prompt re-injected",
-        percentUsed: meter.status === "known" ? meter.percentUsed ?? null : null,
-        usedTokens: meter.status === "known" ? meter.usedTokens : null,
-        sourceFrame: meter.status === "known" ? meter.sourceFrame.slice(0, 500) : null,
-        reading: meter.status,
-        outcome: "pending",
-        createdAt: new Date().toISOString(),
-      };
-      patch.actions = [...actions, event];
-    }
-    const processState = typeof current.processState === "string" ? current.processState : "";
-    const stopTransition = action === "stop" ? checkDispatchTransition("process", processState, "stopped") : undefined;
-    const dispatchState = typeof current.state === "string" ? current.state : "";
-    const waitTransition = action === "stop" ? checkDispatchTransition("dispatch", dispatchState, "waiting_for_reply") : undefined;
-    return {
-      ...current,
-      ...(stopTransition?.kind === "ok" ? { processState: "stopped" } : {}),
-      ...(waitTransition?.kind === "ok" ? { state: "waiting_for_reply", stage: stopReason === "context ceiling reached" ? "context-ceiling" : "context-policy-stop", reason: stopReason } : {}),
-      contextPolicyState: patch,
-      ...(action === "stop" ? { contextPolicyStopReason: stopReason, contextPolicyStoppedAt: new Date().toISOString() } : {}),
-      updatedAt: new Date().toISOString(),
-    };
-  });
-  if (updated.kind !== "ok" || action === "none" || event === undefined) return { response: null, handled: false };
-
-  const continuation = typeof updated.value.contextPolicyPrompt === "string" ? updated.value.contextPolicyPrompt : typeof updated.value.contextLoopPrompt === "string" ? updated.value.contextLoopPrompt : "";
+    nextPolicyState.actions = [...actions, event];
+  }
+  const processState = typeof current.processState === "string" ? current.processState : "";
+  const stopTransition = action === "stop" ? checkDispatchTransition("process", processState, "stopped") : undefined;
+  const dispatchState = typeof current.state === "string" ? current.state : "";
+  const waitTransition = action === "stop" ? checkDispatchTransition("dispatch", dispatchState, "waiting_for_reply") : undefined;
+  const patch: RecordValue = {
+    contextPolicyState: nextPolicyState,
+    updatedAt: new Date().toISOString(),
+    ...(stopTransition?.kind === "ok" ? { processState: "stopped" } : {}),
+    ...(waitTransition?.kind === "ok" ? { state: "waiting_for_reply", stage: stopReason === "context ceiling reached" ? "context-ceiling" : "context-policy-stop", reason: stopReason } : {}),
+    ...(action === "stop" ? { contextPolicyStopReason: stopReason, contextPolicyStoppedAt: new Date().toISOString() } : {}),
+  };
+  const updated = await callStateOwner(root, { operation: "dispatch-patch", dispatchId, expectedState: String(current.state), patch }) as RecordValue;
+  if (updated.updated === false) return { response: null, handled: false };
+  if (action === "none" || event === undefined) return { response: null, handled: false };
+  const continuation = typeof updated.contextPolicyPrompt === "string" ? updated.contextPolicyPrompt : typeof updated.contextLoopPrompt === "string" ? updated.contextLoopPrompt : "";
   if (action === "stop") {
     const tokens = typeof event.usedTokens === "number" ? new Intl.NumberFormat("en-US").format(event.usedTokens) : undefined;
     const ceiling = typeof plannedPolicy.contextCeilingTokens === "number"
@@ -330,8 +333,8 @@ async function applyContextPolicy(
   const prompt = continuation === "" ? "Continue the dispatch task from your current progress and report done when it is complete." : `Continue the dispatch task from your current progress. Original prompt:\n\n${continuation}`;
   const continued = await sendContextInput(root, meta, prompt, environment, processAdapter);
   if (plannedPolicy.loop === true) {
-    const iteration = typeof updated.value.contextPolicyState === "object" && updated.value.contextPolicyState !== null
-      ? (updated.value.contextPolicyState as RecordValue).loopIterations : undefined;
+    const iteration = typeof updated.contextPolicyState === "object" && updated.contextPolicyState !== null
+      ? (updated.contextPolicyState as RecordValue).loopIterations : undefined;
     await notice(continued.kind === "ok"
       ? `Loop iteration ${typeof iteration === "number" ? iteration : ""} re-injected.`
       : `Loop iteration could not be re-injected — ${continued.error}.`);
@@ -362,16 +365,16 @@ async function readLimitRefusal(meta: JsonRecord, processAdapter: ProcessAdapter
 // (mirroring megabrain_dispatch_meta_update_fields's own transition validation) rather than write
 // an illegal state/processState transition.
 async function markLimitRefused(root: string, dispatchId: string, reason: string, processAdapter: ProcessAdapter): Promise<boolean> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return false;
-  let refused = false;
-  const updated = mutateDispatch(database.value, dispatchId, (meta) => {
-    const state = typeof meta.state === "string" ? meta.state : "";
-    const processState = typeof meta.processState === "string" ? meta.processState : "";
-    if (checkDispatchTransition("dispatch", state, "failed").kind !== "ok" || checkDispatchTransition("process", processState, "failed").kind !== "ok") { refused = true; return noDispatchChange; }
-    return { promptReceipt: "unknown", promptState: "failed", promptDeliveryReason: reason, state: "failed", processState: "failed", stage: "limit-refused", reason, reconcileOutcome: "limit-refused", updatedAt: new Date().toISOString() };
-  });
-  if (updated.kind !== "ok" || refused) return false;
+  const current = getDispatch(database.value, dispatchId);
+  if (current.kind !== "ok" || current.value === undefined) return false;
+  const state = typeof current.value.state === "string" ? current.value.state : "";
+  const processState = typeof current.value.processState === "string" ? current.value.processState : "";
+  if (checkDispatchTransition("dispatch", state, "failed").kind !== "ok" || checkDispatchTransition("process", processState, "failed").kind !== "ok") return false;
+  try {
+    await callStateOwner(root, { operation: "dispatch-patch", dispatchId, expectedState: state, patch: { promptReceipt: "unknown", promptState: "failed", promptDeliveryReason: reason, state: "failed", processState: "failed", stage: "limit-refused", reason, reconcileOutcome: "limit-refused", updatedAt: new Date().toISOString() } });
+  } catch { return false; }
   const stored = getDispatch(database.value, dispatchId);
   const meta = stored.kind === "ok" ? stored.value : undefined;
   if (meta?.runtime === "tmux" && typeof meta.tmuxPane === "string") {
@@ -391,7 +394,7 @@ async function markLimitRefused(root: string, dispatchId: string, reason: string
 // reached the terminal, and the pointer path never retries. An in-flight delivery gets time to
 // arrive through its normal channel before the hook surfaces it. One short line per emitted
 // message is marked hook-notified so the same message never blocks twice.
-const PARENT_MAIL_IN_FLIGHT_GRACE_MS = 120_000;
+const PARENT_MAIL_IN_FLIGHT_GRACE_MS = 30_000;
 
 function parentMailSummary(text: string): string {
   const firstLine = text.split("\n", 1)[0]?.trim() ?? "";
@@ -418,15 +421,17 @@ function parentOutboxMatchesDelivery(item: Readonly<Record<string, unknown>>, se
   return typeof sequence === "number" ? sequences.includes(sequence) : onlyOutstandingDelivery;
 }
 
-function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly<{ failed: readonly string[]; pending: readonly string[] }> {
+async function parentMailLines(root: string, database: DatabaseHandle, dispatchId: string): Promise<Readonly<{ failed: readonly string[]; pending: readonly string[] }>> {
   const dispatch = getDispatch(database, dispatchId);
-  if (dispatch.kind !== "ok" || dispatch.value === undefined || dispatch.value.state === "closed") return { failed: [], pending: [] };
+  if (dispatch.kind !== "ok" || dispatch.value === undefined) return { failed: [], pending: [] };
+  const closed = dispatch.value.state === "closed";
   const deliveries = listDeliveries(database, dispatchId);
   const messages = listMessages(database, dispatchId);
   const outbox = listOutbox(database);
   if (deliveries.kind !== "ok" || messages.kind !== "ok") return { failed: [], pending: [] };
   const failed: string[] = [];
   const pending: string[] = [];
+  const subscriberAlive = supervisorWatcher(database).running;
   const checkMessages = messages.value.map((message) => ({ ...message, path: `db:${dispatchId}:${message.seq}` }));
   const unhandled = unhandledParentMail(deliveries.value as unknown as CheckDelivery[], checkMessages);
   const outstandingParentDeliveryCount = deliveries.value.filter((delivery) => delivery.recipient === "parent" && delivery.status === "outstanding").length;
@@ -439,20 +444,21 @@ function parentMailLines(database: DatabaseHandle, dispatchId: string): Readonly
     const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((entry) => entry.dispatchId === dispatchId && entry.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(entry, sequences, outstandingParentDeliveryCount === 1)) : [];
     if (delivery.transport !== "deferred" && matchingOutbox.some((item) => item.status === "sending" && item.detail?.startsWith("peer-sent:"))) continue;
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
+    if (closed && (message.type !== "done" || !pendingOutbox || subscriberAlive || !parentMailWaitedTooLong(delivery, matchingOutbox))) continue;
     const heldOutbox = matchingOutbox.some((item) => item.status === "failed" && /composer-occupied|composer-race|superset-unverifiable-composer|target is no longer idle|session is no longer idle|keystroke dialog/i.test(item.detail ?? ""));
     if (delivery.transport === "failed") {
       if (heldOutbox) {
         pending.push(line);
-        for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
+        for (const sequence of sequences) await callStateOwner(root, { operation: "set-delivery-transport", dispatchId, sequence, transport: "hook-notified" });
         continue;
       }
       failed.push(`${dispatchId}: ${line}`);
-      for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
+      for (const sequence of sequences) await callStateOwner(root, { operation: "set-delivery-transport", dispatchId, sequence, transport: "hook-notified" });
       continue;
     }
-    if (heldOutbox || delivery.transport === "deferred" || (pendingOutbox && parentMailWaitedTooLong(delivery, matchingOutbox))) {
+    if (heldOutbox || delivery.transport === "deferred" || (pendingOutbox && !subscriberAlive && parentMailWaitedTooLong(delivery, matchingOutbox))) {
       pending.push(line);
-      for (const sequence of sequences) setDeliveryTransport(database, dispatchId, sequence, "hook-notified");
+      for (const sequence of sequences) await callStateOwner(root, { operation: "set-delivery-transport", dispatchId, sequence, transport: "hook-notified" });
     }
   }
   return { failed, pending };
@@ -467,7 +473,7 @@ function parentsSession(meta: JsonRecord, session: Readonly<{ id: string; host: 
 type ParentNotifyNotice = Readonly<{ text: string; block: boolean }>;
 
 async function hookParentNotify(root: string, session: Readonly<{ id: string; host: string }>, environment: HookEnvironment, processAdapter: ProcessAdapter): Promise<ParentNotifyNotice | undefined> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return undefined;
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return undefined;
@@ -480,7 +486,7 @@ async function hookParentNotify(root: string, session: Readonly<{ id: string; ho
     const dispatchId = meta.dispatchId;
     if (dispatchId === undefined) continue;
     if (parentsSession(meta, session) && !(await waiterIsActive(root, dispatchId).catch(() => false))) {
-      const mail = parentMailLines(database.value, dispatchId);
+      const mail = await parentMailLines(root, database.value, dispatchId);
       failedMail.push(...mail.failed);
       pendingMail.push(...mail.pending);
     }
@@ -598,7 +604,7 @@ export async function executeHookTurnEnd(
     }
 
     const dispatchId = child.dispatch;
-    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
     if (database.kind !== "ok") return finish(defaultText);
     const metaResult = getDispatch(database.value, dispatchId);
     const meta = metaResult.kind === "ok" ? metaResult.value : undefined;
@@ -616,7 +622,7 @@ export async function executeHookTurnEnd(
       } catch { messageCount = 0; }
     }
     if (messageCount > 0) {
-      for (const sequence of messageSeqs) setDeliveryTransport(database.value, dispatchId, sequence, "hook-notified");
+      for (const sequence of messageSeqs) await callStateOwner(root, { operation: "set-delivery-transport", dispatchId, sequence, transport: "hook-notified" });
       if (environment.MEGABRAIN_HOOK_AGENT === "cursor") return finish('{"continue":true}');
       return finish('{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}');
     }
@@ -635,8 +641,7 @@ export async function executeHookTurnEnd(
     // A turn that ends with its own shells or monitors still running is waiting, not stalled.
     const running = await readBackgroundTasks(meta as RecordValue, processAdapter);
     if (running !== undefined) {
-      const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-      if (database.kind === "ok") mutateDispatch(database.value, dispatchId, () => ({ backgroundTasks: running }));
+      await callStateOwner(root, { operation: "dispatch-patch", dispatchId, patch: { backgroundTasks: running, updatedAt: new Date().toISOString() } });
       return finish(defaultText);
     }
 

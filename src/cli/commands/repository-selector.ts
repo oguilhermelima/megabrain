@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { openDatabase } from "../../db/db.js";
+import { openDatabaseReadOnly } from "../../db/db.js";
 import { listWorktrees } from "../../db/queries/worktrees.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -82,7 +82,7 @@ export async function repoFromOrca(
     }
   }
 
-  const registry = openDatabase(environment);
+  const registry = openDatabaseReadOnly(environment);
   if (registry.kind !== "ok") return failed(`repo not found: ${selector} (${orcaReason}; worktree registry could not be read: ${registry.error})`);
   let matchingPaths: string[];
   try {

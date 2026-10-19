@@ -2,11 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { deliveryComposer } from "../../src/cli/commands/delivery-screen.js";
-import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
 import { stateDatabase, createDispatch, appendMessage, listDeliveries } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { ok, failed } from "../../src/core/result.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
 const sessionShape = new URL("../fixtures/claude-session-idle.json", import.meta.url);
 const screenShape = new URL("../fixtures/orca-terminal-screen-claude-idle.json", import.meta.url);
@@ -94,12 +94,18 @@ async function setupWorker(home: string, session: Record<string, unknown>, metaO
 }
 
 async function runWorker(home: string, ids: { dispatchId: string; outboxId: string }, process: ProcessAdapter, deadlineMs = 100, extraEnvironment: Record<string, string> = {}) {
-  const now = Date.now();
-  return executeDeliveryWorker(
-    [ids.outboxId, "holder", "delivery-target:orca:parent-terminal", String(now + deadlineMs)],
-    { HOME: home, MEGABRAIN_STATE_DIR: home, ...extraEnvironment },
-    process,
-  );
+  const owner = await startStateOwner(home, process, { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_DELIVERY_TIMEOUT_MS: String(deadlineMs), ...extraEnvironment });
+  try {
+    const deadline = Date.now() + deadlineMs + 3_000;
+    while (Date.now() < deadline) {
+      const deliveries = listDeliveries(owner.handle, ids.dispatchId);
+      const delivery = deliveries.kind === "ok" ? deliveries.value[0] : undefined;
+      if (delivery?.transport !== null && delivery?.transport !== undefined) return ok(`delivery ${delivery.transport}\n`);
+      if (owner.pendingDeliveries.size > 0) await Promise.all([...owner.pendingDeliveries]);
+      else await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return ok("delivery pending\n");
+  } finally { await stopStateOwner(owner); }
 }
 
 describe("Claude parent idle delivery", () => {

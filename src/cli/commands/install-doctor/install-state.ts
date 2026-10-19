@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";import { randomUUID } from "node:crypto";import { basename, dirname, resolve } from "node:path";import { failed, ok, type Result } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { nextBackupPath } from "../../../core/tmux.js";import { mutateInstallModule, putInstallModule, stateDatabase } from "../../../adapters/state-db.js";
+import { existsSync, readdirSync } from "node:fs";import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";import { randomUUID } from "node:crypto";import { basename, dirname, resolve } from "node:path";import { failed, ok, type Result } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { nextBackupPath } from "../../../core/tmux.js";import { getInstallState, readOnlyStateDatabase } from "../../../adapters/state-db.js";import { callStateOwner } from "../../../db/state-owner.js";
 import type { Environment } from "./diagnostics.js";
 export type InstallOptions = Readonly<{ yes: boolean; browser: string }>;
 
@@ -6,16 +6,22 @@ export function isInteractiveTerminal(): boolean {
   return Boolean(process.stdin.isTTY);
 }
 
-export function writeInstalledState(environment: Environment, module: string, installed: boolean, details: string): void {
+export async function writeInstalledState(environment: Environment, module: string, installed: boolean, details: string): Promise<Result<void>> {
   const configuredAt = new Date().toISOString();
-  const opened = stateDatabase(environment);
-  if (opened.kind !== "ok") return;
-  const updated = mutateInstallModule(opened.value, module, (value) => {
-    const previous = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
-    return { ...previous, installed, configuredAt, statusSource: "megabrain install", details };
-  });
-  if (updated.kind !== "ok") return;
-  putInstallModule(opened.value, "_meta", { kind: "installation-record", recordedAt: configuredAt, source: "megabrain install", liveStatusCommand: "megabrain doctor" });
+  const opened = readOnlyStateDatabase(environment);
+  if (opened.kind !== "ok") return opened;
+  const state = getInstallState(opened.value);
+  if (state.kind !== "ok") return state;
+  const current = state.value[module];
+  const previous = typeof current === "object" && current !== null && !Array.isArray(current) ? current as Record<string, unknown> : {};
+  const stateDir = environment.MEGABRAIN_STATE_DIR ?? resolve(environment.HOME ?? process.cwd(), ".megabrain");
+  try {
+    await callStateOwner(stateDir, { operation: "install-state-write", moduleId: module, value: { ...previous, installed, configuredAt, statusSource: "megabrain install", details } });
+    await callStateOwner(stateDir, { operation: "install-state-write", moduleId: "_meta", value: { kind: "installation-record", recordedAt: configuredAt, source: "megabrain install", liveStatusCommand: "megabrain doctor" } });
+    return ok(undefined);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
 }
 
 export async function dateStamp(processAdapter: ProcessAdapter): Promise<string> {

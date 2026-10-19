@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { ChatStore, type Chat } from "../../chat/store.js";
 import { readContextMeter } from "../../core/context-meter.js";
-import { listDispatches, listMessages, stateDatabase } from "../../adapters/state-db.js";
+import { listDispatches, listMessages, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { usageText } from "../../core/usage.js";
@@ -137,7 +137,7 @@ async function lane(record: Dispatch, parent: string, messages: Record<string, u
 }
 
 export async function buildOrchestrationGraph(target: Target, environment: Env): Promise<Graph> {
-  const db = stateDatabase(environment);
+  const db = readOnlyStateDatabase(environment);
   if (db.kind !== "ok") throw new Error(db.error);
   const stored = listDispatches(db.value, { includeArchived: true });
   if (stored.kind !== "ok") throw new Error(stored.error);

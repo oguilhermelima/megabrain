@@ -73,11 +73,17 @@ describe("admission queue flow", () => {
       context.freeMachine();
       const database = stateDatabase({ MEGABRAIN_STATE_DIR: context.root });
       if (database.kind !== "ok") throw new Error(database.error);
-      const outcome = await superviseOnce(context.root, database.value, context.environment, context.run.process, Date.now());
+      const outcome = await superviseOnce(context.root, database.value, {
+        ...context.environment,
+        MEGABRAIN_SESSION_ID: "supervisor-session-b",
+        MEGABRAIN_SESSION_HOST: "tmux",
+      }, context.run.process, Date.now());
       expect(outcome.open).toBe(true);
       const started = getDispatch(database.value, context.run.dispatchId);
       expect(started.kind === "ok" ? started.value?.dispatchId : "").toBe(context.run.dispatchId);
       expect(started.kind === "ok" ? started.value?.state : "").toBe("running");
+      expect(started.kind === "ok" ? started.value?.parentSessionId : "").toBe("parent-terminal");
+      expect(started.kind === "ok" ? started.value?.parentHost : "").toBe("tmux");
       const messages = listMessages(database.value, context.run.dispatchId);
       expect(messages.kind === "ok" ? messages.value.filter((item) => item.type === "admission").map((item) => item.text) : []).toEqual([
         expect.stringContaining("queued at position 1"), expect.stringContaining("queued spawn started"),

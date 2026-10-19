@@ -5,7 +5,8 @@ import { resolveChildStateDirectory } from "../../core/state.js";
 import { acknowledgeDelivery } from "../../core/ack.js";
 import { hasCallerIdentity } from "../../core/context.js";
 import { usageText } from "../../core/usage.js";
-import { ackDelivery, listDeliveries, listMessages, stateDatabase } from "../../adapters/state-db.js";
+import { listDeliveries, listMessages, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 type ChildArguments = Readonly<{ deliveryId: string; consumer?: string; generation: number; json: boolean }>;
 type ChildSession = Readonly<{ host: string; id: string; tmuxSession?: string; tmuxPane?: string }>;
@@ -61,7 +62,7 @@ export async function executeChildAck(args: readonly string[], environment: Queu
     ? `child/${child.value.session.host}/${child.value.session.tmuxSession}/${child.value.session.tmuxPane}`
     : `child/${child.value.session.host}/${child.value.session.id}`);
   if (consumer === "") return failed("consumer identity is empty");
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
   if (database.kind !== "ok") return database;
   const deliveries = listDeliveries(database.value, child.value.id);
   if (deliveries.kind !== "ok") return deliveries;
@@ -78,7 +79,8 @@ export async function executeChildAck(args: readonly string[], environment: Queu
     const receipt = await appendMessage(root, child.value.id, "child", "ack", parsed.value.deliveryId, child.value.session.id, environment, processAdapter);
     if (receipt.kind !== "ok") return receipt;
   }
-  const ack = ackDelivery(database.value, parsed.value.deliveryId, consumer, parsed.value.generation);
-  if (ack.kind !== "ok") return ack;
-  return ok(output(child.value.id, parsed.value.deliveryId, ack.value.duplicate, seqs, parsed.value.json));
+  let ack: { duplicate: boolean };
+  try { ack = await callStateOwner(root, { operation: "ack-delivery", id: parsed.value.deliveryId, consumer, generation: parsed.value.generation }) as typeof ack; }
+  catch (cause: unknown) { return failed(`state owner delivery acknowledgement failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+  return ok(output(child.value.id, parsed.value.deliveryId, ack.duplicate, seqs, parsed.value.json));
 }

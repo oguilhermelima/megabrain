@@ -1,8 +1,9 @@
-import { getInstallState, putInstallModule, stateDatabase } from "../../../adapters/state-db.js";import { dirname } from "node:path";import packageJson from "../../../../package.json" with { type: "json" };
-import type { ProcessAdapter } from "../../../adapters/proc.js";import { failed, ok, type Result } from "../../../core/result.js";import { discoverAgentDirectories, type AgentEnvironment, type MachineAgent, type MachineAgentDirectories } from "../../../core/agent-directories.js";import { agentLabel, moduleInfo, type AgentChoice, type ModuleChoice, type SkillMode } from "../install-ui.js";
+import { getInstallState, readOnlyStateDatabase } from "../../../adapters/state-db.js";import { callStateOwner } from "../../../db/state-owner.js";import { existsSync } from "node:fs";import { dirname, join } from "node:path";import packageJson from "../../../../package.json" with { type: "json" };
+import type { ProcessAdapter } from "../../../adapters/proc.js";import { failed, ok, type Result } from "../../../core/result.js";import { resolveStateDirectory } from "../../../core/state.js";import { discoverAgentDirectories, type AgentEnvironment, type MachineAgent, type MachineAgentDirectories } from "../../../core/agent-directories.js";import { agentLabel, moduleInfo, type AgentChoice, type ModuleChoice, type SkillMode } from "../install-ui.js";
 import { agents, modules, resolveDefaultModuleSelection, detectAgents } from "./selection.js";import type { MachineSelection, DefaultModuleSelection } from "./selection.js";
 export function readMachineState(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>): Record<string, unknown> | undefined {
-  const opened = stateDatabase(environment);
+  if (!existsSync(join(resolveStateDirectory(environment), "megabrain.db"))) return {};
+  const opened = readOnlyStateDatabase(environment);
   if (opened.kind !== "ok") return undefined;
   const loaded = getInstallState(opened.value);
   return loaded.kind === "ok" ? loaded.value : undefined;
@@ -39,12 +40,14 @@ export function matchingMachineInstall(left: unknown, right: PersistedMachineSel
   };
 }
 
-export function writeMachineState(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>, selection: MachineSelection, configuredModules: readonly string[]): Result<void> {
-  const opened = stateDatabase(environment);
-  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
+export async function writeMachineState(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>, selection: MachineSelection, configuredModules: readonly string[]): Promise<Result<void>> {
   const value = { agents: selection.agents, skill: selection.skill, tmux: selection.tmux, requestedModules: selection.modules, modules: configuredModules, version: packageJson.version };
-  const saved = putInstallModule(opened.value, "machineInstall", value);
-  return saved.kind === "ok" ? ok(undefined) : saved;
+  try {
+    await callStateOwner(resolveStateDirectory(environment), { operation: "install-state-write", moduleId: "machineInstall", value });
+    return ok(undefined);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
 }
 
 export type MachineContext = Readonly<{

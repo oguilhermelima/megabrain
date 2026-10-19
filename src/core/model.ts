@@ -1,8 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { loadModels, saveModels, stateDatabase } from "../adapters/state-db.js";
+import { loadModels, readOnlyStateDatabase } from "../adapters/state-db.js";
+import { callStateOwner } from "../db/state-owner.js";
 import { failed, type Failed, type Result } from "./result.js";
-import type { StateEnvironment } from "./state.js";
+import { resolveStateDirectory, type StateEnvironment } from "./state.js";
 import { resolvePackageRoot } from "./package-root.js";
 
 export type ModelProvenance = Readonly<Record<string, unknown>>;
@@ -330,13 +331,12 @@ export function loadModelRegistry(environment: ModelEnvironment): LoadedModelReg
     const templateRaw = readFileSync(template, "utf8");
     const templateRegistry = parseModelRegistry(templateRaw);
     if (templateRegistry === undefined) return failed(`model registry template is not valid JSON: ${template}`);
-    const opened = stateDatabase(environment);
+    const opened = readOnlyStateDatabase(environment);
     if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
     let registry: ModelRegistry;
-    let storedEmpty = false;
     const loaded = loadModels(opened.value);
     if (loaded.kind !== "ok") return failed(loaded.error, loaded.exitCode);
-    if (loaded.value.models.length === 0) { registry = templateRegistry; storedEmpty = true; }
+    if (loaded.value.models.length === 0) registry = templateRegistry;
     else {
       const parsed = parseModelRegistry(JSON.stringify(loaded.value));
       if (parsed === undefined) return failed("model registry stored in database is invalid");
@@ -344,22 +344,38 @@ export function loadModelRegistry(environment: ModelEnvironment): LoadedModelReg
     }
     const upgraded = upgradeRegistry(registry, templateRegistry);
     const upgradedRaw = `${JSON.stringify(upgraded, null, 2)}\n`;
-    const currentRaw = `${JSON.stringify(registry, null, 2)}\n`;
-    if (storedEmpty || upgradedRaw !== currentRaw) {
-      const saved = saveModelRegistry(environment, upgraded);
-      if (saved.kind !== "ok") return failed(saved.error, saved.exitCode);
-    }
+    // Loading can repair the returned view, but only an explicit model write persists it.
     return { kind: "loaded", registry: upgraded, raw: upgradedRaw };
   } catch (error: unknown) {
     return failed(error instanceof Error ? error.message : "could not read model registry");
   }
 }
 
-export function saveModelRegistry(environment: ModelEnvironment, registry: ModelRegistry): Result<void> {
-  const opened = stateDatabase(environment);
+export async function saveModelRegistry(environment: ModelEnvironment, registry: ModelRegistry): Promise<Result<void>> {
+  try {
+    const stateDir = resolveStateDirectory(environment);
+    await callStateOwner(stateDir, { operation: "model-registry-write", registry });
+    return { kind: "ok", value: undefined };
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
+}
+
+/** Persist the template seed and any template upgrades through the state owner on first use. */
+export async function loadAndPersistModelRegistry(environment: ModelEnvironment): Promise<LoadedModelRegistry | Failed> {
+  const loaded = loadModelRegistry(environment);
+  if (loaded.kind === "failed") return loaded;
+  const opened = readOnlyStateDatabase(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
-  const saved = saveModels(opened.value, registry);
-  return saved.kind === "ok" ? { kind: "ok", value: undefined } : saved;
+  let current: ModelRegistry;
+  const stored = loadModels(opened.value);
+  if (stored.kind !== "ok") return failed(stored.error, stored.exitCode);
+  current = stored.value as ModelRegistry;
+  if (current.models.length === 0 || JSON.stringify(current) !== JSON.stringify(loaded.registry)) {
+    const saved = await saveModelRegistry(environment, loaded.registry);
+    if (saved.kind !== "ok") return failed(saved.error, saved.exitCode);
+  }
+  return loaded;
 }
 
 export function formatModelList(registry: ModelRegistry): string {

@@ -3,7 +3,7 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveStateDirectory } from "./state.js";
-import { openDatabase } from "../db/db.js";
+import { openDatabaseReadOnly } from "../db/db.js";
 import { listRepositories } from "../db/queries/repositories.js";
 import type { ProcessAdapter } from "../adapters/proc.js";
 import type { Clock } from "./clock.js";
@@ -14,7 +14,7 @@ export type SimulatorOwners = Record<string, SimulatorOwner>;
 
 /** Return the registered main checkout for a project root or one of its git worktrees. */
 export async function registeredProjectForWorktree(worktree: string, environment: Readonly<Record<string, string | undefined>>, processAdapter: ProcessAdapter): Promise<string | undefined> {
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return undefined;
   try {
     for (const repository of listRepositories(opened.value.db)) {

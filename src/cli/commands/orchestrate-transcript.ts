@@ -5,7 +5,7 @@ import { findClaudeTranscriptForWorktree } from "../../core/context-meter.js";
 import { formatSessionTranscript, isTranscriptCursor, readTranscriptEvents, terminalTranscript, type SessionTranscript, type TranscriptAgent } from "../../core/session-transcript.js";
 import { usageText } from "../../core/usage.js";
 import { executeOrchestrateRead, parentMeta } from "./orchestrate-read-liveness.js";
-import { listDispatches, stateDatabase } from "../../adapters/state-db.js";
+import { listDispatches, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { tagTranscriptOrigins, type TranscriptOriginDispatch } from "../../core/transcript-origin.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -112,7 +112,7 @@ export async function executeOrchestrateTranscript(args: readonly string[], envi
     if (parsed.kind !== "ok") return parsed;
     const result = home === "" ? undefined : await readTranscriptEvents(parsed.value.agent, home, parsed.value.id, undefined, environment.GROK_HOME, options.value.since, options.value.limit);
     if (result === undefined) return failed(`session log unavailable for ${parsed.value.agent}:${parsed.value.id}; no dispatch terminal is associated with this session`);
-    const database = stateDatabase(environment);
+    const database = readOnlyStateDatabase(environment);
     if (database.kind !== "ok") return failed(database.error, database.exitCode);
     const stored = listDispatches(database.value);
     if (stored.kind !== "ok") return stored;

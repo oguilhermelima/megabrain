@@ -1,8 +1,10 @@
 import { resolveCaller } from "./queue-write.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { failed, ok, type Result } from "../../core/result.js";
+import { resolveStateDirectory } from "../../core/state.js";
 import { hasCeilingThreshold, hasCompactThreshold, parseContextThreshold, thresholdFields, validateContextPolicy, type ContextPolicy } from "../../core/context-policy.js";
-import { stateDatabase, getDispatch, listDispatches, listMessages, mutateDispatch, noDispatchChange } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, getDispatch, listDispatches, listMessages } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { usageText } from "../../core/usage.js";
 import { getAgent } from "../../agents/index.js";
@@ -65,7 +67,7 @@ export async function executeOrchestratePolicy(args: readonly string[], environm
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-policy"));
   const parsed = parseChanges(args);
   if (parsed.kind !== "ok") return parsed;
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const caller = await resolveCaller(environment, process);
   const resolved = resolveParentDispatchId(database.value, parsed.value.dispatchId, caller);
@@ -88,56 +90,44 @@ export async function executeOrchestratePolicy(args: readonly string[], environm
     if (loopPrompt === "") return failed(`dispatch ${resolved.value} has no original prompt to loop`);
   }
 
-  let policy: ContextPolicy | undefined;
-  let policyError: string | undefined;
-  const updated = mutateDispatch(database.value, resolved.value, (current) => {
-    if (!["spawning", "running", "waiting_for_reply"].includes(String(current.state ?? ""))) {
-      policyError = `dispatch ${resolved.value} is not active`;
-      return noDispatchChange;
-    }
-    const previous = record(current.contextPolicy);
-    const { contextCeiling, contextCeilingTokens, compactAt, compactAtTokens, ...kept } = policyFields(previous);
-    const next: ContextPolicy = {
-      ...kept,
-      ...(parsed.value.changes.ceiling ?? (contextCeiling === undefined ? {} : { contextCeiling })),
-      ...(parsed.value.changes.ceiling ?? (contextCeilingTokens === undefined ? {} : { contextCeilingTokens })),
-      ...(parsed.value.changes.compact ?? (compactAt === undefined ? {} : { compactAt })),
-      ...(parsed.value.changes.compact ?? (compactAtTokens === undefined ? {} : { compactAtTokens })),
-      ...(parsed.value.changes.loop === undefined ? {} : { loop: parsed.value.changes.loop }),
-      ...(parsed.value.changes.maxIterations === undefined ? {} : { maxIterations: parsed.value.changes.maxIterations }),
-    };
-    const valid = validateContextPolicy(next);
-    if (valid.kind !== "ok") { policyError = valid.error; return noDispatchChange; }
-    if ((hasCeilingThreshold(next) || hasCompactThreshold(next) || next.loop === true) && agent?.contextSource === undefined) {
-      policyError = `${String(current.agent ?? "unknown")} has no measured context meter`;
-      return noDispatchChange;
-    }
-    if (hasCompactThreshold(next) && agent?.compactCommand === undefined) {
-      policyError = `${String(current.agent ?? "unknown")} has no measured context compact command`;
-      return noDispatchChange;
-    }
-    if (next.loop === true && loopPrompt === "") {
-      policyError = `dispatch ${resolved.value} has no original prompt to loop`;
-      return noDispatchChange;
-    }
-    policy = next;
-    const currentState = record(current.contextPolicyState);
-    return {
-      ...current,
-      contextPolicy: next,
-      contextPolicyState: {
-        ceilingLatched: parsed.value.changes.ceiling === undefined ? currentState.ceilingLatched === true : false,
-        compactLatched: parsed.value.changes.compact === undefined ? currentState.compactLatched === true : false,
-        loopIterations: typeof currentState.loopIterations === "number" ? currentState.loopIterations : 0,
-        actions: Array.isArray(currentState.actions) ? currentState.actions : [],
-      },
-      ...(next.loop === true || hasCompactThreshold(next) ? { contextLoopPrompt: loopPrompt } : {}),
-      updatedAt: new Date().toISOString(),
-    };
-  });
-  if (updated.kind !== "ok") return updated;
-  if (policyError !== undefined) return failed(policyError, policyError.startsWith("--") ? 2 : 1);
-  if (policy === undefined) return failed(`dispatch ${resolved.value} policy was not updated`);
+  if (!["spawning", "running", "waiting_for_reply"].includes(String(meta.state ?? ""))) return failed(`dispatch ${resolved.value} is not active`);
+  const previous = record(meta.contextPolicy);
+  const { contextCeiling, contextCeilingTokens, compactAt, compactAtTokens, ...kept } = policyFields(previous);
+  const policy: ContextPolicy = {
+    ...kept,
+    ...(parsed.value.changes.ceiling ?? (contextCeiling === undefined ? {} : { contextCeiling })),
+    ...(parsed.value.changes.ceiling ?? (contextCeilingTokens === undefined ? {} : { contextCeilingTokens })),
+    ...(parsed.value.changes.compact ?? (compactAt === undefined ? {} : { compactAt })),
+    ...(parsed.value.changes.compact ?? (compactAtTokens === undefined ? {} : { compactAtTokens })),
+    ...(parsed.value.changes.loop === undefined ? {} : { loop: parsed.value.changes.loop }),
+    ...(parsed.value.changes.maxIterations === undefined ? {} : { maxIterations: parsed.value.changes.maxIterations }),
+  };
+  const valid = validateContextPolicy(policy);
+  if (valid.kind !== "ok") return failed(valid.error);
+  if ((hasCeilingThreshold(policy) || hasCompactThreshold(policy) || policy.loop === true) && agent?.contextSource === undefined) return failed(`${String(meta.agent ?? "unknown")} has no measured context meter`);
+  if (hasCompactThreshold(policy) && agent?.compactCommand === undefined) return failed(`${String(meta.agent ?? "unknown")} has no measured context compact command`);
+  if (policy.loop === true && loopPrompt === "") return failed(`dispatch ${resolved.value} has no original prompt to loop`);
+  const currentState = record(meta.contextPolicyState);
+  const patch = {
+    contextPolicy: policy,
+    contextPolicyState: {
+      ceilingLatched: parsed.value.changes.ceiling === undefined ? currentState.ceilingLatched === true : false,
+      compactLatched: parsed.value.changes.compact === undefined ? currentState.compactLatched === true : false,
+      loopIterations: typeof currentState.loopIterations === "number" ? currentState.loopIterations : 0,
+      actions: Array.isArray(currentState.actions) ? currentState.actions : [],
+    },
+    ...(policy.loop === true || hasCompactThreshold(policy) ? { contextLoopPrompt: loopPrompt } : {}),
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    const updated = await callStateOwner(resolveStateDirectory(environment), {
+      operation: "dispatch-patch", dispatchId: resolved.value, patch,
+      expectedState: ["spawning", "running", "waiting_for_reply"],
+    });
+    if (typeof updated === "object" && updated !== null && "updated" in updated && updated.updated === false) return failed(`dispatch ${resolved.value} is not active`);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
   const output = { dispatchId: resolved.value, contextPolicy: policy };
   return ok(parsed.value.changes.json ? `${JSON.stringify(output, null, 2)}\n` : `dispatch: ${resolved.value}\ncontext policy: ${JSON.stringify(policy)}\n`);
 }

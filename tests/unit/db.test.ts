@@ -7,7 +7,7 @@ import { Database } from "bun:sqlite";
 import { route } from "../../src/cli/router.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { createNativeSessionStore } from "../../src/adapters/native-session-store.js";
-import { latestSchemaVersion, openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
+import { latestSchemaVersion, openDatabase, openDatabaseReadOnly, readSnapshot, withWrite, type DatabaseHandle } from "../../src/db/db.js";
 import { getDispatch, insertDispatch, listDispatchesByOwner } from "../../src/db/queries/dispatches.js";
 import { addNativeSession, listNativeSessions } from "../../src/db/queries/native-sessions.js";
 import type { NativeSession } from "../../src/core/native-session.js";
@@ -92,6 +92,33 @@ describe("SQLite database", () => {
     });
   });
 
+  test("keeps the owner request ledger out of versioned schema migration", async () => {
+    await withStateDirectory(async (directory) => {
+      const handle = database(directory);
+      try {
+        expect(latestSchemaVersion).toBe(16);
+        expect(handle.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(16);
+        expect(handle.db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'state_owner_requests'").get()).toBeNull();
+      } finally { handle.close(); }
+    });
+  });
+
+  test("read-only opens read WAL state without permitting writes", async () => {
+    await withStateDirectory(async (directory) => {
+      const writable = database(directory);
+      try { writable.db.run("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)", ["readonly-test", "saved", "now"]); }
+      finally { writable.close(); }
+
+      const opened = openDatabaseReadOnly({ MEGABRAIN_STATE_DIR: directory });
+      expect(opened.kind).toBe("ok");
+      if (opened.kind !== "ok") throw new Error(opened.error);
+      try {
+        expect(opened.value.db.query<{ value: string }>("SELECT value FROM settings WHERE key = ?").get("readonly-test")?.value).toBe("saved");
+        expect(() => opened.value.db.run("UPDATE settings SET value = ? WHERE key = ?", ["changed", "readonly-test"])).toThrow();
+      } finally { opened.value.close(); }
+    });
+  });
+
   test("admission queue migration accepts queued dispatches and preserves version 11 rows", async () => {
     await withStateDirectory(async (directory) => {
       const current = database(directory);
@@ -114,7 +141,7 @@ describe("SQLite database", () => {
         expect(migrated.db.query("PRAGMA foreign_key_check").all()).toEqual([]);
         insertDispatch(migrated.db, { dispatchId: "queued-spawn", state: "queued", parentSessionId: "parent", queuedSpawnArgs: ["--agent", "codex"] });
         expect(getDispatch(migrated.db, "queued-spawn")?.state).toBe("queued");
-        expect(migrated.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(16);
+        expect(migrated.db.query<{ user_version: number }>("PRAGMA user_version").get()?.user_version).toBe(latestSchemaVersion);
       } finally { migrated.close(); }
     });
   });
@@ -345,7 +372,7 @@ describe("SQLite database", () => {
     });
   });
 
-  test("withWrite commits, rolls back on throw, rejects thenables and nesting", async () => {
+  test("withWrite commits, rolls back on throw, rejects thenables and supports nesting", async () => {
     await withStateDirectory(async (directory) => {
       const handle = database(directory);
       try {
@@ -356,9 +383,15 @@ describe("SQLite database", () => {
         const asyncResult = withWrite(handle, (() => Promise.resolve("late")) as () => unknown);
         expect(asyncResult.kind).toBe("failed");
         expect(asyncResult.kind === "failed" ? asyncResult.error : "").toContain("synchronous");
-        const nested = withWrite(handle, () => withWrite(handle, () => "inner"));
-        expect(nested.kind).toBe("failed");
-        expect(handle.db.query<{ value: number }>("SELECT value FROM counter").get()?.value).toBe(1);
+        const nested = withWrite(handle, () => withWrite(handle, (db) => { db.run("UPDATE counter SET value = value + 1"); return "inner"; }));
+        expect(nested).toEqual({ kind: "ok", value: { kind: "ok", value: "inner" } });
+        const rolledBack = withWrite(handle, (db) => {
+          db.run("UPDATE counter SET value = value + 1");
+          withWrite(handle, (nestedDb) => nestedDb.run("UPDATE counter SET value = value + 1"));
+          throw new Error("rollback outer transaction");
+        });
+        expect(rolledBack.kind).toBe("failed");
+        expect(handle.db.query<{ value: number }>("SELECT value FROM counter").get()?.value).toBe(2);
       } finally {
         handle.close();
       }
@@ -524,8 +557,8 @@ describe("SQLite database", () => {
     await withStateDirectory(async (directory) => {
       const store = createNativeSessionStore({ MEGABRAIN_STATE_DIR: directory });
       expect(store.available).toBe(true);
-      const result = store.update((sessions) => ({ sessions: [...sessions, firstSession], value: "written" }));
-      expect(result).toEqual({ kind: "ok", value: "written" });
+      const result = await store.upsertIfCurrent(firstSession, null);
+      expect(result).toEqual({ kind: "ok", value: true });
 
       const second = database(directory);
       try {
@@ -541,8 +574,8 @@ describe("SQLite database", () => {
       const first = createNativeSessionStore({ MEGABRAIN_STATE_DIR: directory });
       const second = createNativeSessionStore({ MEGABRAIN_STATE_DIR: directory });
       const results = await Promise.all([
-        first.update((sessions) => ({ sessions: [...sessions, firstSession], value: undefined })),
-        second.update((sessions) => ({ sessions: [...sessions, secondSession], value: undefined })),
+        first.upsertIfCurrent(firstSession, null),
+        second.upsertIfCurrent(secondSession, null),
       ]);
       expect(results.every((result) => result.kind === "ok")).toBe(true);
 
@@ -561,7 +594,7 @@ describe("SQLite database", () => {
       const store = createNativeSessionStore({ MEGABRAIN_STATE_DIR: "", HOME: directory });
       expect(store.available).toBe(false);
       expect(store.path).toBeUndefined();
-      expect(store.update((sessions) => ({ sessions, value: undefined }))).toEqual({
+      expect(await store.upsertIfCurrent(firstSession, null)).toEqual({
         kind: "failed",
         error: "native session store has no resolvable state directory",
         exitCode: 1,

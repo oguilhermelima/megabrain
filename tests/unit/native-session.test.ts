@@ -1,5 +1,6 @@
 import { guardedOpenDatabase } from "./state-db-guard.js";
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -96,6 +97,19 @@ afterEach(async () => {
 });
 
 describe("native Appium session store", () => {
+  test("prepares legacy state before the first session read", async () => {
+    const directory = await fixture();
+    await seed(directory, [{ udid: "one", bundleId: "com.example.app", sessionId: "live-session" }]);
+    const processAdapter = processStub();
+
+    await health(directory, processAdapter);
+
+    const posts = processAdapter.calls.filter((call) => call.command === "curl" && call.args.includes("http://127.0.0.1:4723/session"));
+    expect(posts).toHaveLength(0);
+    expect(processAdapter.calls.some((call) => call.args[1] === "http://127.0.0.1:4723/session/live-session")).toBe(true);
+    expect(existsSync(join(directory, "megabrain.db"))).toBe(true);
+  });
+
   test("reuses a verified session without creating another one", async () => {
     const directory = await fixture();
     await seed(directory, [{ udid: "one", bundleId: "com.example.app", sessionId: "live-session" }]);

@@ -8,7 +8,7 @@ import { repositoryCheckout } from "../../../core/project-registry.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { resolveStateDirectory } from "../../../core/state.js";
 import { usageMessage, usageText, type UsageKey } from "../../../core/usage.js";
-import { openDatabase } from "../../../db/db.js";
+import { openDatabaseReadOnly } from "../../../db/db.js";
 import { findRepository, type RepositoryRecord } from "../../../db/queries/repositories.js";
 
 import { Environment, Clock, Verb, ReviewVerb, FlowVerb, Person, Label, Assignee, CheckState, GithubRepository, CACHE_TTL, DEFAULT_LIMIT, MAX_LIMIT, GH_TIMEOUT, VIEWED_QUERY, AUTHOR, LABELS, PR_QUERY, ISSUE_QUERY, PR_VIEW_FIELDS, ISSUE_VIEW_FIELDS, STATES, USAGE, REVIEW_VERBS, FLOW_VERBS, FLOW_WRITES, REVIEW_EVENTS, ISSUE_REASONS, MERGE_METHODS, record, text, nullableText, count, list, person, labels, assignees, lowerState, reviewDecision, checkState, checks, milestone, pullRequest, issue, detail, page, graphqlError, listCommand, Options, parseOptions, listingText, detailText, PullRequestFile, ReviewComment, ReviewEvent, PullRequestAction, FILE_STATUSES, writeCall, FILES_PAGE_SIZE, MAX_FILE_PAGES, normalizeFiles, filesCall, viewedStates, prFilesPage, prFile, MAX_THREAD_PAGES, THREADS_QUERY, REVIEWERS_QUERY, PULL_REQUEST_ID_QUERY, ASSIGNABLE_QUERY, AUTO_MERGE_METHODS, FAILED_CONCLUSIONS, LOGIN, ReviewThread, pullRequestNode, threadComment, prThreads, replyThread, resolveThread, requestedReviewer, prReviewers, requestReview, pullRequestId, pullRequestMutation, setPrReady, setAutoMerge, setFileViewed, rerunChecks, IMAGE_LIMIT, IMAGE_TYPES, ImageLocation, imageLocation, repositoryImage, assignable, submitReview, addComment, setIssueState, setPrState, ReviewOptions, parseComments, parseReviewOptions, FlowSpec, FLOW_SPECS, FlowOptions, parseFlow, wholeNumber, fileLine, personLine, executeFlow, executeReview, executeGithub } from "./index.js";
@@ -22,7 +22,7 @@ export function githubNameWithOwner(remote: string | null): string | null {
 }
 
 export function registered(environment: Environment, selectors: readonly string[]): RepositoryRecord | undefined {
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return undefined;
   try {
     for (const selector of selectors) {

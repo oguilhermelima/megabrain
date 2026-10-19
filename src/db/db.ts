@@ -21,6 +21,7 @@ import hiddenItemsMigration from "./schema/016-hidden-items.sql" with { type: "t
 import { importNativeSessions } from "./queries/native-sessions.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
+import { ensureStateOwnerForRead } from "./state-owner-runtime.js";
 
 const BUSY_TIMEOUT_MILLISECONDS = 5_000;
 const DEFAULT_BUSY_SECONDS = 30;
@@ -155,6 +156,7 @@ export type DatabaseIntegrityReport = Readonly<{
 type NotThenable<T> = T extends PromiseLike<unknown> ? never : T;
 export type Synchronous<T> = (db: DatabaseAdapter) => NotThenable<T>;
 const activeTransactions = new WeakSet<DatabaseHandle>();
+const nestedTransactionSequence = new WeakMap<DatabaseHandle, number>();
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
@@ -246,7 +248,7 @@ export function inspectDatabase(environment: StateEnvironment): Result<DatabaseI
   if (!existsSync(path)) return ok(undefined);
   let db: DatabaseAdapter | undefined;
   try {
-    db = openRuntimeDatabase(path);
+    db = openRuntimeDatabase(path, true);
     const quickCheck = db.query<{ quick_check: string }>("PRAGMA quick_check").all().map((row) => row.quick_check);
     const foreignKeyViolations = db.query<Record<string, unknown>>("PRAGMA foreign_key_check").all();
     const userVersion = pragmaNumber(db, "user_version");
@@ -424,6 +426,46 @@ export function openDatabase(environment: StateEnvironment, build: BuildIdentity
   }
 }
 
+/** Opens an existing state database for queries without migration or WAL-changing setup. */
+export function openDatabaseReadOnly(environment: StateEnvironment): Result<DatabaseHandle> {
+  let path: string;
+  try {
+    const configured = environment.MEGABRAIN_STATE_DIR ?? environment.HOME;
+    if (configured === undefined || configured === "") return failed("resolve failed: no state directory is configured");
+    path = resolve(resolveStateDirectory(environment), "megabrain.db");
+  } catch (cause: unknown) {
+    return failed(`resolve failed: ${errorMessage(cause)}`);
+  }
+  if (!existsSync(path)) {
+    try { ensureStateOwnerForRead(dirname(path), environment); }
+    catch (cause: unknown) { return failed(`open failed: state owner could not initialize the database: ${errorMessage(cause)}`); }
+    if (!existsSync(path)) return failed(`open failed: state owner did not create the database: ${path}`);
+  }
+
+  let db: DatabaseAdapter | undefined;
+  try {
+    db = openRuntimeDatabase(path, true);
+    db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MILLISECONDS}`);
+    db.exec("PRAGMA foreign_keys = ON");
+    const applicationId = pragmaNumber(db, "application_id");
+    if (applicationId !== 0 && applicationId !== APPLICATION_ID) {
+      throw new Error(`database application_id ${applicationId} belongs to another application (expected ${APPLICATION_ID})`);
+    }
+    const actual = pragmaNumber(db, "user_version");
+    if (actual > latestSchemaVersion) throw new Error(newerSchemaMessage(db, path, String(actual), "user_version"));
+    const hasMigrationTable = db.query<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'").get() !== null;
+    if (hasMigrationTable) {
+      const applied = db.query<{ version: number }>("SELECT max(version) AS version FROM schema_migrations").get()?.version ?? 0;
+      if (applied > latestSchemaVersion) throw new Error(newerSchemaMessage(db, path, String(applied), "migration version"));
+    }
+    const handle: DatabaseHandle = { path, db, close: () => db?.close() };
+    return ok(handle);
+  } catch (cause: unknown) {
+    try { db?.close(); } catch { /* preserve the open failure */ }
+    return failed(`read-only open failed: ${errorMessage(cause)}`);
+  }
+}
+
 function isBusy(cause: unknown): boolean {
   const message = errorMessage(cause).toLowerCase();
   const code = typeof cause === "object" && cause !== null && "code" in cause ? String(cause.code).toUpperCase() : "";
@@ -452,7 +494,27 @@ function isThenable(value: unknown): boolean {
 }
 
 function transaction<T>(handle: DatabaseHandle, begin: "IMMEDIATE" | "DEFERRED", fn: (db: DatabaseAdapter) => T): Result<T> {
-  if (activeTransactions.has(handle)) throw new Error("nested database transactions on the same handle are not allowed");
+  if (activeTransactions.has(handle)) {
+    const sequence = (nestedTransactionSequence.get(handle) ?? 0) + 1;
+    nestedTransactionSequence.set(handle, sequence);
+    const savepoint = `megabrain_nested_${sequence}`;
+    try { handle.db.run(`SAVEPOINT ${savepoint}`); }
+    catch (cause: unknown) { return failed(`nested transaction begin failed: ${errorMessage(cause)}`); }
+    try {
+      const value = fn(handle.db);
+      if (isThenable(value)) {
+        handle.db.run(`ROLLBACK TO ${savepoint}`);
+        handle.db.run(`RELEASE ${savepoint}`);
+        return failed("database transactions must be synchronous");
+      }
+      handle.db.run(`RELEASE ${savepoint}`);
+      return ok(value);
+    } catch (cause: unknown) {
+      try { handle.db.run(`ROLLBACK TO ${savepoint}`); } catch { /* preserve the nested failure */ }
+      try { handle.db.run(`RELEASE ${savepoint}`); } catch { /* preserve the nested failure */ }
+      return failed(`nested transaction failed: ${errorMessage(cause)}`);
+    }
+  }
   activeTransactions.add(handle);
   const budget = busySeconds() * 1000;
   const deadline = Date.now() + budget;

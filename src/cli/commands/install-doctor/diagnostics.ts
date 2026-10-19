@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";import { basename, join, resolve } from "node:path";import { ok } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { resolveStateDirectory } from "../../../core/state.js";import { pruneDecision, pruneStates } from "../../../core/orchestrate-prune.js";import { getTmux } from "../../../hosts/tmux.js";import { tmuxCallerPaneSession } from "../queue-write.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { discoverAgentDirectories } from "../../../core/agent-directories.js";import { getInstallState, listDispatches, stateDatabase } from "../../../adapters/state-db.js";
+import { existsSync, readFileSync } from "node:fs";import { basename, join, resolve } from "node:path";import { ok } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { resolveStateDirectory } from "../../../core/state.js";import { pruneDecision, pruneStates } from "../../../core/orchestrate-prune.js";import { getTmux } from "../../../hosts/tmux.js";import { tmuxCallerPaneSession } from "../queue-write.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { discoverAgentDirectories } from "../../../core/agent-directories.js";import { getInstallState, listDispatches, readOnlyStateDatabase } from "../../../adapters/state-db.js";
 import type { HookAgent } from "./hook-config.js";
 export type Environment = Readonly<Record<string, string | undefined>>;
 export type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
@@ -13,7 +13,7 @@ export async function succeeds(process: ProcessAdapter, command: string, args: r
 }
 
 export function readState(environment: Environment): State {
-  const opened = stateDatabase(environment);
+  const opened = readOnlyStateDatabase(environment);
   if (opened.kind !== "ok") return {};
   const loaded = getInstallState(opened.value);
   return loaded.kind === "ok" ? loaded.value as State : {};
@@ -219,7 +219,7 @@ export const PRUNE_DEFAULT_DAYS = 7;
 
 export async function dispatchHealth(environment: Environment, process: ProcessAdapter): Promise<DispatchHealth> {
   const result: DispatchHealth = emptyCounts();
-  const opened = stateDatabase(environment);
+  const opened = readOnlyStateDatabase(environment);
   if (opened.kind !== "ok") return result;
   const listed = listDispatches(opened.value);
   if (listed.kind !== "ok") return result;

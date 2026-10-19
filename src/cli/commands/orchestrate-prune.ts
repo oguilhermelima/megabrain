@@ -9,9 +9,10 @@ import { getHost } from "../../hosts/index.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { hostCloseReason, isHostTerminalAbsent } from "../../core/orchestrate-close.js";
 import { usageText } from "../../core/usage.js";
-import { stateDatabase, listDispatches, listMessages, mutateDispatch, archiveDispatch, deleteDispatch, transcriptPath } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, listDispatches, listMessages, transcriptPath } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 type RecordValue = Record<string, unknown>;
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -50,7 +51,7 @@ function childIdentityProof(handle: DatabaseHandle, dispatchId: string): boolean
   return messages.kind === "ok" && messages.value.some((message) => message.from === "child");
 }
 
-async function reconcileEntry(handle: DatabaseHandle, entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
+async function reconcileEntry(root: string, handle: DatabaseHandle, entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
   const state = text(entry.meta.state);
   const processState = text(entry.meta.processState);
   const terminalState = text(entry.meta.terminalState);
@@ -65,11 +66,11 @@ async function reconcileEntry(handle: DatabaseHandle, entry: Entry, process: Pro
   const decision = reconcileDecision(entry.meta, proven ? "proven" : terminal, parent);
   if (decision.outcome === "unchanged") return entry.meta;
   const next: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  const updated = mutateDispatch(handle, entry.id, () => next);
-  if (updated.kind === "ok" && next.state !== entry.meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
+  await callStateOwner(root, { operation: "dispatch-patch", dispatchId: entry.id, patch: next });
+  if (next.state !== entry.meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
     await setTmuxChatPane(next.tmuxPane, text(next.agent) || "unknown", text(next.chatName) || text(next.branch) || entry.id, text(next.state) || "idle", process);
   }
-  return updated.kind === "ok" ? updated.value : entry.meta;
+  return next;
 }
 
 function hostTerminalArgs(meta: RecordValue): { readonly command: string; readonly args: readonly string[]; readonly host: string } | undefined {
@@ -141,55 +142,58 @@ export async function tmuxCallerSession(environment: Environment, process: Proce
   return tmuxCallerPaneSession(environment, process);
 }
 
-function entries(handle: DatabaseHandle): Entry[] {
+async function entries(root: string, handle: DatabaseHandle): Promise<Entry[]> {
   const records = listDispatches(handle);
   if (records.kind !== "ok") return [];
-  return records.value.map((record) => {
+  return Promise.all(records.value.map(async (record) => {
     const meta = normalizeMetadata(record as RecordValue);
     if (meta !== record) {
-      const updated = mutateDispatch(handle, record.dispatchId, () => meta);
-      if (updated.kind === "ok") return { id: record.dispatchId, meta: updated.value as RecordValue };
+      await callStateOwner(root, { operation: "dispatch-patch", dispatchId: record.dispatchId, patch: meta });
     }
     return { id: record.dispatchId, meta };
-  });
+  }));
 }
 
 export async function executeOrchestratePrune(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-prune"));
   const parsed = parsePruneArgs(args); if (parsed.kind !== "ok") return parsed;
   const options: PruneOptions = parsed.value; const root = resolveStateDirectory(environment); const now = new Date(); const month = now.toISOString().slice(0, 7);
-  const opened = stateDatabase(environment);
+  const opened = readOnlyStateDatabase(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   const handle = opened.value;
   const archived: Array<{ dispatchId: string; path: string }> = []; const deleted: string[] = []; const skipped: Array<{ dispatchId: string; state: string | null; reason: string }> = []; const terminalNotProvenGone: Array<{ dispatchId: string; reason: string }> = [];
-  for (const entry of entries(handle)) {
+  let candidates: Entry[];
+  try { candidates = await entries(root, handle); }
+  catch (cause: unknown) { return failed(`state owner could not normalize prune candidates: ${cause instanceof Error ? cause.message : String(cause)}`); }
+  for (const entry of candidates) {
     let meta = entry.meta;
-    try { meta = await reconcileEntry(handle, entry, process); } catch { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not reconcile dispatch" }); continue; }
+    try { meta = await reconcileEntry(root, handle, entry, process); } catch (cause: unknown) { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: `could not reconcile dispatch: ${cause instanceof Error ? cause.message : String(cause)}` }); continue; }
     const decision = pruneDecision(meta, options, now);
     if (!decision.eligible) { skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: decision.reason ?? "not eligible" }); continue; }
     const released = await releaseBeforePrune(meta, environment, process, options.dryRun);
     if (released.kind === "unproven") {
       terminalNotProvenGone.push({ dispatchId: entry.id, reason: released.reason });
-      if (!options.dryRun) mutateDispatch(handle, entry.id, () => ({
-        ...meta,
-        terminalState: "retained",
-        terminalReason: released.reason,
-        updatedAt: new Date().toISOString(),
-      }));
+      if (!options.dryRun) {
+        try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: entry.id, patch: { terminalState: "retained", terminalReason: released.reason, updatedAt: new Date().toISOString() } }); }
+        catch (cause: unknown) { return failed(`state owner could not retain dispatch ${entry.id}: ${cause instanceof Error ? cause.message : String(cause)}`); }
+      }
       continue;
     }
     if (released.kind === "blocked") { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: released.reason }); continue; }
     if (options.mode === "archive") {
       archived.push({ dispatchId: entry.id, path: handle.path });
       if (!options.dryRun) {
-        const result = archiveDispatch(handle, entry.id, now.toISOString());
-        if (result.kind !== "ok" || !result.value) { archived.pop(); skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not archive dispatch" }); }
+        let result: { changed?: boolean };
+        try { result = await callStateOwner(root, { operation: "dispatch-prune", action: "archive", dispatchId: entry.id, archivedAt: now.toISOString() }) as { changed?: boolean }; }
+        catch (cause: unknown) { return failed(`state owner could not archive dispatch ${entry.id}: ${cause instanceof Error ? cause.message : String(cause)}`); }
+        if (result.changed !== true) { archived.pop(); skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not archive dispatch" }); }
       }
     } else {
       if (options.dryRun) deleted.push(entry.id);
       else {
-        const result = deleteDispatch(handle, entry.id);
-        if (result.kind !== "ok" || !result.value) skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not delete dispatch" });
+        let changed = false;
+        try { changed = (await callStateOwner(root, { operation: "dispatch-prune", action: "delete", dispatchId: entry.id }) as { changed?: boolean }).changed === true; } catch { /* reported below */ }
+        if (!changed) skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: "could not delete dispatch" });
         else {
           deleted.push(entry.id);
           const path = transcriptPath(environment, entry.id);

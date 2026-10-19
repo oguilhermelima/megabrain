@@ -18,7 +18,9 @@ import { createTmuxLauncher, createTmuxSession, dispatchTmuxProcess, getTmux, on
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, recordChannelResult, releaseLease } from "../../adapters/state-db.js";
+import { stateDatabase, readOnlyStateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, getDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
+import { recordChannelResultThroughOwner } from "../../db/state-owner.js";
 import { sendSessionMessage } from "../../core/session-send.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
@@ -105,7 +107,22 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const existingWorktreeSession = selectedRuntime === "tmux" && !sameWorktree
     ? await existingTmuxSessionForWorktree(root, worktree.path, process)
     : undefined;
-  const parentContext = await resolveCaller(environment, process);
+  let queuedParent: RecordValue | undefined;
+  if (environment.MEGABRAIN_SPAWN_DISPATCH_ID !== undefined) {
+    const opened = readOnlyStateDatabase(environment);
+    if (opened.kind === "ok") {
+      const prior = getDispatch(opened.value, id);
+      if (prior.kind === "ok" && prior.value?.admissionQueueEntry === true) queuedParent = prior.value as RecordValue;
+    }
+  }
+  const resolvedParentContext = await resolveCaller(environment, process);
+  const parentContext = queuedParent === undefined ? resolvedParentContext : {
+    id: stringValue(queuedParent.parentSessionId) ?? resolvedParentContext.id,
+    host: stringValue(queuedParent.parentHost) ?? resolvedParentContext.host,
+    terminalId: stringValue(queuedParent.parentTerminalId) ?? null,
+    tmuxSession: stringValue(queuedParent.parentTmuxSession) ?? null,
+    tmuxPane: stringValue(queuedParent.parentTmuxPane) ?? null,
+  };
   const placement = decideTmuxPlacement({ callerInTmux, sameWorktree, tmuxRuntimeSelected: selectedRuntime === "tmux", existingSession: existingWorktreeSession !== undefined });
   // A caller under no terminal host (a plain shell, a bare agent session) has no host terminal to
   // open a tab in, so its children always run in tmux.
@@ -115,8 +132,11 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     const budget = validatePromptBudget(prompt, runtime);
     if (budget.kind !== "ok") return budget;
   }
-  const parentWorkspace = parentWorkspaceId(environment);
-  const parentTmux = parentTmuxChannel(environment);
+  const parentWorkspace = queuedParent === undefined ? parentWorkspaceId(environment) : stringValue(queuedParent.parentWorkspaceId) ?? null;
+  const parentTmux = queuedParent === undefined ? parentTmuxChannel(environment) : {
+    tmuxSession: stringValue(queuedParent.parentTmuxSession) ?? null,
+    tmuxPane: stringValue(queuedParent.parentTmuxPane) ?? null,
+  };
   const chatName = options.label ?? worktree.branch;
   // Antigravity names its conversation only in its log; a per-dispatch log lets the context meter find it.
   // A Grok child runs its own leader so a reply can enter its session queue without typing.
@@ -142,7 +162,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   // has not yet collected a sample for this agent.
   const policy = await readAdmissionPolicy(environment);
   if (policy !== undefined) {
-    const admissionDatabase = stateDatabase(environment);
+    const admissionDatabase = readOnlyStateDatabase(environment);
     if (admissionDatabase.kind !== "ok") return failed(admissionDatabase.error, admissionDatabase.exitCode);
     const estimates = estimateTypicalRssByAgent(admissionDatabase.value);
     const machine = await readMachineResources(process);
@@ -158,10 +178,8 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     if (admission.status === "queued") {
       if (options.admission === "fail") { trace.reason = "admission-refused"; return failed(`spawn refused: ${admission.reason}`, 1); }
       if (prior.value?.admissionQueueEntry === true && ["queued", "spawning"].includes(String(prior.value.state))) {
-        const updated = mutateDispatch(admissionDatabase.value, id, (current) => ["queued", "spawning"].includes(String(current.state))
-          ? { ...current, state: "queued", admissionReason: admission.reason }
-          : { kind: "no_change" });
-        if (updated.kind !== "ok" || updated.value.state !== "queued") return failed(`queued spawn ${id} was cancelled before it could start`);
+        const updated = await callStateOwner(root, { operation: "dispatch-patch", dispatchId: id, expectedState: ["queued", "spawning"], patch: { state: "queued", admissionReason: admission.reason } }) as RecordValue;
+        if (updated.updated === false || updated.state !== "queued") return failed(`queued spawn ${id} was cancelled before it could start`);
       } else {
         const parentChatName = await coordinatorChatName(environment, process);
         const queuedMeta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, "", null, null, null, parentChatName, environment.CODEX_THREAD_ID, environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude" : resolveAgentDescriptor(environment.AI_AGENT ?? ""), environment.CLAUDE_CODE_SESSION_ID);
@@ -169,8 +187,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
           state: "queued", processState: "starting", terminalState: "missing", admissionReason: admission.reason,
           queuedSpawnArgs: [...args], queuedAt: new Date().toISOString(), admissionQueueEntry: true,
         });
-        const saved = createDispatch(admissionDatabase.value, queuedMeta);
-        if (saved.kind !== "ok") return saved;
+        await callStateOwner(root, { operation: "dispatch-create", dispatch: queuedMeta });
       }
       const currentQueue = listDispatches(admissionDatabase.value);
       if (currentQueue.kind !== "ok") return currentQueue;
@@ -184,10 +201,8 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     }
     if (prior.value?.admissionQueueEntry === true) {
       if (prior.value.state === "queued") {
-        const claimed = mutateDispatch(admissionDatabase.value, id, (current) => current.state === "queued" && current.admissionQueueEntry === true
-          ? { ...current, state: "spawning", admissionClaimedAt: new Date().toISOString() }
-          : { kind: "no_change" });
-        if (claimed.kind !== "ok" || claimed.value.state !== "spawning" || claimed.value.admissionQueueEntry !== true) return failed(`queued spawn ${id} was cancelled before it could start`);
+        const claimed = await callStateOwner(root, { operation: "dispatch-patch", dispatchId: id, expectedState: "queued", patch: { state: "spawning", admissionClaimedAt: new Date().toISOString() } }) as RecordValue;
+        if (claimed.updated === false || claimed.state !== "spawning" || claimed.admissionQueueEntry !== true) return failed(`queued spawn ${id} was cancelled before it could start`);
       } else if (prior.value.state !== "spawning") return failed(`queued spawn ${id} was cancelled before it could start`);
     }
   }
@@ -241,15 +256,15 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     const identifiedSession = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{session_id}"]);
     const stableSessionId = identifiedSession.kind === "ok" ? identifiedSession.value.stdout.trim() : "";
     sessionId = /^\$\d+$/.test(stableSessionId) ? stableSessionId : null;
-    const registry = stateDatabase(environment);
+    const registry = readOnlyStateDatabase(environment);
     if (registry.kind !== "ok") return failed(registry.error, registry.exitCode);
     const priorSession = getTmuxSession(registry.value, session);
     if (priorSession.kind !== "ok") return failed(priorSession.error, priorSession.exitCode);
     if (sessionId !== null) {
-      const stale = await removeStaleStableSession(registry.value, session, sessionId, process);
+      const stale = await removeStaleStableSession(root, registry.value, session, sessionId, process);
       if (stale.kind !== "ok") return failed(stale.error, stale.exitCode);
     }
-    const savedSession = putTmuxSession(registry.value, {
+    const sessionRecord = {
       ...(priorSession.value ?? {}),
       tmuxSession: session,
       workingDirectory: await canonicalPath(worktree.path),
@@ -259,8 +274,12 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       hostTerminalId: hostTerminalId ?? priorSession.value?.hostTerminalId ?? null,
       hostTerminalHost: hostTerminalHost ?? priorSession.value?.hostTerminalHost ?? null,
       workspaceId: worktree.workspaceId ?? parentWorkspace,
-    }, sessionId ?? (stringValue(priorSession.value?.stableSessionId) || null));
-    if (savedSession.kind !== "ok") return failed(savedSession.error, savedSession.exitCode);
+    };
+    try {
+      await callStateOwner(root, { operation: "tmux-session-write", action: "upsert", record: sessionRecord, stableSessionId: sessionId ?? (stringValue(priorSession.value?.stableSessionId) || null) });
+    } catch (cause: unknown) {
+      return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
     // The CHILD's own identity, never the caller's: session/pane are always the pane this
     // dispatch actually runs in (freshly split or created above), even when the split reuses the
     // caller's own tmux session — the caller's own pane and this dispatch's pane are always
@@ -292,12 +311,15 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   // Neither agy nor Grok sets AI_AGENT in its tool shells; each sets its own marker (measured).
   const parentAgent = environment.CODEX_THREAD_ID !== undefined ? "codex" : environment.CLAUDE_CODE_SESSION_ID !== undefined ? "claude"
     : environment.ANTIGRAVITY_AGENT === "1" ? "agy" : environment.GROK_AGENT === "1" ? "grok" : resolveAgentDescriptor(environment.AI_AGENT ?? "");
-  const parentAgentSessionId = parentAgent === "claude" ? environment.CLAUDE_CODE_SESSION_ID : undefined;
-  const parentAgentPid = parentAgentSessionId !== undefined && environment.HOME !== undefined
+  const parentAgentSessionId = queuedParent === undefined
+    ? parentAgent === "claude" ? environment.CLAUDE_CODE_SESSION_ID : undefined
+    : stringValue(queuedParent.parentAgentSessionId);
+  const parentAgentPid = queuedParent === undefined && parentAgentSessionId !== undefined && environment.HOME !== undefined
     ? await findClaudeSessionPid(parentAgentSessionId, environment.HOME, process)
-    : undefined;
-  const parentChatName = await coordinatorChatName(environment, process);
-  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, environment.CODEX_THREAD_ID, parentAgent, parentAgentSessionId, parentAgentPid);
+    : queuedParent === undefined ? undefined : typeof queuedParent.parentAgentPid === "number" ? queuedParent.parentAgentPid : undefined;
+  const parentAgentThreadId = queuedParent === undefined ? environment.CODEX_THREAD_ID : stringValue(queuedParent.parentAgentThreadId);
+  const parentChatName = queuedParent === undefined ? await coordinatorChatName(environment, process) : stringValue(queuedParent.parentChatName) ?? await coordinatorChatName(environment, process);
+  const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, parentAgentThreadId, queuedParent === undefined ? parentAgent : stringValue(queuedParent.parentAgent) ?? parentAgent, parentAgentSessionId, parentAgentPid);
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
   if (leaderSocket !== undefined) Object.assign(meta, { grokLeaderSocket: leaderSocket });
@@ -308,16 +330,14 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   if (parentAgent === "grok" && environment.GROK_LEADER_SOCKET && environment.GROK_SESSION_ID) {
     Object.assign(meta, { parentGrokLeaderSocket: environment.GROK_LEADER_SOCKET, parentGrokSessionId: environment.GROK_SESSION_ID });
   }
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const existingDispatch = getDispatch(database.value, id);
   if (existingDispatch.kind !== "ok") return existingDispatch;
   if (existingDispatch.value?.admissionQueueEntry === true && ["queued", "spawning"].includes(String(existingDispatch.value.state))) {
-    const updated = mutateDispatch(database.value, id, (current) => ({ ...current, ...meta, dispatchId: id, admissionQueueEntry: false }));
-    if (updated.kind !== "ok") return updated;
+    await callStateOwner(root, { operation: "dispatch-patch", dispatchId: id, patch: { ...meta, dispatchId: id, admissionQueueEntry: false } });
   } else {
-    const createdDispatch = createDispatch(database.value, meta);
-    if (createdDispatch.kind !== "ok") return createdDispatch;
+    await callStateOwner(root, { operation: "dispatch-create", dispatch: meta });
   }
   trace.dispatchId = id;
   trace.terminalId = terminalId;
@@ -387,7 +407,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       }
       if (waited.result.kind !== "ok") {
         readinessError = waited.result.error;
-        recordRejectedReadinessFrame(root, id, options.agent, readinessTimeoutMs, waited.lastFrame);
+        await recordRejectedReadinessFrame(root, id, options.agent, readinessTimeoutMs, waited.lastFrame);
       }
       outcome = waited.result.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
     } else if (step === "prompt-transport") {
@@ -414,7 +434,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
             const result = await runHostSend(childHost ?? "", process, call.value);
             return result.kind === "ok" ? true : { delivered: false, detail: result.kind === "failed" ? result.error : result.reason };
           } },
-          recordChannel: (channel) => { recordChannelResult(database.value, { agent: options.agent, channel, agentVersion: "unknown", ok: true }); },
+          recordChannel: async (channel) => { await recordChannelResultThroughOwner(root, { agent: options.agent, channel, agentVersion: "unknown", ok: true }); },
         });
         if (!sent.delivered) outcome = { kind: "prompt-transport", status: "failed", failure: { call: `${childHost} terminal send`, detail: sent.detail ?? "session message was not delivered" } };
         else outcome = settleHostReceipt(root, id);
@@ -436,7 +456,8 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     if (step === "prompt-confirmation" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptDelivered: true, promptDelivery: "delivered", promptState: "confirmed" });
     if (plan.action === "fail") Object.assign(metadataUpdate, { state: plan.state.dispatch, processState: plan.state.process, terminalState: plan.state.terminal, reason: plan.reason, promptState: "failed" });
     if (outcome.kind === "prompt-transport" && outcome.receiptMissing !== undefined) receiptMissing = outcome.receiptMissing;
-    await updateMeta(root, id, metadataUpdate, process);
+    const metadataSaved = await updateMeta(root, id, metadataUpdate, process);
+    if (metadataSaved.kind !== "ok") return metadataSaved;
     if (step === "prompt-transport" && outcome.kind === "prompt-transport" && (outcome.status === "delivered" || outcome.status === "turn-without-receipt")) {
       const marked = await markRunningIfSpawning(root, id, process);
       if (marked.kind !== "ok") return marked;

@@ -6,21 +6,22 @@ import { findChild, type QueueEnvironment } from "./queue-write.js";
 import { resolveConsumerIdentity, type ConsumerIdentityInput } from "../../core/identity.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
-import { acknowledgeImplicitDelivery, claimDelivery, createDelivery, listDeliveries, listMessages, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { listDeliveries, listMessages, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import type { DeliveryRecord } from "../../db/queries/deliveries.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 export type CheckEnvironment = Readonly<Record<string, string | undefined>>;
 export type CheckOptions = Readonly<{ acknowledge?: boolean; excludedTransports?: readonly string[] }>;
 
 function checkMessages(root: string, dispatch: string): CheckMessage[] {
-  const db = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const db = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (db.kind !== "ok") return [];
   const result = listMessages(db.value, dispatch);
   return result.kind === "ok" ? result.value.map((message) => ({ ...message, path: `db:${dispatch}:${message.seq}`, from: message.from, type: message.type, text: message.text })) : [];
 }
 
 function checkDeliveries(root: string, dispatch: string): CheckDelivery[] {
-  const db = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const db = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (db.kind !== "ok") return [];
   const result = listDeliveries(db.value, dispatch);
   return result.kind === "ok" ? result.value as unknown as CheckDelivery[] : [];
@@ -47,7 +48,7 @@ export async function loadMessages(root: string, dispatch: string): Promise<Chec
 export async function loadDeliveries(root: string, dispatch: string): Promise<CheckDelivery[]> { return checkDeliveries(root, dispatch); }
 
 export async function migrateDeliveries(root: string, dispatch: string, messages: readonly CheckMessage[], deliveries: readonly CheckDelivery[]): Promise<void> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   for (const message of messages) {
     if (deliveries.some((delivery) => delivery.messageSeqs.includes(message.seq))) continue;
@@ -58,11 +59,10 @@ export async function migrateDeliveries(root: string, dispatch: string, messages
       : classification === "actionable" || classification === "protocol" ? "parent" : undefined;
     if (recipient === undefined) continue;
     const now = new Date().toISOString();
-    const created = createDelivery(database.value, {
+    await callStateOwner(root, { operation: "create-delivery", delivery: {
       id: `delivery-${Date.now()}-${message.seq}`, dispatchId: dispatch, recipient, consumer: null, consumerGeneration: null,
       messageSeqs: [message.seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null,
-    });
-    if (created.kind !== "ok") throw new Error(created.error);
+    } });
   }
 }
 
@@ -98,7 +98,7 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
   const resolvedDispatch = await dispatchId(environment, root, processAdapter);
   if (resolvedDispatch.kind !== "ok") return resolvedDispatch;
   const dispatch = resolvedDispatch.value;
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME });
   if (database.kind !== "ok") return database;
   const resolvedIdentity = resolveConsumerIdentity({
     ...(await childIdentity(environment, processAdapter)), mailbox: "child", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID,
@@ -114,15 +114,16 @@ export async function executeCheck(args: readonly string[], environment: CheckEn
     const selected = selectDelivery("child", full, checkDeliveries(root, dispatch), messages, resolvedConsumer, generation, options.excludedTransports);
     if (selected.kind === "selected") {
       if (selected.delivery.consumer === null) {
-        const claim = claimDelivery(database.value, selected.delivery.id, resolvedConsumer, generation);
-        if (claim.kind !== "ok") return claim;
-        if (claim.value === undefined) continue;
+        let claim: DeliveryRecord | undefined;
+        try { claim = await callStateOwner(root, { operation: "claim-delivery", id: selected.delivery.id, consumer: resolvedConsumer, generation }) as DeliveryRecord | undefined; }
+        catch (cause: unknown) { return failed(`state owner delivery claim failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+        if (claim === undefined) continue;
       }
       if (options.acknowledge !== false && selected.delivery.recipient === "child") {
         for (const sequence of selected.delivery.messageSeqs) {
-          setDeliveryTransport(database.value, dispatch, sequence, "checked");
+          await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: "checked" });
         }
-        acknowledgeImplicitDelivery(database.value, dispatch, selected.delivery.id, "child");
+        await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: selected.delivery.id, recipient: "child" });
       }
       return ok(report(dispatch, selected.delivery, messages, selected.replayed, json));
     }

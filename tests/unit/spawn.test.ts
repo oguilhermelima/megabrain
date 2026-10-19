@@ -14,7 +14,7 @@ import { appendMessage, mutateDispatch, putTmuxSession } from "../../src/adapter
 import { importDispatchFixture, importStateFixture, readDispatchFixture } from "./state-fixture.js";
 import { composerProcess, composerTmux, withComposer } from "./composer-tmux.js";
 
-type Call = Readonly<{ command: string; args: readonly string[] }>;
+type Call = Readonly<{ command: string; args: readonly string[]; options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number; readonly scrubAgentEnvironment?: boolean } }>;
 
 const worktree = (ownership: SpawnWorktree["ownership"], path = "/work/tree"): SpawnWorktree => ({
   path,
@@ -39,8 +39,8 @@ function processFor(events: string[], behavior: (command: string, args: readonly
   const calls: Call[] = [];
   return {
     calls,
-    async run(command, args) {
-      calls.push({ command, args: [...args] });
+    async run(command, args, options) {
+      calls.push({ command, args: [...args], ...(options === undefined ? {} : { options }) });
       events.push(`${command} ${args.join(" ")}`);
       const result = await behavior(command, args);
       if (command === "orca" && args[0] === "terminal" && args[1] === "read" && result.kind === "ok" && result.value.stdout === "") {
@@ -197,6 +197,7 @@ describe("executeSpawn", () => {
       if (reopened.kind !== "ok") throw new Error(reopened.error);
       expect(reopened.value.db.query<{ session_name: string }>("SELECT session_name FROM tmux_sessions WHERE stable_session_id = ?").get("$1")?.session_name).toBe(tmuxWorktreeSessionName("/work/tree"));
       reopened.value.close();
+      expect(await readFile(join(root, "logs", "state-owner.log"), "utf8")).toContain('"operation":"tmux-session-write"');
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -936,7 +937,33 @@ describe("executeSpawn", () => {
         ...environment(root, "dispatch-host-create"),
         MEGABRAIN_SESSION_HOST: "orca",
       }, process, options(worktree("existing")));
-      expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "create", "--worktree", "path:/work/tree", "--title", "codex /work/tree", "--json"] });
+      expect(process.calls[0]).toEqual({ command: "orca", args: ["terminal", "create", "--worktree", "path:/work/tree", "--title", "codex /work/tree", "--json"], options: { timeoutMs: 30_000 } });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("bounds a host terminal create that never answers", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-create-timeout-`);
+    let optionsSeen: Call["options"];
+    const process = processFor([], async (command, args) => {
+      if (command === "orca" && args[1] === "create") return failed("orca timed out after 30000ms");
+      return ok({ stdout: "", stderr: "", exitCode: 0 });
+    });
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "launch", "--tmux", "false"], {
+        ...environment(root, "dispatch-host-create-timeout"),
+        MEGABRAIN_SESSION_HOST: "orca",
+      }, {
+        ...process,
+        async run(command, args, options) {
+          if (command === "orca" && args[1] === "create") optionsSeen = options;
+          return process.run(command, args, options);
+        },
+      }, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      expect(optionsSeen?.timeoutMs).toBe(30_000);
+      if (result.kind === "failed") expect(result.error).toContain("orca timed out after 30000ms");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

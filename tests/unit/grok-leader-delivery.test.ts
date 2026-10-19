@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { appendMessage, createDelivery, createDispatch, getDeliveryChannel, listDeliveries, listOutbox, recordChannelResult, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { grokLeaderSocket, sendGrokLeaderPrompt, stopGrokLeader } from "../../src/agents/grok-leader.js";
-import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { deliverWithOwner } from "./owner-delivery.js";
 import { failed, ok } from "../../src/core/result.js";
 
 // A Grok child runs with its own leader (`grok --leader --leader-socket <path>`). Any client on
@@ -206,7 +206,7 @@ async function runReply(root: string, socket: string | undefined) {
     async startDetached() { return failed("not used"); },
     invocationCount() { return 0; },
   };
-  await executeDeliveryWorker(["ob-grok", "holder", "delivery-target:orca:child-terminal", String(Date.now() + 4000)], { HOME: root, MEGABRAIN_STATE_DIR: root }, process);
+  await deliverWithOwner(root, process, { HOME: root }, "ob-grok", 4000);
   const outbox = listOutbox(db.value);
   const deliveries = listDeliveries(db.value, "d-grok");
   const channel = getDeliveryChannel(db.value, "grok", "leader-socket");
@@ -291,7 +291,7 @@ async function runParentNotice(root: string, record: Record<string, unknown>) {
     async startDetached() { return failed("not used"); },
     invocationCount() { return 0; },
   };
-  await executeDeliveryWorker(["ob-parent", "holder", "delivery-target:orca:parent-terminal", String(Date.now() + 4000)], { HOME: root, MEGABRAIN_STATE_DIR: root }, process);
+  await deliverWithOwner(root, process, { HOME: root }, "ob-parent", 4000);
   const outbox = listOutbox(db.value);
   return { sends, outbox: outbox.kind === "ok" ? outbox.value : [] };
 }

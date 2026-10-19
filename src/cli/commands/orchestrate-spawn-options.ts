@@ -18,7 +18,7 @@ import { createTmuxSession, dispatchTmuxProcess, getTmux, onAppTmuxServer, sendT
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
@@ -40,6 +40,7 @@ import type { AgentUpdateRuntime } from "../../core/agent-update.js";
 export const TERMINAL_CREATE_MAX_ATTEMPTS = 6;
 export const TERMINAL_CREATE_DEADLINE_MS = 2000;
 export const TERMINAL_CREATE_BACKOFF_MS = 250;
+export const TERMINAL_CREATE_TIMEOUT_MS = 30_000;
 const PROMPT_BUDGET_ARGV_BYTES = 262144;
 
 export const SPAWN_ENVIRONMENT_HELP = `
@@ -209,7 +210,7 @@ export function dispatchId(environment: SpawnEnvironment): string {
 
 // The installed module state selects tmux; absent state falls back to the host runtime.
 export function tmuxRuntimeInstalled(environment: SpawnEnvironment): boolean {
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return false;
   const state = getInstallState(database.value);
   return state.kind === "ok" && (state.value["tmux-runtime"] as { readonly installed?: boolean } | undefined)?.installed === true;

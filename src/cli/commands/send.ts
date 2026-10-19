@@ -1,6 +1,6 @@
 import { resolveClaudePeer, sendClaudePeer } from "../../agents/claude-peer.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { listDispatches, recordChannelResult, stateDatabase } from "../../adapters/state-db.js";
+import { listDispatches, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { deliverCodexQueue, findCodexProcessByThread } from "../../core/codex-delivery.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { deliverThroughGrokLeader } from "../../core/grok-leader-delivery.js";
@@ -13,6 +13,7 @@ import { usageText } from "../../core/usage.js";
 import { ownedTmuxProcess, readOwnedSessions } from "../../core/session-ownership.js";
 import { stateDirectory } from "./session.js";
 import { getTmux } from "../../hosts/tmux.js";
+import { recordChannelResultThroughOwner } from "../../db/state-owner.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type SessionTarget = Readonly<{ agent: SessionSendAgent; id: string }>;
@@ -108,7 +109,7 @@ async function sendOwned(tmuxSession: string, agent: SessionSendAgent, request: 
       });
       return result.delivered ? true : { delivered: false, detail: result.detail };
     },
-  }, recordChannel: (channel) => { const database = stateDatabase(environment); if (database.kind === "ok") recordChannelResult(database.value, { agent, channel, agentVersion: "unknown", ok: true }); } });
+  }, recordChannel: async (channel) => { await recordChannelResultThroughOwner(stateDirectory(environment), { agent, channel, agentVersion: "unknown", ok: true }); } });
   return ok(output({ delivered: sent.delivered, channel: sent.channel, ...(sent.detail === undefined ? {} : { detail: sent.detail }) }, request.json), sent.delivered ? undefined : 1);
 }
 
@@ -121,7 +122,7 @@ export async function executeSend(args: readonly string[], environment: Environm
   if (target.kind !== "ok") return target;
   const owned = readOwnedSessions(stateDirectory(environment))[parsed.value.session];
   if (owned !== undefined) return sendOwned(owned.tmuxSession, target.value.agent, parsed.value, process, environment);
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const records = listDispatches(database.value);
   if (records.kind !== "ok") return records;
@@ -235,7 +236,7 @@ export async function executeSend(args: readonly string[], environment: Environm
   const sent = await sendSessionMessage({
     caller: "operator-send", messageId: randomUUID(), target: { agent: target.value.agent, id: target.value.id }, text: parsed.value.text,
     channels,
-    recordChannel: (channel) => { recordChannelResult(database.value, { agent: target.value.agent, channel, agentVersion: "unknown", ok: true }); },
+    recordChannel: async (channel) => { await recordChannelResultThroughOwner(stateDirectory(environment), { agent: target.value.agent, channel, agentVersion: "unknown", ok: true }); },
   });
   return ok(output({ delivered: sent.delivered, channel: sent.channel, ...(sent.detail === undefined ? {} : { detail: sent.detail }) }, parsed.value.json), sent.delivered ? undefined : 1);
 }

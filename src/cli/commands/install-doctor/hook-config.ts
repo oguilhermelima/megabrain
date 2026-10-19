@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";import { basename, dirname, resolve } from "node:path";import { failed, ok, type Result } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { mutateInstallModule, stateDatabase } from "../../../adapters/state-db.js";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";import { basename, dirname, resolve } from "node:path";import { failed, ok, type Result } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { resolveStateDirectory } from "../../../core/state.js";import { callStateOwner } from "../../../db/state-owner.js";
 import { available, readState, fileText, hookCommandKind, hookConfig } from "./diagnostics.js";import type { Environment } from "./diagnostics.js";import { backupExistingFile, writeJsonAtomic } from "./install-state.js";
 // --- orchestration-hooks -----------------------------------------------------------------
 
@@ -144,13 +144,13 @@ export function readHookInstallState(environment: Environment): HookInstallState
   return { createdConfigs, backups, movedLegacyAgy: record.movedLegacyAgy === true };
 }
 
-export function writeHookInstallState(environment: Environment, hookState: HookInstallState): void {
-  const opened = stateDatabase(environment);
-  if (opened.kind !== "ok") return;
-  mutateInstallModule(opened.value, "orchestration-hooks", (value) => {
-    const moduleState = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
-    return { ...moduleState, hookConfigs: hookState };
-  });
+export async function writeHookInstallState(environment: Environment, hookState: HookInstallState): Promise<Result<void>> {
+  try {
+    await callStateOwner(resolveStateDirectory(environment), { operation: "install-hook-state-write", hookState });
+    return ok(undefined);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
 }
 
 export function latestHookBackup(path: string): string | undefined {
@@ -201,7 +201,8 @@ export async function repairHooksConfig(agent: HookAgent, environment: Environme
     return failed(`could not update ${agent} hooks: ${path}`);
   }
   if (!existedBeforeInstall && !hookState.createdConfigs.includes(agent)) hookState.createdConfigs.push(agent);
-  writeHookInstallState(environment, hookState);
+  const saved = await writeHookInstallState(environment, hookState);
+  if (saved.kind !== "ok") return saved;
   return ok(undefined);
 }
 

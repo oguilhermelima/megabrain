@@ -8,7 +8,8 @@ import { matchContext, readConfig, usageForConfig, validateConfig, type ChainEnv
 import { executeSpawn } from "./orchestrate-spawn.js";
 import { appendMessage } from "./queue-write.js";
 import { usageText } from "../../core/usage.js";
-import { stateDatabase, getDispatch, mutateDispatch } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, getDispatch } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 // Ports lib/module-chain.sh's command_chain_run, megabrain_chain_walk, and
 // megabrain_chain_run_spawn for the `chain run` CLI command, and (via continueRefusedChain
@@ -172,16 +173,14 @@ async function writeDispatchChainContext(
   chain: Readonly<{ name: string; step: number; total: number; reason: string; usedDefault: boolean; prompt: string }>,
 ): Promise<void> {
   try {
-    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-    if (database.kind !== "ok") return;
-    mutateDispatch(database.value, dispatchId, (meta) => ({ ...meta, chain: { ...chain }, updatedAt: new Date().toISOString() }));
+    await callStateOwner(root, { operation: "dispatch-patch", dispatchId, patch: { chain: { ...chain }, updatedAt: new Date().toISOString() } });
   } catch { /* best effort, matches megabrain_dispatch_meta_update_chain_context's `|| true` caller */ }
 }
 
 async function maybeSendUsageNotice(root: string, dispatchId: string, config: ChainConfig, environment: ChainRunEnvironment, processAdapter: ProcessAdapter): Promise<void> {
   try {
     if (!usageNoticeDue(config, root, Math.floor(Date.now() / 1000))) return;
-    const database = stateDatabase(environment);
+    const database = readOnlyStateDatabase(environment);
     if (database.kind !== "ok") return;
     const meta = getDispatch(database.value, dispatchId);
     if (meta.kind !== "ok" || meta.value === undefined) return;
@@ -412,7 +411,7 @@ export async function continueRefusedChain(
   dependencies: ChainRunDependencies = {},
 ): Promise<Result<string>> {
   const root = resolveStateDirectory(environment);
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const stored = getDispatch(database.value, dispatchId);
   if (stored.kind !== "ok") return stored;

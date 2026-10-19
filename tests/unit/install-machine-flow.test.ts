@@ -109,6 +109,7 @@ describe("machine install options", () => {
 
     const first = await runMachineInstall(args, environment, withTmux, installModule, false);
     expect(first.kind).toBe("ok");
+    expect(readFileSync(join(environment.MEGABRAIN_STATE_DIR, "logs", "state-owner.log"), "utf8")).toContain('"operation":"install-state-write"');
     expect(calls).toContain("tmux-runtime");
     const state = machineState(environment);
     expect(state.machineInstall.modules).toContain("tmux-runtime");

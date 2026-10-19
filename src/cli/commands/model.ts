@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { addModel, formatModelList, loadModelRegistry, readTemplateModels, refreshAgyModels, refreshCodexModels, refreshGrokModels, saveModelRegistry, type Model } from "../../core/model.js";
+import { addModel, formatModelList, loadAndPersistModelRegistry, readTemplateModels, refreshAgyModels, refreshCodexModels, refreshGrokModels, saveModelRegistry, type Model } from "../../core/model.js";
 import { staleChainSteps, type StaleStep } from "../../core/chain.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { readConfig } from "./chain.js";
@@ -22,7 +22,7 @@ async function modelList(args: readonly string[], environment: Environment): Pro
     else if (arg === "-h" || arg === "--help") return ok(usage("model-list"));
     else return errorResult(`unknown model list option: ${arg}`, 2);
   }
-  const result = loadModelRegistry(environment);
+  const result = await loadAndPersistModelRegistry(environment);
   if (result.kind === "failed") return result;
   return ok(json ? result.raw.endsWith("\n") ? result.raw : `${result.raw}\n` : formatModelList(result.registry));
 }
@@ -42,12 +42,12 @@ async function modelAdd(args: readonly string[], environment: Environment): Prom
     } else if (arg === "-h" || arg === "--help") return ok(usage("model-add"));
     else return errorResult(`unknown model add option: ${arg}`, 2);
   }
-  const loaded = loadModelRegistry(environment);
+  const loaded = await loadAndPersistModelRegistry(environment);
   if (loaded.kind === "failed") return loaded;
   const result = addModel(loaded.registry, agent, model, levels, new Date().toISOString());
   if (result.kind === "invalid") return errorResult(result.message, result.message.includes("cannot be empty") ? 2 : 1);
   if (result.kind === "unknown") return errorResult("model operation is unknown");
-  const saved = saveModelRegistry(environment, result.value);
+  const saved = await saveModelRegistry(environment, result.value);
   if (saved.kind !== "ok") return errorResult(saved.error, saved.exitCode);
   return ok(`model added: ${agent}/${model}\n`);
 }
@@ -98,13 +98,13 @@ async function modelRefresh(args: readonly string[], environment: Environment, p
     if (arg === "-h" || arg === "--help") return ok(usage("model-refresh"));
   }
   if (!["claude", "codex", "grok", "agy"].includes(agent)) return errorResult(`unknown agent: ${agent}`);
-  const loaded = loadModelRegistry(environment);
+  const loaded = await loadAndPersistModelRegistry(environment);
   if (loaded.kind === "failed") return loaded;
   const refreshed = await refreshedModels(agent, environment, processAdapter, loaded.registry.models);
   if (refreshed.kind !== "ok") return refreshed;
   if (refreshed.value.length === 0) return errorResult(`could not refresh ${agent} models: the listing named no models`);
   const models = [...loaded.registry.models.filter((model) => model.agent !== agent), ...refreshed.value];
-  const saved = saveModelRegistry(environment, { ...loaded.registry, models });
+  const saved = await saveModelRegistry(environment, { ...loaded.registry, models });
   if (saved.kind !== "ok") return errorResult(saved.error, saved.exitCode);
   return refreshResult(environment, agent, refreshed.value.length, models, asJson);
 }

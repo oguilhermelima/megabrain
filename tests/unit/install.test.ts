@@ -245,6 +245,7 @@ describe("executeInstall", () => {
     const result = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
+    expect(readFileSync(join(home, "logs", "state-owner.log"), "utf8")).toContain('"operation":"install-hook-state-write"');
     const written = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8")) as Record<string, unknown>;
     const hooks = written.hooks as { Stop: Array<{ hooks: Array<{ command: string }> }> };
     expect(hooks.Stop[0].hooks[0].command).toBe(`MEGABRAIN_HOOK_AGENT=claude '${realpathSync(entrypoint.binary)}' hook turn-end`);

@@ -4,9 +4,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { openDatabase } from "../../db/db.js";
+import { openDatabaseReadOnly } from "../../db/db.js";
 import { listWorktrees as listRegisteredWorktrees } from "../../db/queries/worktrees.js";
-import { getRepositoryPullRequests, listRepositories, saveRepositoryPullRequests } from "../../db/queries/repositories.js";
+import { getRepositoryPullRequests, listRepositories } from "../../db/queries/repositories.js";
+import { resolveStateDirectory } from "../../core/state.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import { formatWorktreeList, parseGitWorktrees, parseParentConfig, parsePullRequests, parseWorkspacePaths, type GitWorktree, type ParentConfig, type WorktreeListEntry } from "../../core/worktree-list.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { usageText } from "../../core/usage.js";
@@ -204,7 +206,7 @@ export async function executeWorktreeList(args: readonly string[], environment: 
       for (const [branch, pull] of parsePullRequests(cached.value)) pullRequests.set(branch, pull);
     } else uncached.push(repository);
   }
-  const registry = openDatabase(environment);
+  const registry = openDatabaseReadOnly(environment);
   const registered = new Map<string, ReturnType<typeof listRegisteredWorktrees>[number]>();
   const repositoryRecords = new Map<string, ReturnType<typeof listRepositories>[number]>();
   let refresh = uncached;
@@ -235,7 +237,7 @@ export async function executeWorktreeList(args: readonly string[], environment: 
           prCache.repositories[repository.path] = { fetchedAt: now, value: usable };
           prCacheChanged = true;
           const record = repositoryRecords.get(repository.path);
-          if (record !== undefined) saveRepositoryPullRequests(registry.value.db, record.path, JSON.stringify(usable), now);
+          if (record !== undefined) await callStateOwner(resolveStateDirectory(environment), { operation: "repository-pull-request-cache-write", path: record.path, value: JSON.stringify(usable), fetchedAt: now });
         }
       }
     }

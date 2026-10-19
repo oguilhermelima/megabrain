@@ -18,12 +18,30 @@ export type AppendMessageOptions = AppendMessageEffects & Readonly<{ derive?: (p
 export type AppendParentReplyOptions = Readonly<{ supersede: boolean; outbox?: OutboxInput }>;
 
 export function acknowledgeImplicitDelivery(handle: DatabaseHandle, dispatchId: string, deliveryId: string, recipient: "child" | "parent", now = new Date().toISOString()): Result<boolean> {
-  return write(handle, ({ db }) => {
-    const delivery = queryDeliveries(db, dispatchId).find((item) => item.id === deliveryId);
-    if (delivery === undefined || delivery.recipient !== recipient || !["outstanding", "superseded"].includes(delivery.status)) return false;
-    db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, now, deliveryId]);
-    return true;
-  });
+  return write(handle, ({ db }) => acknowledgeImplicitDeliveryInTransaction(db, dispatchId, deliveryId, recipient, now));
+}
+
+export function acknowledgeImplicitDeliveryInTransaction(db: DatabaseAdapter, dispatchId: string, deliveryId: string, recipient: "child" | "parent", now = new Date().toISOString()): boolean {
+  const delivery = queryDeliveries(db, dispatchId).find((item) => item.id === deliveryId);
+  if (delivery === undefined || delivery.recipient !== recipient || !["outstanding", "superseded"].includes(delivery.status)) return false;
+  const changed = db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, now, deliveryId]).changes > 0;
+  if (changed) finishAcknowledgedOutbox(db, delivery, recipient, now);
+  return changed;
+}
+
+function finishAcknowledgedOutbox(db: DatabaseAdapter, delivery: DeliveryRecord, recipient: "child" | "parent", now: string): void {
+  const kind = recipient === "child" ? "child-delivery" : "parent-pointer";
+  const sequences = new Set(Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : []);
+  if (sequences.size === 0) return;
+  const rows = db.query<{ id: string; payload: string }>("SELECT id, payload FROM outbox WHERE dispatch_id = ? AND target_kind = ? AND status IN ('pending', 'sending')").all(delivery.dispatchId, kind);
+  for (const row of rows) {
+    let payload: unknown;
+    try { payload = JSON.parse(row.payload); } catch { continue; }
+    if (typeof payload !== "object" || payload === null || !("sequence" in payload)) continue;
+    const sequence = (payload as { sequence?: unknown }).sequence;
+    if (typeof sequence !== "number" || !sequences.has(sequence)) continue;
+    db.run("UPDATE outbox SET status = 'sent', detail = 'receiver acknowledged', lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status IN ('pending', 'sending')", [now, row.id]);
+  }
 }
 
 function findMessageByKey(db: DatabaseAdapter, key: string): MessageRecord | undefined {
@@ -80,6 +98,12 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
 export function appendParentReply(handle: DatabaseHandle, dispatchId: string, message: Readonly<Record<string, unknown>>, options: AppendParentReplyOptions): Result<MessageRecord> {
   return write(handle, ({ db }) => {
     const now = typeof message.createdAt === "string" ? message.createdAt : new Date().toISOString();
+    const messages = queryMessages(db, dispatchId);
+    for (const delivery of queryDeliveries(db, dispatchId)) {
+      if (delivery.recipient !== "parent" || delivery.status !== "outstanding" || !Array.isArray(delivery.messageSeqs)) continue;
+      if (!delivery.messageSeqs.some((sequence) => messages.some((item) => item.seq === sequence && item.from === "child" && item.type === "ask"))) continue;
+      acknowledgeImplicitDeliveryInTransaction(db, dispatchId, delivery.id, "parent", now);
+    }
     let summary: SupersedeSummary = { queued: 0, delivered: 0, deliveredSequences: [] };
     if (options.supersede) {
       const deliveries = queryDeliveries(db, dispatchId);
@@ -140,6 +164,10 @@ export function createDelivery(handle: DatabaseHandle, delivery: Readonly<Record
 
 export function listDeliveries(handle: DatabaseHandle, dispatchId: string): Result<DeliveryRecord[]> {
   return read(handle, ({ db }) => queryDeliveries(db, dispatchId));
+}
+
+export function listDeliveriesInTransaction(db: DatabaseAdapter, dispatchId: string): DeliveryRecord[] {
+  return queryDeliveries(db, dispatchId);
 }
 
 export function cancelQueuedMessage(handle: DatabaseHandle, dispatchId: string, itemId: string, reason: string, actor: string): Result<void> {
@@ -232,6 +260,7 @@ export function ackDelivery(handle: DatabaseHandle, id: string, consumer: string
     if (!decision.value.duplicate) {
       const now = new Date().toISOString();
       db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ? WHERE id = ?", [now, now, id]);
+      if (delivery.recipient === "child" || delivery.recipient === "parent") finishAcknowledgedOutbox(db, delivery, delivery.recipient, now);
     }
     return { kind: "accepted" as const, value: decision.value };
   });
@@ -316,7 +345,19 @@ export function enqueueOutbox(db: DatabaseAdapter, input: OutboxInput): Result<v
 }
 
 export function listOutbox(handle: DatabaseHandle): Result<OutboxDetails[]> {
-  return read(handle, ({ db }) => db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox ORDER BY created_at, id").all().map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail })));
+  return read(handle, ({ db }) => {
+    const records: OutboxDetails[] = [];
+    let cursor: { createdAt: string; id: string } | undefined;
+    for (;;) {
+      const rows = cursor === undefined
+        ? db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox ORDER BY created_at, id LIMIT 100").all()
+        : db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE created_at > ? OR (created_at = ? AND id > ?) ORDER BY created_at, id LIMIT 100").all(cursor.createdAt, cursor.createdAt, cursor.id);
+      records.push(...rows.map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail })));
+      const last = rows.at(-1);
+      if (rows.length < 100 || last === undefined) return records;
+      cursor = { createdAt: last.created_at, id: last.id };
+    }
+  });
 }
 
 export function listLeases(handle: DatabaseHandle): Result<QueryLeaseRecord[]> {
@@ -332,7 +373,9 @@ export function claimOutbox(handle: DatabaseHandle, id: string, holder: string, 
   return write(handle, ({ db }) => {
     const current = outboxRow(db, id);
     if (current === undefined) return undefined;
-    if (current.status !== "pending" && !(current.status === "sending" && current.leaseUntil !== null && current.leaseUntil <= nowText)) return undefined;
+    const abandoned = current.status === "sending" && current.leaseHolder !== null && leaseHolderIsAlive(current.leaseHolder) === false;
+    const expired = current.status === "sending" && current.leaseUntil !== null && current.leaseUntil <= nowText;
+    if (current.status !== "pending" && !abandoned && !expired) return undefined;
     db.run("UPDATE outbox SET status = 'sending', attempts = attempts + 1, lease_until = ?, lease_holder = ?, updated_at = ? WHERE id = ?", [leaseUntil, holder, nowText, id]);
     return outboxRow(db, id);
   });
@@ -470,13 +513,32 @@ export function finishNotification(handle: DatabaseHandle, id: string, status: "
 
 export type LeaseRecord = Readonly<{ key: string; holder: string; expiresAt: string }>;
 
+function leaseHolderIsAlive(holder: string): boolean | undefined {
+  const match = /^(\d+)-/.exec(holder);
+  if (match === null) return undefined;
+  const pid = Number(match[1]);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+  try { process.kill(pid, 0); return true; }
+  catch (error) {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH"
+      ? false
+      : true;
+  }
+}
+
 export function acquireLease(handle: DatabaseHandle, key: string, holder: string, seconds: number): Result<boolean> {
   if (key === "" || holder === "") return failed("lease key and holder must be non-empty");
   if (!Number.isFinite(seconds)) return failed("lease seconds must be finite");
   const now = new Date();
   const nowText = now.toISOString();
   const expiresAt = new Date(now.getTime() + seconds * 1000).toISOString();
-  return write(handle, ({ db }) => db.run("INSERT INTO leases (key, holder, expires_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at WHERE leases.expires_at <= ? OR leases.holder = excluded.holder", [key, holder, expiresAt, nowText]).changes > 0);
+  return write(handle, ({ db }) => {
+    const current = db.query<{ holder: string; expires_at: string }>("SELECT holder, expires_at FROM leases WHERE key = ?").get(key);
+    if (current !== null && current.holder !== holder && current.expires_at > nowText && leaseHolderIsAlive(current.holder) === false) {
+      db.run("DELETE FROM leases WHERE key = ? AND holder = ?", [key, current.holder]);
+    }
+    return db.run("INSERT INTO leases (key, holder, expires_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at WHERE leases.expires_at <= ? OR leases.holder = excluded.holder", [key, holder, expiresAt, nowText]).changes > 0;
+  });
 }
 
 export function transferLease(handle: DatabaseHandle, key: string, from: string, to: string): Result<boolean> {

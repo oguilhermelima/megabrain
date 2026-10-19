@@ -1,5 +1,5 @@
-import { deleteInstallModule, stateDatabase } from "../../../adapters/state-db.js";import { join } from "node:path";import packageJson from "../../../../package.json" with { type: "json" };
-import type { ProcessAdapter } from "../../../adapters/proc.js";import { failed, ok, type Result } from "../../../core/result.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { type AgentEnvironment, type MachineAgent } from "../../../core/agent-directories.js";import { executeTmux } from "../tmux.js";import { agentLabel, createClackPrompter, moduleLabel, SetupCancelled, type MachinePrompter, type SkillMode } from "../install-ui.js";import { createJsonPrompter } from "../install-json.js";
+import { callStateOwner } from "../../../db/state-owner.js";import { join } from "node:path";import packageJson from "../../../../package.json" with { type: "json" };
+import type { ProcessAdapter } from "../../../adapters/proc.js";import { failed, ok, type Result } from "../../../core/result.js";import { resolveStateDirectory } from "../../../core/state.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { type AgentEnvironment, type MachineAgent } from "../../../core/agent-directories.js";import { executeTmux } from "../tmux.js";import { agentLabel, createClackPrompter, moduleLabel, SetupCancelled, type MachinePrompter, type SkillMode } from "../install-ui.js";import { createJsonPrompter } from "../install-json.js";
 import { installAgentSkills, agents, modules, parseMachineInstallArgs } from "./selection.js";import type { MachineSelection, MachineArguments } from "./selection.js";import { retireLegacyChannels, retireLegacyInstructions } from "./legacy-retirement.js";import { readMachineState, matchingMachineInstall, writeMachineState, machineContext, agentChoices, defaultTmux, moduleChoices, machineInstallPlan } from "./state-plan.js";import type { PersistedMachineSelection } from "./state-plan.js";
 export async function runMachineInstall(
   args: readonly string[],
@@ -101,10 +101,8 @@ export async function installMachine(
       return failed(`tmux runtime revert failed: ${reason}`);
     }
     step?.done("tmux runtime turned off");
-    const opened = stateDatabase(environment);
-    if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
-    const deleted = deleteInstallModule(opened.value, "tmux-runtime");
-    if (deleted.kind !== "ok") return deleted;
+    try { await callStateOwner(resolveStateDirectory(environment), { operation: "install-state-remove", moduleId: "tmux-runtime" }); }
+    catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
     tmuxReverted = true;
   }
   const recordedSelection: PersistedMachineSelection = { agents: selectedAgents, skill, tmux, requestedModules: modulesToInstall, modules: modulesToInstall, version: packageJson.version };
@@ -126,10 +124,8 @@ export async function installMachine(
 
   try {
     if (!modulesToInstall.includes("tmux-runtime")) {
-      const opened = stateDatabase(environment);
-      if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
-      const deleted = deleteInstallModule(opened.value, "tmux-runtime");
-      if (deleted.kind !== "ok") return deleted;
+      try { await callStateOwner(resolveStateDirectory(environment), { operation: "install-state-remove", moduleId: "tmux-runtime" }); }
+      catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
     }
     const retired = await retireLegacyChannels(availableAgents, processAdapter, parsed.yes, confirm);
     if (retired.kind !== "ok") return retired;
@@ -143,7 +139,7 @@ export async function installMachine(
     }
     // Record the selected skill configuration before attempting modules so a failed module does
     // not make a later run rewrite the skill files that already succeeded.
-    const saved = writeMachineState(environment, selection, configuredModules);
+    const saved = await writeMachineState(environment, selection, configuredModules);
     if (saved.kind !== "ok") return saved;
     const failures: string[] = [];
     for (const module of pendingModules) {
@@ -160,7 +156,7 @@ export async function installMachine(
         step?.done(moduleLabel(module));
         const warning = /\(warning: ([^;)]+)/.exec(result.value)?.[1];
         if (ui !== undefined && warning !== undefined) ui.warn(`${moduleLabel(module)}: ${warning}. Review with megabrain orchestrate list --uncertain`);
-        const saved = writeMachineState(environment, selection, configuredModules);
+        const saved = await writeMachineState(environment, selection, configuredModules);
         if (saved.kind !== "ok") throw new Error(saved.kind === "failed" ? saved.error : "could not save megabrain install state");
       } catch (error: unknown) {
         const reason = error instanceof Error ? error.message : "module installation failed";

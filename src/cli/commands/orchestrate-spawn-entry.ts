@@ -18,7 +18,7 @@ import { createTmuxSession, dispatchTmuxProcess, getTmux, onAppTmuxServer, sendT
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
@@ -35,6 +35,7 @@ import { decideAdmission, DEFAULT_AGENT_COST_BYTES } from "../../core/admission.
 import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/state-db.js";
 import { readMachineResources } from "../../core/resources.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 import { resultError } from "./orchestrate-spawn-state.js";
 import { runSpawn } from "./orchestrate-spawn-run.js";
@@ -47,30 +48,31 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   }
   const policy = environment.MEGABRAIN_STATE_DIR === undefined && environment.HOME === undefined
     ? undefined : await readAdmissionPolicy(environment);
-  const database = policy === undefined ? undefined : stateDatabase(environment);
-  if (database?.kind === "failed") return failed(database.error, database.exitCode);
   const holder = `admission-${globalThis.process.pid}-${randomUUID()}`;
   let leased = false;
-  if (database?.kind === "ok") {
-    for (let attempt = 0; attempt < 300 && !leased; attempt += 1) {
-      const acquired = acquireLease(database.value, "resource-admission", holder, 300);
-      if (acquired.kind !== "ok") return acquired;
-      leased = acquired.value;
-      if (!leased) await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+  if (policy !== undefined) {
+    try { leased = await callStateOwner(resolveStateDirectory(environment), { operation: "acquire-lease", key: "resource-admission", holder, seconds: 300 }) as boolean; }
+    catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
     if (!leased) return failed("resource admission is busy; retry the spawn", 1);
   }
   let result: Result<string>;
   try { result = await runSpawn(args, environment, process, dependencies, trace); }
+  catch (cause: unknown) { result = failed(`spawn failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   finally {
-    if (leased && database?.kind === "ok") releaseLease(database.value, "resource-admission", holder);
+    if (leased) await callStateOwner(resolveStateDirectory(environment), { operation: "release-lease", key: "resource-admission", holder }).catch(() => undefined);
     // The pane's shell read the brief when it launched the agent, and a failed spawn never will.
     if (trace.promptFile !== undefined) await rm(trace.promptFile, { force: true });
   }
   if (result.kind !== "ok" && trace.sessionCreatedBySpawn && !trace.sessionCleanupAttempted && trace.tmuxSession !== undefined) {
     const cleanup = await getTmux().killSession(trace.tmuxSession, process);
     trace.sessionCleanupAttempted = true;
-    if (cleanup.kind === "ok") forgetTmuxSession(resolveStateDirectory(environment), trace.tmuxSession);
+    if (cleanup.kind === "ok") {
+      const forgotten = await forgetTmuxSession(resolveStateDirectory(environment), trace.tmuxSession);
+      if (forgotten.kind !== "ok") {
+        const primary = result.kind === "failed" ? result.error : result.reason;
+        result = failed(`${primary}; cleanup failed: ${forgotten.error}`, result.kind === "failed" ? result.exitCode : undefined);
+      }
+    }
     if (cleanup.kind !== "ok") {
       const primary = result.kind === "failed" ? result.error : result.reason;
       result = failed(`${primary}; cleanup failed: tmux kill-session --target ${trace.tmuxSession}: ${resultError(cleanup, "could not kill tmux session")}`, result.kind === "failed" ? result.exitCode : undefined);

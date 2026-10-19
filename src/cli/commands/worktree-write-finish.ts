@@ -30,8 +30,8 @@ import {
 import { repoFromOrca } from "./repository-selector.js";
 import { resolveCaller } from "./queue-write.js";
 import { usageMessage, usageText } from "../../core/usage.js";
-import { openDatabase, withWrite } from "../../db/db.js";
-import { insertWorktree, finishWorktree } from "../../db/queries/worktrees.js";
+import { resolveStateDirectory } from "../../core/state.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import { listRepositories } from "../../db/queries/repositories.js";
 import {
   defaultWorktreeLocation,
@@ -218,12 +218,8 @@ export async function executeWorktreeFinish(
       branchDeleted = false;
     }
   }
-  const registry = openDatabase(environment);
-  if (registry.kind !== "ok") return failed(`worktree was removed, but registry could not be opened: ${registry.error}`);
-  try {
-    const marked = withWrite(registry.value, (db) => finishWorktree(db, path, new Date().toISOString()));
-    if (marked.kind !== "ok") return failed(`worktree was removed, but registry update failed: ${marked.error}`);
-  } finally { registry.value.close(); }
+  try { await callStateOwner(resolveStateDirectory(environment), { operation: "worktree-write", action: "finish", path, finishedAt: new Date().toISOString() }); }
+  catch (cause: unknown) { return failed(`worktree was removed, but registry update failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   if (value.json)
     return {
       kind: "ok",

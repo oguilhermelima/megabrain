@@ -1,18 +1,19 @@
-import { openDatabase, readSnapshot, withWrite, type DatabaseHandle } from "../db/db.js";
-import { listNativeSessions, replaceNativeSessions } from "../db/queries/native-sessions.js";
-import { failed, type Result } from "../core/result.js";
-import type { NativeSession } from "../core/native-session.js";
+import { join, resolve } from "node:path";
+import { failed, ok, type Result } from "../core/result.js";
+import { resolveChildStateDirectory } from "../core/state.js";
+import type { NativeSession, NativeSessionKey } from "../core/native-session.js";
 import type { QueueEnvironment } from "../cli/commands/queue-write.js";
-
-type Update<T> = Readonly<{ sessions: readonly NativeSession[]; value: T }>;
-type SynchronousValue<T> = T extends PromiseLike<unknown> ? never : T;
+import { openDatabaseReadOnly, readSnapshot } from "../db/db.js";
+import { listNativeSessions } from "../db/queries/native-sessions.js";
+import { callStateOwner } from "../db/state-owner.js";
 
 export type NativeSessionStore = Readonly<{
   readonly available: boolean;
   readonly path: string | undefined;
   readonly error?: string;
   read(): Result<readonly NativeSession[]>;
-  update<T>(operation: (sessions: readonly NativeSession[]) => Update<T>): Result<T>;
+  upsertIfCurrent(session: NativeSession, expectedSessionId: string | null): Promise<Result<boolean>>;
+  removeIfCurrent(key: NativeSessionKey, sessionId: string): Promise<Result<boolean>>;
 }>;
 
 function unavailable(error?: string): NativeSessionStore {
@@ -22,30 +23,37 @@ function unavailable(error?: string): NativeSessionStore {
     path: undefined,
     ...(error === undefined ? {} : { error }),
     read: () => failed(message),
-    update: () => failed(message),
+    upsertIfCurrent: async () => failed(message),
+    removeIfCurrent: async () => failed(message),
   };
 }
 
 export function createNativeSessionStore(environment: QueueEnvironment): NativeSessionStore {
-  const opened = openDatabase(environment);
-  if (opened.kind !== "ok") {
-    const noStateDirectory = opened.error === "resolve failed: no state directory is configured";
-    return unavailable(noStateDirectory ? undefined : opened.error);
+  let stateDir: string;
+  try {
+    if ((environment.MEGABRAIN_DISPATCH_STATE_DIR ?? environment.MEGABRAIN_STATE_DIR ?? environment.HOME ?? "") === "") return unavailable();
+    stateDir = resolve(resolveChildStateDirectory(environment));
+  } catch (cause: unknown) {
+    return unavailable(cause instanceof Error ? cause.message : String(cause));
   }
-  const database: DatabaseHandle = opened.value;
-
   return {
     available: true,
-    path: database.path,
+    path: join(stateDir, "megabrain.db"),
     read() {
-      return readSnapshot(database, () => listNativeSessions(database));
+      const opened = openDatabaseReadOnly({ MEGABRAIN_STATE_DIR: stateDir, HOME: environment.HOME });
+      if (opened.kind !== "ok") return opened;
+      try { return readSnapshot(opened.value, () => listNativeSessions(opened.value)) as Result<readonly NativeSession[]>; }
+      finally { opened.value.close(); }
     },
-    update<T>(operation: (sessions: readonly NativeSession[]) => Update<T>) {
-      return withWrite(database, () => {
-        const update = operation(listNativeSessions(database));
-        replaceNativeSessions(database, update.sessions);
-        return update.value as SynchronousValue<T>;
-      });
+    async upsertIfCurrent(session, expectedSessionId) {
+      try {
+        return { kind: "ok", value: await callStateOwner(stateDir, { operation: "native-session-upsert", session, expectedSessionId }) as boolean };
+      } catch (cause: unknown) { return failed(cause instanceof Error ? cause.message : String(cause)); }
+    },
+    async removeIfCurrent(key, sessionId) {
+      try {
+        return { kind: "ok", value: await callStateOwner(stateDir, { operation: "native-session-remove", key, sessionId }) as boolean };
+      } catch (cause: unknown) { return failed(cause instanceof Error ? cause.message : String(cause)); }
     },
   };
 }

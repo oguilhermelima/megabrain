@@ -120,7 +120,8 @@ export async function installTmuxRuntime(environment: Environment, processAdapte
   // WHY: the tmux-runtime doctor reads this flag back to decide "enabled" vs "disabled"
   // (report()'s tmux-runtime branch), so it must be recorded before the after-install
   // doctor re-check below, exactly as the shell set state before its own doctor call.
-  writeInstalledState(environment, "tmux-runtime", true, "tmux runtime enabled");
+  const saved = await writeInstalledState(environment, "tmux-runtime", true, "tmux runtime enabled");
+  if (saved.kind !== "ok") return saved;
   return ok(undefined);
 }
 

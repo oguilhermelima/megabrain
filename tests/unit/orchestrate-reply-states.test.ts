@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-reply.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 import { appendMessage, appendParentReply, createDelivery, createDispatch, getDispatch, listDeliveries, listMessages } from "../../src/adapters/state-db.js";
 
 // End-to-end (CLI-verb level, in-process) coverage of the shell parity bugs found in
@@ -157,7 +158,12 @@ describe("orchestrate reply: shell-parity state rules", () => {
   test("accepts a reply to a stalled dispatch, queues it, and resumes the dispatch to running", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta({ state: "stalled", processState: "running" }));
-    const result = await executeOrchestrateReply(["dispatch-1", "--text", "reply reaches stalled child", "--json"], environment(root), fakeProcess());
+    const owner = await startStateOwner(root, fakeProcess(), environment(root));
+    const startedAt = Date.now();
+    let result: Result<string>;
+    try { result = await executeOrchestrateReply(["dispatch-1", "--text", "reply reaches stalled child", "--json"], environment(root), fakeProcess()); }
+    finally { await stopStateOwner(owner); }
+    expect(Date.now() - startedAt).toBeLessThan(100);
     expect(result.kind).toBe("ok");
     const parsed = result.kind === "ok" ? (JSON.parse(result.value) as { status?: string }) : {};
     expect(parsed.status).toBe("queued");
@@ -165,6 +171,23 @@ describe("orchestrate reply: shell-parity state rules", () => {
     expect(meta.state).toBe("running");
     const database = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
     expect(requireOk(listMessages(database, "dispatch-1"))).toHaveLength(1);
+  });
+
+  test("reply returns after publish and acknowledges the parent's read in the same owner write", async () => {
+    const root = await tempStateDir();
+    await writeDispatch(root, "dispatch-1", baseMeta({ state: "running" }));
+    const database = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
+    const ask = requireOk(appendMessage(database, "dispatch-1", { from: "child", type: "ask", text: "Need a decision" }));
+    requireOk(createDelivery(database, { id: "parent-ask-delivery", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [ask.seq], status: "outstanding" }));
+    const owner = await startStateOwner(root, fakeProcess(), environment(root));
+
+    const startedAt = Date.now();
+    let result: Result<string>;
+    try { result = await executeOrchestrateReply(["dispatch-1", "--text", "continue", "--json"], environment(root), fakeProcess()); }
+    finally { await stopStateOwner(owner); }
+    expect(result.kind).toBe("ok");
+    expect(Date.now() - startedAt).toBeLessThan(100);
+    expect(requireOk(listDeliveries(database, "dispatch-1")).find((delivery) => delivery.id === "parent-ask-delivery")?.status).toBe("acknowledged");
   });
 
   test("still refuses the other settled states (failed, closed, circuit_broken)", async () => {

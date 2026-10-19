@@ -22,12 +22,13 @@ import { executeOrchestrateAdopt } from "../../src/cli/commands/orchestrate-adop
 import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-reply.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "../../src/cli/commands/orchestrate-stop-reconcile.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "../../src/cli/commands/orchestrate-parent.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { callerFromEnvironment } from "../../src/cli/commands/orchestrate-list.js";
 import { decorateDispatchRecord, parseDispatchRecord } from "../../src/core/dispatch.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { callerSession as installDoctorCallerSession } from "../../src/cli/commands/install-doctor.js";
-import { appendMessage, createDelivery, createDispatch, listDeliveries } from "../../src/adapters/state-db.js";
+import { appendMessage, createDelivery, createDispatch, getDispatch, listDeliveries } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
 
 // ---------------------------------------------------------------------------
@@ -444,6 +445,25 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     const result = await executeOrchestrateAck(["dispatch-1", "delivery-1", "--json"], structuredClaudeEnvironment(root), orcaHostProcess("child-term-1"));
     expect(result.kind).toBe("ok");
     expect(result.kind === "ok" ? JSON.parse(result.value) : {}).toMatchObject({ acknowledged: true, status: "acknowledged" });
+  });
+
+  test("ack --close closes the completed dispatch and releases its terminal", async () => {
+    const root = await tempStateDir();
+    const meta = baseMeta({ state: "done", processState: "succeeded" });
+    await writeDispatch(root, "dispatch-1", meta);
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    const created = createDelivery(db.value, { id: "delivery-close", dispatchId: "dispatch-1", messageSeqs: [1], status: "outstanding" });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const owner = await startStateOwner(root, fakeProcess(), { MEGABRAIN_STATE_DIR: root });
+    const process = orcaHostProcess("child-term-1");
+    try {
+      const result = await executeOrchestrateAck(["dispatch-1", "delivery-close", "--close", "--json"], structuredClaudeEnvironment(root), process);
+      expect(result.kind).toBe("ok");
+      expect(result.kind === "ok" ? JSON.parse(result.value) : {}).toMatchObject({ acknowledged: true, close: { dispatchId: "dispatch-1" } });
+      expect(process.calls.some(({ command, args }) => command === "orca" && args[1] === "close")).toBe(true);
+      expect(getDispatch(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: { state: "closed", terminalState: "released" } });
+    } finally { await stopStateOwner(owner); }
   });
 });
 

@@ -2,8 +2,8 @@ import { realpath } from "node:fs/promises";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { readArchivedWorktrees, writeArchivedWorktrees, type ArchivedWorktree } from "../../core/archived-worktrees.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { openDatabase, withWrite } from "../../db/db.js";
-import { finishWorktree, getWorktree, upsertWorktree } from "../../db/queries/worktrees.js";
+import { resolveStateDirectory } from "../../core/state.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import { repoFromOrca } from "./repository-selector.js";
 import { defaultBase, localBranchExists, parentBranch, pathFor, removalReason, removeFinishWorktree, repositoryRoot, root, run, workspaceForTarget } from "./worktree-write.js";
 
@@ -111,10 +111,8 @@ export async function executeWorktreeArchive(args: readonly string[], environmen
     const rest = (await readArchivedWorktrees(environment)).filter((item) => !(item.repo === repoPath && item.branch === branch));
     await writeArchivedWorktrees(environment, [...rest, record]);
   } catch (error) { return failed(`worktree ${path} was removed and branch ${branch} kept at ${record.head}, but the archive record could not be saved: ${String(error)}`); }
-  const registry = openDatabase(environment);
-  if (registry.kind === "ok") {
-    try { withWrite(registry.value, (db) => finishWorktree(db, path, record.archivedAt)); } finally { registry.value.close(); }
-  }
+  try { await callStateOwner(resolveStateDirectory(environment), { operation: "worktree-write", action: "finish", path, finishedAt: record.archivedAt }); }
+  catch (cause: unknown) { return failed(`worktree ${path} was removed and branch ${branch} kept, but registry update failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   return render(json, record, `archived: ${branch} (${path} removed, branch kept)\n`);
 }
 
@@ -156,14 +154,7 @@ export async function executeWorktreeUnarchive(args: readonly string[], environm
   if (added.kind !== "ok") return failed(`could not restore ${branch}: ${removalReason(added.error)}`);
   if (record.parent !== null) await run(process, "git", ["-C", record.repo, "config", `branch.${branch}.megabrain-parent`, record.parent]);
   await writeArchivedWorktrees(environment, items.filter((item) => item !== record));
-  const registry = openDatabase(environment);
-  if (registry.kind === "ok") {
-    try {
-      withWrite(registry.value, (db) => {
-        const known = getWorktree(db, record.path);
-        if (known !== undefined) upsertWorktree(db, { ...known, finishedAt: null });
-      });
-    } finally { registry.value.close(); }
-  }
+  try { await callStateOwner(resolveStateDirectory(environment), { operation: "worktree-write", action: "reopen", path: record.path }); }
+  catch (cause: unknown) { return failed(`worktree ${branch} was restored, but registry update failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   return render(json, { repo: record.repo, branch, path: record.path, parent: record.parent }, `restored: ${branch} at ${record.path}\n`);
 }

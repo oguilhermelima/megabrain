@@ -1,6 +1,6 @@
 import { guardedStateDatabase } from "./state-db-guard.js";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { failed } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
@@ -62,6 +62,14 @@ describe("executeOrchestratePolicy", () => {
       contextPolicy: { contextCeiling: 90, compactAt: 60, loop: true, maxIterations: 4 },
       contextPolicyState: { ceilingLatched: false, compactLatched: true, loopIterations: 1, actions: [{ id: "prior" }] },
     });
+  });
+
+  test("persists policy changes through the state owner", async () => {
+    const stateRoot = await setup({ contextPolicy: { contextCeiling: 80 } });
+    const result = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90%"], ownedEnvironment(stateRoot), process);
+    expect(result).toMatchObject({ kind: "ok" });
+    const log = await readFile(`${stateRoot}/logs/state-owner.log`, "utf8");
+    expect(log).toContain('"operation":"dispatch-patch"');
   });
 
   test("accepts an absolute token threshold and refuses an ambiguous bare number", async () => {

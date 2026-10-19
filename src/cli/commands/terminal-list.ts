@@ -1,6 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { listTerminals, stateDatabase } from "../../adapters/state-db.js";
+import { listTerminals, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { tmuxPanePids } from "./terminal-tmux.js";
 import { executeAppTerminalList } from "./terminal-app.js";
@@ -97,7 +97,7 @@ export async function executeTerminalList(args: readonly string[], environment: 
   }
   const filter = worktree === undefined ? undefined : await selector(process, worktree);
   if (filter !== undefined && filter.kind !== "ok") return filter;
-  const opened = stateDatabase(environment);
+  const opened = readOnlyStateDatabase(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   const stored = listTerminals(opened.value);
   if (stored.kind !== "ok") return stored;

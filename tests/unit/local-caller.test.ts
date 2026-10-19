@@ -12,8 +12,9 @@ import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-repl
 import { executeOrchestrateWatch } from "../../src/cli/commands/orchestrate-parent.js";
 import { executeHookTurnEnd } from "../../src/cli/commands/hook-turn-end.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { createDispatch, getDispatch } from "../../src/adapters/state-db.js";
+import { createDispatch, getDispatch, listOutbox } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
+import { callStateOwner } from "../../src/db/state-owner.js";
 
 // A caller outside Orca, Superset and tmux is not unknown: its terminal is simply local, and the
 // agent session it runs (or, failing that, its shell) is its identity.
@@ -181,13 +182,19 @@ describe("parent verbs accept the local caller that spawned the dispatch", () =>
 describe("the parent Stop hook surfaces mail for a local parent", () => {
   test("a child question is queued, never typed, and the hook blocks once with it", async () => {
     const root = await tempDir("hook");
-    createDispatch(database(root), localMeta("dispatch-h1", "claude:abc"));
+    await callStateOwner(root, { operation: "dispatch-create", dispatch: localMeta("dispatch-h1", "claude:abc") });
     const process = plainShellProcess();
-    const env = { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, CLAUDE_CODE_SESSION_ID: "abc" };
+    const env = { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, CLAUDE_CODE_SESSION_ID: "abc", MEGABRAIN_SESSION_ID: "claude:abc", MEGABRAIN_SESSION_HOST: "local" };
     const appended = await appendMessage(root, "dispatch-h1", "child", "ask", "which database?", "child-session", env, process);
     expect(appended.kind).toBe("ok");
     expect(process.detached).toBe(0);
     expect(process.calls.some((call) => call.command === "tmux" && call.args[0] === "send-keys")).toBe(false);
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline) {
+      const outbox = listOutbox(database(root));
+      if (outbox.kind === "ok" && outbox.value.some((item) => item.dispatchId === "dispatch-h1" && item.status !== "pending" && item.status !== "sending")) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
 
     const first = await executeHookTurnEnd([], env, process, async () => "");
     expect(first.kind).toBe("ok");

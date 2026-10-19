@@ -41,7 +41,6 @@ import { executeHookTurnEnd, readStdinText } from "./commands/hook-turn-end.js";
 import { executeHookPreTool } from "./commands/hook-pre-tool.js";
 import { usageTable, usageText } from "../core/usage.js";
 import { ensureAutomaticCutover } from "../db/cutover.js";
-import { executeDeliveryWorker, executeDeliveryVerificationWorker } from "./commands/delivery-worker.js";
 import { executeStack } from "./commands/stack.js";
 import { executeSupervise, executeSupervisorWorker } from "./commands/supervise.js";
 import { executeStatus } from "./commands/status.js";
@@ -69,6 +68,9 @@ import { executeSummaries } from "./commands/summaries.js";
 import { executeArtifact } from "./commands/artifact.js";
 import { executeHookSessionStart } from "./commands/hook-session-start.js";
 import { runChatd } from "../chat/daemon.js";
+import { startStateOwner, stopStateOwner } from "../db/state-owner.js";
+import { callStateOwner } from "../db/state-owner.js";
+import { resolveStateDirectory } from "../core/state.js";
 
 export type RouterDependencies = {
   readonly environment: Environment;
@@ -140,10 +142,42 @@ async function routeCommand(
     await runChatd(stateDir);
     return ok("");
   }
+  if (command === "__state-owner") {
+    const stateDir = dependencies.environment.MEGABRAIN_STATE_OWNER_DIR;
+    if (!stateDir) return failed("state owner requires MEGABRAIN_STATE_OWNER_DIR", 2);
+    const owner = await startStateOwner(stateDir);
+    let stopping = false;
+    const stop = () => {
+      if (stopping) return;
+      stopping = true;
+      const deadline = setTimeout(() => process.exit(0), 900);
+      void stopStateOwner(owner).then(() => {
+        clearTimeout(deadline);
+        process.exit(0);
+      }, (cause: unknown) => {
+        clearTimeout(deadline);
+        process.stderr.write(`state owner shutdown failed: ${cause instanceof Error ? cause.message : String(cause)}\n`);
+        process.exit(1);
+      });
+    };
+    process.once("SIGTERM", stop);
+    process.once("SIGINT", stop);
+    return new Promise<Result<string>>(() => undefined);
+  }
   if (command === "__code-server-proxy") return runCodeServerProxy(commandArgs, dependencies.environment);
   if (command === "__code-extensions") return runCodeExtensionsSync(commandArgs, dependencies.environment, dependencies.processAdapter);
-  if (command === "__delivery-worker") return executeDeliveryWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
-  if (command === "__delivery-verify" || command === "__peer-verify") return executeDeliveryVerificationWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
+  if (command === "__delivery-worker") {
+    const id = commandArgs[0];
+    if (!id) return failed("delivery worker requires an outbox id", 2);
+    try { await callStateOwner(resolveStateDirectory(dependencies.environment), { operation: "resume-outbox", id }); return ok("delivery scheduled by state owner\n"); }
+    catch (cause: unknown) { return failed(`state owner could not schedule delivery: ${cause instanceof Error ? cause.message : String(cause)}`); }
+  }
+  if (command === "__delivery-verify" || command === "__peer-verify") {
+    const id = commandArgs[0];
+    if (!id) return failed("delivery verification worker requires an outbox id", 2);
+    try { await callStateOwner(resolveStateDirectory(dependencies.environment), { operation: "resume-verification", id }); return ok("peer verification scheduled by state owner\n"); }
+    catch (cause: unknown) { return failed(`state owner could not schedule peer verification: ${cause instanceof Error ? cause.message : String(cause)}`); }
+  }
   if (command === "__supervise-worker") return executeSupervisorWorker(commandArgs, dependencies.environment, dependencies.processAdapter);
   if (command === "__usage-table") return Promise.resolve(ok(usageTable()));
   if (command === undefined || command === "help" || command === "-h" || command === "--help") {

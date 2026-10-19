@@ -32,8 +32,29 @@ export function getOutbox(db: DatabaseAdapter, id: string): OutboxRecord | undef
   return row === null ? undefined : toOutbox(row);
 }
 
+export type OutboxCursor = Readonly<{ createdAt: string; id: string }>;
+export type OutboxPage = Readonly<{ rows: OutboxRecord[]; nextCursor?: OutboxCursor }>;
+
+export function listOutboxPage(db: DatabaseAdapter, options: Readonly<{ after?: OutboxCursor; limit?: number }> = {}): OutboxPage {
+  const limit = Math.max(1, Math.min(1_000, Math.trunc(options.limit ?? 100)));
+  const after = options.after;
+  const rows = after === undefined
+    ? db.query<OutboxRow>("SELECT * FROM outbox ORDER BY created_at, id LIMIT ?").all(limit)
+    : db.query<OutboxRow>("SELECT * FROM outbox WHERE created_at > ? OR (created_at = ? AND id > ?) ORDER BY created_at, id LIMIT ?").all(after.createdAt, after.createdAt, after.id, limit);
+  const records = rows.map(toOutbox);
+  const last = rows.at(-1);
+  return { rows: records, ...(rows.length === limit && last !== undefined ? { nextCursor: { createdAt: last.created_at, id: last.id } } : {}) };
+}
+
 export function listOutbox(db: DatabaseAdapter): OutboxRecord[] {
-  return db.query<OutboxRow>("SELECT * FROM outbox ORDER BY created_at, id").all().map(toOutbox);
+  const records: OutboxRecord[] = [];
+  let after: OutboxCursor | undefined;
+  for (;;) {
+    const page = listOutboxPage(db, { after });
+    records.push(...page.rows);
+    if (page.nextCursor === undefined) return records;
+    after = page.nextCursor;
+  }
 }
 
 export type LeaseRecord = Readonly<{ key: string; holder: string; expiresAt: string }>;

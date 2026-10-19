@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { appendMessage, createDelivery, createDispatch, getDeliveryChannel, getDispatch, listDeliveries, listOutbox, recordChannelResult, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { agyLanguageServerFile } from "../../src/agents/agy-ls.js";
-import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { deliverWithOwner } from "./owner-delivery.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 import { executeQueueWrite } from "../../src/cli/commands/queue-write.js";
 import { executeOrchestrateClose } from "../../src/cli/commands/orchestrate-close.js";
 import { failed, ok } from "../../src/core/result.js";
@@ -146,7 +147,7 @@ async function runReply(root: string, withEndpoint: string | undefined) {
     async startDetached() { return failed("not used"); },
     invocationCount() { return 0; },
   };
-  await executeDeliveryWorker(["ob-agy", "holder", "delivery-target:orca:child-terminal", String(Date.now() + 3000)], { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_AGY_POLL_MS: "50" }, process);
+  await deliverWithOwner(root, process, { HOME: root, MEGABRAIN_AGY_POLL_MS: "50" }, "ob-agy", 3000);
   const deliveries = listDeliveries(db.value, "d-agy");
   const outbox = listOutbox(db.value);
   const channel = getDeliveryChannel(db.value, "agy", "language-server");
@@ -253,7 +254,7 @@ async function runParentNotice(root: string, record: Record<string, unknown>, en
     async startDetached() { return failed("not used"); },
     invocationCount() { return 0; },
   };
-  await executeDeliveryWorker(["ob-parent", "holder", "delivery-target:orca:parent-terminal", String(Date.now() + 3000)], { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_AGY_POLL_MS: "50" }, process);
+  await deliverWithOwner(root, process, { HOME: root, MEGABRAIN_AGY_POLL_MS: "50" }, "ob-parent", 3000);
   const outbox = listOutbox(db.value);
   return { sends, outbox: outbox.kind === "ok" ? outbox.value : [] };
 }
@@ -301,24 +302,29 @@ describe("child mail to a local parent", () => {
       async startDetached(command, args) { detached.push([command, ...args].join(" ")); return ok({ pid: 4242 }); },
       invocationCount() { return 0; },
     };
-    const result = await executeQueueWrite("done", ["finished the migration"], { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "d-loc", MEGABRAIN_SESSION_ID: "codex-child" }, process);
-    expect(result.kind).toBe("ok");
-    const outbox = listOutbox(db.value);
-    return { detached, outbox: outbox.kind === "ok" ? outbox.value : [] };
+    const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "d-loc", MEGABRAIN_SESSION_ID: "codex-child" };
+    const owner = await startStateOwner(root, process, environment);
+    try {
+      const result = await executeQueueWrite("done", ["finished the migration"], environment, process);
+      expect(result.kind).toBe("ok");
+      await Promise.all([...owner.pendingDeliveries]);
+      const outbox = listOutbox(db.value);
+      return { detached, outbox: outbox.kind === "ok" ? outbox.value : [] };
+    } finally { await stopStateOwner(owner); }
   }
 
-  test("an agy parent with a recorded endpoint is handed to the delivery worker", async () => {
+  test("an agy parent with a recorded endpoint is delivered by the owner", async () => {
     const root = await tempRoot();
     await endpointFile(root, "d-loc.parent", "127.0.0.1:1");
     const run = await doneFromChild(root, { parentAgent: "agy" });
-    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(true);
-    expect(String(run.outbox[0]?.detail ?? "")).not.toContain("no terminal");
+    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(false);
+    expect(String(run.outbox[0]?.detail ?? "")).toContain("agy language server unreachable");
   });
 
-  test("a Grok parent under a leader is handed to the delivery worker", async () => {
+  test("a Grok parent under a leader is attempted by the owner", async () => {
     const root = await tempRoot();
     const run = await doneFromChild(root, { parentAgent: "grok", parentGrokLeaderSocket: "/tmp/leader.sock", parentGrokSessionId: "s" });
-    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(true);
+    expect(run.detached.some((command) => command.includes("delivery-worker"))).toBe(false);
   });
 
   test("a parent with no channel still waits for the Stop hook and watch", async () => {

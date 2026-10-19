@@ -112,7 +112,8 @@ export async function revertEntryHooks(environment: Environment, spec: EntryHook
     if (resourceEntryCommands(existing, agent, spec).length === 0) continue;
     try { await writeJsonAtomic(path, withoutResourceEntries(existing, agent, spec)); } catch { return failed(`could not update ${agent} hooks: ${path}`); }
   }
-  writeInstalledState(environment, spec.module, false, "reverted");
+  const saved = await writeInstalledState(environment, spec.module, false, "reverted");
+  if (saved.kind !== "ok") return saved;
   return ok(`${spec.module} reverted\n`);
 }
 

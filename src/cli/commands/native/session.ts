@@ -5,7 +5,7 @@ import { nativeUsage, validateTimeout } from "../../../core/native.js";
 import { type ProcessAdapter } from "../../../adapters/proc.js";
 import { type NativeHealth, type NativePlatform } from "../../../core/native.js";
 import { failed, ok, type Result } from "../../../core/result.js";
-import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../../core/native-session.js";
+import { nativeSessionFor, type NativeSessionKey } from "../../../core/native-session.js";
 import { createNativeSessionStore } from "../../../adapters/native-session-store.js";
 import { resolveStateDirectory } from "../../../core/state.js";
 
@@ -100,12 +100,7 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
   const created = await createAppiumSession(processAdapter, key, platform);
   if (created.kind !== "ok") {
     if (initiallyRecorded !== undefined) {
-      const removed = store.update((sessions) => {
-        const current = nativeSessionFor(sessions, key);
-        return current?.sessionId === initiallyRecorded.sessionId
-          ? { sessions: removeNativeSession(sessions, key), value: undefined }
-          : { sessions, value: undefined };
-      });
+      const removed = await store.removeIfCurrent(key, initiallyRecorded.sessionId);
       if (removed.kind !== "ok") return failed(`could not clear dead native session: ${removed.error}; ${created.error}`);
     }
     return ok({ reason: created.error });
@@ -128,16 +123,12 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
     if (current !== undefined && current.sessionId !== initiallyRecorded?.sessionId) {
       const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${current.sessionId}`]);
       if (probe.kind === "ok") {
-        const confirmed = store.update((sessions) => {
-          const latest = nativeSessionFor(sessions, key);
-          return latest?.sessionId === current.sessionId
-            ? { sessions, value: true }
-            : { sessions, value: false };
-        });
-        if (confirmed.kind !== "ok") {
+        const latest = store.read();
+        if (latest.kind !== "ok") {
           const warning = await discardCreated();
-          return failed(`could not confirm concurrent native session: ${confirmed.error}${warning === undefined ? "" : `; ${warning}`}`);
+          return failed("could not confirm concurrent native session: " + latest.error + (warning === undefined ? "" : "; " + warning));
         }
+        const confirmed = { kind: "ok" as const, value: nativeSessionFor(latest.value, key)?.sessionId === current.sessionId };
         if (confirmed.value) {
           const warning = await discardCreated();
           return ok({ session: { sessionId: current.sessionId, stored: true }, ...(warning === undefined ? {} : { warning }) });
@@ -146,11 +137,7 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
       }
     }
 
-    const saved = store.update((sessions) => {
-      const latest = nativeSessionFor(sessions, key);
-      if (latest?.sessionId !== current?.sessionId) return { sessions, value: false };
-      return { sessions: replaceNativeSession(sessions, { ...key, sessionId }), value: true };
-    });
+    const saved = await store.upsertIfCurrent({ ...key, sessionId }, current?.sessionId ?? null);
     if (saved.kind !== "ok") {
       const warning = await discardCreated();
       return failed(`could not store Appium session: ${saved.error}${warning === undefined ? "" : `; ${warning}`}`);

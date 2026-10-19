@@ -8,15 +8,16 @@ import { loadDeliveries, loadMessages, migrateDeliveries, report } from "./check
 import { ackCloseRefusal, parseParentAckArgs } from "../../core/parent-queue.js";
 import { resolveCaller } from "./queue-write.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
-import { ackDelivery, acknowledgeImplicitDelivery, claimDelivery, deleteWaiter, fenceDelivery, getDispatch, isDispatchArchived, listDeliveries, nudgeCursor, putWaiter, stateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
+import { getDispatch, isDispatchArchived, listDeliveries, nudgeCursor, readOnlyStateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
 import { usageText } from "../../core/usage.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 export type ParentQueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
 
 async function requireParent(root: string, dispatch: string, caller: Awaited<ReturnType<typeof resolveCallerIdentity>>): Promise<Result<JsonRecord & { dispatchId: string }>> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return database;
   const resolved = resolveParentDispatchId(database.value, dispatch, caller);
   if (resolved.kind !== "ok") return resolved;
@@ -60,7 +61,7 @@ function waiterRecord(dispatch: string, parent: JsonRecord): WaiterRecord {
 async function waitForNudge(root: string, dispatch: string, cursor: number, milliseconds: number): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < milliseconds) {
-    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
     if (database.kind !== "ok") return;
     const current = nudgeCursor(database.value, dispatch);
     if (current.kind !== "ok" || current.value !== cursor) return;
@@ -75,14 +76,14 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
   const root = resolveStateDirectory(environment);
   const parent = await requireParent(root, parsed.value.dispatch, caller); if (parent.kind !== "ok") return parent;
   const dispatchId = parent.value.dispatchId;
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME }); if (database.kind !== "ok") return database;
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME }); if (database.kind !== "ok") return database;
   const identity = resolveConsumerIdentity({ mailbox: "parent", environmentConsumer: environment.MEGABRAIN_CONSUMER_ID, explicitConsumer: parsed.value.consumer, ...consumerSession(caller) });
   if (identity.kind !== "known") return failed(identity.reason);
   const started = Date.now();
   const cursorResult = nudgeCursor(database.value, dispatchId);
   if (cursorResult.kind !== "ok") return cursorResult;
-  const waiter = putWaiter(database.value, waiterRecord(dispatchId, parent.value));
-  if (waiter.kind !== "ok") return waiter;
+  try { await callStateOwner(root, { operation: "put-waiter", waiter: waiterRecord(dispatchId, parent.value) }); }
+  catch (cause: unknown) { return failed(`state owner waiter write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   let cursor = cursorResult.value;
   try {
     while (true) {
@@ -92,16 +93,20 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
       const selected = selectDelivery("parent", parsed.value.full, await loadDeliveries(root, dispatchId), messages, identity.value, parsed.value.generation);
       if (selected.kind === "selected") {
         if (selected.delivery.consumer !== null && selected.delivery.consumerGeneration !== parsed.value.generation) {
-          const fenced = fenceDelivery(database.value, selected.delivery.id, identity.value, parsed.value.generation);
-          if (fenced.kind !== "ok") return fenced;
+          try { await callStateOwner(root, { operation: "fence-delivery", id: selected.delivery.id, consumer: identity.value, generation: parsed.value.generation }); }
+          catch (cause: unknown) { return failed(`state owner delivery fence failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
           continue;
         }
         if (selected.delivery.consumer === null) {
-          const claimed = claimDelivery(database.value, selected.delivery.id, identity.value, parsed.value.generation);
-          if (claimed.kind !== "ok") return claimed;
-          if (claimed.value === undefined) continue;
+          let claimed: unknown;
+          try { claimed = await callStateOwner(root, { operation: "claim-delivery", id: selected.delivery.id, consumer: identity.value, generation: parsed.value.generation }); }
+          catch (cause: unknown) { return failed(`state owner delivery claim failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+          if (claimed === undefined) continue;
         }
-        if (selected.delivery.recipient === "parent") acknowledgeImplicitDelivery(database.value, dispatchId, selected.delivery.id, "parent");
+        if (selected.delivery.recipient === "parent") {
+          try { await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId, deliveryId: selected.delivery.id, recipient: "parent" }); }
+          catch (cause: unknown) { return failed(`state owner delivery acknowledgement failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+        }
         return ok(report(dispatchId, selected.delivery, messages, selected.replayed, parsed.value.json));
       }
       const elapsed = Date.now() - started;
@@ -113,7 +118,7 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
         if (nextCursor.kind === "ok") cursor = nextCursor.value;
       } else await new Promise((resolve) => setTimeout(resolve, Math.max(0, parsed.value.pollInterval * 1000)));
     }
-  } finally { deleteWaiter(database.value, dispatchId); }
+  } finally { await callStateOwner(root, { operation: "delete-waiter", dispatchId }).catch(() => undefined); }
 }
 
 export async function executeOrchestrateAck(args: readonly string[], environment: ParentQueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
@@ -123,7 +128,7 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   const root = resolveStateDirectory(environment);
   const parent = await requireParent(root, parsed.value.dispatchId, caller); if (parent.kind !== "ok") return parent;
   const dispatchId = parent.value.dispatchId;
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME }); if (database.kind !== "ok") return database;
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root, HOME: environment.HOME }); if (database.kind !== "ok") return database;
   if (parsed.value.close === true) {
     const archived = isDispatchArchived(database.value, dispatchId);
     if (archived.kind !== "ok") return archived;
@@ -138,17 +143,18 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   // The command is printed inside the delivered message. Reaching it proves that this consumer
   // received the message, so an unclaimed delivery can be claimed here before it is acknowledged.
   if (delivery.consumer === null || delivery.consumer === undefined) {
-    const claimed = claimDelivery(database.value, delivery.id, identity.value, parsed.value.generation);
-    if (claimed.kind !== "ok") return claimed;
-    if (claimed.value === undefined) return failed(`delivery ${delivery.id} refused: it belongs to another consumer`);
-    delivery = claimed.value;
+    try { delivery = await callStateOwner(root, { operation: "claim-delivery", id: delivery.id, consumer: identity.value, generation: parsed.value.generation }) as typeof delivery; }
+    catch (cause: unknown) { return failed(`state owner delivery claim failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+    if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: it belongs to another consumer`);
   }
-  const ack = ackDelivery(database.value, parsed.value.deliveryId, identity.value, parsed.value.generation); if (ack.kind !== "ok") return ack;
+  let ack: { duplicate: boolean };
+  try { ack = await callStateOwner(root, { operation: "ack-delivery", id: parsed.value.deliveryId, consumer: identity.value, generation: parsed.value.generation }) as typeof ack; }
+  catch (cause: unknown) { return failed(`state owner delivery acknowledgement failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   const messageSeqs = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs : [];
-  const acknowledgment = { dispatchId, deliveryId: parsed.value.deliveryId, acknowledged: true, duplicate: ack.value.duplicate, status: "acknowledged", messageSeqs };
+  const acknowledgment = { dispatchId, deliveryId: parsed.value.deliveryId, acknowledged: true, duplicate: ack.duplicate, status: "acknowledged", messageSeqs };
   if (parsed.value.close !== true) {
     if (parsed.value.json) return ok(`${JSON.stringify(acknowledgment, null, 2)}\n`);
-    return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.value.duplicate}\n`);
+    return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.duplicate}\n`);
   }
   const closed = await executeOrchestrateClose([dispatchId, ...(parsed.value.json ? ["--json"] : [])], environment, process);
   if (closed.kind !== "ok") return failed(`delivery ${parsed.value.deliveryId} acknowledged; ${closed.error}`, closed.exitCode);
@@ -156,5 +162,5 @@ export async function executeOrchestrateAck(args: readonly string[], environment
     try { const close = JSON.parse(closed.value) as JsonRecord; return ok(`${JSON.stringify({ ...acknowledgment, close }, null, 2)}\n`); }
     catch { return failed(`delivery ${parsed.value.deliveryId} acknowledged; close returned invalid JSON`); }
   }
-  return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.value.duplicate}\n${closed.value}`);
+  return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.duplicate}\n${closed.value}`);
 }

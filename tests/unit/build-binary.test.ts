@@ -1,14 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { cleanupTrackedStateOwners } from "../helpers/state-owner-cleanup.js";
 
 const repository = resolve(import.meta.dir, "../..");
 const script = join(repository, "scripts/build-binary.sh");
 const manifest = JSON.parse(readFileSync(join(repository, "package.json"), "utf8")) as { files: string[] };
+const temporaryPaths: string[] = [];
+const stateDirectories: string[] = [];
 
 // One build serves every assertion: compiling takes about a second and writes ~64 MB.
 const out = mkdtempSync("/tmp/megabrain-build-binary-");
+temporaryPaths.push(out);
 const build = existsSync(script)
   ? spawnSync("bash", [script, "--out", out], { cwd: repository, encoding: "utf8" })
   : undefined;
@@ -19,6 +23,8 @@ function runStaged(args: string[]): ReturnType<typeof spawnSync> {
   const link = join(pathDirectory, "megabrain");
   if (!existsSync(link)) symlinkSync(join(out, "bin/megabrain"), link);
   const state = mkdtempSync("/tmp/megabrain-build-binary-state-");
+  temporaryPaths.push(home, pathDirectory);
+  stateDirectories.push(state);
   mkdirSync(join(home, ".config"), { recursive: true });
   return spawnSync(link, args, {
     cwd: home,
@@ -26,6 +32,11 @@ function runStaged(args: string[]): ReturnType<typeof spawnSync> {
     env: { PATH: "/usr/bin:/bin", HOME: home, MEGABRAIN_STATE_DIR: state },
   });
 }
+
+afterAll(async () => {
+  await cleanupTrackedStateOwners(stateDirectories);
+  for (const path of temporaryPaths) rmSync(path, { recursive: true, force: true });
+});
 
 describe("scripts/build-binary.sh", () => {
   test("builds an executable for the host", () => {

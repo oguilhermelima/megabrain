@@ -9,7 +9,9 @@ import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-te
 import { getHost } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
-import { acknowledgeImplicitDelivery, listDeliveries, stateDatabase, getDispatch, transcriptPath } from "../../adapters/state-db.js";
+import { listDeliveries, readOnlyStateDatabase, getDispatch, transcriptPath } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
+import { resolveStateDirectory } from "../../core/state.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -22,7 +24,7 @@ const transcriptCap = (environment: Environment): number => {
 export type ParentMeta = Readonly<{ meta: RecordValue; dispatchId: string }>;
 
 export async function parentMeta(id: string, environment: Environment, process: ProcessAdapter, allowSuffix = false): Promise<Result<ParentMeta>> {
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const current = await resolveCaller(environment, process);
   let dispatchId = id;
@@ -71,11 +73,11 @@ export async function executeOrchestrateRead(args: readonly string[], environmen
   let output = ""; let source: "tmux" | "file" | "host"; let truncated = false; let pane = "";
   if (runtime === "tmux") { pane = stringValue(meta.tmuxPane); const live = await capture(pane, lines, process); if (live.kind === "ok") { output = live.value; source = "tmux"; } else { const path = transcriptPath(environment, dispatchId); const file = path.kind === "ok" ? await readFile(path.value, "utf8").catch(() => undefined) : undefined; if (file === undefined) return failed(`could not read tmux pane ${pane} and no persisted transcript exists`); const rendered = renderTranscript(file, cap); output = rendered.text; truncated = rendered.truncated; source = "file"; } }
   else { const host = await hostRead(meta, process); if (host.kind !== "ok") return host; output = host.value; source = "host"; }
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind === "ok") {
     const deliveries = listDeliveries(database.value, dispatchId);
     if (deliveries.kind === "ok") for (const delivery of deliveries.value) {
-      if (delivery.recipient === "parent") acknowledgeImplicitDelivery(database.value, dispatchId, delivery.id, "parent");
+      if (delivery.recipient === "parent") await callStateOwner(resolveStateDirectory(environment), { operation: "ack-implicit-delivery", dispatchId, deliveryId: delivery.id, recipient: "parent" });
     }
   }
   return ok(formatDispatchRead({ dispatchId, pane, source, truncated, text: output }, json, cap));

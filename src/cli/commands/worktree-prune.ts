@@ -5,8 +5,8 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { parseGitWorktrees } from "../../core/worktree-list.js";
 import { openDispatchStates, dispatchStates } from "../../core/dispatch-states.js";
 import { parseWorktreePruneArgs } from "../../core/worktree-prune.js";
-import { openDatabase, withWrite } from "../../db/db.js";
-import { finishWorktree, listWorktrees, type WorktreeRecord } from "../../db/queries/worktrees.js";
+import { openDatabaseReadOnly } from "../../db/db.js";
+import { listWorktrees, type WorktreeRecord } from "../../db/queries/worktrees.js";
 import { usageText } from "../../core/usage.js";
 import { executeWorktreeFinish } from "./worktree-write.js";
 import { repoFromOrca } from "./repository-selector.js";
@@ -135,7 +135,7 @@ export async function executeWorktreePrune(args: readonly string[], environment:
   const parsed = parseWorktreePruneArgs(args);
   if (parsed.kind !== "ok") return parsed;
   if (args.includes("-h") || args.includes("--help")) return ok(usageText("worktree-prune"));
-  const database = openDatabase(environment);
+  const database = openDatabaseReadOnly(environment);
   if (database.kind !== "ok") return database;
   const records = new Map<string, WorktreeRecord>();
   const dispatches = new Map<string, string[]>();
@@ -156,7 +156,7 @@ export async function executeWorktreePrune(args: readonly string[], environment:
   const removed: Array<{ path: string; branch: string; verified: boolean; branchDeleted: boolean }> = [];
   if (parsed.value.yes && !parsed.value.dryRun) {
     for (const candidate of candidates.filter((item) => item.eligible)) {
-      const freshDb = openDatabase(environment);
+      const freshDb = openDatabaseReadOnly(environment);
       if (freshDb.kind !== "ok") {
         candidate.eligible = false;
         candidate.reason = `dispatch state could not be rechecked: ${freshDb.error}`;
@@ -187,11 +187,6 @@ export async function executeWorktreePrune(args: readonly string[], environment:
         return typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT" ? false : null;
       });
       if (!stillListed && stillExists === false) {
-        const markDb = openDatabase(environment);
-        if (markDb.kind === "ok") {
-          try { withWrite(markDb.value, (db) => finishWorktree(db, candidate.path, new Date().toISOString())); }
-          finally { markDb.value.close(); }
-        }
         let branchDeleted = false;
         const branchExists = await run(process, "git", ["-C", candidate.repo, "show-ref", "--verify", "--quiet", `refs/heads/${candidate.branch}`]);
         if (branchExists.kind === "ok") {

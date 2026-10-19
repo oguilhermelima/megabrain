@@ -1,7 +1,8 @@
 import { basename, dirname, resolve } from "node:path";
 import { realpath } from "node:fs/promises";
-import { openDatabase, withWrite } from "../db/db.js";
 import { registerRepository as insertRepository, type RepositoryRecord, type RepositorySource } from "../db/queries/repositories.js";
+import { callStateOwner } from "../db/state-owner.js";
+import { resolveStateDirectory } from "./state.js";
 import type { ProcessAdapter } from "../adapters/proc.js";
 import type { Result } from "./result.js";
 import { failed, ok } from "./result.js";
@@ -28,12 +29,10 @@ export async function repositoryCheckout(path: string, process: ProcessAdapter):
 export async function registerMegabrainRepository(path: string, environment: Readonly<Record<string, string | undefined>>, process: ProcessAdapter): Promise<Result<RepositoryRecord>> {
   const checkout = await repositoryCheckout(path, process);
   if (checkout.kind !== "ok") return checkout;
-  const database = openDatabase(environment);
-  if (database.kind !== "ok") return failed(database.error, database.exitCode);
   try {
-    const result = withWrite(database.value, (db) => insertRepository(db, { ...checkout.value, source: "megabrain", addedAt: new Date().toISOString() }));
-    return result.kind === "ok" ? result : failed(result.error, result.exitCode);
-  } finally { database.value.close(); }
+    const repository = await callStateOwner(resolveStateDirectory(environment), { operation: "repository-register", repository: { ...checkout.value, source: "megabrain", addedAt: new Date().toISOString() } });
+    return ok(repository as RepositoryRecord);
+  } catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
 }
 
 export function registerImportedRepository(db: Parameters<typeof insertRepository>[0], record: Omit<RepositoryRecord, "source"> & { source?: RepositorySource }): RepositoryRecord {

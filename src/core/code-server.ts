@@ -1,12 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { chmod, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { type ProcessAdapter } from "../adapters/proc.js";
 import { resolveStateDirectory, type StateEnvironment } from "./state.js";
-import { openDatabase } from "../db/db.js";
+import { openDatabaseReadOnly } from "../db/db.js";
 import { listRepositories } from "../db/queries/repositories.js";
 import { failed, type Result } from "./result.js";
 import { selfInvocation } from "./self-invocation.js";
@@ -198,8 +198,13 @@ async function canonical(path: string): Promise<string | undefined> {
 async function validateRegisteredRoot(root: string, environment: StateEnvironment, processAdapter: ProcessAdapter): Promise<string> {
   const requested = await canonical(root);
   if (requested === undefined) throw new Error(`not a registered project or worktree: ${root}`);
-  const opened = openDatabase(environment);
-  if (opened.kind !== "ok") throw new Error(opened.error);
+  const opened = openDatabaseReadOnly(environment);
+  if (opened.kind !== "ok") {
+    if (!existsSync(join(resolveStateDirectory(environment), "megabrain.db"))) {
+      throw new Error(`not a registered project or worktree: ${root}`);
+    }
+    throw new Error(opened.error);
+  }
   let roots: string[];
   try {
     roots = listRepositories(opened.value.db).map((repository) => repository.path);

@@ -313,6 +313,9 @@ export function skillSyncDoctor(environment: Environment): SkillSyncDoctorReport
 // user can observe.
 export function shouldReconcileSkillsAtStartup(args: readonly string[]): boolean {
   if (args.includes("--help")) return false;
+  // Internal owners must not scan agent configuration or rewrite skill files when the
+  // caller's state directory is temporary or has a different HOME context.
+  if (args[0] === "__state-owner") return false;
   if (args[0] === "db" && args[1] === "migrate" && args.includes("--dry-run")) return false;
   if (args[0] === "doctor") return false;
   // The turn-end hook runs on every agent turn, for every agent, forever — it is the one

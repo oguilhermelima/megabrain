@@ -8,7 +8,8 @@ import { getHost, type HostCommand } from "../../hosts/index.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { usageText } from "../../core/usage.js";
 import { cleanTranscript } from "../../core/dispatch-read.js";
-import { acknowledgeImplicitDelivery, stateDatabase, getDispatch, listDeliveries, listDispatches, mutateDispatch, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, transcriptPath } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, getDispatch, listDeliveries, listDispatches, getTmuxSession, getTmuxSessionByStableId, transcriptPath } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { ownedGrokLeaders, stopGrokLeader, sweepGrokLeaders } from "../../agents/grok-leader.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -81,7 +82,7 @@ async function closeRecordedTmuxHost(hostId: string, terminalId: string, workspa
 export async function executeOrchestrateClose(args: readonly string[], environment: QueueEnvironment, process: ProcessAdapter): Promise<Result<string>> {
   if (args[0] === "-h" || args[0] === "--help") return ok(usageText("orchestrate-close"));
   const parsed = parseCloseArgs(args); if (parsed.kind !== "ok") return parsed;
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const current = await resolveCaller(environment, process);
   const resolved = resolveParentDispatchId(database.value, parsed.value.dispatchId, current);
@@ -164,7 +165,8 @@ export async function executeOrchestrateClose(args: readonly string[], environme
           const closed = await closeRecordedTmuxHost(hostTerminalHost, hostTerminalId, workspaceId === "" ? null : workspaceId, process);
           if (closed.kind !== "ok") return closed;
         }
-        deleteTmuxSession(database.value, session);
+        try { await callStateOwner(resolveStateDirectory(environment), { operation: "tmux-session-write", action: "remove", session }); }
+        catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
       }
     }
   } else {
@@ -185,11 +187,20 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     terminalReason: null,
     ...(current.operator === true ? { closedBy: "operator" } : {}),
   };
-  const updated = mutateDispatch(database.value, dispatchId, () => next);
-  if (updated.kind !== "ok") return updated;
+  try {
+    const updated = await callStateOwner(resolveStateDirectory(environment), {
+      operation: "dispatch-patch", dispatchId, patch: next, expectedState: text(meta.state),
+    });
+    if (typeof updated === "object" && updated !== null && "updated" in updated && updated.updated === false) return failed(`dispatch ${dispatchId} changed while it was closing`);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
   const deliveries = listDeliveries(database.value, dispatchId);
   if (deliveries.kind === "ok") for (const delivery of deliveries.value) {
-    if (delivery.recipient === "parent") acknowledgeImplicitDelivery(database.value, dispatchId, delivery.id, "parent", now);
+    if (delivery.recipient === "parent") {
+      try { await callStateOwner(resolveStateDirectory(environment), { operation: "ack-implicit-delivery", dispatchId, deliveryId: delivery.id, recipient: "parent", now }); }
+      catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+    }
   }
   // The agy language server token dies with that agy; keeping it would only leave a secret behind.
   await forgetAgyLanguageServer(resolveStateDirectory(environment), dispatchId);

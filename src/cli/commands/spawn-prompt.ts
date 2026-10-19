@@ -1,12 +1,12 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { createHash } from "node:crypto";
-import { recordChannelResult, stateDatabase } from "../../adapters/state-db.js";
 import { composerHoldsText } from "../../core/composer-proof.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { sendSessionMessage } from "../../core/session-send.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { SpawnStepOutcome } from "../../core/spawn-plan.js";
 import { getTmux, withTmuxPaneLock, type TmuxSendEnvironment } from "../../hosts/tmux.js";
+import { recordChannelResultThroughOwner } from "../../db/state-owner.js";
 
 const POLL_MS = 100;
 const PASTE_END_MARKER = "\u001b[201~";
@@ -111,7 +111,7 @@ export async function deliverPrompt(target: PromptTarget): Promise<Result<boolea
       });
       return delivered.kind === "ok" && delivered.value ? true : { delivered: false, detail: delivered.kind === "failed" ? delivered.error : "prompt submit was not confirmed" };
     } },
-    recordChannel: (channel) => { const database = stateDatabase({ MEGABRAIN_STATE_DIR: target.root }); if (database.kind === "ok") recordChannelResult(database.value, { agent: target.agent, channel, agentVersion: "unknown", ok: true }); },
+    recordChannel: async (channel) => { await recordChannelResultThroughOwner(target.root, { agent: target.agent, channel, agentVersion: "unknown", ok: true }); },
   });
   return sent.delivered ? ok(true) : ok(false);
 }

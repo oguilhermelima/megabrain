@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { sessionHistory, type HistoryAgent, type HistorySession } from "../adapters/session-history.js";
 import { resolveLocation } from "../chat/summary-library.js";
 import { readSessionTurns } from "../chat/session-log.js";
-import { openDatabase } from "../db/db.js";
+import { openDatabaseReadOnly } from "../db/db.js";
 import { listDispatches } from "../db/queries/dispatches.js";
 import { listRepositories } from "../db/queries/repositories.js";
 import type { DistillTurn } from "./distill.js";
@@ -80,7 +80,7 @@ function gitWorktrees(repo: string): Promise<string[]> {
 
 /** The registered repositories, read from the state database. */
 export function registeredProjects(environment: Environment): string[] {
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return [];
   try { return listRepositories(opened.value.db).map((record) => record.path); } finally { opened.value.close(); }
 }
@@ -88,7 +88,7 @@ export function registeredProjects(environment: Environment): string[] {
 /** Dispatch workers' sessions mapped to the sessions that dispatched them. */
 export function dispatchSessionLinks(environment: Environment): Map<string, string> {
   const links = new Map<string, string>();
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return links;
   try {
     for (const record of listDispatches(opened.value.db, { includeArchived: true })) {

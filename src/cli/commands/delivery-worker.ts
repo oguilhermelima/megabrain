@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { acknowledgeImplicitDelivery, acquireLease, claimOutbox, finishNotification, finishOutbox, finishOutboxPeerVerification, getDispatch, getOutboxPeerVerification, listDeliveries, listOutbox, markOutboxPeerSent, mutateDispatch, recordChannelResult, releaseLease, requeueOutboxPeerFallback, setDeliveryTransport, stateDatabase } from "../../adapters/state-db.js";
+import { finishOutboxPeerVerification, getDispatch, getOutboxPeerVerification, listDeliveries, listOutbox, markOutboxPeerSent, requeueOutboxPeerFallback, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { claudeSessionPermissionClass, scanTranscript } from "../../agents/claude-peer.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
@@ -13,7 +13,7 @@ import { formatDeliveryAcknowledgment, formatOneLine } from "../../core/chat-mes
 import { deliverThroughGrokLeader, GROK_LEADER_CHANNEL } from "../../core/grok-leader-delivery.js";
 import { AGY_LS_CHANNEL, deliverThroughAgyLanguageServer } from "../../core/agy-ls-delivery.js";
 import { agyParentKey } from "../../agents/agy-ls.js";
-import { deliverImmediately, startDeferredDelivery } from "../../core/idle-delivery.js";
+import { deliverImmediately } from "../../core/idle-delivery.js";
 import { deliverOperatorText } from "../../core/session-send.js";
 import { sendSessionMessage, type SessionSendChannel } from "../../core/session-send.js";
 import { deliverCodexQueue, findCodexProcessByThread } from "../../core/codex-delivery.js";
@@ -22,10 +22,11 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { getTmux } from "../../hosts/tmux.js";
 import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
-import { selfInvocation } from "../../core/self-invocation.js";
 import { startSupervisorWorker } from "./supervise.js";
 import { agentOwnsForegroundProcess } from "../../core/terminal-process.js";
-import { settleClosedParentBacklog } from "../../core/closed-deliveries.js";
+import { callStateOwner } from "../../db/state-owner.js";
+import { recordChannelResultThroughOwner } from "../../db/state-owner.js";
+import type { DatabaseHandle } from "../../db/db.js";
 
 type Meta = Record<string, unknown>;
 type WorkerEnvironment = Readonly<Record<string, string | undefined>>;
@@ -57,28 +58,11 @@ export function deliveryTarget(meta: Meta): string {
 }
 
 export async function startDeliveryWorker(root: string, dispatch: string, outboxId: string, meta: Meta, process: ProcessAdapter): Promise<"started" | "already-running" | "failed"> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-  if (database.kind !== "ok") return "failed";
-  const target = deliveryTarget(meta);
-  const holder = `${globalThis.process.pid}-${randomUUID()}`;
-  const leaseKey = `delivery-target:${target}`;
-  // Keep waiting without a deadline; the live worker renews this short lease while it waits.
-  const deadline = Number.MAX_SAFE_INTEGER;
-  const result = await startDeferredDelivery(
-    target,
-    holder,
-    async (key, owner) => {
-      const acquired = acquireLease(database.value, `delivery-target:${key}`, owner, DELIVERY_LEASE_SECONDS);
-      return acquired.kind === "ok" && acquired.value;
-    },
-    async (owner) => {
-      const worker = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["__delivery-worker", outboxId, owner, leaseKey, String(deadline)]);
-      const started = await process.startDetached(worker.command, worker.args);
-      return started.kind === "ok";
-    },
-    async (_key, owner) => { releaseLease(database.value, leaseKey, owner); },
-  );
-  return result;
+  void dispatch; void meta; void process;
+  try {
+    const result = await callStateOwner(root, { operation: "resume-outbox", id: outboxId }) as { scheduled?: boolean };
+    return result.scheduled === true ? "started" : "already-running";
+  } catch { return "failed"; }
 }
 
 // The channel to a Claude target, chosen from both permission classes before anything is sent. A
@@ -100,7 +84,7 @@ async function peerChannelChoice(targetKind: string, meta: Meta, home: string): 
 
 async function readWasPulled(root: string, dispatch: string, sequence: number): Promise<boolean> {
   if (!existsSync(resolve(root, "megabrain.db"))) return true;
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return false;
   const deliveries = listDeliveries(database.value, dispatch);
   if (deliveries.kind !== "ok") return false;
@@ -163,7 +147,7 @@ async function clearOwnComposer(root: string, meta: Meta, process: ProcessAdapte
   return (await runHostSend(host, process, call.value)).kind === "ok";
 }
 
-export async function executeDeliveryWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter): Promise<Result<string>> {
+export async function executeDeliveryWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter, ownerHandle?: DatabaseHandle): Promise<Result<string>> {
   const [outboxId, holder, leaseKey, deadlineValue, nestedValue] = args;
   if (!outboxId || !holder || !leaseKey || !deadlineValue) return failed("delivery worker requires outbox id, holder, lease key, and deadline", 2);
   const deadline = Number(deadlineValue);
@@ -171,19 +155,21 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   if (!Number.isSafeInteger(deadline)) return failed("delivery worker deadline is invalid", 2);
   const root = resolveStateDirectory(environment);
   if (!existsSync(resolve(root, "megabrain.db"))) return ok("delivery source state was removed\n");
-  const database = stateDatabase(environment);
-  if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const settled = settleClosedParentBacklog(database.value);
-  if (settled.kind !== "ok") return settled;
-  const claimed = claimOutbox(database.value, outboxId, holder, DELIVERY_LEASE_SECONDS);
-  if (claimed.kind !== "ok" || claimed.value === undefined) {
-    if (!nested) releaseLease(database.value, leaseKey, holder);
-    return claimed.kind === "ok" ? ok("delivery already claimed\n") : claimed;
+  if (ownerHandle === undefined) return failed("delivery workers must run inside the state owner");
+  const database = { kind: "ok" as const, value: ownerHandle };
+  try { await callStateOwner(root, { operation: "settle-closed-parent-backlog" }); }
+  catch (cause: unknown) { return failed(`state owner could not settle closed deliveries: ${cause instanceof Error ? cause.message : String(cause)}`); }
+  let claimedValue: { targetKind: string; target: string; payload: unknown; dispatchId?: string | null } | undefined;
+  try { claimedValue = await callStateOwner(root, { operation: "claim-outbox", id: outboxId, holder, leaseSeconds: DELIVERY_LEASE_SECONDS }) as typeof claimedValue; }
+  catch (cause: unknown) { return failed(`state owner could not claim delivery: ${cause instanceof Error ? cause.message : String(cause)}`); }
+  if (claimedValue === undefined) {
+    if (!nested) await callStateOwner(root, { operation: "release-lease", key: leaseKey, holder }).catch(() => undefined);
+    return ok("delivery already claimed\n");
   }
-  const targetKind = claimed.value.targetKind;
-  const target = claimed.value.target;
-  const payload = typeof claimed.value.payload === "object" && claimed.value.payload !== null ? claimed.value.payload as Meta : {};
-  const dispatch = String(payload.dispatchId ?? claimed.value.dispatchId ?? "");
+  const targetKind = claimedValue.targetKind;
+  const target = claimedValue.target;
+  const payload = typeof claimedValue.payload === "object" && claimedValue.payload !== null ? claimedValue.payload as Meta : {};
+  const dispatch = String(payload.dispatchId ?? claimedValue.dispatchId ?? "");
   const sequence = Number(payload.sequence ?? 0);
   const stored = dispatch === "" ? undefined : getDispatch(database.value, dispatch);
   const snapshotMeta = typeof payload.meta === "object" && payload.meta !== null ? payload.meta as Meta : {};
@@ -222,9 +208,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       acceptedAt: Date.now(), ...(transcript === undefined ? {} : { transcript, transcriptOffset }),
     });
     if (saved.kind !== "ok" || !saved.value) return;
-    const verifier = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["__delivery-verify", outboxId]);
-    await process.startDetached(verifier.command, verifier.args);
-    await startSupervisorWorker(root, environment, process);
+    await callStateOwner(root, { operation: "resume-verification", id: outboxId });
+    void startSupervisorWorker(root, environment, process).catch(() => undefined);
   };
   const pointer = typeof payload.pointer === "string" ? payload.pointer : "mail: megabrain check";
   let proofSource = "screen";
@@ -242,10 +227,10 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const unavailableMs = Number(environment.MEGABRAIN_PROOF_UNAVAILABLE_MS);
   const giveUpAfterMs = Number.isFinite(unavailableMs) && unavailableMs > 0 ? unavailableMs : PROOF_UNAVAILABLE_MS;
   const decisionLog = createDecisionLog(root);
-  const adoptClaudePid = (status: ClaudeStatus | undefined): void => {
+  const adoptClaudePid = async (status: ClaudeStatus | undefined): Promise<void> => {
     if (status?.pid === undefined || status.pid === Number(meta.agentPid)) return;
     const field = targetKind === "parent-pointer" ? "parentAgentPid" : "agentPid";
-    mutateDispatch(database.value, dispatch, () => ({ [field]: status.pid }));
+    await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: { [field]: status.pid } });
     meta = { ...meta, agentPid: status.pid };
   };
   // Transport order and message-id deduplication belong to the central session sender.
@@ -259,7 +244,10 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const threadId = targetKind === "parent-pointer" ? persistedMeta.parentAgentThreadId : persistedMeta.agentThreadId;
   const typed = async (): Promise<boolean | Readonly<{ delivered: boolean; stop?: boolean; detail?: string }>> => {
     if (localParent || text === "" || dispatch === "" || sequence < 1) return false;
-    if (!(await agentOwnsForegroundProcess(String(meta.agent ?? ""), Number(meta.agentPid), process))) {
+    const terminal = targetKind === "parent-pointer"
+      ? { host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId, workspaceId: meta.parentWorkspaceId }
+      : { host: meta.childHost, terminalId: meta.terminalId, workspaceId: meta.workspaceId };
+    if (!(await agentOwnsForegroundProcess(String(meta.agent ?? ""), Number(meta.agentPid), process, terminal))) {
       receiverGone = true;
       outcome = "receiver-gone";
       transport = "receiver-gone";
@@ -275,7 +263,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         inspect: async () => {
           const screen = await readDeliveryScreen(meta, process);
           const status = await claudeStatus(meta, environment);
-          adoptClaudePid(status);
+          await adoptClaudePid(status);
           if (screen.kind !== "ok") {
             screenDownSince ??= Date.now();
             screenError = screen.kind === "failed" ? screen.error : screen.reason;
@@ -383,7 +371,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       typed,
     },
     recordChannel: async (channel: SessionSendChannel) => {
-      if (channel === "typed") recordChannelResult(database.value, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true });
+      if (channel === "typed") await recordChannelResultThroughOwner(root, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true });
     },
   });
   if (peer !== undefined && (peer.kind === "delivered" || peer.kind === "accepted" || peer.kind === "read")) {
@@ -394,10 +382,10 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const unavailable = outcome === "unavailable";
   const untypable = localParent && peer?.kind !== "delivered" && peer?.kind !== "accepted" && peer?.kind !== "read" && peer?.kind !== "aborted";
   const reason = receiverGone ? "receiver-gone: receiver is no longer the terminal's foreground agent process" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
-  setDeliveryTransport(database.value, dispatch, sequence, transport, receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && !["failed", "deferred"].includes(transport) ? "full-direction" : undefined);
-  const finished = claimed.value.targetKind === "parent-pointer"
-    ? finishNotification(database.value, outboxId, transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", { dispatchId: dispatch, pointer, outcome, reason })
-    : finishOutbox(database.value, outboxId, transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", reason);
+  await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && !["failed", "deferred"].includes(transport) ? "full-direction" : undefined });
+  const finished = targetKind === "parent-pointer"
+    ? await callStateOwner(root, { operation: "finish-notification", id: outboxId, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", event: { dispatchId: dispatch, pointer, outcome, reason } })
+    : await callStateOwner(root, { operation: "finish-outbox", id: outboxId, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", detail: reason });
   if (!nested) {
     const quietDeadline = Math.min(deadline, Date.now() + 1000);
     while (Date.now() < quietDeadline) {
@@ -405,24 +393,24 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       if (pending.kind !== "ok") break;
       const next = pending.value.find((item) => item.target === target && item.status === "pending");
       if (next !== undefined) {
-        await executeDeliveryWorker([next.id, holder, leaseKey, String(deadline), "nested"], environment, process);
+        await executeDeliveryWorker([next.id, holder, leaseKey, String(deadline), "nested"], environment, process, ownerHandle);
         continue;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    releaseLease(database.value, leaseKey, holder);
+    await callStateOwner(root, { operation: "release-lease", key: leaseKey, holder }).catch(() => undefined);
   }
-  return finished.kind === "ok" ? ok(`delivery ${transport}\n`) : finished;
+  return ok(`delivery ${transport}\n`);
 }
 
-export async function executeDeliveryVerificationWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter): Promise<Result<string>> {
+export async function executeDeliveryVerificationWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter, ownerHandle?: DatabaseHandle): Promise<Result<string>> {
   const [outboxId] = args;
   if (!outboxId) return failed("delivery verification worker requires an outbox id", 2);
   const root = resolveStateDirectory(environment);
-  const database = stateDatabase(environment);
-  if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const settled = settleClosedParentBacklog(database.value);
-  if (settled.kind !== "ok") return settled;
+  if (ownerHandle === undefined) return failed("delivery verification workers must run inside the state owner");
+  const database = { kind: "ok" as const, value: ownerHandle };
+  try { await callStateOwner(root, { operation: "settle-closed-parent-backlog" }); }
+  catch (cause: unknown) { return failed(`state owner could not settle closed deliveries: ${cause instanceof Error ? cause.message : String(cause)}`); }
   const saved = getOutboxPeerVerification(database.value, outboxId);
   if (saved.kind !== "ok" || saved.value === undefined || saved.value.state !== "pending") return ok("peer verification is already settled\n");
   const rows = listOutbox(database.value);
@@ -444,11 +432,11 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
   if (delivery === undefined) return failed(`delivery verification delivery row not found for ${outboxId}`);
   const verifierLeaseKey = `delivery-verification:${outboxId}`;
   const verifierHolder = `${globalThis.process.pid}-${randomUUID()}`;
-  const verifierLease = acquireLease(database.value, verifierLeaseKey, verifierHolder, 90);
-  if (verifierLease.kind !== "ok" || !verifierLease.value) return ok("peer verification is already running\n");
+  const verifierLease = await callStateOwner(root, { operation: "acquire-lease", key: verifierLeaseKey, holder: verifierHolder, seconds: 90 }).catch(() => false) as boolean;
+  if (!verifierLease) return ok("peer verification is already running\n");
   try {
   const result = await verifyClaudePeerConsumption({
-    heartbeat: async () => { acquireLease(database.value, verifierLeaseKey, verifierHolder, 90); },
+    heartbeat: async () => { await callStateOwner(root, { operation: "acquire-lease", key: verifierLeaseKey, holder: verifierHolder, seconds: 90 }); },
     acknowledged: async () => {
       const current = listDeliveries(database.value, dispatch);
       return current.kind === "ok" && current.value.some((item) => item.id === delivery.id && item.status === "acknowledged");
@@ -463,7 +451,7 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
       : (await scanTranscript(saved.value!.transcript, saved.value!.transcriptOffset, saved.value!.messageId)).seen,
     sleep: async (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     fallback: async () => {
-      if (saved.value!.agent === "claude") recordChannelResult(database.value, { agent: saved.value!.agent, channel: saved.value!.channel, agentVersion: saved.value!.agentVersion, ok: false, error: `peer message ${saved.value!.messageId} was not acknowledged or consumed`, now: Date.now() });
+      if (saved.value!.agent === "claude") await recordChannelResultThroughOwner(root, { agent: saved.value!.agent, channel: saved.value!.channel, agentVersion: saved.value!.agentVersion, ok: false, error: `peer message ${saved.value!.messageId} was not acknowledged or consumed`, now: Date.now() });
       const queued = requeueOutboxPeerFallback(database.value, outboxId);
       if (queued.kind !== "ok" || !queued.value) return;
       const retryMeta = { ...meta, ...payload, targetKind: outbox.targetKind, dispatchId: dispatch };
@@ -471,13 +459,13 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
     },
   });
   if (result === "delivered") {
-    if (delivery.recipient === "child" || delivery.recipient === "parent") acknowledgeImplicitDelivery(database.value, dispatch, delivery.id, delivery.recipient);
-    recordChannelResult(database.value, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });
+    if (delivery.recipient === "child" || delivery.recipient === "parent") await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: delivery.recipient });
+    await recordChannelResultThroughOwner(root, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });
     finishOutboxPeerVerification(database.value, outboxId, "delivered");
-    setDeliveryTransport(database.value, dispatch, sequence, "acknowledged");
+    await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: "acknowledged" });
   }
   return ok(`peer verification ${result}\n`);
   } finally {
-    releaseLease(database.value, verifierLeaseKey, verifierHolder);
+    await callStateOwner(root, { operation: "release-lease", key: verifierLeaseKey, holder: verifierHolder }).catch(() => undefined);
   }
 }

@@ -6,9 +6,10 @@ import { createHash, randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { openDatabase, withWrite } from "../../db/db.js";
+import { openDatabaseReadOnly } from "../../db/db.js";
 import { listDispatches } from "../../db/queries/dispatches.js";
-import { getRepositoryPullRequests, listRepositories, registerRepository, saveRepositoryPullRequests, type RepositoryRecord } from "../../db/queries/repositories.js";
+import { getRepositoryPullRequests, listRepositories, type RepositoryRecord } from "../../db/queries/repositories.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import type { DatabaseAdapter } from "../../db/db.js";
 import { listWorktrees } from "../../db/queries/worktrees.js";
 import { repositoryCheckout } from "../../core/project-registry.js";
@@ -19,7 +20,7 @@ import { promoteConversation, readConversations, sessionKey, type ConversationRe
 import { agyConversationIndex, sessionHistory, type HistorySession } from "../../adapters/session-history.js";
 import { ChatStore, type Chat } from "../../chat/store.js";
 import { appHost, appTarget, readAppPanes, readProcessTable, type ProcessTable } from "../../core/session-origin.js";
-import { loadModelRegistry, contextWindowOf, type ModelRegistry } from "../../core/model.js";
+import { loadAndPersistModelRegistry, contextWindowOf, type ModelRegistry } from "../../core/model.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { readArchivedWorktrees } from "../../core/archived-worktrees.js";
 import { readProjectAppearance } from "../../core/project-appearance.js";
@@ -725,7 +726,7 @@ async function schedulePullRequestRefresh(repository: RepositoryRecord, processA
 async function refreshRepositoryPullRequests(repositoryPath: string, environment: Environment, processAdapter: ProcessAdapter): Promise<void> {
   const lock = refreshLockPath(repositoryPath, environment);
   if (!(await acquireRefreshLock(lock).catch(() => false))) return;
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") { await unlink(lock).catch(() => undefined); return; }
   try {
     const cached = getRepositoryPullRequests(opened.value.db, repositoryPath);
@@ -735,7 +736,7 @@ async function refreshRepositoryPullRequests(repositoryPath: string, environment
       const parsed: unknown = JSON.parse(refreshed.value.stdout);
       if (Array.isArray(parsed)) value = JSON.stringify(parsed);
     } catch { /* Keep the last known good result on malformed output. */ }
-    saveRepositoryPullRequests(opened.value.db, repositoryPath, value ?? cached?.value ?? "[]", Date.now());
+    await callStateOwner(resolveStateDirectory(environment), { operation: "repository-pull-request-cache-write", path: repositoryPath, value: value ?? cached?.value ?? "[]", fetchedAt: Date.now() });
   } finally {
     opened.value.close();
     await unlink(lock).catch(() => undefined);
@@ -756,7 +757,7 @@ async function claudeIdleEnabled(home: string, cwd: string): Promise<boolean> {
 async function timedSessions(sessions: readonly ProjectSession[], home: string, cwd: string, environment: Environment): Promise<ProjectSession[]> {
   const minimumValue = Number(environment.CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS ?? 200000);
   const minimum = Number.isSafeInteger(minimumValue) && minimumValue >= 0 ? minimumValue : 200000;
-  const loadedRegistry = loadModelRegistry(environment);
+  const loadedRegistry = await loadAndPersistModelRegistry(environment);
   const registry = loadedRegistry.kind === "loaded" ? loadedRegistry.registry : { version: 1 as const, models: [] };
   const measured = await Promise.all(sessions.map(async (session) => {
     const sessionId = session.sessionId.slice(session.agent.length + 1);
@@ -835,24 +836,23 @@ async function repositoryProject(repository: RepositoryRecord, found: readonly R
 }
 
 export async function backfillProjectHistory(environment: Environment, processAdapter: ProcessAdapter): Promise<Result<void>> {
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   const handle = opened.value;
+  const candidates = new Set<string>();
   try {
     const marker = handle.db.query<{ value: string }>("SELECT value FROM settings WHERE key = ?").get(HISTORY_MARKER);
     if (marker !== null) return ok(undefined);
-    const candidates = new Set<string>();
     for (const worktree of listWorktrees(handle.db)) candidates.add(worktree.repo);
     for (const dispatch of listDispatches(handle.db, { includeArchived: true })) if (typeof dispatch.worktreePath === "string" && dispatch.worktreePath !== "") candidates.add(dispatch.worktreePath);
-    const resolved = await Promise.all([...candidates].map((path) => repositoryCheckout(path, processAdapter)));
-    const records = resolved.flatMap((item) => item.kind === "ok" ? [{ ...item.value, source: "megabrain" as const, addedAt: new Date().toISOString() }] : []);
-    const written = withWrite(handle, (db) => {
-      if (db.query<{ value: string }>("SELECT value FROM settings WHERE key = ?").get(HISTORY_MARKER) !== null) return;
-      for (const repository of records) registerRepository(db, repository);
-      db.run("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING", [HISTORY_MARKER, new Date().toISOString(), new Date().toISOString()]);
-    });
-    return written.kind === "ok" ? ok(undefined) : failed(written.error, written.exitCode);
   } finally { handle.close(); }
+  const resolved = await Promise.all([...candidates].map((path) => repositoryCheckout(path, processAdapter)));
+  const markedAt = new Date().toISOString();
+  const records = resolved.flatMap((item) => item.kind === "ok" ? [{ ...item.value, source: "megabrain" as const, addedAt: markedAt }] : []);
+  try {
+    await callStateOwner(resolveStateDirectory(environment), { operation: "project-history-backfill", markerKey: HISTORY_MARKER, markedAt, repositories: records });
+    return ok(undefined);
+  } catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
 }
 
 export async function executeProjects(args: readonly string[], environment: Environment, processAdapter = createProcessAdapter()): Promise<Result<string>> {
@@ -874,7 +874,7 @@ export async function executeProjects(args: readonly string[], environment: Envi
   }
   const backfilled = await backfillProjectHistory(environment, processAdapter);
   if (backfilled.kind !== "ok") return backfilled;
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   try {
     const repositories = listRepositories(opened.value.db);

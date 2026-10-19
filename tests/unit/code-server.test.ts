@@ -165,6 +165,15 @@ describe("code server", () => {
     expect(fake.started).toHaveLength(0);
   });
 
+  test("treats a missing state database as an empty repository registry", async () => {
+    const path = await repository("unregistered-without-state");
+    const fake = fakes();
+    const manager = createCodeServerManager(env, createProcessAdapter(), fake.dependencies);
+    await expect(manager.open(path)).rejects.toThrow("not a registered project or worktree");
+    expect(fake.downloaded).toHaveLength(0);
+    expect(fake.started).toHaveLength(0);
+  });
+
   test("refuses a downloaded release archive whose published SHA256 does not match", async () => {
     const path = await repository("checksum");
     await registerMegabrainRepository(path, env, createProcessAdapter());

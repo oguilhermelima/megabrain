@@ -1,26 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js";
-import { acknowledgeImplicitDelivery, appendMessage, getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, listOutboxPeerVerifications, mutateDispatch, recordResourceSamples, releaseLease, resourceHistoryEnabled, stateDatabase, transferLease } from "../../adapters/state-db.js";
+import { getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, listOutboxPeerVerifications, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
-import { acquireSupervisorLease, agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
+import { agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { readDeliveryScreen } from "./delivery-screen.js";
-import { startDeliveryWorker } from "./delivery-worker.js";
 import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
-import { settleClosedParentBacklog } from "../../core/closed-deliveries.js";
 import { collectResources } from "./resources.js";
 import { notifyAdmissionStatus } from "./admission-notify.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { classifyQueueMail } from "../../core/queue-write.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -41,6 +41,11 @@ function intervalSeconds(environment: Environment): number {
 }
 
 function leaseSeconds(interval: number): number { return Math.max(30, interval + LEASE_PADDING_SECONDS); }
+
+async function logSupervisorExit(root: string, reason: string): Promise<void> {
+  try { await appendFile(resolve(root, "supervise.log"), `${JSON.stringify({ at: new Date().toISOString(), event: "worker-exit", reason })}\n`, { encoding: "utf8", mode: 0o600 }); }
+  catch { /* The state directory may have been removed while the worker was running. */ }
+}
 
 const CLAUDE_TAIL_BYTES = 16 * 1024 * 1024;
 
@@ -242,15 +247,10 @@ async function notifyParent(root: string, database: Parameters<typeof getDispatc
   const createdAt = new Date(now).toISOString();
   const idempotencyKey = `${dispatch}:supervise:${finding.cause}:${now}`;
   const outboxId = `supervise-${idempotencyKey.replace(/[^A-Za-z0-9._-]/g, "-")}`;
-  const appended = appendMessage(database, dispatch, {
-    from: "child", type: "supervise", text, sessionId: string(meta.terminalId) ?? "", createdAt,
-    idempotencyKey,
-  }, {
-    delivery: { id: `delivery-${outboxId}`, recipient: "parent", status: "outstanding", createdAt, updatedAt: createdAt, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null },
-    outbox: { id: outboxId, dispatchId: dispatch, targetKind: "parent-pointer", target: string(meta.parentSessionId) ?? dispatch, payload: { meta, dispatchId: dispatch, targetKind: "parent-pointer", pointer: `mail: megabrain orchestrate watch ${dispatch}`, fullMessage } },
-  });
-  if (appended.kind !== "ok") return;
-  await startDeliveryWorker(root, dispatch, outboxId, { ...meta, dispatchId: dispatch, targetKind: "parent-pointer", fullMessage, pointer: `mail: megabrain orchestrate watch ${dispatch}` }, process);
+  await callStateOwner(root, { operation: "append-message", dispatchId: dispatch, message: {
+    from: "child", type: "supervise", text, sessionId: string(meta.terminalId) ?? "", createdAt, idempotencyKey,
+  }, delivery: { id: `delivery-${outboxId}`, recipient: "parent", status: "outstanding", createdAt, updatedAt: createdAt, acknowledgedAt: null, fencedAt: null, consumer: null, consumerGeneration: null },
+  outbox: { id: outboxId, targetKind: "parent-pointer", target: string(meta.parentSessionId) ?? dispatch, payload: { meta, dispatchId: dispatch, targetKind: "parent-pointer", pointer: `mail: megabrain orchestrate watch ${dispatch}`, fullMessage } } }).catch(() => undefined);
 }
 
 async function inspectDispatch(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, environment: Environment, process: ProcessAdapter, now: number): Promise<SupervisionFinding> {
@@ -291,7 +291,7 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   return blocked.cause === "dialog-waiting" ? blocked : { cause: "unknown" };
 }
 
-async function retryPendingChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, process: ProcessAdapter): Promise<void> {
+async function retryPendingChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
   const outbox = listOutbox(database);
   const deliveries = listDeliveries(database, dispatch);
   const messages = listMessages(database, dispatch);
@@ -305,11 +305,11 @@ async function retryPendingChildReplies(root: string, database: Parameters<typeo
     if (message?.from !== "parent" || message.type !== "reply") continue;
     const delivery = deliveries.value.find((candidate) => Array.isArray(candidate.messageSeqs) && candidate.messageSeqs.includes(sequence));
     if (delivery?.status !== "outstanding") continue;
-    await startDeliveryWorker(root, dispatch, item.id, { ...meta, targetKind: "child-delivery" }, process);
+    await callStateOwner(root, { operation: "resume-outbox", id: item.id }).catch(() => false);
   }
 }
 
-async function retryPendingParentPointers(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, process: ProcessAdapter): Promise<void> {
+async function retryPendingParentPointers(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
   const outbox = listOutbox(database);
   const deliveries = listDeliveries(database, dispatch);
   const messages = listMessages(database, dispatch);
@@ -321,16 +321,15 @@ async function retryPendingParentPointers(root: string, database: Parameters<typ
     if (!Number.isSafeInteger(sequence) || sequence < 1) continue;
     const message = messages.value.find((candidate) => candidate.seq === sequence);
     if (message?.from !== "child") continue;
-    const priorDone = messages.value.some((candidate) => candidate.from === "child" && candidate.type === "done" && candidate.seq < sequence);
+    const priorDone = messages.value.some((candidate) => candidate.from === "child" && candidate.type === "done" && candidate.text === message.text && candidate.seq < sequence);
     if (classifyQueueMail(message.from, message.type, priorDone) !== "actionable") continue;
     const delivery = deliveries.value.find((candidate) => candidate.recipient === "parent" && Array.isArray(candidate.messageSeqs) && candidate.messageSeqs.includes(sequence));
     if (delivery?.status !== "outstanding") continue;
-    const payloadMeta = object(payload?.meta) ?? meta;
-    await startDeliveryWorker(root, dispatch, item.id, { ...meta, ...payloadMeta, ...payload, targetKind: "parent-pointer" }, process);
+    await callStateOwner(root, { operation: "resume-outbox", id: item.id }).catch(() => false);
   }
 }
 
-function settleImplicitChildReads(database: Parameters<typeof getDispatch>[0], dispatch: string): void {
+async function settleImplicitChildReads(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
   const deliveries = listDeliveries(database, dispatch);
   const messages = listMessages(database, dispatch);
   if (deliveries.kind !== "ok" || messages.kind !== "ok") return;
@@ -339,20 +338,19 @@ function settleImplicitChildReads(database: Parameters<typeof getDispatch>[0], d
     if (delivery.transport !== "checked" && delivery.transportReason !== "full-direction") continue;
     const lastSequence = Math.max(0, ...delivery.messageSeqs);
     if (!messages.value.some((message) => message.from === "child" && message.seq > lastSequence)) continue;
-    acknowledgeImplicitDelivery(database, dispatch, delivery.id, "child");
+    await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: "child" });
   }
 }
 
 export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
-  const settled = settleClosedParentBacklog(database);
-  if (settled.kind !== "ok") return { open: true, findings: 0 };
+  try { await callStateOwner(root, { operation: "settle-closed-parent-backlog" }); }
+  catch { return { open: true, findings: 0 }; }
   const peerVerifications = listOutboxPeerVerifications(database);
   const pendingPeerVerifications = peerVerifications.kind === "ok" && peerVerifications.value.some((item) => item.record.state === "pending");
   if (peerVerifications.kind === "ok") {
     for (const item of peerVerifications.value) {
       if (item.record.state !== "pending" || now - item.record.acceptedAt < 5 * 60 * 1000) continue;
-      const verifier = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["__delivery-verify", item.id]);
-      await process.startDetached(verifier.command, verifier.args);
+      await callStateOwner(root, { operation: "resume-verification", id: item.id }).catch(() => undefined);
     }
   }
   const listed = listDispatches(database);
@@ -372,12 +370,12 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
       findings += 1;
     } else if (after.kind === "ok" && after.value?.state === "queued") {
       if (started.kind !== "ok") {
-        mutateDispatch(database, dispatch, (current) => current.state === "queued" ? { ...current, state: "failed", reason: started.kind === "failed" ? started.error : started.reason } : { kind: "no_change" });
+        await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, expectedState: "queued", patch: { state: "failed", reason: started.kind === "failed" ? started.error : started.reason } });
         continue;
       }
       break;
     } else if (started.kind !== "ok") {
-      mutateDispatch(database, dispatch, (current) => current.state === "spawning" ? { ...current, state: "failed", processState: "failed", reason: started.kind === "failed" ? started.error : started.reason } : { kind: "no_change" });
+      await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, expectedState: "spawning", patch: { state: "failed", processState: "failed", reason: started.kind === "failed" ? started.error : started.reason } });
     }
   }
   for (const item of openDispatches) {
@@ -387,12 +385,12 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const current = getDispatch(database, dispatch);
     if (current.kind !== "ok" || current.value === undefined) continue;
     const meta = current.value as RecordValue;
-    settleImplicitChildReads(database, dispatch);
-    await retryPendingParentPointers(root, database, dispatch, meta, process);
+    await settleImplicitChildReads(root, database, dispatch);
+    await retryPendingParentPointers(root, database, dispatch);
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now);
     const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
     const running = screen?.kind === "ok" ? backgroundTasks(screen.value) : undefined;
-    if (screen?.kind === "ok") await retryPendingChildReplies(root, database, dispatch, meta, process);
+    if (screen?.kind === "ok") await retryPendingChildReplies(root, database, dispatch);
     const recordedPrevious = previousFinding(meta);
     const recovered = recordedPrevious !== undefined && await recoveredSince(database, dispatch, meta, environment, recordedPrevious.notifiedAt);
     const previous = recovered ? undefined : recordedPrevious;
@@ -406,24 +404,24 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
       await notifyParent(root, database, dispatch, meta, finding, process, now, recovery);
       findings += 1;
     }
-    mutateDispatch(database, dispatch, () => ({
+    await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: {
       superviseLastCheck: new Date(now).toISOString(),
       ...(running === undefined ? {} : { backgroundTasks: running }),
       superviseFinding: finding.cause === "unknown"
         ? { cause: "unknown", lastSeenAt: new Date(now).toISOString() }
         : { ...finding, cause: finding.cause, lastSeenAt: new Date(now).toISOString(), notifiedAt: shouldNotify ? now : previous?.notifiedAt ?? now, ...(recovery === undefined ? {} : { autoRecoveryAttemptedAt: now, autoRecoveryResult: recovery }) },
-    }));
+    } });
   }
   const historyEnvironment = { ...environment, MEGABRAIN_STATE_DIR: root };
   if (await resourceHistoryEnabled(historyEnvironment)) {
     const snapshot = await collectResources(historyEnvironment, process, true, false);
-    recordResourceSamples(historyEnvironment, database, snapshot.dispatches.flatMap((item) => item.resources === undefined ? [] : [{ dispatchId: item.dispatchId, agent: item.agent, rssBytes: item.resources.rssBytes, cpuPercent: item.resources.cpuPercent }]), now);
+    await callStateOwner(root, { operation: "resource-samples", samples: snapshot.dispatches.flatMap((item) => item.resources === undefined ? [] : [{ dispatchId: item.dispatchId, agent: item.agent, rssBytes: item.resources.rssBytes, cpuPercent: item.resources.cpuPercent }]), now });
   }
   return { open: true, findings };
 }
 
 export async function startSupervisorWorker(root: string, environment: Environment, process: ProcessAdapter): Promise<"started" | "already-running" | "no-open-dispatches" | "failed"> {
-  const database = stateDatabase({ ...environment, MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ ...environment, MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return "failed";
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return "failed";
@@ -431,13 +429,12 @@ export async function startSupervisorWorker(root: string, environment: Environme
   const hasPendingPeerVerification = peerVerifications.kind === "ok" && peerVerifications.value.some((item) => item.record.state === "pending");
   if (!hasOpenDispatches(listed.value.map((record) => String(record.state))) && !hasPendingPeerVerification) return "no-open-dispatches";
   const holder = `${globalThis.process.pid}-${randomUUID()}`;
-  const lease = acquireSupervisorLease(database.value, holder, leaseSeconds(intervalSeconds(environment)));
-  if (lease.kind !== "ok") return "failed";
-  if (!lease.value) return "already-running";
+  const lease = await callStateOwner(root, { operation: "acquire-lease", key: LEASE_KEY, holder, seconds: leaseSeconds(intervalSeconds(environment)) }).catch(() => false) as boolean;
+  if (!lease) return "already-running";
   const worker = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["__supervise-worker", holder]);
   const started = await process.startDetached(worker.command, worker.args);
   if (started.kind !== "ok") {
-    releaseLease(database.value, LEASE_KEY, holder);
+    await callStateOwner(root, { operation: "release-lease", key: LEASE_KEY, holder }).catch(() => undefined);
     return "failed";
   }
   return "started";
@@ -447,32 +444,43 @@ export async function executeSupervisorWorker(args: readonly string[], environme
   const starter = args[0];
   if (starter === undefined || !/^\d+-[0-9a-f-]+$/i.test(starter)) return failed("supervisor worker requires its lease holder", 2);
   const root = resolveStateDirectory(environment);
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   // The starter's lease names the starter's pid, which has exited; --stop needs the worker's own.
   const holder = `${globalThis.process.pid}-${randomUUID()}`;
-  const transferred = transferLease(database.value, LEASE_KEY, starter, holder);
-  if (transferred.kind !== "ok" || !transferred.value) return ok("supervisor lease was taken by another worker\n");
+  const transferred = await callStateOwner(root, { operation: "transfer-lease", key: LEASE_KEY, from: starter, to: holder }).catch(() => false) as boolean;
+  if (!transferred) {
+    await logSupervisorExit(root, "lease was taken by another worker");
+    return ok("supervisor lease was taken by another worker\n");
+  }
   const delay = intervalSeconds(environment) * 1000;
   let running = true;
-  const stop = (): void => { running = false; };
-  globalThis.process.once("SIGTERM", stop);
-  globalThis.process.once("SIGINT", stop);
+  let exitReason = "worker exited without a recorded reason";
+  const stop = (signal: NodeJS.Signals): void => { exitReason = `received ${signal}`; running = false; };
+  const stopTerm = (): void => stop("SIGTERM");
+  const stopInt = (): void => stop("SIGINT");
+  globalThis.process.once("SIGTERM", stopTerm);
+  globalThis.process.once("SIGINT", stopInt);
   try {
     while (running) {
-      const renewed = acquireSupervisorLease(database.value, holder, leaseSeconds(intervalSeconds(environment)));
-      if (renewed.kind !== "ok" || !renewed.value) break;
-      if (!existsSync(resolve(root, "megabrain.db"))) break;
+      if (!existsSync(resolve(root, "megabrain.db"))) { exitReason = "state database was removed"; break; }
+      const renewed = await callStateOwner(root, { operation: "acquire-lease", key: LEASE_KEY, holder, seconds: leaseSeconds(intervalSeconds(environment)) }).catch(() => false) as boolean;
+      if (!renewed) {
+        exitReason = "supervisor lease was lost";
+        break;
+      }
       const status = await superviseOnce(root, database.value, environment, process);
-      if (!status.open) break;
+      if (!status.open) { exitReason = "no work remains"; break; }
       for (let elapsed = 0; running && elapsed < delay; elapsed += 250) await new Promise((resolve) => setTimeout(resolve, Math.min(250, delay - elapsed)));
     }
   } finally {
     globalThis.process.off("SIGTERM", stop);
     globalThis.process.off("SIGINT", stop);
-    releaseLease(database.value, LEASE_KEY, holder);
+    if (existsSync(resolve(root, "megabrain.db"))) await callStateOwner(root, { operation: "release-lease", key: LEASE_KEY, holder }).catch(() => undefined);
+    await logSupervisorExit(root, exitReason);
+    database.value.close();
   }
-  return ok("supervisor stopped\n");
+  return ok(`supervisor stopped: ${exitReason}\n`);
 }
 
 export function supervisorWatcher(database: Parameters<typeof getDispatch>[0]): Readonly<{ running: boolean; pid: number | null }> {
@@ -504,7 +512,7 @@ function formatStatus(root: string, database: Parameters<typeof getDispatch>[0],
 export async function executeSupervise(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   if (args.includes("-h") || args.includes("--help")) return ok(usageText("supervise"));
   const root = resolveStateDirectory(environment);
-  const database = stateDatabase(environment);
+  const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   if (args.length === 1 && args[0] === "--status") {
     const measured = await collectResources({ MEGABRAIN_STATE_DIR: root }, process, true, false);

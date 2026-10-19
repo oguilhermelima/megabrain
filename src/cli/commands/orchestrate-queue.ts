@@ -2,7 +2,8 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { openDispatchStates } from "../../core/dispatch-states.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { ownsDispatch } from "../../core/context.js";
-import { listDeliveries, listDispatches, listMessages, listOutbox, stateDatabase, cancelQueuedMessage, mutateDispatch } from "../../adapters/state-db.js";
+import { listDeliveries, listDispatches, listMessages, listOutbox, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { callStateOwner } from "../../db/state-owner.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { resolveCaller } from "./queue-write.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
@@ -111,7 +112,7 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
       if (procCancel.kind !== "ok") return procCancel;
       return ok(json ? `${JSON.stringify({ id: itemId, kind: "proc", dispatch: "-", type: procCancel.value.name, createdAt: procCancel.value.createdAt, state: "cancelled", text: procCancel.value.reason, reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
     }
-    const db = stateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
+    const db = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
     if (db.kind !== "ok") return db;
     const all = listDispatches(db.value, { includeArchived: true });
     if (all.kind !== "ok") return all;
@@ -119,11 +120,15 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     if (queuedSpawn !== undefined) {
       const owner = resolveParentDispatchId(db.value, queuedSpawn.dispatchId, caller);
       if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
-      const cancelled = mutateDispatch(db.value, owner.value, (current) => current.state === "queued"
-        ? { ...current, state: "closed", reason: reason.trim(), queuedCancelledAt: new Date().toISOString(), ...(caller.operator === true ? { cancelledBy: "operator" } : {}) }
-        : { kind: "no_change" });
-      if (cancelled.kind !== "ok") return cancelled;
-      if (cancelled.value.state !== "closed" || cancelled.value.queuedCancelledAt === undefined) return failed(`queued spawn ${itemId} started before cancellation`);
+      let cancelled: unknown;
+      try {
+        cancelled = await callStateOwner(resolveStateDirectory(environment), {
+          operation: "dispatch-patch", dispatchId: owner.value,
+          patch: { state: "closed", reason: reason.trim(), queuedCancelledAt: new Date().toISOString(), ...(caller.operator === true ? { cancelledBy: "operator" } : {}) },
+          expectedState: "queued",
+        });
+      } catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+      if (typeof cancelled === "object" && cancelled !== null && "updated" in cancelled && cancelled.updated === false) return failed(`queued spawn ${itemId} started before cancellation`);
       return ok(json ? `${JSON.stringify({ id: itemId, dispatch: owner.value, kind: "spawn", type: "spawn", createdAt: String(queuedSpawn.queuedAt ?? queuedSpawn.createdAt ?? ""), state: "cancelled", text: firstLine(queuedSpawn.admissionReason), reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
     }
     const requested = all.value.flatMap((entry) => {
@@ -143,8 +148,9 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     const target = delivery.value.find((item) => item.id === itemId);
     const sequence = Array.isArray(target?.messageSeqs) ? target.messageSeqs.find((value): value is number => typeof value === "number") : undefined;
     const originalText = original.value.find((message) => message.seq === sequence)?.text ?? "";
-    const cancelled = cancelQueuedMessage(db.value, owner.value, itemId, reason.trim(), caller.id || caller.terminalId || "caller");
-    if (cancelled.kind !== "ok") return cancelled;
+    try {
+      await callStateOwner(resolveStateDirectory(environment), { operation: "cancel-queued-message", dispatchId: owner.value, itemId, reason: reason.trim(), actor: caller.id || caller.terminalId || "caller" });
+    } catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
     return ok(json ? `${JSON.stringify({ id: itemId, kind: "message", dispatch: owner.value, type: "reply", createdAt: target?.createdAt ?? "", state: "cancelled", text: originalText, reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
   }
 
@@ -161,7 +167,7 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     else return failed(`unexpected argument: ${arg}`, 2);
   }
   const caller = await resolveCaller(operator ? { ...environment, MEGABRAIN_OPERATOR: "1" } : environment, process);
-  const db = stateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
+  const db = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
   if (db.kind !== "ok") return db;
   let dispatchIds: string[];
   if (dispatch !== "") {

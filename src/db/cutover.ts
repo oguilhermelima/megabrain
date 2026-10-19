@@ -7,7 +7,8 @@ import { acquireLease, releaseLease, transcriptPath } from "../adapters/state-db
 import { resolveStateDirectory, type StateEnvironment } from "../core/state.js";
 import { failed, ok, type Result } from "../core/result.js";
 import { applyJsonStateImport, parseJsonState, readParsedJsonStateParity, type ParityReport, type ParsedJsonState } from "./import/json-state.js";
-import { backupDatabase, openDatabase, vacuumDatabaseFile, withWrite, type DatabaseHandle } from "./db.js";
+import { backupDatabase, openDatabase, openDatabaseReadOnly, vacuumDatabaseFile, withWrite, type DatabaseHandle } from "./db.js";
+import { callStateOwner } from "./state-owner.js";
 
 export type CutoverMethod = "auto" | "migrate" | "import";
 export type CutoverMarker = Readonly<{ method: CutoverMethod; completedAt: string; totals: ParityReport["totals"] }>;
@@ -361,29 +362,33 @@ function parityForFailure(handle: DatabaseHandle, source: ParsedJsonState): Pari
 export async function ensureAutomaticCutover(environment: StateEnvironment): Promise<Result<CutoverSummary | undefined>> {
   const directory = stateDirectory(environment);
   if (directory.kind !== "ok") return failed(directory.error, directory.exitCode);
-  const opened = openDatabase({ ...environment, MEGABRAIN_STATE_DIR: directory.value });
-  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
-  try {
+  const opened = openDatabaseReadOnly({ ...environment, MEGABRAIN_STATE_DIR: directory.value });
+  if (opened.kind === "ok") {
+    try {
     const marker = readCutoverMarker(opened.value);
     if (marker.kind !== "ok") return failed(marker.error, marker.exitCode);
     if (marker.value !== undefined) return ok(undefined);
-    const result = await migrateWithLease(opened.value, environment, directory.value, "auto");
-    return result.kind === "ok" ? ok(result.value.migrated ? result.value : undefined) : failed(result.error, result.exitCode);
-  } finally {
-    opened.value.close();
+    } finally { opened.value.close(); }
   }
+  try {
+    const result = await callStateOwner(directory.value, { operation: "automatic-cutover" }) as CutoverSummary;
+    return ok(result.migrated ? result : undefined);
+  } catch (cause: unknown) { return failed(`automatic cutover through state owner failed: ${errorMessage(cause)}`); }
+}
+
+export async function ensureAutomaticCutoverOnHandle(handle: DatabaseHandle, environment: StateEnvironment, directory: string): Promise<Result<CutoverSummary>> {
+  return migrateWithLease(handle, environment, directory, "auto");
 }
 
 export async function migrateLegacyState(environment: StateEnvironment): Promise<Result<CutoverSummary>> {
   const directory = stateDirectory(environment);
   if (directory.kind !== "ok") return failed(directory.error, directory.exitCode);
-  const opened = openDatabase({ ...environment, MEGABRAIN_STATE_DIR: directory.value });
-  if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
-  try {
-    return await migrateWithLease(opened.value, environment, directory.value, "migrate");
-  } finally {
-    opened.value.close();
-  }
+  try { return ok(await callStateOwner(directory.value, { operation: "manual-migrate" }) as CutoverSummary); }
+  catch (cause: unknown) { return failed(`database migration through state owner failed: ${errorMessage(cause)}`); }
+}
+
+export async function migrateLegacyStateOnHandle(handle: DatabaseHandle, environment: StateEnvironment, directory: string): Promise<Result<CutoverSummary>> {
+  return migrateWithLease(handle, environment, directory, "migrate");
 }
 
 export function markExplicitImport(handle: DatabaseHandle, imported: Readonly<Record<string, number>>): Result<void> {

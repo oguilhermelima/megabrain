@@ -4,7 +4,7 @@ import { projectScripts, type ProjectScriptName } from "../../core/project-scrip
 import { detectScriptPort } from "../../core/script-port.js";
 import { executeProc } from "../../core/proc-runner.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { openDatabase } from "../../db/db.js";
+import { openDatabaseReadOnly } from "../../db/db.js";
 import { listRepositories } from "../../db/queries/repositories.js";
 import { repositoryCheckout } from "../../core/project-registry.js";
 
@@ -17,7 +17,7 @@ const SCRIPTS: readonly ProjectScriptName[] = ["run", "build", "install"];
 export async function resolveRepositoryPath(selector: string, environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   const checkout = await repositoryCheckout(selector, process);
   if (checkout.kind === "ok") return ok(checkout.value.path);
-  const opened = openDatabase(environment);
+  const opened = openDatabaseReadOnly(environment);
   if (opened.kind !== "ok") return failed(opened.error, opened.exitCode);
   try {
     const matches = listRepositories(opened.value.db).filter((record) => record.name === selector || record.path === selector);

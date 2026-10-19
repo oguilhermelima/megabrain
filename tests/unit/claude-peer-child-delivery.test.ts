@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { appendMessage, createDelivery, createDispatch, getDeliveryChannel, listDeliveries, listOutbox, stateDatabase } from "../../src/adapters/state-db.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { claudeSessionPermissionClass } from "../../src/agents/claude-peer.js";
-import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 import { executeOrchestrateChange } from "../../src/cli/commands/orchestrate-reply.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { failed, ok } from "../../src/core/result.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
 // A reply from the parent to a Claude child goes through the child's peer socket, the same channel
 // a parent notice uses. The sender is the parent here, so the attested permission class is the
@@ -24,10 +25,10 @@ afterEach(async () => {
 });
 
 type Frame = Record<string, unknown>;
-type Inbox = { connections: number; frames: Frame[][] };
+type Inbox = { connections: number; frames: Frame[][]; processing: Promise<void>[] };
 
 async function startInbox(path: string, onFrames: (frames: Frame[]) => Promise<void> | void = () => undefined): Promise<Inbox> {
-  const inbox: Inbox = { connections: 0, frames: [] };
+  const inbox: Inbox = { connections: 0, frames: [], processing: [] };
   const server: Server = createServer((socket) => {
     inbox.connections += 1;
     let buffer = "";
@@ -35,7 +36,9 @@ async function startInbox(path: string, onFrames: (frames: Frame[]) => Promise<v
     socket.on("end", () => {
       const frames = buffer.split("\n").filter((line) => line !== "").map((line) => JSON.parse(line) as Frame);
       inbox.frames.push(frames);
-      void Promise.resolve(onFrames(frames)).finally(() => socket.end());
+      const processing = Promise.resolve(onFrames(frames));
+      inbox.processing.push(processing);
+      void processing.finally(() => socket.end());
     });
   });
   await new Promise<void>((resolve) => server.listen(path, resolve));
@@ -98,7 +101,16 @@ async function runReply(current: Scene, parentAgent = "claude", deadlineMs = 500
     async startDetached() { return failed("not used"); },
     invocationCount() { return 0; },
   };
-  await executeDeliveryWorker(["ob-child", "holder", "delivery-target:orca:child-terminal", String(Date.now() + deadlineMs)], { HOME: current.root, MEGABRAIN_STATE_DIR: current.root, MEGABRAIN_PEER_IDLE_DROP_MS: "300" }, process);
+  const owner = await startStateOwner(current.root, process, { HOME: current.root, MEGABRAIN_STATE_DIR: current.root, MEGABRAIN_PEER_IDLE_DROP_MS: "300", MEGABRAIN_DELIVERY_TIMEOUT_MS: String(deadlineMs) });
+  try {
+    const deadline = Date.now() + deadlineMs + 1_000;
+    while (Date.now() < deadline) {
+      const currentOutbox = listOutbox(owner.handle);
+      if (currentOutbox.kind === "ok" && currentOutbox.value.find((item) => item.id === "ob-child")?.status !== "pending") break;
+      if (owner.pendingDeliveries.size > 0) await Promise.all([...owner.pendingDeliveries]);
+      else await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  } finally { await stopStateOwner(owner); }
   const outbox = listOutbox(db.value);
   const deliveries = listDeliveries(db.value, "d-child");
   const channel = getDeliveryChannel(db.value, "claude", "peer-socket");
@@ -150,10 +162,12 @@ describe("orchestrate change peer delivery", () => {
     };
     const originalTmux = getTmux();
     registerTmux({ ...originalTmux });
+    const owner = await startStateOwner(current.root, process, { HOME: current.root, MEGABRAIN_STATE_DIR: current.root, MEGABRAIN_DELIVERY_TIMEOUT_MS: "5000" });
     try {
       const result = await executeOrchestrateChange(["d-change-peer", "--text", "Use the peer channel", "--idle-timeout", "2", "--json"], {
         HOME: current.root, MEGABRAIN_STATE_DIR: current.root, ORCA_TERMINAL_HANDLE: "parent-terminal",
       }, process);
+      await Promise.all([...owner.pendingDeliveries]);
       expect(result.kind).toBe("ok");
       expect(inbox.connections).toBe(1);
       expect(calls.filter((call) => call.includes("--text") && call.includes("\u001b"))).toHaveLength(1);
@@ -162,6 +176,7 @@ describe("orchestrate change peer delivery", () => {
       expect(inbox.frames.flat().some((frame) => frame.type === "user" && String((frame.message as Frame | undefined)?.content).includes("Use the peer channel"))).toBe(true);
     } finally {
       registerTmux(originalTmux);
+      await stopStateOwner(owner);
       db.value.close();
     }
   });
@@ -188,8 +203,9 @@ describe("reply to a Claude child", () => {
       await new Promise((resolve) => setTimeout(resolve, 600));
       await consume(current)(frames);
     };
-    await startInbox(String(current.session.messagingSocketPath), late);
+    const inbox = await startInbox(String(current.session.messagingSocketPath), late);
     const run = await runReply(current);
+    await Promise.all(inbox.processing);
     expect(run.sends).toHaveLength(0);
     expect(run.deliveries[0]).toMatchObject({ transport: "ack-verifying" });
   });

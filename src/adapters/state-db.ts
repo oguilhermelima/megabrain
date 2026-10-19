@@ -1,4 +1,4 @@
-export { stateDatabase, transcriptPath } from "./state/shared.js";
+export { stateDatabase, readOnlyStateDatabase, transcriptPath } from "./state/shared.js";
 export { estimateTypicalRssByAgent, readAdmissionPolicy, recordResourceSamples, resourceHistoryEnabled, setResourceHistory, writeAdmissionPolicy, type ResourceSample, type StoredAdmissionPolicy } from "./state/resources.js";
 export {
   archiveDispatch,

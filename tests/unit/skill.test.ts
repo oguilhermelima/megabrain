@@ -59,6 +59,10 @@ describe("shouldReconcileSkillsAtStartup", () => {
     expect(shouldReconcileSkillsAtStartup(["hook"])).toBe(false);
   });
 
+  test("skips internal state-owner startup", () => {
+    expect(shouldReconcileSkillsAtStartup(["__state-owner"])).toBe(false);
+  });
+
   test("does not skip hook appearing after the first argument", () => {
     expect(shouldReconcileSkillsAtStartup(["context", "hook"])).toBe(true);
   });

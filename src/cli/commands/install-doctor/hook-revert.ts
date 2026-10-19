@@ -67,7 +67,8 @@ export async function migrateLegacyAgyHooks(environment: Environment, processAda
     if (backup !== undefined) hookState.backups.agyLegacy = backup;
   }
   hookState.movedLegacyAgy = true;
-  writeHookInstallState(environment, hookState);
+  const saved = await writeHookInstallState(environment, hookState);
+  if (saved.kind !== "ok") return saved;
   try {
     if (emptyConfigCreatedByInstall(updated)) unlinkSync(path);
     else await writeJsonAtomic(path, updated);
@@ -233,7 +234,8 @@ export async function revertOrchestrationHooks(environment: Environment): Promis
   hookState.createdConfigs = [];
   hookState.backups = {};
   hookState.movedLegacyAgy = false;
-  writeHookInstallState(environment, hookState);
+  const saved = await writeHookInstallState(environment, hookState);
+  if (saved.kind !== "ok") return saved;
   return ok("orchestration-hooks reverted\n");
 }
 

@@ -18,7 +18,7 @@ import { createTmuxSession, dispatchTmuxProcess, getTmux, onAppTmuxServer, sendT
 import { decideTmuxPlacement, tmuxWorktreeSessionName } from "../../core/tmux-placement.js";
 import { usageText } from "../../core/usage.js";
 import { PROMPT_BUDGET_TMUX_BYTES, promptByteLength } from "../../core/prompt-budget.js";
-import { stateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, deleteTmuxSession, putTmuxSession, listDispatches, createDispatch, getDispatch, mutateDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, getInstallState, listTmuxSessions, getTmuxSession, getTmuxSessionByStableId, listDispatches, createDispatch, getDispatch, listMessages, appendMessage as appendDatabaseMessage, acquireLease, releaseLease } from "../../adapters/state-db.js";
 import { resolveAgentDescriptor } from "../../agents/index.js";
 import { findClaudeSessionPid } from "../../agents/claude-session.js";
 import { grokLeaderSocket } from "../../agents/grok-leader.js";
@@ -35,6 +35,7 @@ import { decideAdmission, DEFAULT_AGENT_COST_BYTES } from "../../core/admission.
 import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/state-db.js";
 import { readMachineResources } from "../../core/resources.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
+import { callStateOwner } from "../../db/state-owner.js";
 
 import { type SpawnEnvironment, type SpawnOptions, type SpawnWorktree, type SpawnDependencies, type RecordValue, stringValue } from "./orchestrate-spawn-options.js";
 import { defaultRemoveWorktree, describeHostCall, failureForCall } from "./orchestrate-spawn-worktree.js";
@@ -43,7 +44,7 @@ export function resultError(result: Result<unknown>, fallback: string): string {
 }
 
 export function hasReceipt(root: string, id: string): boolean {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return false;
   const messages = listMessages(database.value, id);
   return messages.kind === "ok" && messages.value.some((message) => message.from === "child" && message.type === "received");
@@ -56,19 +57,24 @@ export function settleHostReceipt(root: string, id: string): PromptTransportOutc
 }
 
 export async function updateMeta(root: string, id: string, update: RecordValue, process: ProcessAdapter): Promise<Result<void>> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return database;
-  const updated = mutateDispatch(database.value, id, (current) => ({ ...current, ...update, updatedAt: new Date().toISOString() }));
-  if (updated.kind === "ok" && updated.value.runtime === "tmux" && typeof updated.value.tmuxPane === "string") {
-    await setTmuxChatPane(updated.value.tmuxPane, String(updated.value.agent ?? "unknown"), String(updated.value.chatName ?? updated.value.branch ?? id), String(updated.value.state ?? "idle"), process);
+  try {
+    await callStateOwner(root, { operation: "dispatch-patch", dispatchId: id, patch: { ...update, updatedAt: new Date().toISOString() } });
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
-  return updated.kind === "ok" ? ok(undefined) : updated;
+  const updatedMeta = getDispatch(database.value, id);
+  if (updatedMeta.kind === "ok" && updatedMeta.value?.runtime === "tmux" && typeof updatedMeta.value.tmuxPane === "string") {
+    await setTmuxChatPane(updatedMeta.value.tmuxPane, String(updatedMeta.value.agent ?? "unknown"), String(updatedMeta.value.chatName ?? updatedMeta.value.branch ?? id), String(updatedMeta.value.state ?? "idle"), process);
+  }
+  return updatedMeta.kind === "ok" ? ok(undefined) : updatedMeta;
 }
 
 export async function coordinatorChatName(environment: SpawnEnvironment, process: ProcessAdapter): Promise<string> {
   const parentDispatchId = environment.MEGABRAIN_DISPATCH_ID;
   if (parentDispatchId !== undefined) {
-    const database = stateDatabase(environment);
+    const database = readOnlyStateDatabase(environment);
     const parent = database.kind === "ok" ? getDispatch(database.value, parentDispatchId) : database;
     if (parent.kind === "ok" && typeof parent.value?.chatName === "string" && parent.value.chatName !== "") return parent.value.chatName;
   }
@@ -82,7 +88,7 @@ export async function coordinatorChatName(environment: SpawnEnvironment, process
 }
 
 export async function markRunningIfSpawning(root: string, id: string, processAdapter: ProcessAdapter = createProcessAdapter()): Promise<Result<void>> {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return database;
   const result = getDispatch(database.value, id);
   if (result.kind !== "ok") return result;
@@ -162,9 +168,13 @@ export async function initialMeta(id: string, options: SpawnOptions, worktree: S
 }
 
 // A session that was killed must not stay in the registry, or lists show it as live.
-export function forgetTmuxSession(root: string, session: string): void {
-  const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
-  if (database.kind === "ok") deleteTmuxSession(database.value, session);
+export async function forgetTmuxSession(root: string, session: string): Promise<Result<void>> {
+  try {
+    await callStateOwner(root, { operation: "tmux-session-write", action: "remove", session });
+    return ok(undefined);
+  } catch (cause: unknown) {
+    return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+  }
 }
 
 export async function cleanup(root: string, id: string, worktree: SpawnWorktree, plan: SpawnPlan, process: ProcessAdapter, dependencies: SpawnDependencies, terminalId: string, session: string | null, pane: string | null, sessionOwned: boolean): Promise<readonly string[]> {
@@ -174,10 +184,13 @@ export async function cleanup(root: string, id: string, worktree: SpawnWorktree,
     const call = sessionOwned ? `tmux kill-session --target ${session}` : `tmux kill-pane --target ${pane ?? ""}`;
     const result = sessionOwned ? await getTmux().killSession(session, process) : pane === null ? undefined : await getTmux().killPane(pane, process);
     if (result !== undefined && result.kind !== "ok") failures.push(`${call}: ${result.error}`);
-    if (sessionOwned && result?.kind === "ok") forgetTmuxSession(root, session);
+    if (sessionOwned && result?.kind === "ok") {
+      const forgotten = await forgetTmuxSession(root, session);
+      if (forgotten.kind !== "ok") failures.push(forgotten.error);
+    }
   }
   if (plan.cleanup.runtime === "host") {
-    const database = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+    const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
     const stored = database.kind === "ok" ? getDispatch(database.value, id) : database;
     const meta = stored.kind === "ok" ? stored.value : undefined;
     const provider = getHost(stringValue(meta?.childHost));

@@ -4,6 +4,8 @@ export type RepositorySource = "megabrain" | "import";
 export type RepositoryRecord = Readonly<{ name: string; path: string; remote: string | null; source: RepositorySource; addedAt: string }>;
 type RepositoryRow = Readonly<{ name: string; path: string; remote: string | null; source: RepositorySource; added_at: string }>;
 export type RepositoryPullRequestCache = Readonly<{ value: string; fetchedAt: number }>;
+export type RepositoryCursor = Readonly<{ name: string; path: string }>;
+export type RepositoryPage = Readonly<{ rows: RepositoryRecord[]; nextCursor?: RepositoryCursor }>;
 
 function fromRow(row: RepositoryRow): RepositoryRecord {
   return { name: row.name, path: row.path, remote: row.remote, source: row.source, addedAt: row.added_at };
@@ -17,7 +19,24 @@ export function registerRepository(db: DatabaseAdapter, repository: RepositoryRe
 }
 
 export function listRepositories(db: DatabaseAdapter): RepositoryRecord[] {
-  return db.query<RepositoryRow>("SELECT name, path, remote, source, added_at FROM repositories ORDER BY name COLLATE NOCASE, path").all().map(fromRow);
+  const repositories: RepositoryRecord[] = [];
+  let after: RepositoryCursor | undefined;
+  for (;;) {
+    const page = listRepositoriesPage(db, { after });
+    repositories.push(...page.rows);
+    if (page.nextCursor === undefined) return repositories;
+    after = page.nextCursor;
+  }
+}
+
+export function listRepositoriesPage(db: DatabaseAdapter, options: Readonly<{ after?: RepositoryCursor; limit?: number }> = {}): RepositoryPage {
+  const limit = Math.max(1, Math.min(1_000, Math.trunc(options.limit ?? 100)));
+  const rows = options.after === undefined
+    ? db.query<RepositoryRow>("SELECT name, path, remote, source, added_at FROM repositories ORDER BY name COLLATE NOCASE, path LIMIT ?").all(limit)
+    : db.query<RepositoryRow>("SELECT name, path, remote, source, added_at FROM repositories WHERE name COLLATE NOCASE > ? OR (name COLLATE NOCASE = ? AND path > ?) ORDER BY name COLLATE NOCASE, path LIMIT ?").all(options.after.name, options.after.name, options.after.path, limit);
+  const records = rows.map(fromRow);
+  const last = rows.at(-1);
+  return { rows: records, ...(rows.length === limit && last !== undefined ? { nextCursor: { name: last.name, path: last.path } } : {}) };
 }
 
 export function getRepositoryPullRequests(db: DatabaseAdapter, path: string): RepositoryPullRequestCache | undefined {

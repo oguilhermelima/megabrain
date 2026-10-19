@@ -41,7 +41,7 @@ export function listInstallState(db: DatabaseAdapter): Record<string, unknown> {
   }));
 }
 
-type ModelRow = Readonly<{ value: string; registry_extra: string }>;
+type ModelRow = Readonly<{ rowid: number; value: string; registry_extra: string }>;
 export function toModel(row: ModelRow): Record<string, unknown> { return decode(row.value); }
 
 export function insertModel(db: DatabaseAdapter, record: Readonly<Record<string, unknown>>, registry: Readonly<Record<string, unknown>>): void {
@@ -56,7 +56,9 @@ export function getModel(db: DatabaseAdapter, agent: string, model: string): Rec
 }
 
 export function listModels(db: DatabaseAdapter): Record<string, unknown> {
-  const rows = db.query<ModelRow>("SELECT value, registry_extra FROM models ORDER BY rowid").all();
+  // Walk the indexed key order to avoid an SQLite sort, then restore the registry's insertion
+  // order in memory. Model registries are already returned as a whole, and their order is public.
+  const rows = db.query<ModelRow>("SELECT rowid, value, registry_extra FROM models ORDER BY agent, model").all().sort((left, right) => left.rowid - right.rowid);
   if (rows.length === 0) return { version: 1, models: [] };
   const extra = decode<Record<string, unknown>>(rows[0].registry_extra);
   return { ...extra, models: rows.map(toModel) };

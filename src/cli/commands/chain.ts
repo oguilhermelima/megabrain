@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { chainUsageKeys, explainChains, validateChainRules, type ChainConfig, type ChainExplanation, type MatchContext, type RuleIssue } from "../../core/chain.js";
 import { readLimit, type LimitAgent, type LimitReading, type LimitWindowName } from "../../core/chain-limits.js";
-import { loadModelRegistry, modelRegistryPaths, validateReasoning, type Model } from "../../core/model.js";
+import { loadAndPersistModelRegistry, loadModelRegistry, modelRegistryPaths, validateReasoning, type Model } from "../../core/model.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { executeChainRun } from "./chain-run.js";
@@ -353,6 +353,10 @@ async function limits(environment: ChainEnvironment, asJson: boolean, config: Ch
 }
 async function execute(args: readonly string[], environment: ChainEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
   const [subcommand, ...rest] = args; let asJson = false;
+  if (["list", "limits", "add", "save", "step", "edit", "delete", "repair", "run"].includes(subcommand ?? "")) {
+    const registry = await loadAndPersistModelRegistry(environment);
+    if (registry.kind === "failed") return error(registry.error, registry.exitCode);
+  }
   if (subcommand === "list") { for (const arg of rest) { if (arg === "--json") asJson = true; else if (arg === "-h" || arg === "--help") return ok(usage("list")); else return error(`unknown chain list option: ${arg}`, 2); } const config = readConfig(environment); if (config.kind !== "ok") return config; const valid = validateConfig(config.value, environment); return valid.kind === "ok" ? validatedOutput(valid, formatList(valid.value, asJson)) : valid; }
   if (subcommand === "limits") return limitsCommand(rest, environment, processAdapter);
   if (subcommand === "add") return Promise.resolve(addChain(rest, environment));
