@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stateDatabase } from "../../src/adapters/state-db.js";
+import { readOnlyStateDatabase, stateDatabase } from "../../src/adapters/state-db.js";
 import { write } from "../../src/adapters/state/shared.js";
 import { usageStats } from "../../src/adapters/usage-logs.js";
 import { executeUsage } from "../../src/cli/commands/usage.js";
@@ -215,6 +215,32 @@ describe("the parse cache", () => {
 });
 
 describe("megabrain usage stats", () => {
+  test("bounds dispatch reads to the requested date range in SQLite", async () => {
+    const { environment } = sandbox();
+    const writable = stateDatabase(environment);
+    if (writable.kind !== "ok") throw new Error(writable.error);
+    const seeded = write(writable.value, ({ db }) => {
+      db.run("INSERT INTO dispatches (id, state, agent, created_at, updated_at) VALUES (?, 'done', 'codex', ?, ?)", ["old-dispatch", "2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z"]);
+    });
+    if (seeded.kind !== "ok") throw new Error(seeded.error);
+    const readOnly = readOnlyStateDatabase(environment);
+    if (readOnly.kind !== "ok") throw new Error(readOnly.error);
+    const database = readOnly.value.db;
+    const query = database.query.bind(database);
+    let usageQuery = "";
+    Object.defineProperty(database, "query", {
+      value: <T>(sql: string) => {
+        if (sql.includes("FROM dispatches d")) usageQuery = sql;
+        return query<T>(sql);
+      },
+    });
+    try {
+      await usageStats(environment, { days: 1, provider: null, now, timeZone });
+      expect(usageQuery).toContain("d.created_at >= ?");
+      expect(usageQuery).toContain("d.created_at < ?");
+    } finally { Object.defineProperty(database, "query", { value: query }); }
+  });
+
   test("--json prints the report", async () => {
     const { environment } = sandbox();
     const result = await executeUsage(["stats", "--days", "2", "--provider", "codex", "--json"], { ...environment, TZ: timeZone }, { now });
