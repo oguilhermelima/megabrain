@@ -159,11 +159,17 @@ export async function drainChatd(stateDir: string): Promise<Readonly<{ running: 
 export async function retireChatd(stateDir: string): Promise<Readonly<{ running: false } | { running: true; retired: true; waitedMs: number }>> {
   const local = instances.get(stateDir);
   if (local === undefined && (!existsSync(chatSocket(stateDir)) || !await socketAccepts(stateDir, DEFAULT_CONNECT_TIMEOUT_MS))) return { running: false };
-  if (local === undefined) await ensureProtocol(stateDir, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: DEFAULT_REQUEST_TIMEOUT_MS });
-  const result = object(local === undefined
-    ? await socketRequest(stateDir, { operation: "retire" }, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: undefined })
-    : await local.handle({ operation: "retire" }));
-  return { running: true, retired: true, waitedMs: Number(result.waitedMs) };
+  try {
+    if (local === undefined) await ensureProtocol(stateDir, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: DEFAULT_REQUEST_TIMEOUT_MS });
+    const result = object(local === undefined
+      ? await socketRequest(stateDir, { operation: "retire" }, { connect: DEFAULT_CONNECT_TIMEOUT_MS, request: undefined })
+      : await local.handle({ operation: "retire" }));
+    return { running: true, retired: true, waitedMs: Number(result.waitedMs) };
+  } catch (cause: unknown) {
+    const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+    if (local === undefined && (code === "ENOENT" || code === "ECONNREFUSED")) return { running: false };
+    throw cause;
+  }
 }
 
 async function callChatdOnce(stateDir: string, request: Request, environment: Environment, processAdapter: Starter, onLine?: (line: ChatLine) => void): Promise<unknown> {
