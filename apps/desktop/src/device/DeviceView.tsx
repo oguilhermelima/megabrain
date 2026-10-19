@@ -10,7 +10,7 @@ import { inputPaused } from '@/device/screen-model'
 import { DevicesSidebar, type DeviceBusy } from '@/device/DevicesSidebar'
 import { FlowsRunPanel, type Load } from '@/device/FlowsRunPanel'
 import { startRun, stopRun, useDeviceRun } from '@/device/run-store'
-import { changesPolicy, deviceCatalogPolicy, devicesPolicy } from '@/lib/poll-model'
+import { changesPolicy, deviceCatalogPolicy, devicesPolicy, projectsPolicy } from '@/lib/poll-model'
 import { native } from '@/lib/surface'
 import { usePoll } from '@/lib/usePoll'
 import { devServerUrl, webDeviceName } from '@/device/web-device-model'
@@ -90,18 +90,25 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const [catalogFailed, setCatalogFailed] = useState<DeviceInventory[]>([])
   const [asleepFailed, setAsleepFailed] = useState(false)
   const [waking, setWaking] = useState(false)
-  // Which project each worktree belongs to, to tell this project's devices from the rest; read once, as the list barely changes.
+  // Which project each worktree belongs to, to tell this project's devices from the rest; the list barely changes,
+  // so it is read on the projects' schedule, and a failed read is tried again with the last list kept.
   const [projects, setProjects] = useState<ProjectRef[]>([])
-  useEffect(() => {
-    let current = true
-    api.projects('megabrain').then(
-      (listed) => current && setProjects(listed),
-      () => undefined,
-    )
-    return () => {
-      current = false
-    }
-  }, [])
+  const [projectsFailed, setProjectsFailed] = useState(false)
+  usePoll(
+    projectsPolicy,
+    async (current) => {
+      try {
+        const listed = await api.projects('megabrain')
+        if (!current()) return
+        setProjects(listed)
+        setProjectsFailed(false)
+      } catch (error) {
+        if (current()) setProjectsFailed(true)
+        throw error
+      }
+    },
+    [],
+  )
 
   const refreshFlows = usePoll(
     changesPolicy,
@@ -364,7 +371,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       elsewhereCount={sections.elsewhereCount}
       booting={booting}
       error={booted.kind === 'error' ? message(booted.error) : lifecycleError}
-      stale={staleDeviceNote([...catalogFailed, ...(asleepFailed ? (['asleep'] as const) : [])])}
+      stale={staleDeviceNote([...catalogFailed, ...(asleepFailed ? (['asleep'] as const) : []), ...(projectsFailed ? (['projects'] as const) : [])])}
       loading={booted.kind === 'loading'}
       selected={udid}
       locked={active}

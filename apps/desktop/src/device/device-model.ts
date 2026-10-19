@@ -343,9 +343,9 @@ export async function bootThenRun(needsBoot: boolean, boot: () => Promise<void>,
 }
 
 /** A Device tab read whose failure leaves its last answer on screen. */
-export type DeviceInventory = 'phones' | 'tvs' | 'asleep'
+export type DeviceInventory = 'phones' | 'tvs' | 'asleep' | 'projects'
 
-const inventoryNames: Record<DeviceInventory, string> = { phones: 'the phone simulators', tvs: 'the TV simulators', asleep: 'the sleeping simulators' }
+const inventoryNames: Record<DeviceInventory, string> = { phones: 'the phone simulators', tvs: 'the TV simulators', asleep: 'the sleeping simulators', projects: 'the project list' }
 
 /** The note under the devices while some reads fail: what could not be refreshed, the rest still shown as last read. */
 export function staleDeviceNote(failed: readonly DeviceInventory[]): string | null {
