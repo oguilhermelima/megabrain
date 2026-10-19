@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Spinner } from '@/components/ui'
 import { Tooltip } from '@/components/Tooltip'
 import { ActionsIcon, IssueIcon, PullRequestIcon } from '@/github/icons'
 import { Avatar } from '@/github/parts'
-import { pageSize } from '@/github/github-model'
+import { pageSize, tabKeyTarget } from '@/github/github-model'
 import { pageCount, pageRange, pageWindow, type Cursors } from '@/github/pager'
 import type { GithubKind } from '@/github/useGithubCounts'
 import { pageMx, pageX } from '@/lib/page'
@@ -118,15 +118,25 @@ export function KindSwitch({ kind, onKind }: { kind: GithubKind; onKind: (kind: 
   )
 }
 
+/** A tablist: only the selected tab takes Tab focus, and the arrows, Home and End move the selection and the focus. */
 export function Tabs<T extends string>({ value, tabs, onChange }: { value: T; tabs: { value: T; label: string; count: number | null }[]; onChange: (value: T) => void }) {
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const next = tabKeyTarget(tabs.map((tab) => tab.value), value, event.key)
+    if (next === null) return
+    event.preventDefault()
+    onChange(next)
+    event.currentTarget.querySelector<HTMLButtonElement>(`[data-tab="${CSS.escape(next)}"]`)?.focus()
+  }
   return (
-    <div role="tablist" className="inline-flex shrink-0 rounded-full border border-white/10 bg-white/[0.05] p-1">
+    <div role="tablist" onKeyDown={onKeyDown} className="inline-flex shrink-0 rounded-full border border-white/10 bg-white/[0.05] p-1">
       {tabs.map((tab) => (
         <button
           key={tab.value}
           type="button"
           role="tab"
+          data-tab={tab.value}
           aria-selected={tab.value === value}
+          tabIndex={tab.value === value ? 0 : -1}
           onClick={() => onChange(tab.value)}
           className={`flex h-8 items-center gap-2 rounded-full px-3.5 text-[13px] font-semibold transition-colors ${tab.value === value ? 'bg-white/[0.14] text-ink-100' : 'text-ink-400 hover:text-ink-200'}`}
         >

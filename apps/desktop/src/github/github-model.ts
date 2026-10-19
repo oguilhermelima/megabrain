@@ -299,3 +299,11 @@ export function filterOptionsFrom(labels: PromiseSettledResult<{ name: string }[
     error: errors.length === 0 ? null : errors.join('. '),
   }
 }
+
+/** The tab a key moves a tablist to: arrows to the next or previous one, wrapping, Home and End to the ends; null for any other key. */
+export function tabKeyTarget<T>(tabs: readonly T[], current: T, key: string): T | null {
+  if (tabs.length === 0) return null
+  const at = Math.max(0, tabs.indexOf(current))
+  const index = key === 'ArrowRight' ? (at + 1) % tabs.length : key === 'ArrowLeft' ? (at - 1 + tabs.length) % tabs.length : key === 'Home' ? 0 : key === 'End' ? tabs.length - 1 : null
+  return index === null ? null : (tabs[index] ?? null)
+}
