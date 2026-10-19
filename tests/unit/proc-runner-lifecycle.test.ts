@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProcessAdapter } from "../../src/adapters/proc.js";
+import { createProcessAdapter, type ProcessAdapter } from "../../src/adapters/proc.js";
 import { executeProc, isProcErrorLine } from "../../src/core/proc-runner.js";
 
 const adapter = createProcessAdapter();
@@ -109,6 +109,41 @@ describe("managed process lifecycle", () => {
     const start = await executeProc(["start", "--name", "web", "--port", String(port), "--", "sleep", "300"], env, adapter);
     expect(start.kind).toBe("failed");
     expect(start.kind === "failed" ? start.error : "").toContain(`pid ${process.pid}`);
+  }, 20000);
+
+  test("does not signal the caller, ancestors, or its process group from a process record", async () => {
+    const env = await sandbox();
+    env.MEGABRAIN_SESSION_HOST = "local";
+    env.MEGABRAIN_SESSION_ID = "proc-owner";
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const pids = [process.pid, process.ppid, 4242];
+    const names = ["caller", "ancestor", "same-group"];
+    const ps = `${process.pid} ${process.ppid} ${process.pid}\n${process.ppid} 1 ${process.ppid}\n4242 1 ${process.pid}\n`;
+    let panePid = process.pid;
+    const fake: ProcessAdapter = {
+      run: async (command, args) => {
+        calls.push({ command, args });
+        const stdout = command === "ps"
+          ? ps
+          : command === "tmux" && args.includes("display-message")
+            ? `${panePid}\n`
+            : "";
+        return { kind: "ok", value: { stdout, stderr: "", exitCode: 0 } };
+      },
+      startDetached: async () => ({ kind: "ok", value: { pid: 1 } }),
+      invocationCount: () => calls.length,
+    };
+
+    for (const [index, pid] of pids.entries()) {
+      const name = names[index] ?? "same-group";
+      panePid = pid;
+      const started = await executeProc(["start", "--name", name, "--", "sleep", "300"], env, fake);
+      expect(started.kind).toBe("ok");
+      const stopped = await executeProc(["stop", name], env, fake);
+      expect(stopped.kind).toBe("ok");
+    }
+
+    expect(calls.filter(({ command }) => command === "kill")).toEqual([]);
   }, 20000);
 
   test("restart runs the same command again", async () => {

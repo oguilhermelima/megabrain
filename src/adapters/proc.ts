@@ -60,7 +60,16 @@ export function createProcessAdapter(defaultTimeoutMs = DEFAULT_PROCESS_TIMEOUT_
         stderrBytes += accepted.length;
       });
       let timedOut = false;
-      const timeout = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, options?.timeoutMs ?? defaultTimeoutMs);
+      let exited = false;
+      const timeout = setTimeout(() => {
+        if (exited || child.exitCode !== null || child.signalCode !== null) return;
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, options?.timeoutMs ?? defaultTimeoutMs);
+      child.once("exit", () => {
+        exited = true;
+        clearTimeout(timeout);
+      });
       let exitCode: number;
       try {
         exitCode = await new Promise<number>((resolve, reject) => {

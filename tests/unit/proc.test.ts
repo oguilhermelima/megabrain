@@ -32,6 +32,13 @@ describe("createProcessAdapter", () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  test("does not signal an exited command while a descendant holds its output open", async () => {
+    const started = Date.now();
+    const result = await createProcessAdapter().run("sh", ["-c", "(sleep 0.25) & exit 0"], { timeoutMs: 25 });
+    expect(result).toEqual({ kind: "ok", value: { stdout: "", stderr: "", exitCode: 0 } });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(150);
+  });
+
   test("caps captured stdout and stderr independently", async () => {
     const result = await createProcessAdapter().run("sh", ["-c", "printf 123456; printf abcdef >&2"], { maxOutputBytes: 4 });
     expect(result).toEqual({ kind: "ok", value: { stdout: "1234", stderr: "abcd", exitCode: 0 } });

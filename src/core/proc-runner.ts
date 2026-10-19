@@ -255,22 +255,34 @@ async function procAction(verb: string, args: readonly string[], env: Readonly<R
 }
 async function stopRecord(record: ProcRecord, process: ProcessAdapter, env: Readonly<Record<string, string | undefined>>): Promise<Result<void>> {
   if (record.pid > 1) {
-    const table = await process.run("ps", ["-A", "-o", "pid=,ppid="]);
+    const table = await process.run("ps", ["-A", "-o", "pid=,ppid=,pgid="]);
     if (table.kind === "ok") {
-      const parents = new Map<number, number>();
-      for (const line of table.value.stdout.trim().split(/\r?\n/)) { const [pid, ppid] = line.trim().split(/\s+/).map(Number); if (Number.isFinite(pid) && Number.isFinite(ppid)) parents.set(pid!, ppid!); }
+      const parents = new Map<number, number>(); const groups = new Map<number, number>();
+      for (const line of table.value.stdout.trim().split(/\r?\n/)) {
+        const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number);
+        if (Number.isFinite(pid) && Number.isFinite(ppid) && Number.isFinite(pgid)) { parents.set(pid!, ppid!); groups.set(pid!, pgid!); }
+      }
+      const callerPid = globalThis.process.pid; const callerGroup = groups.get(callerPid);
+      const callerTree = new Set([callerPid]); let callerAncestor = callerPid;
+      while (parents.has(callerAncestor)) { const parent = parents.get(callerAncestor)!; if (parent <= 1 || callerTree.has(parent)) break; callerTree.add(parent); callerAncestor = parent; }
       const tree = new Set([record.pid]); let changed = true;
       while (changed) { changed = false; for (const [pid, ppid] of parents) if (tree.has(ppid) && !tree.has(pid)) { tree.add(pid); changed = true; } }
-      // The pane process leads its own process group; signal the group too, so a child forked
-      // after the table above was read is not left running.
-      await process.run("kill", ["-TERM", "--", `-${record.pid}`]);
-      for (const pid of [...tree].sort((a, b) => a === record.pid ? -1 : b === record.pid ? 1 : b - a)) await process.run("kill", ["-TERM", String(pid)]);
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      const after = await process.run("ps", ["-A", "-o", "pid=,ppid="]);
-      if (after.kind === "ok") {
-        const remaining = new Set<number>(); const rows = after.value.stdout.trim().split(/\r?\n/).map((line) => line.trim().split(/\s+/).map(Number));
-        for (const [pid, ppid] of rows) if (Number.isFinite(pid) && (tree.has(pid!) || tree.has(ppid!))) remaining.add(pid!);
-        for (const pid of remaining) await process.run("kill", ["-KILL", String(pid)]);
+      if (callerGroup !== undefined && !tree.has(callerPid) && !callerTree.has(record.pid)) {
+        if (groups.get(record.pid) === record.pid && record.pid !== callerGroup) await process.run("kill", ["-TERM", "--", `-${record.pid}`]);
+        const targets = [...tree].filter((pid) => !callerTree.has(pid) && groups.get(pid) !== callerGroup);
+        for (const pid of targets.sort((a, b) => a === record.pid ? -1 : b === record.pid ? 1 : b - a)) await process.run("kill", ["-TERM", String(pid)]);
+        if (targets.length > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const after = await process.run("ps", ["-A", "-o", "pid=,ppid=,pgid="]);
+          if (after.kind === "ok") {
+            const remaining = new Set<number>();
+            for (const line of after.value.stdout.trim().split(/\r?\n/)) {
+              const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number);
+              if (Number.isFinite(pid) && Number.isFinite(ppid) && Number.isFinite(pgid) && (tree.has(pid!) || tree.has(ppid!)) && !callerTree.has(pid!) && pgid !== callerGroup) remaining.add(pid!);
+            }
+            for (const pid of remaining) await process.run("kill", ["-KILL", String(pid)]);
+          }
+        }
       }
     }
   }

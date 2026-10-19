@@ -157,6 +157,14 @@ afterEach(async () => {
   registerTmux(getTmux());
 });
 
+async function removeStateDir(root: string): Promise<void> {
+  if (stateOwner !== undefined) {
+    await stopStateOwner(stateOwner);
+    stateOwner = undefined;
+  }
+  await rm(root, { recursive: true, force: true });
+}
+
 describe("orchestrate change delivery", () => {
   test("refuses delivery when a shell, rather than Codex, owns the receiver process", async () => {
     const root = await tempStateDir();
@@ -165,7 +173,7 @@ describe("orchestrate change delivery", () => {
       const result = await executeOrchestrateChange(["change", "--text", direction, "--json"], environment(root), processAdapter(true));
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: false, status: "queued" });
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally { await removeStateDir(root); }
   });
 
   test("delivers to a busy child without waiting for idle or interrupting it", async () => {
@@ -182,7 +190,7 @@ describe("orchestrate change delivery", () => {
       expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -203,7 +211,7 @@ describe("orchestrate change delivery", () => {
       expect((messages[0] as JsonRecord).text).toBe(direction);
     } finally {
       harness.restore();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -223,7 +231,7 @@ describe("orchestrate change delivery", () => {
       expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -240,7 +248,7 @@ describe("orchestrate change delivery", () => {
       expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -260,7 +268,7 @@ describe("orchestrate change delivery", () => {
       expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "typed" });
     } finally {
       harness.restore();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -277,7 +285,7 @@ describe("orchestrate change delivery", () => {
       expect(harness.events.some((event) => event.includes(large))).toBe(false);
     } finally {
       harness.restore();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -289,7 +297,7 @@ describe("orchestrate change delivery", () => {
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
       expect((await readMessages(root))[0]).toMatchObject({ type: "reply", text: direction });
-    } finally { await rm(root, { recursive: true, force: true }); }
+    } finally { await removeStateDir(root); }
   });
 
   test("interrupts a busy Orca terminal once and sends the full direction", async () => {
@@ -324,7 +332,7 @@ describe("orchestrate change delivery", () => {
       expect(calls.some((call) => call.includes(direction))).toBe(true);
     } finally {
       restoreHost();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -338,7 +346,7 @@ describe("orchestrate change delivery", () => {
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: true, confirmed: false });
     } finally {
       harness.restore();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -355,7 +363,7 @@ describe("orchestrate change delivery", () => {
       expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 
@@ -374,7 +382,7 @@ describe("orchestrate change delivery", () => {
       expect(busy.kind).toBe("ok");
     } finally {
       registerTmux(original);
-      await rm(root, { recursive: true, force: true });
+      await removeStateDir(root);
     }
   });
 });
