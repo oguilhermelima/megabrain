@@ -887,6 +887,25 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
 });
 
 describe("executeHookTurnEnd: never fails or blocks the agent", () => {
+  test("records the cause when the hook falls back to its default response", async () => {
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...values: unknown[]) => { errors.push(values.map(String).join(" ")); };
+    const environmentWithFailure = new Proxy(environment("/unused"), {
+      get(target, property, receiver) {
+        if (property === "SUPERSET_TERMINAL_ID") throw new Error("identity lookup failed");
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    try {
+      const result = await executeHookTurnEnd([], environmentWithFailure, fakeProcess(), noStdin);
+      expect(result).toEqual({ kind: "ok", value: "{}\n" });
+    } finally {
+      console.error = originalError;
+    }
+    expect(errors.join(" ")).toContain("identity lookup failed");
+  });
+
   test("still resolves ok() with the default response when every process call throws", async () => {
     await withRoot("throwing", async (root) => {
       await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
