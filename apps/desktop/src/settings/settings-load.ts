@@ -9,8 +9,7 @@ export const sectionKeys: Record<Section, SettingsKey[]> = {
   models: ['models'],
   chains: ['chains', 'models', 'limits'],
   knowledge: ['models'],
-  supervisor: ['supervisor'],
-  limits: ['resources'],
+  supervisor: ['supervisor', 'resources'],
   terminal: ['terminalEngine', 'terminal'],
   worktrees: [],
 }

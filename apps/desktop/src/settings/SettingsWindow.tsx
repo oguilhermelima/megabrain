@@ -7,7 +7,6 @@ import { Button, ErrorNote } from '@/components/ui'
 import { AgentsSection } from '@/settings/AgentsSection'
 import { useAgentUpdates } from '@/settings/AgentUpdates'
 import { ChainsSection } from '@/settings/ChainsSection'
-import { LimitsSection } from '@/settings/LimitsSection'
 import { ModelsSection } from '@/settings/ModelsSection'
 import { ProjectPage } from '@/settings/ProjectPage'
 import { createLoads, sectionKeys } from '@/settings/settings-load'
@@ -215,22 +214,17 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
                 <SupervisorSection
                   running={settings.supervisor.running}
                   pid={settings.supervisor.pid}
+                  policy={settings.resources.policy}
+                  historyEnabled={settings.resources.historyEnabled}
                   error={error}
                   onToggle={(running) => void act(() => api.setSupervisor(running))}
+                  onSavePolicy={(policy: AdmissionPolicy) => void act(() => api.setPolicy(policy))}
+                  onPolicyOff={() => void act(() => api.setPolicy(null))}
+                  onToggleHistory={(enabled) => void act(() => api.setResourceHistory(enabled))}
                   onSetup={() => {
                     onClose()
                     onSetup()
                   }}
-                />
-              )}
-              {section === 'limits' && (
-                <LimitsSection
-                  policy={settings.resources.policy}
-                  historyEnabled={settings.resources.historyEnabled}
-                  error={error}
-                  onSave={(policy: AdmissionPolicy) => void act(() => api.setPolicy(policy))}
-                  onOff={() => void act(() => api.setPolicy(null))}
-                  onToggleHistory={(enabled) => void act(() => api.setResourceHistory(enabled))}
                 />
               )}
               {section === 'worktrees' && <WorktreesSection projects={listed} onOpenProject={(path) => go(projectKey(path))} />}
