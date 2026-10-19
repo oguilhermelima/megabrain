@@ -5,6 +5,7 @@
       "assignees": {
         "nodes": [
           {
+            "avatarUrl": "https://avatars.githubusercontent.com/u/55964335?u=3936ddb3c0cf5a753ccf8f0406bbd91cabd1b57d&v=4",
             "login": "person-redacted"
           }
         ]
@@ -26,6 +27,9 @@
       "title": "test(corpo): o que o Corpo entrega e validação por perfil de uso",
       "updatedAt": "2026-10-19T17:23:04Z",
       "url": "https://github.com/cantospace/canto-space/issues/408"
+    },
+    "fieldValueByName": {
+      "optionId": "98236657"
     },
     "fieldValues": {
       "nodes": [
@@ -78,6 +82,7 @@
       "assignees": {
         "nodes": [
           {
+            "avatarUrl": "https://avatars.githubusercontent.com/u/55964335?u=3936ddb3c0cf5a753ccf8f0406bbd91cabd1b57d&v=4",
             "login": "person-redacted"
           }
         ]
@@ -98,7 +103,11 @@
       "number": 326,
       "parent": {
         "number": 109,
-        "title": "DISCUSSION: how the server delivers push notifications"
+        "repository": {
+          "nameWithOwner": "cantospace/canto-space"
+        },
+        "title": "DISCUSSION: how the server delivers push notifications",
+        "url": "https://github.com/cantospace/canto-space/issues/109"
       },
       "repository": {
         "nameWithOwner": "cantospace/canto-space"
@@ -111,6 +120,9 @@
       "title": "feat: deliver server notifications as push",
       "updatedAt": "2026-10-19T20:05:12Z",
       "url": "https://github.com/cantospace/canto-space/issues/326"
+    },
+    "fieldValueByName": {
+      "optionId": "61e4505c"
     },
     "fieldValues": {
       "nodes": [
@@ -138,6 +150,9 @@
         },
         {
           "__typename": "ProjectV2ItemFieldLabelValue",
+          "field": {
+            "name": "Labels"
+          },
           "labels": {
             "nodes": [
               {
@@ -233,7 +248,11 @@
       "number": 325,
       "parent": {
         "number": 326,
-        "title": "feat: deliver server notifications as push"
+        "repository": {
+          "nameWithOwner": "cantospace/canto-space"
+        },
+        "title": "feat: deliver server notifications as push",
+        "url": "https://github.com/cantospace/canto-space/issues/326"
       },
       "repository": {
         "nameWithOwner": "cantospace/canto-space"
@@ -246,6 +265,9 @@
       "title": "chore(mobile): create the EAS project and push credentials",
       "updatedAt": "2026-10-19T20:05:14Z",
       "url": "https://github.com/cantospace/canto-space/issues/325"
+    },
+    "fieldValueByName": {
+      "optionId": "61e4505c"
     },
     "fieldValues": {
       "nodes": [
@@ -260,6 +282,9 @@
         },
         {
           "__typename": "ProjectV2ItemFieldLabelValue",
+          "field": {
+            "name": "Labels"
+          },
           "labels": {
             "nodes": [
               {
