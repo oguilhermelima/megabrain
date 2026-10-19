@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { githubCountsPolicy, mapLimited, planPoll, projectsPolicy, quickViewPolicy, retryDelay, statusPolicy, type PollPolicy } from '@/lib/poll-model'
+import { deviceCatalogPolicy, devicesPolicy, githubCountsPolicy, mapLimited, planPoll, projectsPolicy, quickViewPolicy, retryDelay, statusPolicy, type PollPolicy } from '@/lib/poll-model'
 
 const policy: PollPolicy = { visibleMs: 30_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 const hiddenToo: PollPolicy = { visibleMs: 5_000, hiddenMs: 30_000, refreshOn: { action: true, focus: true } }
@@ -102,5 +102,14 @@ describe('retryDelay', () => {
   test('never waits longer than the interval, and pauses with it', () => {
     expect(retryDelay(1, 500)).toBe(500)
     expect(retryDelay(3, null)).toBeNull()
+  })
+})
+
+describe('the Device tab inventory', () => {
+  test('reads the simulator catalogs far less often than the booted list, and not while hidden', () => {
+    expect(devicesPolicy.visibleMs).toBe(5_000)
+    expect(deviceCatalogPolicy.visibleMs).toBeGreaterThanOrEqual(60_000)
+    expect(deviceCatalogPolicy.hiddenMs).toBeNull()
+    expect(planPoll(deviceCatalogPolicy, 'timer', { visible: true, now: 30_000, lastRunAt: 0 }).run).toBe(false)
   })
 })
