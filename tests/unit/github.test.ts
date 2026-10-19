@@ -6,6 +6,7 @@ import { createProcessAdapter, type ProcessAdapter, type ProcessOutput } from ".
 import { executeGithub } from "../../src/cli/commands/github.js";
 import { route } from "../../src/cli/router.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
+import { usageLine } from "../../src/core/usage.js";
 import { assertUnitStateDirectory } from "./state-db-guard.js";
 
 // gh's own output for the list queries (gh api graphql), `pr view` and `issue view`, captured from
@@ -488,7 +489,7 @@ describe("github cache", () => {
 
 describe("github routing and usage", () => {
   const usage = {
-    "github": "github projects|project|project-move|project-field|project-clear|project-add|project-draft|project-archive|project-unarchive|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
+    "github": usageLine("github"),
     "github-runs": "github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json]",
     "github-run": "github run <repo name|path> <run id> [--json]",
     "github-run-log": "github run-log <repo name|path> <run id> --job <job id> [--json]",
