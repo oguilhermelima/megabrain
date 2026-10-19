@@ -67,6 +67,7 @@ function refreshResult(environment: Environment, agent: string, count: number, m
 async function refreshedModels(agent: string, environment: Environment, processAdapter: ProcessAdapter, known: readonly Model[]): Promise<Result<readonly Model[]>> {
   const template = readTemplateModels(environment);
   const home = environment.HOME ?? "";
+  const grokHome = environment.GROK_HOME ?? join(home, ".grok");
   if (agent === "claude") return ok(template.filter((model) => model.agent === "claude"));
   if (agent === "codex") {
     const cache = await readFile(join(home, ".codex", "models_cache.json"), "utf8").catch(() => undefined);
@@ -76,7 +77,7 @@ async function refreshedModels(agent: string, environment: Environment, processA
   if (agent === "grok") {
     const listed = await processAdapter.run("grok", ["models"], { timeoutMs: 30_000 });
     if (listed.kind !== "ok") return failed("could not refresh grok models: grok models failed");
-    const cache = await readFile(join(home, ".grok", "models_cache.json"), "utf8").catch(() => undefined);
+    const cache = await readFile(join(grokHome, "models_cache.json"), "utf8").catch(() => undefined);
     return ok(refreshGrokModels(listed.value.stdout, cache, known, new Date().toISOString(), template));
   }
   if (agent === "agy") {

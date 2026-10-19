@@ -3,8 +3,8 @@ import { createInterface } from "node:readline";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
-import { loadAndPersistModelRegistry } from "../../core/model.js";
-import { readModelSettings, startModel } from "../../core/model-settings.js";
+import { grokDefaultModel, loadAndPersistModelRegistry, readTemplateModels } from "../../core/model.js";
+import { modelEnabled, readModelSettings, startModel } from "../../core/model-settings.js";
 import { callChatd, callPermissionServer, chatdStatus, drainChatd, retireChatd } from "../../chat/daemon.js";
 import { ChatStore, type ChatLine } from "../../chat/store.js";
 import { readSummaries, searchSummaries } from "../../chat/summaries.js";
@@ -96,10 +96,20 @@ export async function executeChat(args: readonly string[], environment: Environm
       partsArg.rest = partsArg.rest.filter((arg) => arg !== "--approvals");
       if (agent === undefined || !["claude", "codex", "grok", "agy"].includes(agent) || cwdArg.value === undefined || effortArg.value === "" || partsArg.rest.some((arg) => arg !== "--json") || !partsArg.rest.includes("--json")) throw new Error("Usage: megabrain chat start --agent <claude|codex|grok|agy> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json");
       const parts = partsJson(partsArg.value);
-      // Without --model the chat takes the agent's default from Settings > Models, when one is set.
+      // Without --model the chat takes the configured app default. For Grok, resolve the CLI's own
+      // default too, so the chat header and model picker name the model Grok will actually run.
       const registry = await loadAndPersistModelRegistry(environment);
-      const start = startModel(await readModelSettings(dir), registry.kind === "loaded" ? registry.registry.models : [], agent, modelArg.value, effortArg.value);
-      value = await callChatd(dir, { operation: "start", agent, model: start.model, effort: start.effort, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
+      const modelSettings = await readModelSettings(dir);
+      const models = registry.kind === "loaded" ? registry.registry.models : readTemplateModels(environment);
+      const start = startModel(modelSettings, models, agent, modelArg.value, effortArg.value);
+      let model = start.model;
+      if (agent === "grok" && model === undefined) {
+        const listed = await processAdapter.run("grok", ["models"], { timeoutMs: 30_000 });
+        const defaultModel = listed.kind === "ok" ? grokDefaultModel(listed.value.stdout) : undefined;
+        const entry = defaultModel === undefined ? undefined : models.find((candidate) => candidate.agent === "grok" && candidate.model === defaultModel);
+        if (entry !== undefined && modelEnabled(modelSettings, entry)) model = defaultModel;
+      }
+      value = await callChatd(dir, { operation: "start", agent, model, effort: start.effort, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
       return ok(argsJson(value));
     }
     if (verb === "send") {
