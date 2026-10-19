@@ -7,15 +7,15 @@ import { useSheet } from '@/components/Sheet'
 import { Toast, type ToastMessage } from '@/components/Toast'
 import { ErrorNote } from '@/components/ui'
 import { stateColors } from '@/github/github-model'
-import { ClosedIssueIcon, ClosedPullRequestIcon, IssueIcon, MergedIcon, MoreIcon, PullRequestIcon, RefreshIcon } from '@/github/icons'
+import { ChevronIcon, ClosedIssueIcon, ClosedPullRequestIcon, IssueIcon, MergedIcon, MoreIcon, PullRequestIcon, RefreshIcon } from '@/github/icons'
 import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts'
 import { Avatar, LabelChip, OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
 import { pageDivider, pageX } from '@/lib/page'
-import { answeredItems, boardColumns, movesItem, otherRepository, shownItems, withoutMove, type BoardColumn, type PendingMove } from '@/tasks/board-model'
+import { answeredItems, otherRepository } from '@/tasks/board-model'
 import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
 import { boardSheetFields } from '@/tasks/BoardFilterBar'
 import { ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
-import { projectViews, readViewPrefs, shownView, sortedItems, writeViewPrefs } from '@/tasks/board-view'
+import { editedItems, groupField, laneField, optionOf, projectViews, readViewPrefs, shownView, sortedItems, swimlanes, viewColumns, writeViewPrefs, type PendingEdit, type ViewColumn } from '@/tasks/board-view'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
 import { boardItemsPolicy, boardListPolicy } from '@/lib/poll-model'
@@ -256,16 +256,58 @@ function Card({ item, repo, moving, onPointerDown, onOpen, onMenu }: { item: Git
   )
 }
 
-function Column({ column, droppable, over, count, children }: { column: BoardColumn; droppable: boolean; over: boolean; count: number; children: ReactNode }) {
-  return (
-    <section aria-label={column.name} data-board-column={droppable ? (column.id ?? '') : ''} className={`flex max-h-full w-[288px] shrink-0 flex-col rounded-[20px] border transition-colors ${over ? 'border-accent/60 bg-accent/[0.06]' : 'border-white/[0.07] bg-ink-900/60'}`}>
-      <header className="flex shrink-0 items-center gap-2 px-4 pt-3 pb-2.5">
+/** A column: its option's colour, name, count and description, and a menu; collapsed, a narrow strip that still takes drops. */
+function Column({ column, field, droppable, over, collapsed, onMenu, children }: { column: ViewColumn; field: string; droppable: boolean; over: boolean; collapsed: boolean; onMenu: (event: MouseEvent<HTMLElement>) => void; children: ReactNode }) {
+  const dropTarget = droppable ? (column.id ?? '') : ''
+  if (collapsed) {
+    return (
+      <section aria-label={column.name} data-board-column={dropTarget} onContextMenu={onMenu} className={`flex max-h-full w-11 shrink-0 flex-col items-center gap-2 rounded-[20px] border py-3 transition-colors ${over ? 'border-accent/60 bg-accent/[0.06]' : 'border-white/[0.07] bg-ink-900/60'}`}>
+        <button type="button" onClick={onMenu} aria-haspopup="menu" aria-label={`${column.name} column menu`} className="grid size-6 place-items-center rounded-full text-ink-400 hover:bg-white/[0.08] hover:text-ink-100">
+          <MoreIcon size={14} />
+        </button>
         <span aria-hidden="true" style={{ borderColor: column.color }} className="size-3 shrink-0 rounded-full border-2" />
-        <h3 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-100">{column.name}</h3>
-        <span className="shrink-0 text-[12px] text-ink-500 tabular-nums">{count}</span>
+        <span className="text-[12px] text-ink-500 tabular-nums">{column.items.length}</span>
+        <h3 className="min-h-0 truncate text-[13px] font-semibold text-ink-100 [writing-mode:vertical-rl]">{column.name}</h3>
+      </section>
+    )
+  }
+  return (
+    <section aria-label={column.name} data-board-column={dropTarget} className={`flex max-h-full w-[288px] shrink-0 flex-col rounded-[20px] border transition-colors ${over ? 'border-accent/60 bg-accent/[0.06]' : 'border-white/[0.07] bg-ink-900/60'}`}>
+      <header onContextMenu={onMenu} className="shrink-0 px-4 pt-3 pb-2.5">
+        <div className="flex items-center gap-2">
+          <span aria-hidden="true" style={{ borderColor: column.color }} className="size-3 shrink-0 rounded-full border-2" />
+          <h3 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-100">{column.name}</h3>
+          <span className="shrink-0 text-[12px] text-ink-500 tabular-nums">{column.items.length}</span>
+          <button type="button" onClick={onMenu} aria-haspopup="menu" aria-label={`${column.name} column menu`} className="-mr-1.5 grid size-6 shrink-0 place-items-center rounded-full text-ink-400 hover:bg-white/[0.08] hover:text-ink-100">
+            <MoreIcon size={14} />
+          </button>
+        </div>
+        {column.description !== '' && <p className="mt-1 line-clamp-2 text-[12px] text-ink-500">{column.description}</p>}
       </header>
-      {!droppable && <p className="-mt-1 shrink-0 px-4 pb-2.5 text-[12px] text-ink-500">Can’t drop here: a move sets a status, it can’t clear one.</p>}
+      {!droppable && <p className="-mt-1 shrink-0 px-4 pb-2.5 text-[12px] text-ink-500">Can’t drop here: a move sets {field}, it can’t clear it.</p>}
       {children}
+    </section>
+  )
+}
+
+/** A swimlane: a collapsible band with its value, count and a menu, over the columns of its items. */
+function Lane({ name, color, count, collapsed, onToggle, onMenu, children }: { name: string; color: string | null; count: number; collapsed: boolean; onToggle: () => void; onMenu: (event: MouseEvent<HTMLElement>) => void; children: ReactNode }) {
+  return (
+    <section aria-label={name} className="shrink-0">
+      <header onContextMenu={onMenu} className={`sticky left-0 flex w-max items-center gap-2 ${pageX} py-2`}>
+        <button type="button" onClick={onToggle} aria-expanded={!collapsed} className="flex items-center gap-2 rounded-full pr-2 text-left hover:text-ink-100">
+          <span className={`text-ink-400 transition-transform ${collapsed ? '-rotate-90' : ''}`}>
+            <ChevronIcon size={12} />
+          </span>
+          {color !== null && <span aria-hidden="true" style={{ borderColor: color }} className="size-3 shrink-0 rounded-full border-2" />}
+          <h3 className="text-[13px] font-semibold text-ink-100">{name}</h3>
+          <span className="text-[12px] text-ink-500 tabular-nums">{count}</span>
+        </button>
+        <button type="button" onClick={onMenu} aria-haspopup="menu" aria-label={`${name} lane menu`} className="grid size-6 place-items-center rounded-full text-ink-400 hover:bg-white/[0.08] hover:text-ink-100">
+          <MoreIcon size={14} />
+        </button>
+      </header>
+      {!collapsed && children}
     </section>
   )
 }
@@ -294,12 +336,11 @@ export function TasksBoard({ root, repo, remembered, onPick, onOpenGithub }: { r
 
 function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub }: { root: string; repo: string; board: GithubProject; boards: GithubProject[]; onReloadBoards: () => void; onPick: (number: number) => void; onOpenGithub: (kind: 'pr' | 'issue', number: number) => void }) {
   const { items, answer, error, loading, reload } = useBoardItems(root, board)
-  const [pending, setPending] = useState<PendingMove[]>([])
+  const [pending, setPending] = useState<PendingEdit[]>([])
   const [toast, setToast] = useState<ToastMessage | null>(null)
   const closeToast = useCallback(() => setToast(null), [])
   const { menu, open: openMenu, close: closeMenu } = useContextMenu()
   const nextMove = useRef(0)
-  const field = board.statusField
   const key = boardKey(board)
   const [filters, setFilters] = useState<BoardFilters>(() => readBoardPrefs(browserStorage).filters[key] ?? emptyBoardFilters)
   // Applied to the latest filters, so the sheet's Clear can reset several in a row.
@@ -324,22 +365,37 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
     setQuery(views.find((entry) => entry.id === id)?.filter ?? '')
     writeViewPrefs(browserStorage, { ...readViewPrefs(browserStorage), [key]: id })
   }
+  const field = groupField(board, view)
+  const lane = laneField(board, view)
+  // Collapsed and hidden columns and collapsed lanes last for the session, as GitHub's own do.
+  const [collapsedColumns, setCollapsedColumns] = useState<ReadonlySet<string>>(new Set())
+  const [hiddenColumns, setHiddenColumns] = useState<ReadonlySet<string>>(new Set())
+  const [collapsedLanes, setCollapsedLanes] = useState<ReadonlySet<string>>(new Set())
+  const toggled = (set: ReadonlySet<string>, id: string) => {
+    const next = new Set(set)
+    if (!next.delete(id)) next.add(id)
+    return next
+  }
   const sheet = useSheet('tasks.board.filters')
   const options = useMemo(() => boardFilterOptions(items ?? [], filters), [items, filters])
 
-  const move = (item: GithubProjectItem, status: string) => {
-    if (items === null || !movesItem(items, pending, item.id, status)) return
+  /** Sets the group field to `optionId`: Status through a move, any other single select as a field write. */
+  const move = (item: GithubProjectItem, optionId: string) => {
+    if (items === null || field === null) return
+    const current = editedItems(items, pending).find((entry) => entry.id === item.id)
+    if (current === undefined || optionOf(current, field) === optionId) return
     const id = ++nextMove.current
-    setPending((current) => [...current, { id, itemId: item.id, status }])
+    setPending((list) => [...list, { id, itemId: item.id, field, optionId }])
+    const write = field.id === board.statusField?.id ? api.githubProjectMove(root, board.number, item.id, optionId, board.owner) : api.githubProjectSetField(root, board.number, item.id, field.name, 'single-select', optionId, board.owner)
     // Applied to the newest state, so a refresh or another move meanwhile is kept.
-    api.githubProjectMove(root, board.number, item.id, status, board.owner).then(
+    write.then(
       (answered) => {
         answer(answered)
-        setPending((current) => withoutMove(current, id))
+        setPending((list) => list.filter((entry) => entry.id !== id))
       },
       (cause: unknown) => {
-        setPending((current) => withoutMove(current, id))
-        const name = field?.options.find((option) => option.id === status)?.name ?? 'that column'
+        setPending((list) => list.filter((entry) => entry.id !== id))
+        const name = field.options.find((option) => option.id === optionId)?.name ?? 'that column'
         setToast({ id: `move-${id}`, text: `Couldn’t move “${item.title}” to ${name}: ${cause instanceof Error ? cause.message : String(cause)}` })
       },
     )
@@ -365,14 +421,38 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
 
   // The view's filter goes through the data layer's GitHub evaluator; the sheet's filters narrow what it matches.
   const matched = useMemo(() => (items === null ? null : query.trim() === '' ? { items, warnings: [] } : api.githubProjectFilter(board, items, query)), [board, items, query])
-  const shown = matched === null ? null : sortedItems(filterBoardItems(shownItems(matched.items, pending), { ...filters, query: '' }), board, view)
-  const columns = shown === null || field === null ? [] : boardColumns(field, shown)
+  const shown = matched === null ? null : sortedItems(filterBoardItems(editedItems(matched.items, pending), { ...filters, query: '' }), board, view)
+  const columns = shown === null || field === null ? [] : viewColumns(field, shown)
   const noStatus = columns.find((column) => column.id === null)?.items.length ?? 0
   const sheetFields = boardSheetFields(filters, options, filter, field === null ? null : { on: showNoStatus, count: noStatus, onChange: setNoStatus })
   const moving = new Set(pending.map((entry) => entry.itemId))
   const card = (item: GithubProjectItem) => (
-    <Card key={item.id} item={item} repo={repo} moving={moving.has(item.id) || drag?.item.id === item.id} onPointerDown={(event) => start(event, item)} onOpen={opener(item)} onMenu={(event) => menuFor(event, item, item.status)} />
+    <Card key={item.id} item={item} repo={repo} moving={moving.has(item.id) || drag?.item.id === item.id} onPointerDown={(event) => start(event, item)} onOpen={opener(item)} onMenu={(event) => menuFor(event, item, field === null ? null : optionOf(item, field))} />
   )
+
+  const laneMenu = (event: MouseEvent<HTMLElement>) => {
+    const ids = shown === null || lane === null ? [] : swimlanes(lane, shown).map((entry) => entry.id ?? '')
+    openMenu(event, [[{ label: 'Collapse all', onSelect: () => setCollapsedLanes(new Set(ids)) }, { label: 'Expand all', onSelect: () => setCollapsedLanes(new Set()) }]])
+  }
+  const columnMenu = (event: MouseEvent<HTMLElement>, column: ViewColumn) => {
+    const id = column.id ?? ''
+    const collapsed = collapsedColumns.has(id)
+    openMenu(event, [[
+      { label: collapsed ? 'Expand column' : 'Collapse column', onSelect: () => setCollapsedColumns((set) => toggled(set, id)) },
+      { label: 'Hide column', onSelect: () => setHiddenColumns((set) => new Set(set).add(id)) },
+    ]])
+  }
+  const columnsFor = (list: ViewColumn[]) =>
+    field !== null &&
+    list
+      .filter((column) => (showNoStatus || column.id !== null) && !hiddenColumns.has(column.id ?? ''))
+      .map((column) => (
+        <Column key={column.id ?? ''} column={column} field={field.name} droppable={column.id !== null} over={drag !== null && drag.over !== null && drag.over === column.id} collapsed={collapsedColumns.has(column.id ?? '')} onMenu={(event) => columnMenu(event, column)}>
+          <ul onKeyDown={openMenuFromKeyboard} className="min-h-12 space-y-2 overflow-y-auto px-2.5 pb-2.5">
+            {column.items.map(card)}
+          </ul>
+        </Column>
+      ))
 
   return (
     <div className="relative flex h-full min-h-0">
@@ -411,25 +491,40 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
           </div>
         ) : field === null ? (
           <div className={`min-h-0 flex-1 overflow-y-auto border-t ${pageDivider} pt-3 pb-5`}>
-            <p className={`${pageX} pb-3 text-[13px] text-ink-400`}>{board.title} has no Status field, so its items show as a list. Add a Status field on GitHub to see them as a board.</p>
+            <p className={`${pageX} pb-3 text-[13px] text-ink-400`}>{board.title} has no Status or other single-select field to group by, so its items show as a list. Add one on GitHub to see them as a board.</p>
             <ul onKeyDown={openMenuFromKeyboard} className={`${pageX} grid max-w-[720px] gap-2`}>
               {shown.map(card)}
             </ul>
           </div>
         ) : (
-          <div className={`flex min-h-0 flex-1 items-start gap-3 overflow-x-auto border-t ${pageDivider} ${pageX} pt-3 pb-5`}>
-            {columns.filter((column) => showNoStatus || column.id !== null).map((column) => (
-              <Column key={column.id ?? ''} column={column} droppable={column.id !== null} over={drag !== null && drag.over !== null && drag.over === column.id} count={column.items.length}>
-                <ul onKeyDown={openMenuFromKeyboard} className="min-h-12 space-y-2 overflow-y-auto px-2.5 pb-2.5">
-                  {column.items.map(card)}
-                </ul>
-              </Column>
-            ))}
+          <div className={`flex min-h-0 flex-1 flex-col border-t ${pageDivider} pt-3`}>
+            {hiddenColumns.size > 0 && (
+              <p className={`${pageX} pb-2 text-[12px] text-ink-500`}>
+                {hiddenColumns.size} hidden {hiddenColumns.size === 1 ? 'column' : 'columns'}{' '}
+                <button type="button" onClick={() => setHiddenColumns(new Set())} className="font-semibold text-accent hover:underline">
+                  Show all
+                </button>
+              </p>
+            )}
+            {lane === null ? (
+              <div className={`flex min-h-0 flex-1 items-start gap-3 overflow-x-auto ${pageX} pb-5`}>{columnsFor(columns)}</div>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-auto pb-5">
+                {swimlanes(lane, shown).map((entry) => {
+                  const id = entry.id ?? ''
+                  return (
+                    <Lane key={id} name={entry.name} color={entry.color} count={entry.items.length} collapsed={collapsedLanes.has(id)} onToggle={() => setCollapsedLanes((set) => toggled(set, id))} onMenu={laneMenu}>
+                      <div className={`flex items-start gap-3 ${pageX} pb-4`}>{columnsFor(viewColumns(field, entry.items))}</div>
+                    </Lane>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
         {drag !== null && (
           <div style={{ left: drag.x + 12, top: drag.y + 12 }} className="pointer-events-none fixed z-[70] max-w-64 rounded-[10px] border border-white/[0.12] bg-ink-850 px-2.5 py-1 text-[12.5px] text-ink-100 shadow-xl">
-            <div className="text-[11px] font-medium text-accent">{drag.over === null ? 'Drop on a status' : `Move to ${field?.options.find((option) => option.id === drag.over)?.name ?? ''}`}</div>
+            <div className="text-[11px] font-medium text-accent">{drag.over === null ? `Drop on a ${field?.name ?? 'column'}` : `Move to ${field?.options.find((option) => option.id === drag.over)?.name ?? ''}`}</div>
             <div className="truncate">{drag.item.title}</div>
           </div>
         )}
