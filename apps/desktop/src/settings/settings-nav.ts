@@ -18,13 +18,15 @@ export interface SectionInfo {
   description: string
   icon: SectionIcon
   group: 'General' | 'Agents' | 'System'
+  /** Uses the content column's full width; every other page caps its content at a readable width. */
+  wide?: boolean
 }
 
 /** In navigation order; groups follow the order their first section appears in. */
 export const settingsSections: SectionInfo[] = [
-  { key: 'usage', label: 'Usage', description: 'Tokens, estimated cost and limits across your agents, from their own logs.', icon: 'gauge', group: 'General' },
+  { key: 'usage', label: 'Usage', description: 'Tokens, estimated cost and limits across your agents, from their own logs.', icon: 'gauge', group: 'General', wide: true },
   { key: 'shortcuts', label: 'Shortcuts', description: 'The keys for the window’s actions, Orca’s where Orca has the same action.', icon: 'keyboard', group: 'General' },
-  { key: 'agents', label: 'Agents', description: 'The agents installed here, the command each starts with, and the one New chat uses.', icon: 'agents', group: 'Agents' },
+  { key: 'agents', label: 'Agents', description: 'The agents installed here, the command each starts with, and the one New chat uses.', icon: 'agents', group: 'Agents', wide: true },
   { key: 'models', label: 'Models', description: 'Which models each agent offers in the picker, and what new chats start on.', icon: 'cpu', group: 'Agents' },
   { key: 'chains', label: 'Chains', description: 'Which agent and model a dispatch tries first, and what it falls back to.', icon: 'link', group: 'Agents' },
   { key: 'knowledge', label: 'Knowledge', description: 'What each project keeps from its chats, and the model that writes it up.', icon: 'note', group: 'Agents' },

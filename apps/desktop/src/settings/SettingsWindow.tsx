@@ -21,7 +21,9 @@ import { TerminalSection } from '@/settings/TerminalSection'
 import { setKnownTerminalEngine } from '@/terminal/terminal-engine'
 import { UsageSection } from '@/settings/UsageSection'
 import { WorktreesSection } from '@/settings/WorktreesSection'
+import { lightsRow } from '@/advanced/chrome'
 import { pageX } from '@/lib/page'
+import { sidebarSurface } from '@/lib/panel-width'
 
 /** `focusProject` opens on that project's page, as Edit commands in a chat's run menu does. `focusChat` is the native chat focused behind the window, for Summarize now. */
 export function SettingsWindow({ onClose, onSetup, focusProject = null, focusChat = null, initialSection = null }: { onClose: () => void; onSetup: () => void; focusProject?: string | null; focusChat?: { id: string; title: string } | null; initialSection?: Section | null }) {
@@ -103,70 +105,67 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
   const settings = entry.value as Settings
 
   return (
-    <div
-      className="absolute inset-0 z-50 flex bg-ink-950/70 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Settings"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose()
-      }}
-    >
-      <div className="glass relative m-auto flex h-[min(760px,92vh)] w-[min(960px,94vw)] overflow-hidden rounded-[28px] border border-white/[0.1] shadow-2xl">
-        <button type="button" onClick={onClose} aria-label="Close settings" title="Close (Esc)" className={`${ghostIcon} absolute top-3 right-3 z-10 size-8`}>
-          <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
-            <path d="M4 4l8 8M12 4l-8 8" />
-          </svg>
-        </button>
-        <nav
-          ref={nav}
-          aria-label="Settings sections"
-          className="flex w-[216px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-white/[0.06] px-3 pt-5 pb-4"
-          onKeyDown={(event) => {
-            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-            event.preventDefault()
-            go(adjacentKey(navKeys(listed), section, event.key === 'ArrowDown' ? 1 : -1))
-          }}
-        >
-          <h1 className="px-3 text-[15px] font-semibold tracking-[-0.01em] text-ink-100">Settings</h1>
-          {navGroups(listed).map((group) => (
-            <div key={group.label} className={`grid gap-0.5 ${group.label === 'Projects' ? 'border-t border-white/[0.06] pt-4' : ''}`}>
-              <p className="px-3 pb-1 text-[11px] font-semibold tracking-[0.06em] text-ink-500 uppercase">{group.label}</p>
-              {group.items.map((item) => {
-                const current = section === item.key
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    data-section={item.key}
-                    onClick={() => setSection(item.key)}
-                    aria-current={current ? 'page' : undefined}
-                    tabIndex={current ? 0 : -1}
-                    title={item.project?.path}
-                    className={`flex h-8 min-w-0 items-center gap-2.5 rounded-[10px] px-3 text-left text-[13.5px] font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
-                      current ? 'bg-white/[0.1] text-ink-100' : 'text-ink-300 hover:bg-white/[0.05] hover:text-ink-100'
-                    }`}
-                  >
-                    {item.project === null ? (
-                      <SettingsIcon name={sectionInfo(item.key).icon} className={`size-4 ${current ? 'text-ink-100' : 'text-ink-400'}`} />
-                    ) : (
-                      <span className="-ml-1 flex scale-[0.84]">
-                        <ProjectPicture project={item.project} />
-                      </span>
-                    )}
-                    <span className="min-w-0 truncate">{item.label}</span>
-                    {item.key === 'agents' && agentUpdates.badge > 0 && (
-                      <span className="ml-auto rounded-full bg-white/[0.08] px-1.5 text-[11px] leading-[18px] font-semibold text-ink-300 tabular-nums" aria-label={`${agentUpdates.badge} agent ${agentUpdates.badge === 1 ? 'update' : 'updates'} available`}>
-                        {agentUpdates.badge}
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-          ))}
-        </nav>
-        <main ref={content} className={`min-h-0 flex-1 overflow-y-auto pt-8 pb-10 ${pageX}`}>
+    <div className="absolute inset-0 z-50 flex bg-ink-950" role="region" aria-label="Settings">
+      <nav
+        ref={nav}
+        aria-label="Settings sections"
+        className={`flex w-[260px] shrink-0 flex-col gap-4 overflow-y-auto px-3 pb-4 ${sidebarSurface('left')}`}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+          event.preventDefault()
+          go(adjacentKey(navKeys(listed), section, event.key === 'ArrowDown' ? 1 : -1))
+        }}
+      >
+        <div data-tauri-drag-region className={`${lightsRow} -mb-4 shrink-0`} />
+        <div className="flex items-center gap-1.5 px-1">
+          <button type="button" onClick={onClose} aria-label="Back" title="Back (Esc)" className={`${ghostIcon} size-8`}>
+            <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M10 3.5L5.5 8l4.5 4.5" />
+            </svg>
+          </button>
+          <h1 className="text-[15px] font-semibold tracking-[-0.01em] text-ink-100">Settings</h1>
+        </div>
+        {navGroups(listed).map((group) => (
+          <div key={group.label} className={`grid gap-0.5 ${group.label === 'Projects' ? 'border-t border-white/[0.06] pt-4' : ''}`}>
+            <p className="px-3 pb-1 text-[11px] font-semibold tracking-[0.06em] text-ink-500 uppercase">{group.label}</p>
+            {group.items.map((item) => {
+              const current = section === item.key
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  data-section={item.key}
+                  onClick={() => setSection(item.key)}
+                  aria-current={current ? 'page' : undefined}
+                  tabIndex={current ? 0 : -1}
+                  title={item.project?.path}
+                  className={`flex h-8 min-w-0 items-center gap-2.5 rounded-[10px] px-3 text-left text-[13.5px] font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none ${
+                    current ? 'bg-white/[0.1] text-ink-100' : 'text-ink-300 hover:bg-white/[0.05] hover:text-ink-100'
+                  }`}
+                >
+                  {item.project === null ? (
+                    <SettingsIcon name={sectionInfo(item.key).icon} className={`size-4 ${current ? 'text-ink-100' : 'text-ink-400'}`} />
+                  ) : (
+                    <span className="-ml-1 flex scale-[0.84]">
+                      <ProjectPicture project={item.project} />
+                    </span>
+                  )}
+                  <span className="min-w-0 truncate">{item.label}</span>
+                  {item.key === 'agents' && agentUpdates.badge > 0 && (
+                    <span className="ml-auto rounded-full bg-white/[0.08] px-1.5 text-[11px] leading-[18px] font-semibold text-ink-300 tabular-nums" aria-label={`${agentUpdates.badge} agent ${agentUpdates.badge === 1 ? 'update' : 'updates'} available`}>
+                      {agentUpdates.badge}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        ))}
+      </nav>
+      <main ref={content} className={`min-h-0 min-w-0 flex-1 overflow-y-auto pb-10 ${pageX}`}>
+        <div data-tauri-drag-region className={`${lightsRow} shrink-0`} />
+        {/* Wide pages (tables, lists) take the whole column; forms keep a readable width, left aligned. */}
+        <div className={projectPath === null && info.wide === true ? 'min-w-0' : 'max-w-[900px] min-w-0'}>
           {projectPath !== null ? (
             project !== null ? (
               <ProjectPage key={project.path} project={project} onChanged={() => void reloadProjects()} />
@@ -253,8 +252,8 @@ export function SettingsWindow({ onClose, onSetup, focusProject = null, focusCha
               )}
             </SectionPage>
           )}
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   )
 }
