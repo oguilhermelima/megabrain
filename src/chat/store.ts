@@ -60,6 +60,7 @@ export type QueuedChatMessage = { id: string; parts: ({ type: "text"; text: stri
 export type ChatLine = { cursor: string; chat?: Chat; event?: ChatEvent; approval?: ChatApproval; queue?: QueuedChatMessage[] };
 
 function safeId(id: string): boolean { return /^[a-f\d-]{36}$/i.test(id); }
+const CHAT_CACHE_LIMIT = 128;
 
 export class ChatStore {
   readonly chatsDir: string;
@@ -67,6 +68,16 @@ export class ChatStore {
   private readonly turnIds = new Map<string, Map<string, string>>();
   private readonly lastUsers = new Map<string, string>();
   constructor(readonly stateDir: string) { this.chatsDir = join(stateDir, "chats"); }
+
+  private cacheSet<T>(cache: Map<string, T>, id: string, value: T): void {
+    cache.delete(id);
+    cache.set(id, value);
+    while (cache.size > CHAT_CACHE_LIMIT) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  }
 
   async initialize(): Promise<void> { await mkdir(this.chatsDir, { recursive: true, mode: 0o700 }); await chmod(this.chatsDir, 0o700); }
   dir(id: string): string { if (!safeId(id)) throw new Error("invalid chat id"); return join(this.chatsDir, id); }
@@ -121,9 +132,9 @@ export class ChatStore {
     const line: ChatLine = { cursor: String(count + 1), event, ...(approval ? { approval } : {}) };
     await appendFile(file, `${JSON.stringify(line)}\n`, { mode: 0o600 });
     await chmod(file, 0o600);
-    if (event.kind === "user") this.lastUsers.set(id, event.id);
+    if (event.kind === "user") this.cacheSet(this.lastUsers, id, event.id);
     if (event.kind === "user" && event.turnId !== undefined) await this.recordTurnId(id, event.id, event.turnId);
-    this.counts.set(id, count + 1);
+    this.cacheSet(this.counts, id, count + 1);
     return line;
   }
 
@@ -134,9 +145,9 @@ export class ChatStore {
     const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, normalized.map((line) => JSON.stringify(line)).join("\n") + (normalized.length ? "\n" : ""), { mode: 0o600 });
     await rename(temporary, file);
-    this.counts.set(id, normalized.length);
+    this.cacheSet(this.counts, id, normalized.length);
     const lastUser = normalized.flatMap((line) => line.event?.kind === "user" ? [line.event.id] : []).at(-1);
-    if (lastUser === undefined) this.lastUsers.delete(id); else this.lastUsers.set(id, lastUser);
+    if (lastUser === undefined) this.lastUsers.delete(id); else this.cacheSet(this.lastUsers, id, lastUser);
     await this.replaceTurnIds(id, normalized);
   }
 
@@ -148,7 +159,7 @@ export class ChatStore {
 
   private async turnIdMap(id: string): Promise<Map<string, string>> {
     const cached = this.turnIds.get(id);
-    if (cached) return cached;
+    if (cached) { this.cacheSet(this.turnIds, id, cached); return cached; }
     const map = new Map<string, string>();
     try {
       const content = await readFile(this.turnIdsPath(id), "utf8");
@@ -157,7 +168,7 @@ export class ChatStore {
         if (typeof value.eventId === "string" && typeof value.turnId === "string") map.set(value.eventId, value.turnId);
       }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    this.turnIds.set(id, map);
+    this.cacheSet(this.turnIds, id, map);
     return map;
   }
 
@@ -174,7 +185,7 @@ export class ChatStore {
     const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, records.map((record) => JSON.stringify(record)).join("\n") + (records.length ? "\n" : ""), { mode: 0o600 });
     await rename(temporary, file);
-    this.turnIds.set(id, new Map(records.map((record) => [record.eventId, record.turnId])));
+    this.cacheSet(this.turnIds, id, new Map(records.map((record) => [record.eventId, record.turnId])));
   }
 
   /** Drops what is cached for a chat whose files were deleted. */
@@ -191,12 +202,12 @@ export class ChatStore {
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
     const turnIds = await this.turnIdMap(id);
     const lines = content.split("\n").filter(Boolean).map((line) => JSON.parse(line) as ChatLine);
-    this.counts.set(id, lines.reduce((count, line) => Math.max(count, Number(line.cursor) || 0), 0));
+    this.cacheSet(this.counts, id, lines.reduce((count, line) => Math.max(count, Number(line.cursor) || 0), 0));
     return lines.filter((line) => Number(line.cursor) > since).map((line) => this.attachTurnId(id, line, turnIds));
   }
 
   private attachTurnId(id: string, line: ChatLine, turnIds: Map<string, string>): ChatLine {
-    if (line.event?.kind === "user") this.lastUsers.set(id, line.event.id);
+    if (line.event?.kind === "user") this.cacheSet(this.lastUsers, id, line.event.id);
     const turnId = line.event?.kind === "user" ? turnIds.get(line.event.id) : undefined;
     return turnId === undefined || line.event === undefined || line.event.turnId !== undefined ? line : { ...line, event: { ...line.event, turnId } };
   }
