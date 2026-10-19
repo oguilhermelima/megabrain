@@ -107,3 +107,23 @@ export function distinctItems(items: readonly GithubProjectItem[]): GithubProjec
 export function mergedPages(read: readonly GithubProjectItem[], before: readonly GithubProjectItem[]): GithubProjectItem[] {
   return distinctItems([...read, ...before])
 }
+
+/**
+ * Reads a board a page at a time, at most `maxPages`, handing `show` the items read so far after each
+ * page (`last` on the final one). A read whose board is no longer the one shown (`current` false)
+ * shows nothing more, asks for no more pages and answers null.
+ */
+export async function readBoardPages({ read, maxPages, current, show }: { read: (after: string | null) => Promise<{ items: GithubProjectItem[]; next: string | null }>; maxPages: number; current: () => boolean; show: (items: GithubProjectItem[], last: boolean) => void }): Promise<GithubProjectItem[] | null> {
+  let all: GithubProjectItem[] = []
+  let after: string | null = null
+  for (let page = 0; page < maxPages; page++) {
+    const next = await read(after)
+    if (!current()) return null
+    all = distinctItems([...all, ...next.items])
+    after = next.next
+    const last = after === null || page === maxPages - 1
+    show(all, last)
+    if (last) break
+  }
+  return all
+}

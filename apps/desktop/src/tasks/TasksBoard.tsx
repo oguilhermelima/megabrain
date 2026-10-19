@@ -12,7 +12,7 @@ import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts
 import { Avatar, LabelChip, OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
 import { pageDivider, pageX } from '@/lib/page'
 import { answeredItems, boardColumns, movesItem, otherRepository, shownItems, withoutMove, type BoardColumn, type PendingMove } from '@/tasks/board-model'
-import { boardKey, boardReadDue, createBoardMemory, distinctItems, mergedPages, withItems, withProjects } from '@/tasks/board-cache'
+import { boardKey, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
 import { BoardSearch, boardSheetFields } from '@/tasks/BoardFilterBar'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
@@ -77,42 +77,27 @@ function useBoardItems(root: string, board: GithubProject) {
   const [loading, setLoading] = useState(false)
   const shown = useRef(items)
   shown.current = items
-  const alive = useRef(true)
   // Refresh reads at once; a schedule or a reopened board reads only when the last read is a minute old.
   const asked = useRef(false)
-  useEffect(() => {
-    alive.current = true
-    setItems(boardCache().items[key]?.value ?? null)
-    return () => {
-      alive.current = false
-    }
-  }, [key])
+  useEffect(() => setItems(boardCache().items[key]?.value ?? null), [key])
+  // usePoll's `current` turns false once another board is shown, so an old board's pages never land.
   const poll = usePoll(
     boardItemsPolicy,
-    async () => {
+    async (current) => {
       const force = asked.current
       asked.current = false
       if (!boardReadDue(boardCache().items[key]?.at, Date.now(), force)) return
       setLoading(true)
       const before = shown.current ?? []
       try {
-        let all: GithubProjectItem[] = []
-        let after: string | null = null
-        for (let page = 0; page < maxPages; page++) {
-          const next = await api.githubProject(root, board.number, board.owner, after)
-          if (!alive.current) return
-          all = distinctItems([...all, ...next.items])
-          after = next.next
-          const last = after === null || page === maxPages - 1
-          setItems(last ? all : mergedPages(all, before))
-          if (last) break
-        }
+        const all = await readBoardPages({ read: (after) => api.githubProject(root, board.number, board.owner, after), maxPages, current, show: (read, last) => setItems(last ? read : mergedPages(read, before)) })
+        if (all === null) return
         remember(withItems(boardCache(), key, all, Date.now()))
         setError(null)
       } catch (cause: unknown) {
-        if (alive.current) setError(cause)
+        if (current()) setError(cause)
       } finally {
-        if (alive.current) setLoading(false)
+        if (current()) setLoading(false)
       }
     },
     [root, board.number, board.owner, key],
