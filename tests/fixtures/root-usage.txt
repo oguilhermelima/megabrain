@@ -72,7 +72,7 @@ Commands:
   ack <delivery-id> [options]          Acknowledge a child reply delivery
   received                            Confirm receipt of a dispatch prompt
   native sim list <phone|tv> ...       List available Apple simulators
-  native runtime list ...              List installed or known Apple runtimes
+  native runtime list ...              List installed Apple runtimes
   native runtime install ...           Install an Apple simulator runtime
   native appium start|stop|status      Manage the shared Appium server
   native build <phone|tv> ...          Build, install and launch a native app
