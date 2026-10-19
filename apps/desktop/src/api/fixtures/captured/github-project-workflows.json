@@ -1,0 +1,11 @@
+{
+  "workflows": [
+    { "id": "PWF_lAHOEz7eiM4BmvvKzgdR-dg", "name": "Auto-add sub-issues to project", "number": 10, "enabled": true },
+    { "id": "PWF_lAHOEz7eiM4BmvvKzgdR-dw", "name": "Auto-add to project", "number": 13, "enabled": true },
+    { "id": "PWF_lAHOEz7eiM4BmvvKzgdR-dc", "name": "Auto-close issue", "number": 9, "enabled": true },
+    { "id": "PWF_lAHOEz7eiM4BmvvKzgdR-ds", "name": "Item added to project", "number": 12, "enabled": true },
+    { "id": "PWF_lAHOEz7eiM4BmvvKzgdR-dQ", "name": "Item closed", "number": 7, "enabled": true },
+    { "id": "PWF_lAHOEz7eiM4BmvvKzgdR-do", "name": "Pull request linked to issue", "number": 11, "enabled": true },
+    { "id": "PWF_lAHOEz7eiM4BmvvKzgdR-dY", "name": "Pull request merged", "number": 8, "enabled": true }
+  ]
+}

@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { DispatchMessage, OrchestrationGraph, OrchestrationTarget } from '@/api/schema'
+import type { DispatchMessage, OrchestrationGraph, OrchestrationTarget, GithubProjectStatusUpdate, GithubProjectStatusUpdateStatus, GithubProjectStatusUpdates, GithubProjectWorkflows } from '@/api/schema'
 import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, HistorySession, GithubIssueList, GithubPullRequestList, GithubLabel, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame, InputStream, InputRotation, WebDevice, ViewportPreset, WebInputAction, WebActionResult } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
@@ -213,6 +213,12 @@ export interface DesktopApi {
   githubProject(root: string, number: number, owner?: string, after?: string | null): Promise<GithubProjectPage>
   /** Move a project item to a status option; writes through GitHub Projects v2. */
   githubProjectMove(root: string, number: number, itemId: string, status: string, owner?: string): Promise<GithubProjectItem>
+  /** Every status update on a GitHub Project v2 board. */
+  githubProjectStatus(root: string, number: number, owner?: string): Promise<GithubProjectStatusUpdates>
+  /** Creates one GitHub Project v2 status update. */
+  githubProjectStatusCreate(root: string, number: number, status: GithubProjectStatusUpdateStatus, body?: string, startDate?: string, targetDate?: string, owner?: string): Promise<GithubProjectStatusUpdate>
+  /** Every workflow configured on a GitHub Project v2 board. */
+  githubProjectWorkflows(root: string, number: number, owner?: string): Promise<GithubProjectWorkflows>
   /** One pull request's body, comments, checks, review decision and line counts (`github pr`). */
   githubPullRequest(root: string, number: number): Promise<GithubDetail>
   /** One issue's body and comments (`github issue`). */

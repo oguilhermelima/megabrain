@@ -68,6 +68,14 @@ export const fixtureBacklogItems: GithubProjectItem[] = [
 
 export const mockGithubProjects: GithubProject[] = [fixtureRoadmap, fixtureBacklog]
 
+export const mockGithubProjectStatusUpdates = {
+  [fixtureRoadmap.number]: [{ id: 'PVT_status_roadmap', status: 'ON_TRACK' as const, body: 'Work is progressing as planned', startDate: '2026-10-01', targetDate: '2026-10-31', createdAt: '2026-10-02T12:00:00.000Z', creator: 'operator' }],
+}
+
+export const mockGithubProjectWorkflows = {
+  [fixtureRoadmap.number]: [{ id: 'PWF_auto_close', name: 'Auto-close issue', number: 9, enabled: true }],
+}
+
 export const mockGithubProjectItems: Record<number, GithubProjectItem[]> = {
   [fixtureRoadmap.number]: fixtureRoadmapItems,
   [fixtureBacklog.number]: fixtureBacklogItems,
