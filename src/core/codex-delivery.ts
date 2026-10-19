@@ -120,12 +120,22 @@ export async function findCodexProcessByThread(threadId: string, process: Proces
     const match = /^\s*(\d+)\s+(.*)$/.exec(line);
     return match !== null && codexCommand(match[2] ?? "") ? [match[1] as string] : [];
   });
-  for (const candidate of candidates) {
+  const candidateLimit = 16;
+  const deadline = Date.now() + 1_500;
+  let lsofReason = "";
+  for (const candidate of candidates.slice(0, candidateLimit)) {
+    const timeoutMs = deadline - Date.now();
+    if (timeoutMs <= 0) break;
     const pid = Number(candidate);
-    const openFiles = await process.run("lsof", ["-p", candidate, "-Fn"]);
+    const openFiles = await process.run("lsof", ["-p", candidate, "-Fn"], { timeoutMs });
     if (openFiles.kind === "ok" && hasThreadRollout(openFiles.value.stdout, threadId)) return { pid };
+    if (openFiles.kind === "failed") lsofReason = openFiles.error;
   }
-  return { reason: candidates.length === 0 ? "no Codex process is running" : `no Codex process holds the rollout for thread ${threadId}` };
+  if (candidates.length === 0) return { reason: "no Codex process is running" };
+  if (Date.now() >= deadline) return { reason: `no Codex process holds the rollout for thread ${threadId}; discovery timed out${lsofReason === "" ? "" : `: ${lsofReason}`}` };
+  return { reason: candidates.length > candidateLimit
+    ? `no Codex process holds the rollout for thread ${threadId} among the first ${candidateLimit} candidates`
+    : `no Codex process holds the rollout for thread ${threadId}` };
 }
 
 export async function deliverCodexQueue(threadId: string, pid: number, message: string, process: ProcessAdapter): Promise<CodexQueueResult> {
