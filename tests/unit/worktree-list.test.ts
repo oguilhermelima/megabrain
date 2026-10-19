@@ -241,6 +241,24 @@ describe("executeWorktreeList", () => {
     if (result.kind === "failed") expect(result.error).toContain("git worktree list failed");
   });
 
+  test("fails on Git configuration errors other than a missing match", async () => {
+    const fixture = await createFixture();
+    const process = processFor((command, args) => {
+      if (command !== "git") return commandOutput(command);
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "rev-parse" && gitArgs.includes("--show-toplevel")) return output(`${fixture.repo}\n`);
+      if (gitArgs[0] === "rev-parse" && gitArgs.includes("--git-common-dir")) return output(`${fixture.repo}/.git\n`);
+      if (gitArgs[0] === "worktree") return output(gitWorktrees(fixture.repo, fixture.linked));
+      if (gitArgs[0] === "config") return failed("git config failed", 128);
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList(["--repo", fixture.repo, "--json"], { MEGABRAIN_STATE_DIR: fixture.state }, process);
+
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") expect(result.error).toContain("git config failed");
+  });
+
   test("bounds the fallback GitHub pull request query", async () => {
     const fixture = await createFixture();
     const repo = join(fixture.shared, "repo");
