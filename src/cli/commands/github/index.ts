@@ -48,9 +48,12 @@ export const USAGE: Readonly<Record<Verb | ReviewVerb | FlowVerb, UsageKey>> = {
 import { executeActions } from "./actions.js";
 import { executeProjects, PROJECT_VERBS } from "./projects.js";
 import { executeProjectMove } from "./project-move.js";
+import { executeProjectWrite } from "./project-writes.js";
+const PROJECT_WRITE_VERBS = ["project-field", "project-clear", "project-add", "project-draft", "project-archive", "project-unarchive"] as const;
 import { executeProjectStatus, executeProjectStatusCreate } from "./project-status.js";
 import { executeProjectWorkflows } from "./project-workflows.js";
 export { executeProjects, PROJECTS_QUERY, PROJECT_QUERY } from "./projects.js";
+export { normalizeProjectFields, normalizeProjectViews, normalizeProjectItem } from "./projects.js";
 export { executeProjectMove, PROJECT_METADATA_QUERY, PROJECT_MOVE_QUERY } from "./project-move.js";
 export { executeProjectStatus, executeProjectStatusCreate, PROJECT_STATUS_QUERY, PROJECT_STATUS_PROJECT_QUERY, CREATE_PROJECT_STATUS_UPDATE, PROJECT_STATUS_VALUES } from "./project-status.js";
 export { executeProjectWorkflows, PROJECT_WORKFLOWS_QUERY } from "./project-workflows.js";
@@ -81,6 +84,7 @@ import { executeGithubLabels } from "./labels.js";
 export async function executeGithub(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter(), now: Clock = Date.now): Promise<Result<string>> {
   const [verbArgument, ...rest] = args;
   if (verbArgument === "labels") return executeGithubLabels(rest, environment, process);
+  if (verbArgument !== undefined && PROJECT_WRITE_VERBS.includes(verbArgument as (typeof PROJECT_WRITE_VERBS)[number])) return executeProjectWrite(verbArgument as (typeof PROJECT_WRITE_VERBS)[number], rest, environment, process);
   if (verbArgument !== undefined && PROJECT_VERBS.includes(verbArgument as (typeof PROJECT_VERBS)[number])) {
     const projectVerb = verbArgument as (typeof PROJECT_VERBS)[number];
     if (projectVerb === "project-move") return executeProjectMove(rest, environment, process);

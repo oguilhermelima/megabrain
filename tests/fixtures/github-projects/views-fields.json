@@ -1,0 +1,1439 @@
+{
+  "fields": {
+    "nodes": [
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "TITLE",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Q",
+        "name": "Title"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "ASSIGNEES",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Y",
+        "name": "Assignees"
+      },
+      {
+        "__typename": "ProjectV2SingleSelectField",
+        "dataType": "SINGLE_SELECT",
+        "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXe5c",
+        "name": "Status",
+        "options": [
+          {
+            "color": "GREEN",
+            "description": "This item hasn't been started",
+            "id": "f75ad846",
+            "name": "Backlog"
+          },
+          {
+            "color": "BLUE",
+            "description": "This is ready to be picked up",
+            "id": "61e4505c",
+            "name": "Ready"
+          },
+          {
+            "color": "YELLOW",
+            "description": "This is actively being worked on",
+            "id": "47fc9ee4",
+            "name": "In progress"
+          },
+          {
+            "color": "PURPLE",
+            "description": "This item is in review",
+            "id": "df73e18b",
+            "name": "In review"
+          },
+          {
+            "color": "PINK",
+            "description": "",
+            "id": "c6fb7089",
+            "name": "Blocked"
+          },
+          {
+            "color": "ORANGE",
+            "description": "This has been completed",
+            "id": "98236657",
+            "name": "Done"
+          }
+        ]
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "LABELS",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5g",
+        "name": "Labels"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "LINKED_PULL_REQUESTS",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5k",
+        "name": "Linked pull requests"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "MILESTONE",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5o",
+        "name": "Milestone"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "REPOSITORY",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5s",
+        "name": "Repository"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "REVIEWERS",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe50",
+        "name": "Reviewers"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "PARENT_ISSUE",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe54",
+        "name": "Parent issue"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "SUB_ISSUES_PROGRESS",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe58",
+        "name": "Sub-issues progress"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "CREATED",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe6A",
+        "name": "Created"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "UPDATED",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe6E",
+        "name": "Updated"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "CLOSED",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe6I",
+        "name": "Closed"
+      },
+      {
+        "__typename": "ProjectV2SingleSelectField",
+        "dataType": "SINGLE_SELECT",
+        "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfI8",
+        "name": "Priority",
+        "options": [
+          {
+            "color": "RED",
+            "description": "",
+            "id": "79628723",
+            "name": "P0"
+          },
+          {
+            "color": "ORANGE",
+            "description": "",
+            "id": "0a877460",
+            "name": "P1"
+          },
+          {
+            "color": "YELLOW",
+            "description": "",
+            "id": "da944a9c",
+            "name": "P2"
+          }
+        ]
+      },
+      {
+        "__typename": "ProjectV2SingleSelectField",
+        "dataType": "SINGLE_SELECT",
+        "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfJA",
+        "name": "Size",
+        "options": [
+          {
+            "color": "GREEN",
+            "description": "",
+            "id": "6c6483d2",
+            "name": "XS"
+          },
+          {
+            "color": "PURPLE",
+            "description": "",
+            "id": "f784b110",
+            "name": "S"
+          },
+          {
+            "color": "RED",
+            "description": "",
+            "id": "7515a9f1",
+            "name": "M"
+          },
+          {
+            "color": "YELLOW",
+            "description": "",
+            "id": "817d0097",
+            "name": "L"
+          },
+          {
+            "color": "PINK",
+            "description": "",
+            "id": "db339eb2",
+            "name": "XL"
+          }
+        ]
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "NUMBER",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXfJE",
+        "name": "Estimate"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "DATE",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXfJI",
+        "name": "Start date"
+      },
+      {
+        "__typename": "ProjectV2Field",
+        "dataType": "DATE",
+        "id": "PVTF_lAHOEz7eiM4BmvvKzhlXfJM",
+        "name": "Target date"
+      },
+      {
+        "__typename": "ProjectV2SingleSelectField",
+        "dataType": "SINGLE_SELECT",
+        "id": "PVTSSF_lAHOEz7eiM4BmvvKzhmVKNs",
+        "name": "Área",
+        "options": [
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "3d21ff22",
+            "name": "Treino"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "31100c69",
+            "name": "Corpo"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "2919617f",
+            "name": "Dieta"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "0ac8663a",
+            "name": "Remédios"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "21fc511d",
+            "name": "Notificações"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "cf686c60",
+            "name": "Agenda"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "93261a8f",
+            "name": "Organização"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "a14c50ba",
+            "name": "Páginas"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "cc3445eb",
+            "name": "Espaços"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "82dcc62a",
+            "name": "Conta"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "b72103c0",
+            "name": "Social"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "a6d506c3",
+            "name": "Release"
+          }
+        ]
+      },
+      {
+        "__typename": "ProjectV2SingleSelectField",
+        "dataType": "SINGLE_SELECT",
+        "id": "PVTSSF_lAHOEz7eiM4BmvvKzhmVKPU",
+        "name": "Escopo",
+        "options": [
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "494161aa",
+            "name": "core"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "0e9da43b",
+            "name": "desejável"
+          },
+          {
+            "color": "GRAY",
+            "description": "",
+            "id": "b23b967c",
+            "name": "pós-v1"
+          }
+        ]
+      }
+    ]
+  },
+  "views": {
+    "nodes": [
+      {
+        "configuration": {
+          "visibleFields": {
+            "nodes": [
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "TITLE",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Q",
+                "name": "Title"
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "ASSIGNEES",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Y",
+                "name": "Assignees"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXe5c",
+                "name": "Status",
+                "options": [
+                  {
+                    "color": "GREEN",
+                    "description": "This item hasn't been started",
+                    "id": "f75ad846",
+                    "name": "Backlog"
+                  },
+                  {
+                    "color": "BLUE",
+                    "description": "This is ready to be picked up",
+                    "id": "61e4505c",
+                    "name": "Ready"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "This is actively being worked on",
+                    "id": "47fc9ee4",
+                    "name": "In progress"
+                  },
+                  {
+                    "color": "PURPLE",
+                    "description": "This item is in review",
+                    "id": "df73e18b",
+                    "name": "In review"
+                  },
+                  {
+                    "color": "PINK",
+                    "description": "",
+                    "id": "c6fb7089",
+                    "name": "Blocked"
+                  },
+                  {
+                    "color": "ORANGE",
+                    "description": "This has been completed",
+                    "id": "98236657",
+                    "name": "Done"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "LINKED_PULL_REQUESTS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5k",
+                "name": "Linked pull requests"
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "SUB_ISSUES_PROGRESS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe58",
+                "name": "Sub-issues progress"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfI8",
+                "name": "Priority",
+                "options": [
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "79628723",
+                    "name": "P0"
+                  },
+                  {
+                    "color": "ORANGE",
+                    "description": "",
+                    "id": "0a877460",
+                    "name": "P1"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "da944a9c",
+                    "name": "P2"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "NUMBER",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXfJE",
+                "name": "Estimate"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfJA",
+                "name": "Size",
+                "options": [
+                  {
+                    "color": "GREEN",
+                    "description": "",
+                    "id": "6c6483d2",
+                    "name": "XS"
+                  },
+                  {
+                    "color": "PURPLE",
+                    "description": "",
+                    "id": "f784b110",
+                    "name": "S"
+                  },
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "7515a9f1",
+                    "name": "M"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "817d0097",
+                    "name": "L"
+                  },
+                  {
+                    "color": "PINK",
+                    "description": "",
+                    "id": "db339eb2",
+                    "name": "XL"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "filter": null,
+        "groupByFields": {
+          "nodes": []
+        },
+        "id": "PVTV_lAHOEz7eiM4BmvvKzgMB9Ik",
+        "layout": "BOARD_LAYOUT",
+        "name": "Backlog",
+        "number": 1,
+        "sortByFields": {
+          "nodes": [
+            {
+              "direction": "ASC",
+              "field": {
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfI8",
+                "name": "Priority"
+              }
+            }
+          ]
+        },
+        "verticalGroupByFields": {
+          "nodes": [
+            {
+              "__typename": "ProjectV2SingleSelectField",
+              "dataType": "SINGLE_SELECT",
+              "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXe5c",
+              "name": "Status",
+              "options": [
+                {
+                  "color": "GREEN",
+                  "description": "This item hasn't been started",
+                  "id": "f75ad846",
+                  "name": "Backlog"
+                },
+                {
+                  "color": "BLUE",
+                  "description": "This is ready to be picked up",
+                  "id": "61e4505c",
+                  "name": "Ready"
+                },
+                {
+                  "color": "YELLOW",
+                  "description": "This is actively being worked on",
+                  "id": "47fc9ee4",
+                  "name": "In progress"
+                },
+                {
+                  "color": "PURPLE",
+                  "description": "This item is in review",
+                  "id": "df73e18b",
+                  "name": "In review"
+                },
+                {
+                  "color": "PINK",
+                  "description": "",
+                  "id": "c6fb7089",
+                  "name": "Blocked"
+                },
+                {
+                  "color": "ORANGE",
+                  "description": "This has been completed",
+                  "id": "98236657",
+                  "name": "Done"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "configuration": {
+          "visibleFields": {
+            "nodes": [
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "TITLE",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Q",
+                "name": "Title"
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "ASSIGNEES",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Y",
+                "name": "Assignees"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXe5c",
+                "name": "Status",
+                "options": [
+                  {
+                    "color": "GREEN",
+                    "description": "This item hasn't been started",
+                    "id": "f75ad846",
+                    "name": "Backlog"
+                  },
+                  {
+                    "color": "BLUE",
+                    "description": "This is ready to be picked up",
+                    "id": "61e4505c",
+                    "name": "Ready"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "This is actively being worked on",
+                    "id": "47fc9ee4",
+                    "name": "In progress"
+                  },
+                  {
+                    "color": "PURPLE",
+                    "description": "This item is in review",
+                    "id": "df73e18b",
+                    "name": "In review"
+                  },
+                  {
+                    "color": "PINK",
+                    "description": "",
+                    "id": "c6fb7089",
+                    "name": "Blocked"
+                  },
+                  {
+                    "color": "ORANGE",
+                    "description": "This has been completed",
+                    "id": "98236657",
+                    "name": "Done"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "LINKED_PULL_REQUESTS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5k",
+                "name": "Linked pull requests"
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "SUB_ISSUES_PROGRESS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe58",
+                "name": "Sub-issues progress"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfJA",
+                "name": "Size",
+                "options": [
+                  {
+                    "color": "GREEN",
+                    "description": "",
+                    "id": "6c6483d2",
+                    "name": "XS"
+                  },
+                  {
+                    "color": "PURPLE",
+                    "description": "",
+                    "id": "f784b110",
+                    "name": "S"
+                  },
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "7515a9f1",
+                    "name": "M"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "817d0097",
+                    "name": "L"
+                  },
+                  {
+                    "color": "PINK",
+                    "description": "",
+                    "id": "db339eb2",
+                    "name": "XL"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "NUMBER",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXfJE",
+                "name": "Estimate"
+              }
+            ]
+          }
+        },
+        "filter": null,
+        "groupByFields": {
+          "nodes": [
+            {
+              "__typename": "ProjectV2SingleSelectField",
+              "dataType": "SINGLE_SELECT",
+              "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfI8",
+              "name": "Priority",
+              "options": [
+                {
+                  "color": "RED",
+                  "description": "",
+                  "id": "79628723",
+                  "name": "P0"
+                },
+                {
+                  "color": "ORANGE",
+                  "description": "",
+                  "id": "0a877460",
+                  "name": "P1"
+                },
+                {
+                  "color": "YELLOW",
+                  "description": "",
+                  "id": "da944a9c",
+                  "name": "P2"
+                }
+              ]
+            }
+          ]
+        },
+        "id": "PVTV_lAHOEz7eiM4BmvvKzgMB9J8",
+        "layout": "BOARD_LAYOUT",
+        "name": "Priority board",
+        "number": 2,
+        "sortByFields": {
+          "nodes": []
+        },
+        "verticalGroupByFields": {
+          "nodes": [
+            {
+              "__typename": "ProjectV2SingleSelectField",
+              "dataType": "SINGLE_SELECT",
+              "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXe5c",
+              "name": "Status",
+              "options": [
+                {
+                  "color": "GREEN",
+                  "description": "This item hasn't been started",
+                  "id": "f75ad846",
+                  "name": "Backlog"
+                },
+                {
+                  "color": "BLUE",
+                  "description": "This is ready to be picked up",
+                  "id": "61e4505c",
+                  "name": "Ready"
+                },
+                {
+                  "color": "YELLOW",
+                  "description": "This is actively being worked on",
+                  "id": "47fc9ee4",
+                  "name": "In progress"
+                },
+                {
+                  "color": "PURPLE",
+                  "description": "This item is in review",
+                  "id": "df73e18b",
+                  "name": "In review"
+                },
+                {
+                  "color": "PINK",
+                  "description": "",
+                  "id": "c6fb7089",
+                  "name": "Blocked"
+                },
+                {
+                  "color": "ORANGE",
+                  "description": "This has been completed",
+                  "id": "98236657",
+                  "name": "Done"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "configuration": {
+          "visibleFields": {
+            "nodes": [
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "TITLE",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Q",
+                "name": "Title"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfI8",
+                "name": "Priority",
+                "options": [
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "79628723",
+                    "name": "P0"
+                  },
+                  {
+                    "color": "ORANGE",
+                    "description": "",
+                    "id": "0a877460",
+                    "name": "P1"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "da944a9c",
+                    "name": "P2"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "LINKED_PULL_REQUESTS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5k",
+                "name": "Linked pull requests"
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "SUB_ISSUES_PROGRESS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe58",
+                "name": "Sub-issues progress"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfJA",
+                "name": "Size",
+                "options": [
+                  {
+                    "color": "GREEN",
+                    "description": "",
+                    "id": "6c6483d2",
+                    "name": "XS"
+                  },
+                  {
+                    "color": "PURPLE",
+                    "description": "",
+                    "id": "f784b110",
+                    "name": "S"
+                  },
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "7515a9f1",
+                    "name": "M"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "817d0097",
+                    "name": "L"
+                  },
+                  {
+                    "color": "PINK",
+                    "description": "",
+                    "id": "db339eb2",
+                    "name": "XL"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "NUMBER",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXfJE",
+                "name": "Estimate"
+              }
+            ]
+          }
+        },
+        "filter": "assignee:@me",
+        "groupByFields": {
+          "nodes": []
+        },
+        "id": "PVTV_lAHOEz7eiM4BmvvKzgMB9KI",
+        "layout": "TABLE_LAYOUT",
+        "name": "My items",
+        "number": 5,
+        "sortByFields": {
+          "nodes": []
+        },
+        "verticalGroupByFields": {
+          "nodes": []
+        }
+      },
+      {
+        "configuration": {
+          "visibleFields": {
+            "nodes": [
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "TITLE",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Q",
+                "name": "Title"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhmVKNs",
+                "name": "Área",
+                "options": [
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "3d21ff22",
+                    "name": "Treino"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "31100c69",
+                    "name": "Corpo"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "2919617f",
+                    "name": "Dieta"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "0ac8663a",
+                    "name": "Remédios"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "21fc511d",
+                    "name": "Notificações"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "cf686c60",
+                    "name": "Agenda"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "93261a8f",
+                    "name": "Organização"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "a14c50ba",
+                    "name": "Páginas"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "cc3445eb",
+                    "name": "Espaços"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "82dcc62a",
+                    "name": "Conta"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "b72103c0",
+                    "name": "Social"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "a6d506c3",
+                    "name": "Release"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhmVKPU",
+                "name": "Escopo",
+                "options": [
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "494161aa",
+                    "name": "core"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "0e9da43b",
+                    "name": "desejável"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "b23b967c",
+                    "name": "pós-v1"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfI8",
+                "name": "Priority",
+                "options": [
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "79628723",
+                    "name": "P0"
+                  },
+                  {
+                    "color": "ORANGE",
+                    "description": "",
+                    "id": "0a877460",
+                    "name": "P1"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "da944a9c",
+                    "name": "P2"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfJA",
+                "name": "Size",
+                "options": [
+                  {
+                    "color": "GREEN",
+                    "description": "",
+                    "id": "6c6483d2",
+                    "name": "XS"
+                  },
+                  {
+                    "color": "PURPLE",
+                    "description": "",
+                    "id": "f784b110",
+                    "name": "S"
+                  },
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "7515a9f1",
+                    "name": "M"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "817d0097",
+                    "name": "L"
+                  },
+                  {
+                    "color": "PINK",
+                    "description": "",
+                    "id": "db339eb2",
+                    "name": "XL"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "ASSIGNEES",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Y",
+                "name": "Assignees"
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "SUB_ISSUES_PROGRESS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe58",
+                "name": "Sub-issues progress"
+              }
+            ]
+          }
+        },
+        "filter": "escopo:core",
+        "groupByFields": {
+          "nodes": [
+            {
+              "__typename": "ProjectV2SingleSelectField",
+              "dataType": "SINGLE_SELECT",
+              "id": "PVTSSF_lAHOEz7eiM4BmvvKzhmVKNs",
+              "name": "Área",
+              "options": [
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "3d21ff22",
+                  "name": "Treino"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "31100c69",
+                  "name": "Corpo"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "2919617f",
+                  "name": "Dieta"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "0ac8663a",
+                  "name": "Remédios"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "21fc511d",
+                  "name": "Notificações"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "cf686c60",
+                  "name": "Agenda"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "93261a8f",
+                  "name": "Organização"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "a14c50ba",
+                  "name": "Páginas"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "cc3445eb",
+                  "name": "Espaços"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "82dcc62a",
+                  "name": "Conta"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "b72103c0",
+                  "name": "Social"
+                },
+                {
+                  "color": "GRAY",
+                  "description": "",
+                  "id": "a6d506c3",
+                  "name": "Release"
+                }
+              ]
+            }
+          ]
+        },
+        "id": "PVTV_lAHOEz7eiM4BmvvKzgMI3AM",
+        "layout": "BOARD_LAYOUT",
+        "name": "v1 · core",
+        "number": 7,
+        "sortByFields": {
+          "nodes": []
+        },
+        "verticalGroupByFields": {
+          "nodes": [
+            {
+              "__typename": "ProjectV2SingleSelectField",
+              "dataType": "SINGLE_SELECT",
+              "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXe5c",
+              "name": "Status",
+              "options": [
+                {
+                  "color": "GREEN",
+                  "description": "This item hasn't been started",
+                  "id": "f75ad846",
+                  "name": "Backlog"
+                },
+                {
+                  "color": "BLUE",
+                  "description": "This is ready to be picked up",
+                  "id": "61e4505c",
+                  "name": "Ready"
+                },
+                {
+                  "color": "YELLOW",
+                  "description": "This is actively being worked on",
+                  "id": "47fc9ee4",
+                  "name": "In progress"
+                },
+                {
+                  "color": "PURPLE",
+                  "description": "This item is in review",
+                  "id": "df73e18b",
+                  "name": "In review"
+                },
+                {
+                  "color": "PINK",
+                  "description": "",
+                  "id": "c6fb7089",
+                  "name": "Blocked"
+                },
+                {
+                  "color": "ORANGE",
+                  "description": "This has been completed",
+                  "id": "98236657",
+                  "name": "Done"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "configuration": {
+          "visibleFields": {
+            "nodes": [
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "TITLE",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Q",
+                "name": "Title"
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXe5c",
+                "name": "Status",
+                "options": [
+                  {
+                    "color": "GREEN",
+                    "description": "This item hasn't been started",
+                    "id": "f75ad846",
+                    "name": "Backlog"
+                  },
+                  {
+                    "color": "BLUE",
+                    "description": "This is ready to be picked up",
+                    "id": "61e4505c",
+                    "name": "Ready"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "This is actively being worked on",
+                    "id": "47fc9ee4",
+                    "name": "In progress"
+                  },
+                  {
+                    "color": "PURPLE",
+                    "description": "This item is in review",
+                    "id": "df73e18b",
+                    "name": "In review"
+                  },
+                  {
+                    "color": "PINK",
+                    "description": "",
+                    "id": "c6fb7089",
+                    "name": "Blocked"
+                  },
+                  {
+                    "color": "ORANGE",
+                    "description": "This has been completed",
+                    "id": "98236657",
+                    "name": "Done"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhmVKNs",
+                "name": "Área",
+                "options": [
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "3d21ff22",
+                    "name": "Treino"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "31100c69",
+                    "name": "Corpo"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "2919617f",
+                    "name": "Dieta"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "0ac8663a",
+                    "name": "Remédios"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "21fc511d",
+                    "name": "Notificações"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "cf686c60",
+                    "name": "Agenda"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "93261a8f",
+                    "name": "Organização"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "a14c50ba",
+                    "name": "Páginas"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "cc3445eb",
+                    "name": "Espaços"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "82dcc62a",
+                    "name": "Conta"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "b72103c0",
+                    "name": "Social"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "a6d506c3",
+                    "name": "Release"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhmVKPU",
+                "name": "Escopo",
+                "options": [
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "494161aa",
+                    "name": "core"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "0e9da43b",
+                    "name": "desejável"
+                  },
+                  {
+                    "color": "GRAY",
+                    "description": "",
+                    "id": "b23b967c",
+                    "name": "pós-v1"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfI8",
+                "name": "Priority",
+                "options": [
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "79628723",
+                    "name": "P0"
+                  },
+                  {
+                    "color": "ORANGE",
+                    "description": "",
+                    "id": "0a877460",
+                    "name": "P1"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "da944a9c",
+                    "name": "P2"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2SingleSelectField",
+                "dataType": "SINGLE_SELECT",
+                "id": "PVTSSF_lAHOEz7eiM4BmvvKzhlXfJA",
+                "name": "Size",
+                "options": [
+                  {
+                    "color": "GREEN",
+                    "description": "",
+                    "id": "6c6483d2",
+                    "name": "XS"
+                  },
+                  {
+                    "color": "PURPLE",
+                    "description": "",
+                    "id": "f784b110",
+                    "name": "S"
+                  },
+                  {
+                    "color": "RED",
+                    "description": "",
+                    "id": "7515a9f1",
+                    "name": "M"
+                  },
+                  {
+                    "color": "YELLOW",
+                    "description": "",
+                    "id": "817d0097",
+                    "name": "L"
+                  },
+                  {
+                    "color": "PINK",
+                    "description": "",
+                    "id": "db339eb2",
+                    "name": "XL"
+                  }
+                ]
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "ASSIGNEES",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5Y",
+                "name": "Assignees"
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "LINKED_PULL_REQUESTS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe5k",
+                "name": "Linked pull requests"
+              },
+              {
+                "__typename": "ProjectV2Field",
+                "dataType": "SUB_ISSUES_PROGRESS",
+                "id": "PVTF_lAHOEz7eiM4BmvvKzhlXe58",
+                "name": "Sub-issues progress"
+              }
+            ]
+          }
+        },
+        "filter": "has:escopo",
+        "groupByFields": {
+          "nodes": []
+        },
+        "id": "PVTV_lAHOEz7eiM4BmvvKzgMI3AQ",
+        "layout": "TABLE_LAYOUT",
+        "name": "v1 · inventário",
+        "number": 8,
+        "sortByFields": {
+          "nodes": []
+        },
+        "verticalGroupByFields": {
+          "nodes": []
+        }
+      }
+    ]
+  }
+}

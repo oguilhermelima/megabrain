@@ -1,0 +1,361 @@
+[
+  {
+    "content": {
+      "__typename": "Issue",
+      "assignees": {
+        "nodes": [
+          {
+            "avatarUrl": "https://avatars.githubusercontent.com/u/55964335?u=3936ddb3c0cf5a753ccf8f0406bbd91cabd1b57d&v=4",
+            "login": "person-redacted"
+          }
+        ]
+      },
+      "labels": {
+        "nodes": []
+      },
+      "milestone": null,
+      "number": 408,
+      "parent": null,
+      "repository": {
+        "nameWithOwner": "cantospace/canto-space"
+      },
+      "state": "CLOSED",
+      "subIssuesSummary": {
+        "completed": 12,
+        "total": 12
+      },
+      "title": "test(corpo): o que o Corpo entrega e validação por perfil de uso",
+      "updatedAt": "2026-10-19T17:23:04Z",
+      "url": "https://github.com/cantospace/canto-space/issues/408"
+    },
+    "fieldValueByName": {
+      "optionId": "98236657"
+    },
+    "fieldValues": {
+      "nodes": [
+        {
+          "__typename": "ProjectV2ItemFieldUserValue",
+          "field": {
+            "name": "Assignees"
+          },
+          "users": {
+            "nodes": [
+              {
+                "login": "person-redacted"
+              }
+            ]
+          }
+        },
+        {
+          "__typename": "ProjectV2ItemFieldRepositoryValue",
+          "field": {
+            "name": "Repository"
+          },
+          "repository": {
+            "nameWithOwner": "cantospace/canto-space"
+          }
+        },
+        {
+          "__typename": "ProjectV2ItemFieldTextValue",
+          "field": {
+            "name": "Title"
+          },
+          "text": "test(corpo): o que o Corpo entrega e validação por perfil de uso"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Status"
+          },
+          "name": "Done",
+          "optionId": "98236657"
+        }
+      ]
+    },
+    "id": "PVTI_lAHOEz7eiM4BmvvKzhA4GrY",
+    "isArchived": false,
+    "updatedAt": "2026-10-19T17:23:06Z"
+  },
+  {
+    "content": {
+      "__typename": "Issue",
+      "assignees": {
+        "nodes": [
+          {
+            "avatarUrl": "https://avatars.githubusercontent.com/u/55964335?u=3936ddb3c0cf5a753ccf8f0406bbd91cabd1b57d&v=4",
+            "login": "person-redacted"
+          }
+        ]
+      },
+      "labels": {
+        "nodes": [
+          {
+            "color": "0E8A16",
+            "name": "v1"
+          },
+          {
+            "color": "5319E7",
+            "name": "area:notificacoes"
+          }
+        ]
+      },
+      "milestone": null,
+      "number": 326,
+      "parent": {
+        "number": 109,
+        "repository": {
+          "nameWithOwner": "cantospace/canto-space"
+        },
+        "title": "DISCUSSION: how the server delivers push notifications",
+        "url": "https://github.com/cantospace/canto-space/issues/109"
+      },
+      "repository": {
+        "nameWithOwner": "cantospace/canto-space"
+      },
+      "state": "OPEN",
+      "subIssuesSummary": {
+        "completed": 2,
+        "total": 7
+      },
+      "title": "feat: deliver server notifications as push",
+      "updatedAt": "2026-10-19T20:05:12Z",
+      "url": "https://github.com/cantospace/canto-space/issues/326"
+    },
+    "fieldValueByName": {
+      "optionId": "61e4505c"
+    },
+    "fieldValues": {
+      "nodes": [
+        {
+          "__typename": "ProjectV2ItemFieldUserValue",
+          "field": {
+            "name": "Assignees"
+          },
+          "users": {
+            "nodes": [
+              {
+                "login": "person-redacted"
+              }
+            ]
+          }
+        },
+        {
+          "__typename": "ProjectV2ItemFieldRepositoryValue",
+          "field": {
+            "name": "Repository"
+          },
+          "repository": {
+            "nameWithOwner": "cantospace/canto-space"
+          }
+        },
+        {
+          "__typename": "ProjectV2ItemFieldLabelValue",
+          "field": {
+            "name": "Labels"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "color": "0E8A16",
+                "name": "v1"
+              },
+              {
+                "color": "5319E7",
+                "name": "area:notificacoes"
+              }
+            ]
+          }
+        },
+        {
+          "__typename": "ProjectV2ItemFieldTextValue",
+          "field": {
+            "name": "Title"
+          },
+          "text": "feat: deliver server notifications as push"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Status"
+          },
+          "name": "Ready",
+          "optionId": "61e4505c"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Área"
+          },
+          "name": "Notificações",
+          "optionId": "21fc511d"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Escopo"
+          },
+          "name": "core",
+          "optionId": "494161aa"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Priority"
+          },
+          "name": "P1",
+          "optionId": "0a877460"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Size"
+          },
+          "name": "L",
+          "optionId": "817d0097"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldNumberValue",
+          "field": {
+            "name": "Estimate"
+          },
+          "number": 4
+        }
+      ]
+    },
+    "id": "PVTI_lAHOEz7eiM4BmvvKzhAxCVg",
+    "isArchived": false,
+    "updatedAt": "2026-10-19T20:05:14Z"
+  },
+  {
+    "content": {
+      "__typename": "Issue",
+      "assignees": {
+        "nodes": []
+      },
+      "labels": {
+        "nodes": [
+          {
+            "color": "0E8A16",
+            "name": "v1"
+          },
+          {
+            "color": "5319E7",
+            "name": "area:release"
+          }
+        ]
+      },
+      "milestone": null,
+      "number": 325,
+      "parent": {
+        "number": 326,
+        "repository": {
+          "nameWithOwner": "cantospace/canto-space"
+        },
+        "title": "feat: deliver server notifications as push",
+        "url": "https://github.com/cantospace/canto-space/issues/326"
+      },
+      "repository": {
+        "nameWithOwner": "cantospace/canto-space"
+      },
+      "state": "OPEN",
+      "subIssuesSummary": {
+        "completed": 0,
+        "total": 0
+      },
+      "title": "chore(mobile): create the EAS project and push credentials",
+      "updatedAt": "2026-10-19T20:05:14Z",
+      "url": "https://github.com/cantospace/canto-space/issues/325"
+    },
+    "fieldValueByName": {
+      "optionId": "61e4505c"
+    },
+    "fieldValues": {
+      "nodes": [
+        {
+          "__typename": "ProjectV2ItemFieldRepositoryValue",
+          "field": {
+            "name": "Repository"
+          },
+          "repository": {
+            "nameWithOwner": "cantospace/canto-space"
+          }
+        },
+        {
+          "__typename": "ProjectV2ItemFieldLabelValue",
+          "field": {
+            "name": "Labels"
+          },
+          "labels": {
+            "nodes": [
+              {
+                "color": "0E8A16",
+                "name": "v1"
+              },
+              {
+                "color": "5319E7",
+                "name": "area:release"
+              }
+            ]
+          }
+        },
+        {
+          "__typename": "ProjectV2ItemFieldTextValue",
+          "field": {
+            "name": "Title"
+          },
+          "text": "chore(mobile): create the EAS project and push credentials"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Status"
+          },
+          "name": "Ready",
+          "optionId": "61e4505c"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Área"
+          },
+          "name": "Release",
+          "optionId": "a6d506c3"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Escopo"
+          },
+          "name": "core",
+          "optionId": "494161aa"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Priority"
+          },
+          "name": "P0",
+          "optionId": "79628723"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldSingleSelectValue",
+          "field": {
+            "name": "Size"
+          },
+          "name": "S",
+          "optionId": "f784b110"
+        },
+        {
+          "__typename": "ProjectV2ItemFieldNumberValue",
+          "field": {
+            "name": "Estimate"
+          },
+          "number": 1
+        }
+      ]
+    },
+    "id": "PVTI_lAHOEz7eiM4BmvvKzhAxB5E",
+    "isArchived": false,
+    "updatedAt": "2026-10-19T20:05:16Z"
+  }
+]

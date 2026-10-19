@@ -96,21 +96,44 @@ export const githubPullRequestListSchema = githubListing(githubPullRequestSchema
 export const githubIssueListSchema = githubListing(githubIssueSchema)
 export const githubRepositoryLabelsSchema = z.looseObject({ labels: z.array(githubLabelSchema) })
 
-// `megabrain github projects|project|project-move --json`: GitHub Projects v2 boards.
+// `github project --json` returns this page contract: project views and fields plus a page of items.
 export const githubProjectStatusFieldSchema = z.looseObject({
-  id: z.string(), name: z.string(), options: z.array(z.looseObject({ id: z.string(), name: z.string(), color: z.enum(['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE']) })),
+  id: z.string(), name: z.string(), options: z.array(z.looseObject({ id: z.string(), name: z.string(), color: z.enum(['GRAY', 'BLUE', 'GREEN', 'YELLOW', 'ORANGE', 'RED', 'PINK', 'PURPLE']), description: z.string().optional() })),
 })
+export const githubProjectFieldSchema = z.looseObject({ id: z.string(), name: z.string(), dataType: z.string(), options: z.array(z.looseObject({ id: z.string(), name: z.string(), color: z.string(), description: z.string() })), iterations: z.array(z.looseObject({ id: z.string(), title: z.string(), startDate: z.string(), duration: z.number() })) })
+const githubProjectFieldRefSchema = z.looseObject({ id: z.string(), name: z.string() })
+/** View filter string and GitHub's grouping, sorting, layout, and visible field configuration. */
+export const githubProjectViewSchema = z.looseObject({ id: z.string(), number: z.number(), name: z.string(), layout: z.enum(['BOARD_LAYOUT', 'TABLE_LAYOUT', 'ROADMAP_LAYOUT']), filter: z.string(), groupByFields: z.array(githubProjectFieldRefSchema), verticalGroupByFields: z.array(githubProjectFieldRefSchema), sortByFields: z.array(z.looseObject({ direction: z.string(), field: githubProjectFieldRefSchema })), visibleFields: z.array(githubProjectFieldRefSchema) })
+/** A field value keeps its GraphQL kind as a discriminator; single-select values retain both id and display name. */
+const githubProjectItemFieldValueSchema = z.discriminatedUnion('kind', [
+  z.looseObject({ kind: z.literal('singleSelect'), field: z.string(), value: z.looseObject({ optionId: z.string().nullable(), name: z.string().nullable() }) }),
+  z.looseObject({ kind: z.literal('number'), field: z.string(), value: z.number().nullable() }),
+  z.looseObject({ kind: z.literal('date'), field: z.string(), value: z.string().nullable() }),
+  z.looseObject({ kind: z.literal('text'), field: z.string(), value: z.string().nullable() }),
+  z.looseObject({ kind: z.literal('iteration'), field: z.string(), value: z.looseObject({ title: z.string(), startDate: z.string(), duration: z.number().nullable() }) }),
+  z.looseObject({ kind: z.literal('labels'), field: z.string(), value: z.array(z.looseObject({ name: z.string(), color: z.string() })) }),
+  z.looseObject({ kind: z.literal('milestone'), field: z.string(), value: z.looseObject({ title: z.string(), dueOn: z.string().nullable() }).nullable() }),
+  z.looseObject({ kind: z.literal('users'), field: z.string(), value: z.array(z.string()) }),
+  z.looseObject({ kind: z.literal('repository'), field: z.string(), value: z.string().nullable() }),
+  z.looseObject({ kind: z.literal('pullRequests'), field: z.string(), value: z.array(z.looseObject({ number: z.number(), title: z.string(), url: z.string() })) }),
+  z.looseObject({ kind: z.literal('reviewers'), field: z.string(), value: z.array(z.string()) }),
+  z.looseObject({ kind: z.literal('issue'), field: z.string(), value: z.looseObject({ kind: z.string(), value: z.union([z.string(), z.number()]).nullable(), name: z.string().nullable() }).nullable() }),
+])
 export const githubProjectSchema = z.looseObject({
-  id: z.string(), number: z.number(), title: z.string(), url: z.string(), owner: z.string(), closed: z.boolean(), statusField: githubProjectStatusFieldSchema.nullable(),
+  id: z.string(), number: z.number(), title: z.string(), url: z.string(), owner: z.string(), closed: z.boolean(), statusField: githubProjectStatusFieldSchema.nullable(), fields: z.array(githubProjectFieldSchema).default([]), views: z.array(githubProjectViewSchema).default([]),
 })
+/** Item content plus every fetched custom field value, archival state, and parent/sub-issue metadata. */
 export const githubProjectItemSchema = z.looseObject({
   id: z.string(), type: z.enum(['ISSUE', 'PULL_REQUEST', 'DRAFT_ISSUE']), number: z.number().nullable(), title: z.string(), url: z.string().nullable(),
   state: z.enum(['OPEN', 'CLOSED', 'MERGED']).nullable(), repository: z.string().nullable(), status: z.string().nullable(),
-  assignees: z.array(z.looseObject({ login: z.string(), avatarUrl: z.string() })), labels: z.array(z.looseObject({ name: z.string(), color: z.string() })), updatedAt: z.string(),
+  assignees: z.array(z.looseObject({ login: z.string(), avatarUrl: z.string() })), labels: z.array(z.looseObject({ name: z.string(), color: z.string() })), updatedAt: z.string(), isArchived: z.boolean().optional(), fieldValues: z.array(githubProjectItemFieldValueSchema).optional(),
+  milestone: z.looseObject({ title: z.string(), dueOn: z.string().nullable() }).nullable().optional(), parentIssue: z.looseObject({ number: z.number(), title: z.string(), url: z.string(), repository: z.string().nullable() }).nullable().optional(), subIssuesProgress: z.looseObject({ total: z.number(), completed: z.number() }).nullable().optional(),
+  body: z.string().nullable().optional(),
 })
 export const githubProjectsSchema = z.looseObject({ projects: z.array(githubProjectSchema) })
 export const githubProjectPageSchema = z.looseObject({ project: githubProjectSchema, items: z.array(githubProjectItemSchema), next: z.string().nullable() })
 export const githubProjectMoveSchema = z.looseObject({ item: githubProjectItemSchema })
+export const githubProjectArchiveSchema = z.looseObject({ item: z.looseObject({ id: z.string(), isArchived: z.boolean() }) })
 export const githubProjectStatusUpdateSchema = z.looseObject({
   id: z.string(), status: z.enum(['INACTIVE', 'ON_TRACK', 'AT_RISK', 'OFF_TRACK', 'COMPLETE']), body: z.string(),
   startDate: z.string().nullable(), targetDate: z.string().nullable(), createdAt: z.string(), creator: z.string().nullable(),
@@ -119,10 +142,13 @@ export const githubProjectStatusUpdatesSchema = z.looseObject({ updates: z.array
 export const githubProjectWorkflowsSchema = z.looseObject({ workflows: z.array(z.looseObject({ id: z.string(), name: z.string(), number: z.number(), enabled: z.boolean() })) })
 export type GithubProject = z.infer<typeof githubProjectSchema>
 export type GithubProjectStatusField = z.infer<typeof githubProjectStatusFieldSchema>
+export type GithubProjectField = z.infer<typeof githubProjectFieldSchema>
+export type GithubProjectView = z.infer<typeof githubProjectViewSchema>
 export type GithubProjectColor = GithubProjectStatusField['options'][number]['color']
 export type GithubProjectItem = z.infer<typeof githubProjectItemSchema>
 export type GithubProjects = z.infer<typeof githubProjectsSchema>
 export type GithubProjectPage = z.infer<typeof githubProjectPageSchema>
+export type GithubProjectArchive = z.infer<typeof githubProjectArchiveSchema>['item']
 export type GithubProjectStatusUpdate = z.infer<typeof githubProjectStatusUpdateSchema>
 export type GithubProjectStatusUpdateStatus = GithubProjectStatusUpdate['status']
 export type GithubProjectStatusUpdates = z.infer<typeof githubProjectStatusUpdatesSchema>

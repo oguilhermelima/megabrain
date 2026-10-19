@@ -22,6 +22,10 @@ export const fixtureRoadmap: GithubProject = {
       { id: 'opt_done', name: 'Done', color: 'GREEN' },
     ],
   },
+  fields: [{ id: 'PVTSSF_status', name: 'Status', dataType: 'SINGLE_SELECT', options: [
+    { id: 'opt_todo', name: 'Todo', color: 'GRAY', description: '' }, { id: 'opt_progress', name: 'In Progress', color: 'YELLOW', description: '' }, { id: 'opt_review', name: 'In Review', color: 'BLUE', description: '' }, { id: 'opt_done', name: 'Done', color: 'GREEN', description: '' },
+  ], iterations: [] }],
+  views: [{ id: 'PVTV_roadmap', number: 1, name: 'Priority board', layout: 'BOARD_LAYOUT', filter: '', groupByFields: [{ id: 'PVTSSF_status', name: 'Status' }], verticalGroupByFields: [], sortByFields: [], visibleFields: [{ id: 'PVTSSF_status', name: 'Status' }] }],
 }
 
 export const fixtureBacklog: GithubProject = {
@@ -32,6 +36,8 @@ export const fixtureBacklog: GithubProject = {
   owner: 'oguilhermelima',
   closed: false,
   statusField: null,
+  fields: [],
+  views: [{ id: 'PVTV_backlog', number: 1, name: 'Backlog', layout: 'TABLE_LAYOUT', filter: '', groupByFields: [], verticalGroupByFields: [], sortByFields: [], visibleFields: [] }],
 }
 
 const repo = 'oguilhermelima/megabrain'
@@ -39,7 +45,7 @@ const person = (login: string) => ({ login, avatarUrl: `https://avatars.githubus
 const label = (name: string, color: string) => ({ name, color })
 
 function item(id: string, fields: Partial<GithubProjectItem> & Pick<GithubProjectItem, 'title'>): GithubProjectItem {
-  return { id, type: 'ISSUE', number: null, url: null, state: 'OPEN', repository: repo, status: null, assignees: [], labels: [], updatedAt: '2026-10-17T12:00:00.000Z', ...fields }
+  return { id, type: 'ISSUE', number: null, url: null, state: 'OPEN', repository: repo, status: null, assignees: [], labels: [], updatedAt: '2026-10-17T12:00:00.000Z', isArchived: false, fieldValues: [], body: null, ...fields }
 }
 
 const issue = (number: number) => ({ number, url: `https://github.com/${repo}/issues/${number}` })

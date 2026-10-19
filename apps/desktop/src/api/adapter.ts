@@ -1,6 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { DispatchMessage, OrchestrationGraph, OrchestrationTarget, GithubProjectStatusUpdate, GithubProjectStatusUpdateStatus, GithubProjectStatusUpdates, GithubProjectWorkflows } from '@/api/schema'
-import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, HistorySession, GithubIssueList, GithubPullRequestList, GithubLabel, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame, InputStream, InputRotation, WebDevice, ViewportPreset, WebInputAction, WebActionResult } from '@/api/schema'
+import type { DispatchMessage, OrchestrationGraph, OrchestrationTarget, AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, GithubProjectArchive, HistorySession, GithubIssueList, GithubPullRequestList, GithubLabel, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame, InputStream, InputRotation, WebDevice, ViewportPreset, WebInputAction, WebActionResult, GithubProjectStatusUpdate, GithubProjectStatusUpdateStatus, GithubProjectStatusUpdates, GithubProjectWorkflows } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -211,8 +210,20 @@ export interface DesktopApi {
   githubProjects(root: string): Promise<GithubProjects>
   /** One page of a GitHub Project v2 board's items. */
   githubProject(root: string, number: number, owner?: string, after?: string | null): Promise<GithubProjectPage>
+  /** Applies a stored GitHub view filter locally and reports unsupported qualifiers. */
+  githubProjectFilter(project: import('@/api/schema').GithubProject, items: GithubProjectItem[], filter: string, options?: { today?: string; me?: string }): { items: GithubProjectItem[]; warnings: string[] }
   /** Move a project item to a status option; writes through GitHub Projects v2. */
   githubProjectMove(root: string, number: number, itemId: string, status: string, owner?: string): Promise<GithubProjectItem>
+  /** Set a typed GitHub Projects field value after validating it against the project schema. */
+  githubProjectSetField(root: string, number: number, itemId: string, field: string, type: 'single-select' | 'number' | 'date' | 'text' | 'iteration', value: string, owner?: string): Promise<GithubProjectItem>
+  /** Clear a field value on a GitHub Projects item. */
+  githubProjectClearField(root: string, number: number, itemId: string, field: string, owner?: string): Promise<GithubProjectItem>
+  /** Add an existing GitHub issue or pull request by URL or owner/repo#number. */
+  githubProjectAddItem(root: string, number: number, reference: string, owner?: string): Promise<GithubProjectItem>
+  /** Create a draft issue inside a GitHub Project. */
+  githubProjectCreateDraft(root: string, number: number, title: string, body?: string, owner?: string): Promise<GithubProjectItem>
+  /** Archive or unarchive one project item. */
+  githubProjectSetArchived(root: string, number: number, itemId: string, archived: boolean, owner?: string): Promise<GithubProjectArchive>
   /** Every status update on a GitHub Project v2 board. */
   githubProjectStatus(root: string, number: number, owner?: string): Promise<GithubProjectStatusUpdates>
   /** Creates one GitHub Project v2 status update. */
