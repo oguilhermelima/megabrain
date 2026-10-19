@@ -82,9 +82,13 @@ function FieldControl({ item, field, busy, onSet, onClear }: { item: GithubProje
   )
 }
 
-export function ItemPanel({ item, project, busy, onSet, onClear, onArchive, onOpenDetail, onClose }: { item: GithubProjectItem; project: GithubProject; busy: boolean; onSet: (write: FieldWrite) => void; onClear: (field: GithubProjectField) => void; onArchive: () => void; onOpenDetail: (() => void) | null; onClose: () => void }) {
+export function ItemPanel({ item, project, busy, onSet, onClear, onEditDraft, onArchive, onOpenDetail, onClose }: { item: GithubProjectItem; project: GithubProject; busy: boolean; onSet: (write: FieldWrite) => void; onClear: (field: GithubProjectField) => void; onEditDraft: (title: string, body: string) => void; onArchive: () => void; onOpenDetail: (() => void) | null; onClose: () => void }) {
   const fields = project.fields.filter((field) => editableType(field) !== null)
   const url = item.url
+  const [title, setTitle] = useState(item.title)
+  const [body, setBody] = useState(item.body ?? '')
+  useEffect(() => { setTitle(item.title); setBody(item.body ?? '') }, [item.title, item.body])
+  const draftChanged = title.trim() !== item.title || body !== (item.body ?? '')
   return (
     <aside aria-label={item.title} className="flex w-[380px] shrink-0 flex-col border-l border-white/[0.06] bg-ink-950">
       <header className="flex shrink-0 items-start gap-2 px-5 pt-4 pb-3">
@@ -93,7 +97,7 @@ export function ItemPanel({ item, project, busy, onSet, onClear, onArchive, onOp
             {item.type === 'DRAFT_ISSUE' ? 'Draft' : `${item.repository ?? ''}${item.number === null ? '' : ` #${item.number}`}`}
             {item.isArchived === true && ' · Archived'}
           </p>
-          <h2 className="mt-0.5 text-[15px] leading-snug font-semibold text-ink-100">{item.title}</h2>
+          {item.type === 'DRAFT_ISSUE' ? <input aria-label="Draft title" disabled={busy} value={title} onChange={(event) => setTitle(event.target.value)} className={`${control} mt-1 font-semibold`} /> : <h2 className="mt-0.5 text-[15px] leading-snug font-semibold text-ink-100">{item.title}</h2>}
         </div>
         <button type="button" onClick={onClose} aria-label="Close" className="grid size-7 shrink-0 place-items-center rounded-full text-ink-400 hover:bg-white/[0.08] hover:text-ink-100">
           <CloseIcon size={14} />
@@ -112,7 +116,7 @@ export function ItemPanel({ item, project, busy, onSet, onClear, onArchive, onOp
             </button>
           )}
         </div>
-        {item.body !== undefined && item.body !== null && item.body.trim() !== '' && <p className="line-clamp-[12] text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink-300">{item.body}</p>}
+        {item.type === 'DRAFT_ISSUE' ? <section aria-label="Draft description" className="space-y-2"><label className="block text-[12px] font-semibold tracking-wide text-ink-500 uppercase" htmlFor="draft-body">Description</label><textarea id="draft-body" disabled={busy} value={body} onChange={(event) => setBody(event.target.value)} rows={6} className={`${control} h-auto resize-y py-2`} /><button type="button" disabled={busy || !draftChanged || title.trim() === ''} onClick={() => onEditDraft(title.trim(), body)} className="rounded-full bg-accent px-3 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-40">Save draft</button></section> : item.body !== undefined && item.body !== null && item.body.trim() !== '' && <p className="line-clamp-[12] text-[12.5px] leading-relaxed whitespace-pre-wrap text-ink-300">{item.body}</p>}
         <section aria-label="Fields" className="space-y-2">
           <h3 className="text-[12px] font-semibold tracking-wide text-ink-500 uppercase">Fields</h3>
           {fields.length === 0 ? <p className="text-[12.5px] text-ink-500">This project has no fields the app can edit.</p> : fields.map((field) => <FieldControl key={field.id} item={item} field={field} busy={busy} onSet={onSet} onClear={onClear} />)}

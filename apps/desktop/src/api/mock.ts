@@ -372,6 +372,7 @@ export function createMockApi(): DesktopApi {
       return [...new Map(labels.map((label) => [label.name, label])).values()]
     },
     githubProjects: async () => ({ projects: structuredClone(mockGithubProjects) }),
+    githubViewerLogin: async () => 'operator',
     githubProject: async (_root, number, owner, after) => {
       await wait(300)
       const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
@@ -433,6 +434,15 @@ export function createMockApi(): DesktopApi {
       const item: GithubProjectItem = { id: `MOCK_${number}_${items.length + 1}`, type: 'DRAFT_ISSUE', number: null, title, body: body ?? null, url: null, state: null, repository: null, status: null, assignees: [], labels: [], updatedAt: new Date().toISOString(), isArchived: false, fieldValues: [] }
       items.push(item)
       return structuredClone(item)
+    },
+    githubProjectEditDraft: async (_root, number, itemId, title, body, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      const items = githubProjectItems[number] ?? []
+      const index = items.findIndex((item) => item.id === itemId && item.type === 'DRAFT_ISSUE')
+      if (!project || index < 0) throw new CliError(`GitHub draft item ${itemId} was not found`, 1)
+      const updated = { ...items[index]!, title, body, updatedAt: new Date().toISOString() }
+      items[index] = updated
+      return structuredClone(updated)
     },
     githubProjectSetArchived: async (_root, number, itemId, archived, owner) => {
       const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
