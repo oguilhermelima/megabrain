@@ -40,7 +40,9 @@ export async function resumeDrained(daemon: ChatDaemon): Promise<void> {
       const item = items.shift();
       if (item === undefined) continue;
       await daemon.persistQueue(id);
-      await daemon.deliver(chat, item.parts);
+      if (chat.agent === "agy" && chat.owner === "terminal") {
+        try { await daemon.send(id, item.parts); } catch { /* the send path keeps unavailable messages queued and visible */ }
+      } else await daemon.deliver(chat, item.parts);
     }
   }
 
