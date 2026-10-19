@@ -146,7 +146,17 @@ export function chatArtifactSignature(artifacts: readonly ChatArtifact[]): strin
 }
 
 /** Directory mtimes find new or removed artifacts; only metadata files already linked to this chat need per-file checks. */
-export function chatArtifactStoreFingerprint(stateDir: string, artifacts: readonly ChatArtifact[]): string {
+const PROJECT_FINGERPRINT_TTL_MS = 1000;
+const PROJECT_FINGERPRINT_CACHE_LIMIT = 64;
+const projectFingerprints = new Map<string, { at: number; value: string }>();
+
+function projectArtifactFingerprint(stateDir: string): string {
+  const cached = projectFingerprints.get(stateDir);
+  if (cached !== undefined && Date.now() - cached.at < PROJECT_FINGERPRINT_TTL_MS) {
+    projectFingerprints.delete(stateDir);
+    projectFingerprints.set(stateDir, cached);
+    return cached.value;
+  }
   const knowledge = join(stateDir, "knowledge");
   const parts: string[] = [];
   if (existsSync(knowledge)) {
@@ -155,6 +165,19 @@ export function chatArtifactStoreFingerprint(stateDir: string, artifacts: readon
       try { parts.push(`${root}:${statSync(root).mtimeMs}`); } catch { /* project has no artifact folder */ }
     }
   }
+  const value = parts.sort().join("\n");
+  projectFingerprints.delete(stateDir);
+  projectFingerprints.set(stateDir, { at: Date.now(), value });
+  while (projectFingerprints.size > PROJECT_FINGERPRINT_CACHE_LIMIT) {
+    const oldest = projectFingerprints.keys().next().value;
+    if (oldest === undefined) break;
+    projectFingerprints.delete(oldest);
+  }
+  return value;
+}
+
+export function chatArtifactStoreFingerprint(stateDir: string, artifacts: readonly ChatArtifact[]): string {
+  const parts = [projectArtifactFingerprint(stateDir)];
   for (const artifact of artifacts) {
     if (artifact.source !== "megabrain" || artifact.path === undefined) continue;
     const metadata = join(dirname(artifact.path), "artifact.json");
