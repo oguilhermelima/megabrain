@@ -187,6 +187,10 @@ export async function executeWorktreeList(args: readonly string[], environment: 
     const error = failedWorktreeList.output.kind === "failed" ? failedWorktreeList.output : undefined;
     return failed(`could not list worktrees for ${failedWorktreeList.repository.path}: ${error?.error ?? "git returned no result"}`, error?.exitCode);
   }
+  const failedConfig = gitResults.find((result) => result.config.kind === "failed" && result.config.exitCode !== 1 && result.config.error !== "no parent config");
+  if (failedConfig !== undefined && failedConfig.config.kind === "failed") {
+    return failed(`could not read branch metadata for ${failedConfig.repository.path}: ${failedConfig.config.error}`, failedConfig.config.exitCode);
+  }
   const gitRecords = gitResults.flatMap((result) => result.output.kind === "ok" ? parseGitWorktrees(result.output.value, result.repository.common) : []);
   const parents = gitResults.flatMap((result) => result.config.kind === "ok" ? parseParentConfig(result.config.value, result.repository.common) : []);
   const tools = await Promise.all(["superset", "orca", "gh"].map(async (command) => [command, await available(command, environment)] as const));
