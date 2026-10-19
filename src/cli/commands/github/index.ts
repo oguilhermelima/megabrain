@@ -49,6 +49,7 @@ import { executeActions } from "./actions.js";
 import { executeProjects, PROJECT_VERBS } from "./projects.js";
 import { executeProjectMove } from "./project-move.js";
 export { executeProjects, PROJECTS_QUERY, PROJECT_QUERY } from "./projects.js";
+export { normalizeProjectFields, normalizeProjectViews, normalizeProjectItem } from "./projects.js";
 export { executeProjectMove, PROJECT_METADATA_QUERY, PROJECT_MOVE_QUERY } from "./project-move.js";
 export type { Project, ProjectItem, ProjectStatusField, ProjectStatusOption } from "./projects.js";
 

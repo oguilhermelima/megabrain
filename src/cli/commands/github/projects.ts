@@ -1,31 +1,83 @@
 import { failed, ok, type Result } from '../../../core/result.js'
 import { usageMessage, usageText } from '../../../core/usage.js'
 import { graphqlCall, repositoryVariables, resolveRepository } from './client.js'
-import { list, nullableText, record, text } from './views.js'
 import type { ProcessAdapter } from '../../../adapters/proc.js'
+
+const record = (value: unknown): Record<string, any> | undefined => value !== null && typeof value === 'object' ? value as Record<string, any> : undefined
+const list = (value: unknown): Record<string, any>[] => Array.isArray(value) ? value.filter((entry) => entry !== null && typeof entry === 'object') : []
+const text = (value: unknown): string => typeof value === 'string' ? value : ''
+const nullableText = (value: unknown): string | null => typeof value === 'string' ? value : null
 
 export const PROJECT_VERBS = ['projects', 'project', 'project-move'] as const
 type ProjectVerb = typeof PROJECT_VERBS[number]
 type Environment = Readonly<Record<string, string | undefined>>
 
 export type ProjectStatusOption = { id: string; name: string; color: string }
+export type ProjectField = { id: string; name: string; dataType: string; options: ProjectStatusOption[]; iterations: { id: string; title: string; startDate: string; duration: number }[] }
+export type ProjectView = { id: string; number: number; name: string; layout: string; filter: string; groupByFields: { id: string; name: string }[]; verticalGroupByFields: { id: string; name: string }[]; sortByFields: { direction: string; field: { id: string; name: string } }[]; visibleFields: { id: string; name: string }[] }
 export type ProjectStatusField = { id: string; name: string; options: ProjectStatusOption[] }
-export type Project = { id: string; number: number; title: string; url: string; owner: string; closed: boolean; statusField: ProjectStatusField | null }
+export type Project = { id: string; number: number; title: string; url: string; owner: string; closed: boolean; statusField: ProjectStatusField | null; fields: ProjectField[]; views: ProjectView[] }
 export type ProjectItem = {
   id: string; type: 'ISSUE' | 'PULL_REQUEST' | 'DRAFT_ISSUE'; number: number | null; title: string; url: string | null;
   state: 'OPEN' | 'CLOSED' | 'MERGED' | null; repository: string | null; status: string | null;
-  assignees: { login: string; avatarUrl: string }[]; labels: { name: string; color: string }[]; updatedAt: string;
+  assignees: { login: string; avatarUrl: string }[]; labels: { name: string; color: string }[]; updatedAt: string; isArchived: boolean;
+  fieldValues: { kind: string; field: string; value: unknown }[]
+}
+
+function normalizeFieldRef(value: unknown): { id: string; name: string } | null {
+  const entry = record(value)
+  return typeof entry?.id === 'string' && typeof entry.name === 'string' ? { id: entry.id, name: entry.name } : null
+}
+
+export function normalizeProjectFields(value: unknown): ProjectField[] {
+  return list(value).flatMap((raw) => {
+    const entry = record(raw)
+    if (typeof entry?.id !== 'string' || typeof entry.name !== 'string') return []
+    const options = list(entry.options).flatMap((option) => typeof option.id === 'string' && typeof option.name === 'string'
+      ? [{ id: option.id, name: option.name, color: text(option.color), description: text(option.description) }] : [])
+    const iterations = list(record(entry.configuration)?.iterations).flatMap((iteration) => typeof iteration.id === 'string'
+      ? [{ id: iteration.id, title: text(iteration.title), startDate: text(iteration.startDate), duration: typeof iteration.duration === 'number' ? iteration.duration : 0 }] : [])
+    return [{ id: entry.id, name: entry.name, dataType: text(entry.dataType), options, iterations }]
+  })
+}
+
+export function normalizeProjectViews(value: unknown): ProjectView[] {
+  return list(value).flatMap((raw) => {
+    const entry = record(raw)
+    if (typeof entry?.id !== 'string' || typeof entry.number !== 'number') return []
+    const refs = (node: unknown) => list(record(node)?.nodes).flatMap((field) => { const normalized = normalizeFieldRef(field); return normalized ? [normalized] : [] })
+    const sortByFields = list(record(entry.sortByFields)?.nodes).flatMap((row) => {
+      const direction = record(row)?.direction
+      const field = normalizeFieldRef(record(row)?.field)
+      return field && typeof direction === 'string' ? [{ direction, field }] : []
+    })
+    return [{ id: entry.id, number: entry.number, name: text(entry.name), layout: text(entry.layout), filter: text(entry.filter), groupByFields: refs(entry.groupByFields), verticalGroupByFields: refs(entry.verticalGroupByFields), sortByFields, visibleFields: refs(record(entry.configuration)?.visibleFields) }]
+  })
+}
+
+function normalizeFieldValues(value: unknown): ProjectItem['fieldValues'] {
+  return list(record(value)?.nodes).flatMap((raw) => {
+    const entry = record(raw)
+    if (!entry || typeof entry.__typename !== 'string') return []
+    const kind = entry.__typename.replace('ProjectV2ItemField', '').replace('Value', '').toLowerCase()
+    const field = text(record(entry.field)?.name)
+    const value = entry.optionId ?? entry.number ?? entry.date ?? entry.text ?? (entry.title ? { title: entry.title, startDate: entry.startDate, duration: entry.duration } : entry.users ?? entry.repository ?? entry.pullRequests ?? entry.labels ?? entry.milestone)
+    return [{ kind, field, value: value ?? null }]
+  })
 }
 
 const STATUS_FIELD = `fields(first: 100) { nodes { __typename ... on ProjectV2SingleSelectField { id name options { id name color } } } }`
 export const PROJECT_FIELDS = `id number title url closed owner { ... on User { login } ... on Organization { login } } ${STATUS_FIELD}`
+const FIELD_NODE = `__typename ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name color description } } ... on ProjectV2IterationField { id name dataType configuration { iterations { id title startDate duration } } } ... on ProjectV2MultiSelectField { id name dataType options { id name color description } }`
+const VIEW_FIELDS = `views(first: 50) { nodes { id number name layout filter groupByFields(first: 50) { nodes { ${FIELD_NODE} } } verticalGroupByFields(first: 50) { nodes { ${FIELD_NODE} } } sortByFields(first: 50) { nodes { direction field { ... on ProjectV2Field { id name } ... on ProjectV2SingleSelectField { id name } ... on ProjectV2IterationField { id name } ... on ProjectV2MultiSelectField { id name } } } } configuration { visibleFields(first: 50) { nodes { ${FIELD_NODE} } } } } } fields(first: 100) { nodes { ${FIELD_NODE} } }`
 export const CONTENT_FIELDS = `
   __typename
   ... on Issue { number title url state updatedAt repository { nameWithOwner } assignees(first: 100) { nodes { login avatarUrl } } labels(first: 100) { nodes { name color } } }
   ... on PullRequest { number title url state updatedAt repository { nameWithOwner } assignees(first: 100) { nodes { login avatarUrl } } labels(first: 100) { nodes { name color } } }
   ... on DraftIssue { title }
 `
-const PROJECT_ITEMS = `items(first: 100, after: $after) { nodes { id fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CONTENT_FIELDS} } } pageInfo { hasNextPage endCursor } }`
+const ITEM_FIELD_VALUES = `fieldValues(first: 30) { nodes { __typename ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title startDate duration field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldLabelValue { labels(first: 20) { nodes { name color } } } ... on ProjectV2ItemFieldMilestoneValue { milestone { title } } ... on ProjectV2ItemFieldUserValue { users(first: 20) { nodes { login } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldRepositoryValue { repository { nameWithOwner } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldPullRequestValue { pullRequests(first: 20) { nodes { number title url } } field { ... on ProjectV2FieldCommon { name } } } } }`
+const PROJECT_ITEMS = `items(first: 100, after: $after) { nodes { id isArchived updatedAt ${ITEM_FIELD_VALUES} fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CONTENT_FIELDS} } } pageInfo { hasNextPage endCursor } }`
 
 export const PROJECTS_QUERY = `query projectsDiscovery($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
@@ -51,7 +103,7 @@ export const OWNER_PROJECTS_PAGE_QUERY = `query ownerProjects($owner: String!, $
 
 export const PROJECT_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) { owner { login } }
-  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { ${PROJECT_FIELDS} ${PROJECT_ITEMS} } } }
+  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { ${PROJECT_FIELDS} ${VIEW_FIELDS} ${PROJECT_ITEMS} } } }
 }`
 
 function statusField(value: unknown): ProjectStatusField | null {
@@ -71,7 +123,7 @@ export function normalizeProject(value: unknown): Project | null {
   if (entry === undefined || typeof entry.id !== 'string' || typeof entry.number !== 'number') return null
   return {
     id: entry.id, number: entry.number, title: text(entry.title), url: text(entry.url),
-    owner: text(record(entry.owner)?.login), closed: entry.closed === true, statusField: statusField(entry.fields),
+    owner: text(record(entry.owner)?.login), closed: entry.closed === true, statusField: statusField(entry.fields), fields: normalizeProjectFields(record(entry.fields)?.nodes), views: normalizeProjectViews(record(entry.views)?.nodes),
   }
 }
 
@@ -93,7 +145,7 @@ export function normalizeProjectItem(value: unknown): ProjectItem | null {
       ? [{ login: assignee.login, avatarUrl: text(assignee.avatarUrl) }] : []),
     labels: list(record(content.labels)?.nodes).flatMap((label) => typeof label.name === 'string'
       ? [{ name: label.name, color: text(label.color) }] : []),
-    updatedAt: text(content.updatedAt),
+    updatedAt: text(entry.updatedAt ?? content.updatedAt), isArchived: entry.isArchived === true, fieldValues: normalizeFieldValues(entry.fieldValues),
   }
 }
 
