@@ -13,7 +13,9 @@ import { Avatar, LabelChip, OpenLink, SkeletonRows, openOnGithub } from '@/githu
 import { pageDivider, pageX } from '@/lib/page'
 import { answeredItems, boardColumns, movesItem, otherRepository, shownItems, withoutMove, type BoardColumn, type PendingMove } from '@/tasks/board-model'
 import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
-import { BoardSearch, boardSheetFields } from '@/tasks/BoardFilterBar'
+import { boardSheetFields } from '@/tasks/BoardFilterBar'
+import { ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
+import { projectViews, readViewPrefs, shownView, sortedItems, writeViewPrefs } from '@/tasks/board-view'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
 import { boardItemsPolicy, boardListPolicy } from '@/lib/poll-model'
@@ -313,6 +315,15 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
     setShowNoStatus(on)
     writeBoardPrefs(browserStorage, { ...readBoardPrefs(browserStorage), showNoStatus: on })
   }
+  const views = useMemo(() => projectViews(board), [board])
+  const [viewId, setViewId] = useState(() => shownView(views, readViewPrefs(browserStorage)[key])?.id ?? null)
+  const view = views.find((entry) => entry.id === viewId) ?? views[0] ?? null
+  const [query, setQuery] = useState(view?.filter ?? '')
+  const showView = (id: string) => {
+    setViewId(id)
+    setQuery(views.find((entry) => entry.id === id)?.filter ?? '')
+    writeViewPrefs(browserStorage, { ...readViewPrefs(browserStorage), [key]: id })
+  }
   const sheet = useSheet('tasks.board.filters')
   const options = useMemo(() => boardFilterOptions(items ?? [], filters), [items, filters])
 
@@ -352,7 +363,9 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
     openMenu(event, [moves, links].filter((section) => section.length > 0))
   }
 
-  const shown = items === null ? null : filterBoardItems(shownItems(items, pending), filters)
+  // The view's filter goes through the data layer's GitHub evaluator; the sheet's filters narrow what it matches.
+  const matched = useMemo(() => (items === null ? null : query.trim() === '' ? { items, warnings: [] } : api.githubProjectFilter(board, items, query)), [board, items, query])
+  const shown = matched === null ? null : sortedItems(filterBoardItems(shownItems(matched.items, pending), { ...filters, query: '' }), board, view)
   const columns = shown === null || field === null ? [] : boardColumns(field, shown)
   const noStatus = columns.find((column) => column.id === null)?.items.length ?? 0
   const sheetFields = boardSheetFields(filters, options, filter, field === null ? null : { on: showNoStatus, count: noStatus, onChange: setNoStatus })
@@ -364,10 +377,13 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   return (
     <div className="relative flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* One row: the project and the search on the left; Refresh, Filter and Open on GitHub on the right. */}
-        <div className={`flex items-center gap-2 ${pageX} pt-4 pb-4`}>
+        {/* The project and its views; then the view's filter, with Refresh, Filter and Open on GitHub on the right. */}
+        <div className={`flex items-center gap-2 ${pageX} pt-4`}>
           <FilterSelect label="Project" value={String(board.number)} options={boards.map((entry) => ({ value: String(entry.number), label: entry.closed ? `${entry.title} (closed)` : entry.title }))} onChange={(value) => onPick(Number(value))} />
-          <BoardSearch query={filters.query} onChange={(query) => filter({ query })} />
+          <ViewTabs views={views} shown={view?.id ?? null} onShow={showView} />
+        </div>
+        <div className={`flex items-center gap-2 ${pageX} pt-3 pb-4`}>
+          <ViewFilterBar value={query} saved={view?.filter ?? ''} count={shown?.length ?? null} warnings={matched?.warnings ?? []} onChange={setQuery} />
           <span className="ml-auto" />
           <IconButton
             label="Refresh"
@@ -389,6 +405,10 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
         )}
         {shown === null ? (
           error === null && <SkeletonRows count={4} />
+        ) : view?.layout === 'TABLE_LAYOUT' ? (
+          <div className={`min-h-0 flex-1 overflow-auto border-t ${pageDivider} ${pageX} pb-5`}>
+            <ViewTable project={board} view={view} items={shown} onOpen={(item) => opener(item)?.()} />
+          </div>
         ) : field === null ? (
           <div className={`min-h-0 flex-1 overflow-y-auto border-t ${pageDivider} pt-3 pb-5`}>
             <p className={`${pageX} pb-3 text-[13px] text-ink-400`}>{board.title} has no Status field, so its items show as a list. Add a Status field on GitHub to see them as a board.</p>

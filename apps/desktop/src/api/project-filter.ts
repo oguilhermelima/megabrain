@@ -7,9 +7,12 @@ export function filterGithubProjectItems(project: GithubProject, items: readonly
   const normalized = items.map((item) => {
     const fields: Record<string, unknown> = {}
     for (const entry of item.fieldValues ?? []) {
-      const optionId = entry.value && typeof entry.value === 'object' && 'optionId' in entry.value ? entry.value.optionId : entry.value
-      const option = entry.kind === 'singleSelect' ? status?.options.find((candidate) => candidate.id === optionId) : undefined
-      fields[entry.field] = option?.name ?? (entry.value && typeof entry.value === 'object' && 'title' in entry.value ? entry.value.title : entry.value)
+      if (entry.kind === 'singleSelect') {
+        const field = project.fields.find((candidate) => candidate.name === entry.field)
+        fields[entry.field] = field?.options.find((candidate) => candidate.id === entry.value.optionId)?.name ?? entry.value.name
+        continue
+      }
+      fields[entry.field] = entry.value && typeof entry.value === 'object' && 'title' in entry.value ? entry.value.title : entry.value
     }
     for (const field of project.fields) if (field.name.toLocaleLowerCase() === 'status' && item.status) fields[field.name] = status?.options.find((option) => option.id === item.status)?.name ?? item.status
     return { id: item.id, title: item.title, type: item.type, state: item.state, repository: item.repository, status: status?.options.find((option) => option.id === item.status)?.name ?? item.status, assignees: item.assignees, labels: item.labels, fields }
