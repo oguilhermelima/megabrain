@@ -13,6 +13,7 @@ import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { appendMessage as appendDatabaseMessage, claimOutbox, createDispatch, finishNotification, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
+import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
 type Behavior = (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>>;
@@ -190,11 +191,17 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       }
 
       const startFor = (expected: number | undefined) => (_pid: number): number | undefined => expected;
-      expect(await waiterIsActive(root, "reused", startFor(entries[0]?.startTime))).toBe(false);
-      expect(await waiterIsActive(root, "active", startFor(entries[1]?.startTime))).toBe(true);
-      expect(await waiterIsActive(root, "exited", startFor(entries[2]?.startTime))).toBe(false);
-      expect(database.value.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("reused")).toBeNull();
-      expect(database.value.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("exited")).toBeNull();
+      database.value.close();
+      const owner = await startStateOwner(root);
+      try {
+        expect(await waiterIsActive(root, "reused", startFor(entries[0]?.startTime))).toBe(false);
+        expect(await waiterIsActive(root, "active", startFor(entries[1]?.startTime))).toBe(true);
+        expect(await waiterIsActive(root, "exited", startFor(entries[2]?.startTime))).toBe(false);
+        expect(owner.handle.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("reused")).toBeNull();
+        expect(owner.handle.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("exited")).toBeNull();
+      } finally {
+        await stopStateOwner(owner);
+      }
     });
   });
 
