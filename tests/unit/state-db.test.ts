@@ -23,6 +23,7 @@ import {
   listMessages,
   listOutbox,
   listOutboxForDispatch,
+  getQueuedDispatchId,
   mutateDispatch,
   stateDatabase,
 } from "../../src/adapters/state-db.js";
@@ -46,6 +47,27 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 }
 
 describe("state database facade", () => {
+  test("finds a queued item's dispatch with direct bounded key lookups", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "queued-lookup", state: "running" }));
+    db.db.run("INSERT INTO deliveries (id, dispatch_id, message_seqs, status, created_at, updated_at, extra) VALUES (?, ?, ?, ?, ?, ?, ?)", ["delivery-key", "queued-lookup", "[]", "outstanding", "2026-01-01", "2026-01-01", "{}"]);
+    db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", ["outbox-key", "queued-lookup", "parent-pointer", "parent", "{}", "2026-01-01", "2026-01-01"]);
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    expect(requireOk(getQueuedDispatchId(handle, "delivery-key"))).toBe("queued-lookup");
+    expect(query).toContain("LIMIT 1");
+    expect(requireOk(getQueuedDispatchId(handle, "outbox-key"))).toBe("queued-lookup");
+    expect(query).toContain("LIMIT 1");
+  });
+
   test("lists outbox rows through an indexed dispatch scoped page", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "outbox-scope-a", state: "running" }));
