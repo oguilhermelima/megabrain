@@ -173,7 +173,7 @@ export async function executeRepository(args: readonly string[], environment: En
         return ok(json ? `${JSON.stringify(owners, null, 2)}\n` : owners.map((entry) => `${entry.login}\t${entry.kind}\n`).join(""));
       } catch { return failed("gh api returned invalid JSON"); }
     }
-    const listed = await process.run("gh", ["repo", "list", ...(owner === undefined ? [] : [owner]), "--json", "nameWithOwner,url,description,isPrivate,updatedAt,primaryLanguage,stargazerCount", "--limit", "200"], { timeoutMs: 2_000 });
+    const listed = await process.run("gh", ["repo", "list", ...(owner === undefined ? [] : [owner]), "--json", "nameWithOwner,url,description,isPrivate,updatedAt,primaryLanguage,stargazerCount", "--limit", "1000"], { timeoutMs: 2_000 });
     if (listed.kind !== "ok") return failed(`could not list GitHub repositories: ${listed.error}`);
     try {
       const repositories = JSON.parse(listed.value.stdout) as GithubRepository[];
