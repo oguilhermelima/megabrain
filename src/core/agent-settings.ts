@@ -30,9 +30,8 @@ export function parseAgentSettings(raw: string): Result<AgentSettings> {
   return ok({ version: 1, default: value.default as string | null, disabled: [...new Set(value.disabled)], ...(value.modes === undefined ? {} : { modes: value.modes as Record<string, ChatMode> }) });
 }
 
-/** The mode a new chat of this agent opens in: the saved one, else chat; agy has only its terminal for now. */
+/** The mode a new chat of this agent opens in: the saved one, else chat. */
 export function startMode(settings: AgentSettings, agent: string): ChatMode {
-  if (agent === "agy") return "terminal";
   return settings.modes?.[agent] ?? "chat";
 }
 

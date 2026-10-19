@@ -104,18 +104,13 @@ function AgentLine({ row, onEnabled, onDefault, onMode }: { row: AgentRow; onEna
             Set default
           </button>
         )}
-        {/* agy runs only in its terminal for now, so it offers no choice. */}
         <div role="group" aria-label={`${row.label} opens new chats as`}>
           <Segmented
             value={row.mode}
-            options={
-              row.agent === 'agy'
-                ? [{ value: 'terminal', label: 'Terminal' }]
-                : [
-                    { value: 'chat', label: 'Chat' },
-                    { value: 'terminal', label: 'Terminal' },
-                  ]
-            }
+            options={[
+              { value: 'chat', label: 'Chat' },
+              { value: 'terminal', label: 'Terminal' },
+            ]}
             onChange={onMode}
           />
         </div>

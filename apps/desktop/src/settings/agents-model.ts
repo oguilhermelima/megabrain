@@ -35,9 +35,8 @@ export function serialiseAgentSettings(settings: AgentSettings): string {
   return JSON.stringify({ version: 1, default: settings.default, disabled: settings.disabled, modes: settings.modes })
 }
 
-/** The mode a new chat of this agent opens in: the one chosen, else chat; agy has only its terminal for now. */
+/** The mode a new chat of this agent opens in: the one chosen, else chat. */
 export function agentMode(settings: AgentSettings, agent: string): ChatMode {
-  if (agent === 'agy') return 'terminal'
   return settings.modes[agent] ?? 'chat'
 }
 
