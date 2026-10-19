@@ -321,8 +321,7 @@ async function retryPendingParentPointers(root: string, database: Parameters<typ
     if (!Number.isSafeInteger(sequence) || sequence < 1) continue;
     const message = messages.value.find((candidate) => candidate.seq === sequence);
     if (message?.from !== "child") continue;
-    const priorDone = messages.value.some((candidate) => candidate.from === "child" && candidate.type === "done" && candidate.text === message.text && candidate.seq < sequence);
-    if (classifyQueueMail(message.from, message.type, priorDone) !== "actionable") continue;
+    if (classifyQueueMail(message.from, message.type, false) !== "actionable") continue;
     const delivery = deliveries.value.find((candidate) => candidate.recipient === "parent" && Array.isArray(candidate.messageSeqs) && candidate.messageSeqs.includes(sequence));
     if (delivery?.status !== "outstanding") continue;
     await callStateOwner(root, { operation: "resume-outbox", id: item.id }).catch(() => false);

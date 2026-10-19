@@ -25,9 +25,8 @@ export function orderMessages(messages: readonly CheckMessage[]): CheckMessage[]
   return [...messages].sort((left, right) => left.seq - right.seq || left.path.localeCompare(right.path));
 }
 
-export function classifyMail(from: string, type: string, hasPriorDone: boolean): "actionable" | "protocol" | { readonly kind: "unknown" } {
+export function classifyMail(from: string, type: string, _hasPriorDone: boolean): "actionable" | "protocol" | { readonly kind: "unknown" } {
   const key = `${from}:${type}`;
-  if (key === "child:done" && hasPriorDone) return "protocol";
   if (["child:ask", "child:done", "child:stalled", "child:policy", "child:supervise", "megabrain:usage", "parent:withdrawal"].includes(key)) return "actionable";
   if (["child:received", "child:ack", "child:done-repeat", "parent:interrupt", "parent:interrupt-result"].includes(key)) return "protocol";
   return { kind: "unknown" };
@@ -47,8 +46,7 @@ export function unhandledParentMail(deliveries: readonly CheckDelivery[], messag
     seen.add(delivery.id);
     const batch = orderMessages(messages.filter((message) => delivery.messageSeqs.includes(message.seq)));
     const unhandled = batch.filter((message) => {
-      const priorDone = messages.some((candidate) => candidate.seq < message.seq && candidate.from === "child" && candidate.type === "done");
-      if (classifyMail(message.from, message.type, priorDone) !== "actionable") return false;
+      if (classifyMail(message.from, message.type, false) !== "actionable") return false;
       return message.type !== "ask" || !replies.some((reply) => reply.seq > message.seq);
     });
     if (unhandled.length > 0) result.push({ delivery, messages: unhandled });
@@ -66,9 +64,8 @@ function matchesMailbox(mailbox: "parent" | "child", full: boolean, delivery: Ch
   const ordered = messageFor(delivery, messages);
   if (ordered.length === 0) return false;
   for (const message of ordered) {
-    const priorDone = messages.some((candidate) => candidate.seq < message.seq && candidate.from === "child" && candidate.type === "done");
     if (mailbox === "parent" && (message.from === "child" || message.from === "megabrain")) {
-      const classification = classifyMail(message.from, message.type, priorDone);
+      const classification = classifyMail(message.from, message.type, false);
       if (full ? (typeof classification === "string" || classification.kind !== "unknown") : classification === "actionable") return true;
     }
     if (mailbox === "child" && message.from === "parent") {

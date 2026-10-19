@@ -22,16 +22,15 @@ export function parseChildMessage(type: string, args: readonly string[]): Result
   return failed(`unsupported child message type: ${type}`, 2);
 }
 
-export function classifyQueueMail(from: string, type: string, hasPriorDone: boolean): QueueMailClass {
-  if (from === "child" && type === "done" && hasPriorDone) return "protocol";
+export function classifyQueueMail(from: string, type: string, _hasPriorDone: boolean): QueueMailClass {
   if (["child:ask", "child:done", "child:stalled", "child:policy", "child:supervise", "megabrain:usage", "parent:withdrawal"].includes(`${from}:${type}`)) return "actionable";
   if (["child:received", "child:ack", "child:done-repeat", "parent:interrupt", "parent:interrupt-result"].includes(`${from}:${type}`)) return "protocol";
   return undefined;
 }
 
-export function recipientForQueueMessage(from: string, type: string, hasPriorDone: boolean): QueueRecipient {
+export function recipientForQueueMessage(from: string, type: string, _hasPriorDone: boolean): QueueRecipient {
   if (from === "parent") return type === "reply" ? "child" : undefined;
-  const classification = classifyQueueMail(from, type, hasPriorDone);
+  const classification = classifyQueueMail(from, type, false);
   return classification === undefined ? undefined : "parent";
 }
 

@@ -338,9 +338,8 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
   if (request.operation === "append-queue-message") {
     const result = withWrite(owner.handle, (db) => {
       if (request.childReport !== undefined) applyChildReport(owner, request.dispatchId, request.childReport);
-      const priorDone = db.query<{ found: number }>("SELECT 1 AS found FROM messages WHERE dispatch_id = ? AND \"from\" = 'child' AND type = 'done' AND text = ? LIMIT 1").get(request.dispatchId, request.message.text) !== null;
-      const classification = classifyQueueMail(request.message.from, request.message.type, priorDone);
-      const recipient = recipientForQueueMessage(request.message.from, request.message.type, priorDone);
+      const classification = classifyQueueMail(request.message.from, request.message.type, false);
+      const recipient = recipientForQueueMessage(request.message.from, request.message.type, false);
       const sequence = (db.query<{ seq: number | null }>("SELECT max(seq) AS seq FROM messages WHERE dispatch_id = ?").get(request.dispatchId)?.seq ?? 0) + 1;
       insertMessage(db, request.dispatchId, { ...request.message, seq: sequence });
       if (request.message.from === "child") {
