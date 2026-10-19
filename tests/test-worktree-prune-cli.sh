@@ -31,6 +31,14 @@ fi
 exec /usr/bin/du -sk "$@"
 EOF
 chmod +x "$work/bin/du"
+cat >"$work/bin/git" <<'EOF'
+#!/usr/bin/env bash
+if [ "${PRUNE_DELAY_GIT:-0}" = "1" ] && [[ " $* " == *" worktree list --porcelain "* ]]; then
+  exec /bin/sleep 6
+fi
+exec /usr/bin/git "$@"
+EOF
+chmod +x "$work/bin/git"
 trap 'remove_test_dir "$work"' EXIT
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 repo="$work/repo"
@@ -100,7 +108,7 @@ MEGABRAIN_STATE_DIR="$work/state" REPO="$repo" ROOT="$work/shared" bun -e '
   handle.value.close();
 '
 
-run() { env -i HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" PRUNE_REPO="$repo" PRUNE_ACTIVE_DU="$work/active-du" PRUNE_DU_OVERLAP="$work/du-overlap" PATH="$work/bin:$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree prune "$@"; }
+run() { env -i HOME="$work/home" MEGABRAIN_STATE_DIR="$work/state" PRUNE_REPO="$repo" PRUNE_ACTIVE_DU="$work/active-du" PRUNE_DU_OVERLAP="$work/du-overlap" PRUNE_DELAY_GIT="${PRUNE_DELAY_GIT:-0}" PATH="$work/bin:$node_bin:/usr/bin:/bin" "$root/.build/megabrain" worktree prune "$@"; }
 before="$(git -C "$repo" worktree list --porcelain | shasum -a 256)"
 dry="$(run --older-than 1 --json)" || fail 'default prune dry-run failed'
 printf '%s' "$dry" | jq -e '
@@ -124,3 +132,10 @@ for name in eligible eligible2; do
 done
 for name in dirty unpushed unmerged open; do [ -d "$work/shared/$name" ] || fail "$name worktree was removed despite being ineligible"; done
 printf 'confirmed prune removes only eligible worktrees and merged branches\n'
+
+started="$(date +%s)"
+if delayed="$(PRUNE_DELAY_GIT=1 run --repo "$repo" --json 2>&1)"; then fail 'a timed-out Git worktree query succeeded'; fi
+elapsed=$(( $(date +%s) - started ))
+[[ "$delayed" == *"timed out"* ]] || fail "timed-out Git query did not report its deadline: $delayed"
+[ "$elapsed" -lt 5 ] || fail "Git worktree query exceeded its deadline: ${elapsed}s"
+printf 'prune stops a slow Git query at its deadline\n'
