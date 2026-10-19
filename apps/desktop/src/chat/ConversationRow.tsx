@@ -11,6 +11,8 @@ import { groupToolRuns, type DisplayItem } from '@/chat/tool-groups'
 import { activityLabel, activityRows, type ActivityRow } from '@/chat/activity-rows'
 import { subagentGroupSummary, subagentSummary, visibleSteps, type SubagentItem, type SubagentState } from '@/chat/subagent-model'
 import { formatElapsed } from '@/native-chat/chat-model'
+import { turnHeaderLabel, type TurnSpan } from '@/native-chat/turn-header'
+import { useClock } from '@/lib/clock'
 import { MarkdownText } from '@/chat/markdown'
 import { CommandOutput } from '@/chat/CommandOutput'
 import { UserMessageBody } from '@/chat/MessageImages'
@@ -41,6 +43,34 @@ function AssistantMessage({ event, streaming = false }: { event: TranscriptEvent
       {!streaming && <SelectTarget event={event} />}
       <MarkdownText text={event.text} />
       {!streaming && <MessageActions event={event} side="left" />}
+    </li>
+  )
+}
+
+/** A native chat's turns, by the id of the message that started each; empty where no header shows. */
+export const TurnSpansContext = createContext<ReadonlyMap<string, TurnSpan>>(new Map())
+
+/** A message of the person, then how long the agent worked on it. */
+function UserTurn({ event, pending }: { event: TranscriptEvent; pending: boolean }) {
+  const span = useContext(TurnSpansContext).get(event.id)
+  return (
+    <>
+      <UserMessage event={event} pending={pending} />
+      {span !== undefined && (span.end === null ? <RunningTurnHeader span={span} /> : <TurnHeader text={turnHeaderLabel(span, span.end)} />)}
+    </>
+  )
+}
+
+function RunningTurnHeader({ span }: { span: TurnSpan }) {
+  const now = useClock(1000)
+  return <TurnHeader text={turnHeaderLabel(span, now)} />
+}
+
+// The counter is not announced: it changes every second.
+function TurnHeader({ text }: { text: string }) {
+  return (
+    <li aria-live="off" className="mt-4 border-b border-white/[0.06] pb-2 text-[13px] text-ink-400 tabular-nums">
+      {text}
     </li>
   )
 }
@@ -392,7 +422,7 @@ export const Item = memo(function Item({ item, onOpenChat }: { item: Conversatio
   if (item.type === 'tool') return <ToolItem item={item} />
   const event = item.event
   if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />
-  if (event.kind === 'user') return <UserMessage event={event} pending={item.pending} />
+  if (event.kind === 'user') return <UserTurn event={event} pending={item.pending === true} />
   if (event.kind === 'command-output') return <CommandMessage event={event} command={event.command ?? ''} />
   if (event.kind === 'assistant' && event.command !== undefined) return <CommandMessage event={event} command={event.command} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} streaming={item.streaming === true} />

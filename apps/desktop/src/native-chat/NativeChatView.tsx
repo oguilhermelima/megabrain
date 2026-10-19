@@ -412,7 +412,8 @@ export function NativeChatView({
           <ConversationList
             events={state.events}
             live={live}
-            footer={working === null ? null : <WorkingIndicator agent={chat.agent} status={working} progress={(now) => thinkingProgress(state, now)} />}
+            footer={working === null ? null : <WorkingIndicator status={working} progress={(now) => thinkingProgress(state, now)} />}
+            turnRunning={(chat.state === 'working' || chat.state === 'waiting-approval') && state.outgoing.length === 0}
             onOpenChat={onOpenChat}
             root={chat.cwd}
             onOpenPath={onOpenPath}

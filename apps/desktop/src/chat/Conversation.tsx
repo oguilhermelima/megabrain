@@ -22,7 +22,8 @@ import { pageMx } from '@/lib/page'
 import { chatTurns, railShown, turnLanding } from '@/native-chat/navigator-rail'
 import { NavigatorRail, railMargin } from '@/native-chat/NavigatorRail'
 import { usePaneWidth } from '@/native-chat/usePaneWidth'
-import { BackgroundTasksContext, Item, LatestCommandContext, ShareCard } from '@/chat/ConversationRow'
+import { BackgroundTasksContext, Item, LatestCommandContext, ShareCard, TurnSpansContext } from '@/chat/ConversationRow'
+import { turnSpans, type TurnSpan } from '@/native-chat/turn-header'
 export { ApprovalRendererContext } from '@/chat/ConversationRow'
 import { MessageActionsContext } from '@/native-chat/MessageActions'
 import { ConversationActionBars, useConversationActions } from '@/native-chat/useConversationActions'
@@ -30,6 +31,7 @@ import { useConversationSearch } from '@/native-chat/useConversationSearch'
 import { taskRows } from '@/chat/background-tasks'
 
 const noLive: LiveRow[] = []
+const noSpans: ReadonlyMap<string, TurnSpan> = new Map()
 
 export type OpenChat = (target: { dispatchId: string } | { sessionId: string }) => void
 /** Opens a file under a chat's worktree in Code, at a line when one was named. */
@@ -145,6 +147,7 @@ export function ConversationList({
   shareTitle = null,
   divider = null,
   onAtLatest,
+  turnRunning,
 }: {
   events: TranscriptEvent[]
   onOpenChat?: OpenChat
@@ -174,6 +177,8 @@ export function ConversationList({
   divider?: string | null
   /** Told whether the list shows its newest row, as it changes. */
   onAtLatest?: (atLatest: boolean) => void
+  /** Set for a native chat: each turn shows how long the agent worked on it, the last counting while this is true. */
+  turnRunning?: boolean
 }) {
   const [pinned, setPinned] = useState(true)
   const list = useRef<HTMLDivElement>(null)
@@ -264,6 +269,7 @@ export function ConversationList({
       jumpRef.current = null
     }
   }, [jumpRef, items, virtualizer])
+  const spans = useMemo(() => (turnRunning === undefined ? noSpans : turnSpans(events, turnRunning)), [events, turnRunning])
   const taskContext = useMemo(() => ({ latest: tasks.latest, flashed }), [tasks.latest, flashed])
 
   useEffect(() => {
@@ -388,6 +394,7 @@ export function ConversationList({
   return (
     <PathLinksContext.Provider value={links}>
       <BackgroundTasksContext.Provider value={taskContext}>
+      <TurnSpansContext.Provider value={spans}>
       <MessageActionsContext.Provider value={actions}>
       {/* It fades in where the suggestions or the loading rows were, as the first message arrives. */}
       <div
@@ -448,6 +455,7 @@ export function ConversationList({
         <ContextMenu menu={contextMenu.menu} onClose={contextMenu.close} />
       </div>
       </MessageActionsContext.Provider>
+      </TurnSpansContext.Provider>
       </BackgroundTasksContext.Provider>
     </PathLinksContext.Provider>
   )
