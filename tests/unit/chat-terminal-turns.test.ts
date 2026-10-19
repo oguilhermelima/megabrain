@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import * as fsPromises from "node:fs/promises";
 import { ChatDaemon } from "../../src/chat/daemon.js";
 import { claudeLogPath, parseClaudeLog, parseCodexRollout } from "../../src/chat/session-log.js";
 import { ChatStore, type Chat, type ChatEvent } from "../../src/chat/store.js";
@@ -217,6 +218,26 @@ describe("switching back to chat imports what the terminal did", () => {
     expect(shown(await events(restarted))).toEqual(["user:first terminal turn", "assistant:first answer", "user:second terminal turn", "assistant:second answer"]);
     const updated = (await store.get(ID) as (Chat & { terminalLogCursor?: { byteOffset: number; lastMessageId: string | null } }) | null)?.terminalLogCursor;
     expect(updated).toEqual({ byteOffset: readFileSync(path).byteLength, lastMessageId: "cursor-message-2" });
+  });
+
+  test("refresh reads terminal session logs incrementally from the saved cursor", async () => {
+    const env = sandbox();
+    const base = CLAUDE_LOG.replaceAll("recorded-session", env.sessionId);
+    writeClaudeLog(env, base);
+    const path = claudeLogPath(env.root, env.cwd, env.sessionId);
+    const offset = Buffer.byteLength(base);
+    const chat = record(env, { terminalSince: "2026-10-16T09:00:00.000Z", terminalLogCursor: { byteOffset: offset, lastMessageId: null } });
+    await new ChatStore(env.state).put(chat);
+    const daemon = await daemonFor(env);
+    const stamp = new Date().toISOString();
+    appendFileSync(path, `${JSON.stringify({ type: "user", uuid: "incremental-user", timestamp: stamp, message: { role: "user", content: "new turn" } })}\n`);
+    const spy = spyOn(fsPromises, "readFile");
+    try {
+      await daemon.refreshTerminalChats();
+      const fullReads = spy.mock.calls.filter(([file]) => file === path);
+      expect(fullReads).toHaveLength(0);
+      expect(shown(await events(daemon))).toContain("user:new turn");
+    } finally { spy.mockRestore(); }
   });
 
   test("follows appended Codex rollout events while the terminal owns the thread, once each", async () => {
