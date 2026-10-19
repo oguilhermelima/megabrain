@@ -6,7 +6,7 @@ import { createProcessAdapter, type ProcessAdapter } from "../../../adapters/pro
 import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, DEFAULT_NATIVE_STABLE_WINDOW_MS, evaluateNativeHealth, formatNativeList, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateStableWindow, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../../core/native.js";
 import { sleep, systemClock, type Clock } from "../../../core/clock.js";
 import { failed, ok, type Result } from "../../../core/result.js";
-import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../../core/crash.js";
+import { selectCrashReportFiles, validateCrashLast } from "../../../core/crash.js";
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../../core/native-session.js";
 import { createNativeSessionStore } from "../../../adapters/native-session-store.js";
 import { connectMetroInspector, waitForMetroInspectorTarget, type MetroEvaluation } from "../../../core/native-cdp.js";
@@ -39,19 +39,17 @@ export async function nativeCrashes(args: readonly string[], environment: Enviro
   let files: string[];
   try { files = readdirSync(directory).filter((file) => file.endsWith(".ips")); }
   catch { return error(`cannot read crash reports directory: ${directory}`); }
-  const inputs: CrashInput[] = [];
+  const candidates: Array<{ path: string; modifiedAt: number }> = [];
   const parseErrors: string[] = [];
   for (const file of files) {
     const path = resolve(directory, file);
     try {
-      const contents = readFileSync(path, "utf8");
-      inputs.push({ path, contents, modifiedAt: statSync(path).mtimeMs });
-      const parsed = parseCrashReport(contents, target);
-      if (parsed.kind === "invalid") parseErrors.push(`${file}: ${parsed.reason}`);
-    } catch (cause) { parseErrors.push(`${file}: ${cause instanceof Error ? cause.message : "could not read file"}`); }
+      candidates.push({ path, modifiedAt: statSync(path).mtimeMs });
+    } catch (cause) { parseErrors.push(`${file}: ${cause instanceof Error ? cause.message : "could not stat file"}`); }
   }
-  const selected = selectCrashReports(inputs, target, last.value);
-  const stderr = parseErrors.map((message) => `megabrain: ${message}\n`).join("");
+  const selection = selectCrashReportFiles(candidates, target, last.value, (path) => readFileSync(path, "utf8"));
+  const selected = selection.reports;
+  const stderr = [...parseErrors, ...selection.errors].map((message) => `megabrain: ${message}\n`).join("");
   if (selected.length === 0) return { kind: "ok", value: args.includes("--json") ? `${JSON.stringify({ reports: [], noReports: true })}\n` : `no crash reports found for ${target}\n`, stderr };
   if (args.includes("--json")) return { kind: "ok", value: `${JSON.stringify({ reports: selected.map((entry) => ({ file: entry.path, ...entry.value })), noReports: false })}\n`, stderr };
   const value = selected.map((entry) => {
