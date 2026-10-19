@@ -69,6 +69,14 @@ describe("megabrain settings", () => {
     expect(existsSync(join(env.state, "megabrain.sqlite"))).toBe(false);
   });
 
+  test("--only models does not read or validate chain configuration", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "chains.json"), "not valid JSON");
+    const result = await run(["settings", "--json", "--only", "models"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(Object.keys(JSON.parse(result.value))).toEqual(["models"]);
+  });
+
   test("returns the desktop schema keys with empty settings", async () => {
     const env = sandbox();
     const value = await settings(env);
