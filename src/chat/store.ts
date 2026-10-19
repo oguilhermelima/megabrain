@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, appendFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, appendFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -181,15 +181,61 @@ export class ChatStore {
   forget(id: string): void { this.counts.delete(id); this.turnIds.delete(id); this.lastUsers.delete(id); }
 
   async events(id: string, since = 0): Promise<ChatLine[]> {
+    if (since > 0 && this.counts.has(id)) {
+      const saved = await this.eventsAfter(id, since);
+      const turnIds = await this.turnIdMap(id);
+      return saved.map((line) => this.attachTurnId(id, line, turnIds));
+    }
     let content: string;
     try { content = await readFile(this.eventsPath(id), "utf8"); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
     const turnIds = await this.turnIdMap(id);
-    return content.split("\n").filter(Boolean).map((line) => {
-      const saved = JSON.parse(line) as ChatLine;
-      if (saved.event?.kind === "user") this.lastUsers.set(id, saved.event.id);
-      const turnId = saved.event?.kind === "user" ? turnIds.get(saved.event.id) : undefined;
-      return turnId === undefined || saved.event === undefined || saved.event.turnId !== undefined ? saved : { ...saved, event: { ...saved.event, turnId } };
-    }).filter((line) => Number(line.cursor) > since);
+    const lines = content.split("\n").filter(Boolean).map((line) => JSON.parse(line) as ChatLine);
+    this.counts.set(id, lines.reduce((count, line) => Math.max(count, Number(line.cursor) || 0), 0));
+    return lines.filter((line) => Number(line.cursor) > since).map((line) => this.attachTurnId(id, line, turnIds));
+  }
+
+  private attachTurnId(id: string, line: ChatLine, turnIds: Map<string, string>): ChatLine {
+    if (line.event?.kind === "user") this.lastUsers.set(id, line.event.id);
+    const turnId = line.event?.kind === "user" ? turnIds.get(line.event.id) : undefined;
+    return turnId === undefined || line.event === undefined || line.event.turnId !== undefined ? line : { ...line, event: { ...line.event, turnId } };
+  }
+
+  private async eventsAfter(id: string, since: number): Promise<ChatLine[]> {
+    const file = await open(this.eventsPath(id), "r").catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    if (file === null) return [];
+    try {
+      const size = (await file.stat()).size;
+      const blockSize = 64 * 1024;
+      let end = size;
+      let carry = "";
+      let firstBlock = true;
+      let foundCursor = false;
+      const newer: ChatLine[] = [];
+      while (end > 0 && !foundCursor) {
+        const start = Math.max(0, end - blockSize);
+        const buffer = Buffer.alloc(end - start);
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
+        const parts = `${buffer.subarray(0, bytesRead).toString("utf8")}${carry}`.split("\n");
+        carry = parts.shift() ?? "";
+        if (firstBlock) { parts.pop(); firstBlock = false; }
+        for (let index = parts.length - 1; index >= 0; index -= 1) {
+          const value = parts[index];
+          if (value === undefined || value === "") continue;
+          const line = JSON.parse(value) as ChatLine;
+          if (Number(line.cursor) === since) { foundCursor = true; break; }
+          if (Number(line.cursor) > since) newer.push(line);
+        }
+        end = start;
+      }
+      if (end === 0 && !foundCursor && carry !== "") {
+        const line = JSON.parse(carry) as ChatLine;
+        if (Number(line.cursor) > since) newer.push(line);
+      }
+      return newer.reverse();
+    } finally { await file.close(); }
   }
 }
