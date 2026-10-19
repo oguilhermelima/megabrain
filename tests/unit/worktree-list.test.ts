@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -264,6 +264,36 @@ describe("executeWorktreeList", () => {
     expect(result.kind).toBe("ok");
     expect(ghOptions).toHaveLength(1);
     expect(ghOptions[0]?.timeoutMs).toBe(2_000);
+  });
+
+  test("collects expired pull request cache entries for repositories no longer scanned", async () => {
+    const fixture = await createFixture();
+    const repoA = join(fixture.shared, "repo-a");
+    const repoB = join(fixture.shared, "repo-b");
+    await mkdir(join(repoA, ".git"), { recursive: true });
+    await mkdir(join(repoB, ".git"), { recursive: true });
+    const process = processFor((command, args) => {
+      if (command === "gh") return output("[]");
+      if (command !== "git") return failed(`${command} unavailable`);
+      const path = args[1];
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") return output(`worktree ${path}\nHEAD abc\nbranch refs/heads/main\n`);
+      if (gitArgs[0] === "config") return failed("no parent config", 1);
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+    const environment = { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/opt/homebrew/bin" };
+    await executeWorktreeList(["--json"], environment, process);
+    const cachePath = join(fixture.state, "worktree-pull-requests.json");
+    const cache = JSON.parse(await readFile(cachePath, "utf8")) as { repositories: Record<string, { fetchedAt: number; value: unknown }> };
+    for (const entry of Object.values(cache.repositories)) entry.fetchedAt = 1;
+    await writeFile(cachePath, JSON.stringify(cache));
+    await rm(repoB, { recursive: true, force: true });
+
+    const result = await executeWorktreeList(["--json"], environment, process);
+    const updated = JSON.parse(await readFile(cachePath, "utf8")) as { repositories: Record<string, unknown> };
+
+    expect(result.kind).toBe("ok");
+    expect(Object.keys(updated.repositories)).toEqual([repoA]);
   });
 
   test("keeps the shared-root scan when no repository is named", async () => {
