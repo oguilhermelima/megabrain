@@ -1312,6 +1312,32 @@ describe("github Actions", () => {
     expect(calls.filter((call) => call[1]?.includes("/contents/")).map((call) => call[1])).toEqual(["repos/operator/sample/contents/.github/workflows/ci.yml"]);
   });
 
+  test("returns an opaque cursor and resumes runs after it", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const pages: string[] = [];
+    answer = (args) => {
+      const endpoint = args[1] ?? "";
+      if (endpoint.includes("actions/workflows?")) return stdout(fixture("actions-workflows.json"));
+      if (endpoint.endsWith("/contents/.github/workflows/ci.yml")) return stdout(JSON.stringify({ encoding: "base64", content: Buffer.from("on: workflow_dispatch").toString("base64") }));
+      if (endpoint.includes("actions/runs?")) {
+        pages.push(endpoint);
+        return stdout(JSON.stringify({ workflow_runs: [{ id: pages.length }, { id: pages.length + 1 }] }));
+      }
+      return failed(`unexpected gh ${args.join(" ")}`);
+    };
+
+    const first = parsed<{ next: string | null }>(await github(["runs", path, "--limit", "2", "--json"]));
+    expect(first.next).not.toBeNull();
+    if (first.next === null) return;
+    expect(first.next).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(Buffer.from(first.next, "base64url").toString("utf8")).toBe("actions-runs:2");
+    await github(["runs", path, "--limit", "2", "--after", first.next, "--json"]);
+    expect(pages).toEqual([
+      "repos/operator/sample/actions/runs?per_page=2&page=1",
+      "repos/operator/sample/actions/runs?per_page=2&page=2",
+    ]);
+  });
+
   test("lists normalized runs and workflows using the Actions API", async () => {
     const path = await repository("sample", "git@github.com:operator/sample.git");
     answer = (args) => args[1]?.includes("actions/runs") ? stdout(fixture("actions-runs.json"))
