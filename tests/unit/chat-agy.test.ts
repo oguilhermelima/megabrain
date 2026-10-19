@@ -8,10 +8,15 @@ import { ChatDaemon } from "../../src/chat/daemon.js";
 import { chatProtocolAdapters } from "../../src/chat/protocol.js";
 import { discoverAgyEnvironment } from "../../src/chat/session-log.js";
 import { ok, failed } from "../../src/core/result.js";
+import { createServer } from "node:http";
+import type { Server } from "node:http";
+import { recordAgyLanguageServer } from "../../src/agents/agy-ls.js";
+import { chatKey, upsertConversation } from "../../src/core/conversations.js";
 
 const directories: string[] = [];
 const daemons: ChatDaemon[] = [];
-afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.close(); for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+const servers: Server[] = [];
+afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.close(); for (const server of servers.splice(0)) await new Promise<void>((resolve) => server.close(() => resolve())); for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 const transcript = readFileSync(join(import.meta.dir, "../fixtures/chat-agy-transcript.jsonl"), "utf8");
 const sessionId = "eaaac49a-ca19-480a-8f26-f6cf6337e7a2";
@@ -107,6 +112,42 @@ describe("agy terminal-follow transcript", () => {
       ANTIGRAVITY_LS_VERSION: "1.4.2",
     });
     expect(calls.map((call) => call.join(" "))).toEqual(["ps -axo pid=,ppid=,command=", "ps eww -p 101"]);
+  });
+
+  test("sends a native chat message through the recorded agy language server", async () => {
+    const root = mkdtempSync(join(tmpdir(), "megabrain-agy-send-"));
+    directories.push(root);
+    const daemon = new ChatDaemon(join(root, "state"), { HOME: root });
+    await daemon.start();
+    daemons.push(daemon);
+    const chat = agyChat({ mode: "chat", owner: "terminal" });
+    await daemon.store.put(chat);
+    upsertConversation(daemon.stateDir, chatKey(chat.id), { owner: "app-chat", cwd: chat.cwd, aliases: { chatId: chat.id, tmux: "megabrain-app:mb-app-test", pid: null, dispatchId: null }, createdAt: chat.createdAt, hidden: false });
+    const received: Array<Record<string, unknown>> = [];
+    const config = { plannerConfig: { planModel: "model" } };
+    const server = createServer((request, response) => {
+      let raw = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => { raw += chunk; });
+      request.on("end", () => {
+        const body = JSON.parse(raw) as Record<string, unknown>;
+        if (request.url?.endsWith("GetCascadeTrajectory")) response.end(JSON.stringify({ trajectory: { steps: [{ userInput: { items: [{ text: "prior" }], userConfig: config } }] } }));
+        else { received.push(body); response.end("{}"); }
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("language server did not bind");
+    await recordAgyLanguageServer(daemon.stateDir, chat.id, { ANTIGRAVITY_LS_ADDRESS: `127.0.0.1:${address.port}`, ANTIGRAVITY_CSRF_TOKEN: "test-token", ANTIGRAVITY_CONVERSATION_ID: sessionId });
+    daemon.foreignHolders = async () => [{ tmuxSession: "mb-app-test" } as never];
+    daemon.sessionOfTerminal = async () => sessionId;
+    daemon.syncTerminalPolling = async () => {};
+
+    await daemon.send(chat.id, [{ type: "text", text: "send this" }]);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ cascadeId: sessionId, items: [{ text: "send this" }], cascadeConfig: config });
   });
 
   test("persists agy and its truthful terminal-follow capabilities", async () => {
