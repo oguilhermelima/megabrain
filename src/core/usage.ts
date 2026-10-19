@@ -161,7 +161,7 @@ export const USAGE_LINES = {
   "web-device-stop": "web device stop <id> [--json]",
   "web-device-input": "web device input <id> tap <x> <y> | swipe <x1> <y1> <x2> <y2> [--ms n] | scroll <x> <y> <dx> <dy> | type <text> | key <name> | navigate <url> | back | forward | reload | viewport <slug> [--landscape] [--json]",
   "native-sim-list": "native sim list <phone|tv> [--json]",
-  "native-runtime-list": "native runtime list [<ios|tvos>] (--installed|--available) [--json]",
+  "native-runtime-list": "native runtime list [<ios|tvos>] --installed [--json]",
   "native-runtime-install": "native runtime install <ios|tvos> <version> [--json]",
   "native-sim-ensure": "native sim ensure <phone|tv> [--device <name-or-udid>] [--worktree <path>] [--timeout <seconds>] [--json]",
   "native-sim-claim": "native sim claim <udid> --worktree <path> [--json]",
@@ -314,7 +314,7 @@ Commands:
   ack <delivery-id> [options]          Acknowledge a child reply delivery
   received                            Confirm receipt of a dispatch prompt
   native sim list <phone|tv> ...       List available Apple simulators
-  native runtime list ...              List installed or known Apple runtimes
+  native runtime list ...              List installed Apple runtimes
   native runtime install ...           Install an Apple simulator runtime
   native appium start|stop|status      Manage the shared Appium server
   native build <phone|tv> ...          Build, install and launch a native app
