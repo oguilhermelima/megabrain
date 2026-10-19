@@ -112,7 +112,7 @@ export async function executeRepository(args: readonly string[], environment: En
     if (existsSync(destination)) return failed(`clone destination already exists: ${destination}`);
     try { mkdirSync(parent, { recursive: true }); }
     catch (cause: unknown) { return failed(`could not create clone directory: ${cause instanceof Error ? cause.message : String(cause)}`); }
-    const cloned = await process.run("git", ["clone", url, destination]);
+    const cloned = await process.run("git", ["clone", url, destination], { timeoutMs: 20 * 60_000 });
     if (cloned.kind !== "ok") return failed(`git clone failed: ${cloned.error}`, cloned.exitCode);
     const added = await addRepository(destination, "import", environment, process);
     return added.kind === "ok" ? ok(parseRepository(added.value, json)) : added;

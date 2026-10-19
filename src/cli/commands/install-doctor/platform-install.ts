@@ -1,14 +1,15 @@
 import { existsSync, readFileSync } from "node:fs";import { join, resolve } from "node:path";import { failed, ok, type Result } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { executeTmux } from "../tmux.js";import { resolvePackageRoot } from "../../../core/package-root.js";
 import { available, appiumReady } from "./diagnostics.js";import type { Environment } from "./diagnostics.js";import { report } from "./doctor.js";import { writeInstalledState } from "./install-state.js";import type { InstallOptions } from "./install-state.js";
+const PACKAGE_INSTALL_TIMEOUT_MS = 20 * 60_000;
 // --- simulator-native / simulator-tv -------------------------------------------------------
 
 export async function installSimulatorNative(processAdapter: ProcessAdapter): Promise<Result<void>> {
   if (!(await available(processAdapter, "appium"))) {
-    const install = await processAdapter.run("npm", ["install", "-g", "appium"]);
+    const install = await processAdapter.run("npm", ["install", "-g", "appium"], { timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS });
     if (install.kind !== "ok") return failed("npm install -g appium failed");
   }
   if (!(await appiumReady(processAdapter))) {
-    const driver = await processAdapter.run("appium", ["driver", "install", "xcuitest"]);
+    const driver = await processAdapter.run("appium", ["driver", "install", "xcuitest"], { timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS });
     if (driver.kind !== "ok") return failed("appium driver install xcuitest failed");
   }
   return ok(undefined);
@@ -71,10 +72,10 @@ export async function installSimulatorWeb(environment: Environment, processAdapt
   const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? join(resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT), "scripts/playwright-web.mjs");
   if (!existsSync(script)) return failed("node, npm, and the browser setup script are required for simulator-web");
   if (!(await available(processAdapter, "npx"))) return failed("npx is not on PATH");
-  const versionCheck = await processAdapter.run("npx", ["-y", "@playwright/mcp@latest", "--version"]);
+  const versionCheck = await processAdapter.run("npx", ["-y", "@playwright/mcp@latest", "--version"], { timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS });
   if (versionCheck.kind !== "ok") return failed("@playwright/mcp could not be executed by npx");
   const root = environment.MEGABRAIN_PLAYWRIGHT_ROOT ?? `${environment.HOME ?? ""}/.megabrain/playwright`;
-  const install = await processAdapter.run("node", [script, "install", "--root", root, "--browser", browser]);
+  const install = await processAdapter.run("node", [script, "install", "--root", root, "--browser", browser], { timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS });
   if (install.kind !== "ok") return failed("browser setup failed; run doctor for prerequisites");
   let manifest: { activeBrowser?: string; profiles?: Record<string, { configPath?: string }> };
   try {
@@ -103,7 +104,7 @@ export async function installTmuxRuntime(environment: Environment, processAdapte
     const os = platform.kind === "ok" ? platform.value.stdout.trim() : "";
     if (os === "Darwin") {
       if (!(await available(processAdapter, "brew"))) return failed("tmux is missing. Install it with: brew install tmux");
-      const brew = await processAdapter.run("brew", ["install", "tmux"]);
+      const brew = await processAdapter.run("brew", ["install", "tmux"], { timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS });
       if (brew.kind !== "ok") return failed("brew install tmux failed");
     } else if (os === "Linux") {
       return failed("tmux is missing. Install it with your package manager, for example: apt install tmux");

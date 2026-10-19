@@ -138,7 +138,7 @@ export async function nativeRestart(args: readonly string[], environment: Enviro
   if (!device) return error(`unknown simulator udid: ${udid}`);
   const stopped = await processAdapter.run("xcrun", ["simctl", "shutdown", udid]);
   if (stopped.kind !== "ok" && device.state !== "Shutdown") return error(`failed to shut down simulator ${udid}: ${stopped.error}`);
-  const boot = await processAdapter.run("xcrun", ["simctl", "boot", udid]);
+  const boot = await processAdapter.run("xcrun", ["simctl", "boot", udid], { timeoutMs: 5 * 60_000 });
   if (boot.kind !== "ok") return error(`failed to boot simulator ${udid}: ${boot.error}`);
   const waited = await waitUntilBooted(device.kind, udid, timeout.value, processAdapter, clock);
   if (waited.kind !== "ok") return waited;
@@ -186,7 +186,7 @@ export async function nativeEnsure(args: readonly string[], environment: Environ
   const selected = selectDevice(kind.value, candidates.value, device, false); if (selected.kind !== "ok") return selected;
   let notice: string | undefined;
   if (selected.value.state !== "Booted") {
-    const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid]);
+    const boot = await processAdapter.run("xcrun", ["simctl", "boot", selected.value.udid], { timeoutMs: 5 * 60_000 });
     if (boot.kind !== "ok") return error(`failed to boot simulator ${selected.value.udid}: ${boot.error.replace(/^xcrun exited with status \d+$/, "simctl exited")}`);
     await recordBooted(environment, selected.value.udid, clock.now());
   }
