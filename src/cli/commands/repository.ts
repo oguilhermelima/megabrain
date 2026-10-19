@@ -51,20 +51,29 @@ export async function executeRepository(args: readonly string[], environment: En
   if (verb === "run") return executeRepoRun(rest, environment, process);
   if (verb === "stop") return executeRepoStop(rest, environment, process);
   if (verb === "scripts") {
-    const selector = rest.find((argument) => !argument.startsWith("-"));
+    let selector: string | undefined;
+    const changes: SavedProjectScripts = {};
+    const seen = new Set<string>();
+    for (let index = 0; index < rest.length; index += 1) {
+      const argument = rest[index];
+      if (argument === "--json") continue;
+      if (argument === "--run" || argument === "--build" || argument === "--install") {
+        if (seen.has(argument)) return failed(`${argument} may only be supplied once`, 2);
+        seen.add(argument);
+        const value = rest[index + 1];
+        if (value === undefined || value.startsWith("--")) return failed(`${argument} requires a command (use an empty string to clear it)`, 2);
+        changes[argument.slice(2) as keyof SavedProjectScripts] = value;
+        index += 1;
+        continue;
+      }
+      if (argument.startsWith("-")) return failed(`unknown option for repo scripts: ${argument}`, 2);
+      if (selector !== undefined) return failed(`unexpected repo scripts argument: ${argument}`, 2);
+      selector = argument;
+    }
     if (selector === undefined) return failed("Usage: megabrain repo scripts <name|path> [--run <cmd>] [--build <cmd>] [--install <cmd>] [--json]", 2);
     const resolved = await resolveRepositoryPath(selector, environment, process);
     if (resolved.kind !== "ok") return resolved;
     const repoPath = resolved.value;
-    const changes: SavedProjectScripts = {};
-    for (const name of ["run", "build", "install"] as const) {
-      const index = rest.indexOf(`--${name}`);
-      if (index >= 0) {
-        const value = rest[index + 1];
-        if (value === undefined || value === "--json" || value.startsWith("--")) return failed(`--${name} requires a command (use an empty string to clear it)`, 2);
-        changes[name] = value;
-      }
-    }
     const scripts = Object.keys(changes).length > 0
       ? await setProjectScripts(repoPath, changes, environment)
       : await projectScripts(repoPath, environment);
