@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseAgyLog, sessionLogPath, sessionTurnOpen } from "../../src/chat/session-log.js";
 import { ChatStore, type Chat, type ChatCapabilities } from "../../src/chat/store.js";
 import { ChatDaemon } from "../../src/chat/daemon.js";
@@ -148,6 +148,29 @@ describe("agy terminal-follow transcript", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ cascadeId: sessionId, items: [{ text: "send this" }], cascadeConfig: config });
+  });
+
+  test("imports the agy transcript into events while the native chat owns the view", async () => {
+    const home = mkdtempSync(join(tmpdir(), "megabrain-agy-follow-"));
+    directories.push(home);
+    const daemon = new ChatDaemon(join(home, "state"), { HOME: home });
+    await daemon.start();
+    daemons.push(daemon);
+    const chat = agyChat({ mode: "chat", owner: "terminal", terminalSince: "2026-10-18T01:44:20Z" });
+    await daemon.store.put(chat);
+    const path = join(home, ".gemini/antigravity-cli/brain", sessionId, ".system_generated/logs/transcript_full.jsonl");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, transcript);
+
+    await daemon.importTerminalTurns(chat, false);
+
+    const events = (await daemon.store.events(chat.id)).flatMap((line) => line.event === undefined || line.event.kind === "state" ? [] : [line.event]);
+    expect(events.slice(0, 4).map(({ kind, text }) => `${kind}:${text}`)).toEqual([
+      "user:Reply with exactly: first", "assistant:first", "user:Reply with exactly: second", "assistant:second",
+    ]);
+    expect(events.slice(4).map(({ kind }) => kind)).toEqual(["tool-call", "tool-result"]);
+    expect(events[4]).toMatchObject({ kind: "tool-call", text: "run_command", tool: { input: expect.stringContaining("ls -la") } });
+    expect(events[5]?.text).toContain("permission check failed");
   });
 
   test("persists agy and its truthful terminal-follow capabilities", async () => {
