@@ -56,7 +56,7 @@
 - Run megabrain port free [--from <port>] [--json]. — recommended when you need the next port nothing listens on.
 - Run megabrain port kill <port> [--json]. — recommended when you need to stop your own process tree that holds a port.
 - Run megabrain projects [--json]. — recommended when you need to list registered projects, their Git worktrees, and agent sessions.
-- Run megabrain github projects|project|project-move|project-status|project-status-create|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image .... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions.
+- Run megabrain github projects|project|project-move|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image .... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions.
 - Run megabrain github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need a page of workflow runs, workflows, dispatch support and declared inputs.
 - Run megabrain github run <repo name|path> <run id> [--json]. — recommended when you need one workflow run and its jobs.
 - Run megabrain github run-log <repo name|path> <run id> --job <job id> [--json]. — recommended when you need a job's log.
@@ -69,6 +69,7 @@
 - Run megabrain github project-move <repo name|path> <project number> <item id> --status <option id> [--owner <login>] [--json]. — recommended when you need to move a GitHub Project v2 item to a status option.
 - Run megabrain github project-status <repo name|path> <project number> [--owner <login>] [--json]. — recommended when you need status updates from a GitHub Project v2 board.
 - Run megabrain github project-status-create <repo name|path> <project number> --status <INACTIVE|ON_TRACK|AT_RISK|OFF_TRACK|COMPLETE> [--body <text>] [--start <date>] [--target <date>] [--owner <login>] [--json]. — recommended when you need to post a status update to a GitHub Project v2 board.
+- Run megabrain github project-workflows <repo name|path> <project number> [--owner <login>] [--json]. — recommended when you need workflows configured on a GitHub Project v2 board.
 - Run megabrain github pr <repo name|path> <number> [--json]. — recommended when you need one pull request's description, comments, checks, review decision and line counts.
 - Run megabrain github issue <repo name|path> <number> [--json]. — recommended when you need one issue's description and comments.
 - Run megabrain github pr-files <repo name|path> <number> [--page <k>] [--per-page <m>] [--no-patch] [--json]. — recommended when you need a page of a pull request's changed files (100 by default), with or without their patches.
