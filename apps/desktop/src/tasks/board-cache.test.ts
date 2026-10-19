@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { fixtureBacklog, fixtureRoadmap, fixtureRoadmapItems } from '@/api/fixtures/github-projects'
 import type { GithubProjectItem } from '@/api/schema'
-import { boardCacheKey, boardKey, distinctItems, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
+import { boardCacheKey, boardKey, createBoardMemory, distinctItems, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
 
 const item = (id: string): GithubProjectItem => ({ id, type: 'ISSUE', number: 1, title: id, url: null, state: 'OPEN', repository: 'o/r', status: null, assignees: [], labels: [], updatedAt: '2026-10-17T00:00:00.000Z' })
 const ids = (items: GithubProjectItem[]) => items.map((entry) => entry.id)
@@ -82,5 +82,27 @@ describe('streaming pages', () => {
     const shown = { ...item('a'), status: 'old' }
     const read = { ...item('a'), status: 'new' }
     expect(mergedPages([read], [shown])[0]?.status).toBe('new')
+  })
+})
+
+describe('the board cache in memory', () => {
+  test('starts from storage and keeps what it remembers', () => {
+    const { storage } = memoryStorage()
+    writeBoardCache(storage, withProjects(emptyBoardCache, '/repo', [fixtureRoadmap], 10))
+    const memory = createBoardMemory(storage)
+    expect(memory.get().projects['/repo']?.value).toEqual([fixtureRoadmap])
+    memory.remember(withItems(memory.get(), boardKey(fixtureRoadmap), fixtureRoadmapItems, 20))
+    expect(memory.get().items[boardKey(fixtureRoadmap)]?.value).toEqual(fixtureRoadmapItems)
+  })
+
+  test('holds no more than storage would: each board capped, only the latest boards', () => {
+    const { storage } = memoryStorage()
+    const memory = createBoardMemory(storage)
+    const many = Array.from({ length: keptItems + 50 }, (_, index) => item(`i${index}`))
+    memory.remember(withItems(memory.get(), 'o/1', many, 1))
+    expect(memory.get().items['o/1']?.value).toHaveLength(keptItems)
+    for (let board = 2; board <= keptEntries + 2; board++) memory.remember(withItems(memory.get(), `o/${board}`, [item('x')], board))
+    expect(Object.keys(memory.get().items)).toHaveLength(keptEntries)
+    expect(memory.get().items['o/1']).toBeUndefined()
   })
 })
