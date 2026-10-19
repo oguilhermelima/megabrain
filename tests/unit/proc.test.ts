@@ -31,4 +31,14 @@ describe("createProcessAdapter", () => {
     expect(result).toEqual({ kind: "failed", error: `${process.execPath} timed out`, exitCode: 1 });
     expect(Date.now() - started).toBeLessThan(1000);
   });
+
+  test("caps captured stdout and stderr independently", async () => {
+    const result = await createProcessAdapter().run("sh", ["-c", "printf 123456; printf abcdef >&2"], { maxOutputBytes: 4 });
+    expect(result).toEqual({ kind: "ok", value: { stdout: "1234", stderr: "abcd", exitCode: 0 } });
+  });
+
+  test("uses the default deadline when no timeout is supplied", async () => {
+    const result = await createProcessAdapter({ defaultTimeoutMs: 25 }).run(process.execPath, ["-e", "setTimeout(() => {}, 10000)"]);
+    expect(result).toEqual({ kind: "failed", error: `${process.execPath} timed out`, exitCode: 1 });
+  });
 });
