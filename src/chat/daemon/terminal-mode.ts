@@ -26,6 +26,7 @@ import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAUL
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
 import { startAgyTerminal } from "./agy-terminal.js";
 import { readAgentSettings, startCommand } from "../../core/agent-settings.js";
+import { terminalExitMessage } from "../terminal-exit.js";
 
 export async function rename(daemon: ChatDaemon, id: string, title: string): Promise<Chat> {
     const chat = await daemon.requireChat(id);
@@ -106,16 +107,20 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
       const foreignOwner = holders.filter((holder) => !holder.tmuxSession?.startsWith(APP_SESSION_PREFIX));
       if (foreignOwner.length > 0) throw new ChatHandoffError("chat-busy", heldMessage(chat, foreignOwner));
       if (appOwner) {
-        if (await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
-        await captureTerminalDraft(daemon, chat, holders);
+        const removed = await reportAndRemoveExitedChatTerminals(daemon, chat, holders);
+        if (!removed) {
+          if (await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
+          await captureTerminalDraft(daemon, chat, holders);
+        }
         // Selecting the chat view does not take ownership away from the TUI.
         chat.mode = "chat";
-        chat.owner = "terminal";
+        chat.owner = removed ? "none" : "terminal";
         await daemon.save(chat);
       } else {
         // Old records may have terminal turns without a running app pane. Import those once, then resume through chatd.
         if (daemon.draining) throw new Error(DRAINING);
         if (chat.agentSessionId === null) chat.agentSessionId = await daemon.sessionOfTerminal(chat);
+        await reportAndRemoveExitedChatTerminals(daemon, chat, []);
         const ended = await daemon.endAppTerminals(chat);
         const elsewhere = (await daemon.foreignHolders(chat, undefined, ended)).filter((holder) => !holder.tmuxSession?.startsWith(APP_SESSION_PREFIX));
         if (elsewhere.length > 0) throw new ChatHandoffError("chat-busy", heldMessage(chat, elsewhere));
@@ -174,6 +179,35 @@ async function captureTerminalDraft(daemon: ChatDaemon, chat: Chat, holders: rea
       if (draft !== null) await daemon.publish(chat, event("system", `Unsent text from the terminal: ${draft}`));
     }
   }
+
+async function reportAndRemoveExitedChatTerminals(daemon: ChatDaemon, chat: Chat, holders: readonly SessionHolder[]): Promise<boolean> {
+  const sessions = new Set(holders.flatMap((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) ? [holder.tmuxSession] : []));
+  const entry = daemon.entryOf(chat.id);
+  const alias = entry?.[1].aliases.tmux ?? null;
+  const [server, session] = (alias ?? "").split(":");
+  if (server === OWNED_TMUX_SERVER && session?.startsWith(APP_SESSION_PREFIX)) sessions.add(session);
+  const tmux = ownedTmuxProcess(daemon.processes());
+  let removed = false;
+  let activeOrUnknown = false;
+  for (const name of sessions) {
+    const panes = await tmux.run("tmux", ["list-panes", "-s", "-t", `=${name}`, "-F", "#{pane_id}\t#{pane_dead}\t#{pane_dead_status}"]);
+    if (panes.kind !== "ok") { activeOrUnknown = true; continue; }
+    const statuses = panes.value.stdout.trim().split("\n").map((line) => line.split("\t"));
+    if (statuses.length === 0 || statuses.some(([, dead]) => dead !== "1")) { activeOrUnknown = true; continue; }
+    const target = statuses[0]?.[0];
+    if (target === undefined || target === "") continue;
+    const output = await tmux.run("tmux", ["capture-pane", "-p", "-S", "-40", "-t", target]);
+    const code = statuses.map(([, , status]) => status).filter((status) => status !== undefined && status !== "").join(", ") || "unknown";
+    const detail = output.kind === "ok" ? output.value.stdout : "";
+    const killed = await tmux.run("tmux", ["kill-session", "-t", `=${name}`]);
+    if (killed.kind !== "ok") continue;
+    removed = true;
+    await daemon.publish(chat, event("system", terminalExitMessage(code, detail)));
+    try { forgetAppTerminal(daemon.stateDir, name); } catch { /* a listing aid */ }
+    if (entry !== undefined && session === name) setConversationAlias(daemon.stateDir, entry[0], { tmux: null });
+  }
+  return removed && !activeOrUnknown;
+}
 
 export async function importTerminalTurns(daemon: ChatDaemon, chat: Chat, markInterrupted = true): Promise<void> {
     const existing = (await daemon.store.events(chat.id)).flatMap((line) => line.event === undefined ? [] : [line.event]);
