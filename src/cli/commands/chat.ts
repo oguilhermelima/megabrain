@@ -5,6 +5,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
 import { loadAndPersistModelRegistry } from "../../core/model.js";
 import { readModelSettings, startModel } from "../../core/model-settings.js";
+import { readAgentSettings, startMode } from "../../core/agent-settings.js";
 import { callChatd, callPermissionServer, chatdStatus, drainChatd, retireChatd } from "../../chat/daemon.js";
 import { ChatStore, type ChatLine } from "../../chat/store.js";
 import { readSummaries, searchSummaries } from "../../chat/summaries.js";
@@ -99,7 +100,9 @@ export async function executeChat(args: readonly string[], environment: Environm
       // Without --model the chat takes the agent's default from Settings > Models, when one is set.
       const registry = await loadAndPersistModelRegistry(environment);
       const start = startModel(await readModelSettings(dir), registry.kind === "loaded" ? registry.registry.models : [], agent, modelArg.value, effortArg.value);
-      value = await callChatd(dir, { operation: "start", agent, model: start.model, effort: start.effort, cwd: cwdArg.value, approvals, parts }, environment, processAdapter);
+      // The chat opens in the agent's default mode from Settings > Agents.
+      const mode = startMode(await readAgentSettings(dir), agent);
+      value = await callChatd(dir, { operation: "start", agent, model: start.model, effort: start.effort, cwd: cwdArg.value, approvals, parts, mode }, environment, processAdapter);
       return ok(argsJson(value));
     }
     if (verb === "send") {

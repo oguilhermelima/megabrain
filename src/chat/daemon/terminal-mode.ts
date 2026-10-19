@@ -106,6 +106,11 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
         const elsewhere = (await daemon.foreignHolders(chat, undefined, ended)).filter((holder) => !holder.tmuxSession?.startsWith(APP_SESSION_PREFIX));
         if (elsewhere.length > 0) throw new ChatHandoffError("chat-busy", heldMessage(chat, elsewhere));
         await daemon.importTerminalTurns(chat);
+        // A first message no TUI took yet goes to the chat instead.
+        if (chat.pendingPrompt !== undefined) {
+          daemon.queues.set(id, [...(daemon.queues.get(id) ?? []), [{ type: "text", text: chat.pendingPrompt }]]);
+          delete chat.pendingPrompt;
+        }
         chat.mode = "chat";
         chat.owner = "none";
         chat.state = "starting";
@@ -388,5 +393,11 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
 
 export async function terminalCommand(daemon: ChatDaemon, id: string): Promise<string[]> {
     const chat = await daemon.requireChat(id);
-    return chatProtocolAdapters[chat.agent].terminalCommand(chat);
+    // The first message rides on the first TUI only; a later one resumes without it.
+    const prompt = chat.pendingPrompt;
+    if (prompt !== undefined) {
+      delete chat.pendingPrompt;
+      await daemon.save(chat);
+    }
+    return chatProtocolAdapters[chat.agent].terminalCommand(chat, prompt);
   }

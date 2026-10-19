@@ -69,17 +69,27 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
     if (!cwd || !cwd.startsWith("/")) throw new Error("--cwd must be an absolute path");
     const parts = request.parts === undefined ? [] : await daemon.normalizeParts(cwd, validateParts(request.parts));
     const now = new Date().toISOString();
+    // agy has only its terminal; another agent opens in one when its default mode says so.
+    const terminal = agent === "agy" || request.mode === "terminal";
     const chat: Chat = {
       id: randomUUID(), agent, capabilities: agent === "agy" ? { approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true } : { approvals: true, interrupt: true, liveModelSwitch: agent === "grok", steer: agent === "codex", structuredTools: true }, cwd, model: text(request.model) || null, ...(text(request.effort) ? { effort: text(request.effort) } : {}), ...(request.approvals === true && agent !== "agy" ? { approvals: true } : {}),
-      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: agent === "agy" ? "idle" : "starting", mode: agent === "agy" ? "terminal" : "chat", owner: agent === "agy" ? "terminal" : "none",
+      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: terminal ? "idle" : "starting", mode: terminal ? "terminal" : "chat", owner: agent === "agy" ? "terminal" : "none",
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
+      ...(terminal && agent !== "agy" ? { terminalSince: now } : {}), ...(terminal && firstText(parts) !== "" ? { pendingPrompt: firstText(parts) } : {}),
     };
     await daemon.save(chat);
     await daemon.syncTerminalPolling();
     await daemon.publish(chat, event("system", `Started ${agent} chat`));
+    if (terminal) {
+      // The TUI takes the first message's text as its initial prompt; images it cannot take are named, never dropped silently.
+      if (parts.length > 0) await daemon.publish(chat, event("user", firstText(parts), undefined, withImages(parts)));
+      const images = parts.filter((part) => part.type === "image").length;
+      if (images > 0) await daemon.publish(chat, event("system", `${images} image${images === 1 ? "" : "s"} not sent: the terminal takes the message text only`));
+      return chat;
+    }
     const queue = daemon.queues.get(chat.id) ?? [];
     if (parts.length > 0) { queue.push(parts); daemon.queues.set(chat.id, queue); await daemon.publish(chat, event("user", firstText(parts), undefined, withImages(parts))); }
-    if (agent !== "agy") daemon.trackCallback(daemon.runAgent(chat).catch((error: unknown) => daemon.fail(chat.id, error)));
+    daemon.trackCallback(daemon.runAgent(chat).catch((error: unknown) => daemon.fail(chat.id, error)));
     return chat;
   }
 

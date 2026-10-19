@@ -17,7 +17,8 @@ export interface ChatProtocolAdapter {
   send(chat: Chat, child: ChildProcessWithoutNullStreams, parts: MessagePart[], request: RpcRequest): Promise<string | undefined>;
   steer(chat: Chat, child: ChildProcessWithoutNullStreams, turnId: string, parts: MessagePart[], request: RpcRequest): Promise<void>;
   interrupt(chat: Chat, child: ChildProcessWithoutNullStreams | undefined, turnId: string | undefined, request: RpcRequest): Promise<void>;
-  terminalCommand(chat: Chat): string[];
+  /** The TUI on this conversation; a prompt is the initial message of a fresh session. */
+  terminalCommand(chat: Chat, prompt?: string): string[];
 }
 
 async function claudeContent(parts: MessagePart[]): Promise<unknown[]> {
@@ -65,8 +66,8 @@ const claude: ChatProtocolAdapter = {
   },
   async steer() { throw new Error("Claude does not support steering a running turn"); },
   async interrupt(_chat, child) { child?.kill("SIGINT"); },
-  terminalCommand(chat) {
-    return ["claude", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-skip-permissions"]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : [])];
+  terminalCommand(chat, prompt) {
+    return ["claude", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-skip-permissions"]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
   },
 };
 
@@ -90,8 +91,8 @@ const codex: ChatProtocolAdapter = {
   async interrupt(chat, child, turnId, request) {
     if (turnId) await request("turn/interrupt", { threadId: chat.agentSessionId, turnId });
   },
-  terminalCommand(chat) {
-    return ["codex", ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), "-c", "check_for_update_on_startup=false", ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : [])];
+  terminalCommand(chat, prompt) {
+    return ["codex", ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), "-c", "check_for_update_on_startup=false", ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
   },
 };
 
@@ -114,7 +115,7 @@ const grok: ChatProtocolAdapter = {
   async interrupt(chat, _child, _turnId, request) {
     if (chat.agentSessionId) await request("session/cancel", { sessionId: chat.agentSessionId });
   },
-  terminalCommand(chat) { return ["grok", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : [])]; },
+  terminalCommand(chat, prompt) { return ["grok", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(prompt ? [prompt] : [])]; },
 };
 
 const agyUnavailable: ChatProtocolAdapter = {
@@ -122,7 +123,7 @@ const agyUnavailable: ChatProtocolAdapter = {
   async send() { throw new Error("agy messages must be sent through the agy terminal"); },
   async steer() { throw new Error("agy does not support steering"); },
   async interrupt() { throw new Error("agy does not support interruption"); },
-  terminalCommand(chat) { return ["agy", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(chat.model ? ["--model", chat.model] : [])]; },
+  terminalCommand(chat, prompt) { return ["agy", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(chat.model ? ["--model", chat.model] : []), ...(prompt ? ["-i", prompt] : [])]; },
 };
 
 function codexInput(parts: MessagePart[]): unknown[] {
