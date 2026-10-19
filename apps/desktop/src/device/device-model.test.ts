@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, type MaestroEvent } from '@/api/schema'
-import { groupDevices, groupOf, afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, elsewhereLabel, panelPlaces, renameCommit, sleepNote, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
+import { groupDevices, groupOf, afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, elsewhereLabel, panelPlaces, renameCommit, sleepNote, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, staleDeviceNote, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
 import { changesPolicy, devicesPolicy, planPoll, pollInterval, projectsPolicy, screenPolicy } from '@/lib/poll-model'
 
 const captured = (name: string) => readFileSync(join(import.meta.dir, '..', 'api', 'fixtures', 'captured', name), 'utf8')
@@ -511,5 +511,16 @@ describe('device groups', () => {
   test('selection reaches a web device by its id', () => {
     expect(selectDevice([{ udid: 'sim-1' }, { udid: 'web-1' }], 'web-1')).toBe('web-1')
     expect(selectDevice([{ udid: 'sim-1' }], 'web-gone')).toBe('sim-1')
+  })
+})
+
+describe('stale Device inventory', () => {
+  test('says nothing while every read answered', () => {
+    expect(staleDeviceNote([])).toBeNull()
+  })
+
+  test('names each read that failed and says the last list stays', () => {
+    expect(staleDeviceNote(['phones'])).toBe('Could not refresh the phone simulators; showing the last list.')
+    expect(staleDeviceNote(['phones', 'tvs', 'asleep'])).toBe('Could not refresh the phone simulators, the TV simulators and the sleeping simulators; showing the last list.')
   })
 })
