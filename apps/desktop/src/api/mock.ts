@@ -3,7 +3,7 @@ import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/ap
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
 import { filterGithubProjectItems } from '@/api/project-filter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
-import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, GithubProjectItem, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep, NativeChat } from '@/api/schema'
+import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, GithubProjectItem, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep, NativeChat, GithubProjectStatusUpdate, GithubProjectStatusUpdateStatus } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockNewFileDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { fixtureGraph, fixtureLiveEvents, withLiveEvent } from '@/api/fixtures/orchestration-graph'
@@ -14,7 +14,7 @@ import { mockKnowledgeList, mockKnowledgeSearch, mockKnowledgeTopics, mockKnowle
 import { mockArtifact, mockArtifactList } from '@/api/fixtures/artifacts'
 import { createMockReviewApi } from '@/api/fixtures/github-review'
 import { createMockActionsApi } from '@/api/fixtures/github-actions'
-import { mockGithubProjectItems, mockGithubProjects } from '@/api/fixtures/github-projects'
+import { mockGithubProjectItems, mockGithubProjects, mockGithubProjectStatusUpdates, mockGithubProjectWorkflows } from '@/api/fixtures/github-projects'
 import { validateRule } from '@/settings/chain-rules'
 import { effectiveToggles, inEffect, parseKnowledgeSettings } from '@/settings/knowledge-model'
 import { agentMode, parseAgentSettings } from '@/settings/agents-model'
@@ -63,6 +63,7 @@ export function createMockApi(): DesktopApi {
   const githubComments = new Map<string, GithubDetail['comments']>()
   const githubStates = new Map<string, string>()
   const githubProjectItems = structuredClone(mockGithubProjectItems)
+  const githubProjectStatusUpdates: Record<number, GithubProjectStatusUpdate[]> = structuredClone(mockGithubProjectStatusUpdates)
   // Files, threads, reviewers and readiness (fixtures/github-review); a draft change shows in the detail.
   const { draftOf, ...reviewApi } = createMockReviewApi()
   const githubComment = (kind: 'pr' | 'issue', number: number, body: string) => {
@@ -440,6 +441,23 @@ export function createMockApi(): DesktopApi {
       if (!project || index < 0) throw new CliError(`GitHub project item ${itemId} was not found`, 1)
       items[index] = { ...items[index]!, isArchived: archived }
       return { id: itemId, isArchived: archived }
+    },
+    githubProjectStatus: async (_root, number, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      if (!project) throw new CliError(`GitHub project ${number} was not found`, 1)
+      return { updates: structuredClone(githubProjectStatusUpdates[number] ?? []) }
+    },
+    githubProjectStatusCreate: async (_root, number, status: GithubProjectStatusUpdateStatus, body, startDate, targetDate, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      if (!project) throw new CliError(`GitHub project ${number} was not found`, 1)
+      const update = { id: `PVT_status_${Date.now()}`, status, body: body ?? '', startDate: startDate ?? null, targetDate: targetDate ?? null, createdAt: new Date().toISOString(), creator: 'operator' }
+      githubProjectStatusUpdates[number] = [update, ...(githubProjectStatusUpdates[number] ?? [])]
+      return structuredClone(update)
+    },
+    githubProjectWorkflows: async (_root, number, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      if (!project) throw new CliError(`GitHub project ${number} was not found`, 1)
+      return { workflows: structuredClone(mockGithubProjectWorkflows[number] ?? []) }
     },
     githubPullRequest: async (_root, number) => {
       await wait(300)

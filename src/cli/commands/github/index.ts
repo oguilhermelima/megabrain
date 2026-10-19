@@ -50,9 +50,13 @@ import { executeProjects, PROJECT_VERBS } from "./projects.js";
 import { executeProjectMove } from "./project-move.js";
 import { executeProjectWrite } from "./project-writes.js";
 const PROJECT_WRITE_VERBS = ["project-field", "project-clear", "project-add", "project-draft", "project-archive", "project-unarchive"] as const;
+import { executeProjectStatus, executeProjectStatusCreate } from "./project-status.js";
+import { executeProjectWorkflows } from "./project-workflows.js";
 export { executeProjects, PROJECTS_QUERY, PROJECT_QUERY } from "./projects.js";
 export { normalizeProjectFields, normalizeProjectViews, normalizeProjectItem } from "./projects.js";
 export { executeProjectMove, PROJECT_METADATA_QUERY, PROJECT_MOVE_QUERY } from "./project-move.js";
+export { executeProjectStatus, executeProjectStatusCreate, PROJECT_STATUS_QUERY, PROJECT_STATUS_PROJECT_QUERY, CREATE_PROJECT_STATUS_UPDATE, PROJECT_STATUS_VALUES } from "./project-status.js";
+export { executeProjectWorkflows, PROJECT_WORKFLOWS_QUERY } from "./project-workflows.js";
 export type { Project, ProjectItem, ProjectStatusField, ProjectStatusOption } from "./projects.js";
 
 const ACTION_VERBS: readonly ActionVerb[] = ["runs", "run", "run-log", "run-action", "workflow-dispatch"];
@@ -86,6 +90,9 @@ export async function executeGithub(args: readonly string[], environment: Enviro
     if (projectVerb === "project-move") return executeProjectMove(rest, environment, process);
     return executeProjects(projectVerb, rest, environment, process);
   }
+  if (verbArgument === "project-status") return executeProjectStatus(rest, environment, process);
+  if (verbArgument === "project-status-create") return executeProjectStatusCreate(rest, environment, process);
+  if (verbArgument === "project-workflows") return executeProjectWorkflows(rest, environment, process);
   if (verbArgument !== undefined && ACTION_VERBS.includes(verbArgument as ActionVerb)) {
     if (rest.includes("-h") || rest.includes("--help")) return ok(usageText(`github-${verbArgument}` as UsageKey));
     return executeActions(verbArgument, rest, environment, process);
