@@ -13,6 +13,27 @@ const nullable = (value: unknown): string | null => typeof value === "string" ? 
 const usage = (verb: string): Result<never> => failed(usageMessage(`github-${verb}` as never), 2);
 const RUN_STATUSES = new Set(["queued", "in_progress", "completed", "waiting", "requested", "pending"]);
 const CONCLUSIONS = new Set(["success", "failure", "cancelled", "skipped", "timed_out", "action_required", "neutral", "stale"]);
+const RUN_CURSOR_PREFIX = "actions-runs:";
+
+function runCursor(page: number): string {
+  return Buffer.from(`${RUN_CURSOR_PREFIX}${page}`).toString("base64url");
+}
+
+function runPage(cursor: string | undefined): number | null {
+  if (cursor === undefined) return 1;
+  if (/^[1-9]\d*$/.test(cursor)) {
+    const legacyPage = Number(cursor);
+    return Number.isSafeInteger(legacyPage) ? legacyPage : null;
+  }
+  try {
+    const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+    if (!decoded.startsWith(RUN_CURSOR_PREFIX)) return null;
+    const pageText = decoded.slice(RUN_CURSOR_PREFIX.length);
+    if (!/^[1-9]\d*$/.test(pageText)) return null;
+    const page = Number(pageText);
+    return Number.isSafeInteger(page) && runCursor(page) === cursor ? page : null;
+  } catch { return null; }
+}
 
 function run(value: unknown) {
   const r = row(value);
@@ -114,8 +135,8 @@ export async function executeActions(verb: string, args: readonly string[], envi
   let output: unknown;
   let plain = "";
   if (verb === "runs") {
-    const page = parsed.flags["--after"] ?? "1";
-    if (!/^\d+$/.test(page) || Number(page) < 1) return usage(verb);
+    const page = runPage(parsed.flags["--after"]);
+    if (page === null) return usage(verb);
     const workflows = await gh(process, ["api", `repos/${repo}/actions/workflows?per_page=100`], { name: "gh api actions workflows" });
     if (workflows.kind !== "ok") return workflows;
     const workflowRows = Array.isArray(row(workflows.value).workflows) ? row(workflows.value).workflows as unknown[] : [];
@@ -141,7 +162,7 @@ export async function executeActions(verb: string, args: readonly string[], envi
     if (runs.kind !== "ok") return runs;
     const list = row(runs.value);
     const raw = Array.isArray(list.workflow_runs) ? list.workflow_runs : [];
-    output = { runs: raw.map(run), workflows: workflowRowsWithMetadata, next: raw.length === parsed.limit ? String(Number(page) + 1) : null };
+    output = { runs: raw.map(run), workflows: workflowRowsWithMetadata, next: raw.length === parsed.limit && Number.isSafeInteger(page + 1) ? runCursor(page + 1) : null };
     plain = `${raw.length} workflow runs\n`;
   } else if (verb === "run") {
     const [detail, jobs] = await Promise.all([
