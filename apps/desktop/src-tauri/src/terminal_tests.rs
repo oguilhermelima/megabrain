@@ -53,12 +53,12 @@ fn tmux_engine_builds_private_server_commands_for_new_and_existing_sessions() {
     assert_eq!(tmux_server_name(), "megabrain-app");
     assert_eq!(tmux_plain_panes_argv(), ["-L", "megabrain-app", "set-window-option", "-g", "pane-border-status", "off"]);
     assert_eq!(
-        tmux_create_argv("megabrain-app", "term-test", "/tmp/work", None, Some(&["/bin/zsh".into(), "-l".into()])),
+        tmux_create_argv("megabrain-app", "term-test", "/tmp/work", None, Some(&["/bin/zsh".into(), "-l".into()]), false),
         ["-L", "megabrain-app", "new-session", "-d", "-s", "term-test", "-c", "/tmp/work", "/bin/zsh", "-l"]
     );
     // The session starts at the view's size, so the agent's TUI paints once instead of again on attach.
     assert_eq!(
-        tmux_create_argv("megabrain-app", "term-test", "/tmp/work", Some((132, 40)), Some(&["claude".into()])),
+        tmux_create_argv("megabrain-app", "term-test", "/tmp/work", Some((132, 40)), Some(&["claude".into()]), false),
         ["-L", "megabrain-app", "new-session", "-d", "-s", "term-test", "-x", "132", "-y", "40", "-c", "/tmp/work", "claude"]
     );
     assert_eq!(
