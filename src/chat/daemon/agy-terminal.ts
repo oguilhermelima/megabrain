@@ -3,6 +3,7 @@ import { chatKey, setConversationAlias, upsertConversation } from "../../core/co
 import { OWNED_TMUX_SERVER, ownedTmuxProcess } from "../../core/session-ownership.js";
 import type { Chat } from "../store.js";
 import { chatProtocolAdapters } from "../protocol.js";
+import { readAgentSettings, startCommand } from "../../core/agent-settings.js";
 import type { ChatDaemon } from "../daemon.js";
 
 function quote(value: string): string { return `'${value.replace(/'/g, "'\\''")}'`; }
@@ -10,7 +11,7 @@ function quote(value: string): string { return `'${value.replace(/'/g, "'\\''")}
 /** Starts agy in a private app-owned terminal so chatd can follow its transcript and send safely. */
 export async function startAgyTerminal(daemon: ChatDaemon, chat: Chat): Promise<void> {
   const session = `${APP_SESSION_PREFIX}${chat.id}`;
-  const command = chatProtocolAdapters.agy.terminalCommand(chat).map(quote).join(" ");
+  const command = chatProtocolAdapters.agy.terminalCommand(chat, undefined, startCommand(await readAgentSettings(daemon.stateDir), "agy")).map(quote).join(" ");
   const tmux = ownedTmuxProcess(daemon.processes());
   const started = await tmux.run("tmux", ["new-session", "-d", "-s", session, "-c", chat.cwd, command]);
   if (started.kind !== "ok") {

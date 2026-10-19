@@ -1,6 +1,8 @@
 import { agentCommand, INTERACTIVE_AGENTS } from "../../adapters/agent-command.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { readAgentDefaults } from "../../core/agent-defaults.js";
+import { readAgentSettings, startCommand } from "../../core/agent-settings.js";
+import { join } from "node:path";
 import { failed, ok, type Result } from "../../core/result.js";
 import { usageText } from "../../core/usage.js";
 import { runAgentUpdateLocked, runBackgroundAgentUpdate, scheduleAgentAutoUpdate, updateReportText, recordAgentUpdate, officialAgentVersion, type AgentVersionSource, type AgentUpdateId, type AgentUpdateReport } from "../../core/agent-update.js";
@@ -78,7 +80,8 @@ export async function executeAgent(args: readonly string[], environment: Environ
   }
   try {
     void scheduleAgentAutoUpdate(agent as AgentUpdateId, environment, processAdapter).catch(() => undefined);
-    const argv = await agentCommand(agent, { model, effort, resume }, processAdapter);
+    const base = startCommand(await readAgentSettings(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain")), agent);
+    const argv = await agentCommand(agent, { model, effort, resume, base }, processAdapter);
     return ok(json ? `${JSON.stringify({ agent, argv })}\n` : `${argv.join(" ")}\n`);
   } catch (cause: unknown) {
     return failed(cause instanceof Error ? cause.message : String(cause), 1);
