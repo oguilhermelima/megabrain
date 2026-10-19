@@ -27,6 +27,7 @@ import {
   getQueuedDispatchId,
   listOutboxPage,
   listPendingOutboxPeerVerifications,
+  listChildAnsweredDispatches,
   mutateDispatch,
   listNudges,
   nudgeCursor,
@@ -52,6 +53,25 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 }
 
 describe("state database facade", () => {
+  test("loads child answer state for many dispatches in one bounded query", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    for (const dispatchId of ["child-a", "child-b", "child-c"]) requireOk(createDispatch(db, { dispatchId, state: "running" }));
+    requireOk(appendMessage(db, "child-b", { from: "child", type: "received", text: "ready" }));
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    expect(requireOk(listChildAnsweredDispatches(handle, ["child-a", "child-b", "child-c"]))).toEqual(new Set(["child-b"]));
+    expect(query).toContain("dispatch_id IN");
+    expect(query).toContain("LIMIT ?");
+  });
+
   test("bounds nudge retention without resetting the active cursor", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "nudge-retention", state: "running" }));
