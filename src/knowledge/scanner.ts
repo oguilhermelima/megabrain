@@ -75,7 +75,10 @@ function storeHorizon(stateDir: string, repo: string, horizon: string): void {
 type Candidate = { repo: string; cwd: string; session: HistorySession; key: string; last: string; at: number; parent: string | undefined };
 
 function gitWorktrees(repo: string): Promise<string[]> {
-  return new Promise((done) => execFile("git", ["worktree", "list", "--porcelain"], { cwd: repo, timeout: 5000 }, (error, out) => done(error === null ? out.split("\n").filter((line) => line.startsWith("worktree ")).map((line) => resolve(line.slice(9))) : [])));
+  return new Promise((resolveResult, reject) => execFile("git", ["worktree", "list", "--porcelain"], { cwd: repo, timeout: 5000 }, (error, out) => {
+    if (error !== null) { reject(new Error(`git worktree list failed for ${repo}: ${error.message}`, { cause: error })); return; }
+    resolveResult(out.split("\n").filter((line) => line.startsWith("worktree ")).map((line) => resolve(line.slice(9))));
+  }));
 }
 
 /** The registered repositories, read from the state database. */
