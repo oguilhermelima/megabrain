@@ -19,11 +19,12 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 type Call = readonly string[];
 
 /** A gh that answers by its first arguments; git and anything else fail, as no repository is involved. */
-function fakeGh(answers: Readonly<Record<string, string>>, calls: Call[]): ProcessAdapter {
+function fakeGh(answers: Readonly<Record<string, string>>, calls: Call[], timeouts: Array<number | undefined> = []): ProcessAdapter {
   return {
-    run: async (command, args) => {
+    run: async (command, args, options) => {
       if (command !== "gh") return failed(`${command} unavailable`);
       calls.push(args);
+      timeouts.push(options?.timeoutMs);
       if (args[0] === "auth") return ok({ stdout: "", stderr: "Logged in", exitCode: 0 });
       const key = args.slice(0, 2).join(" ");
       const answer = answers[key];
@@ -74,5 +75,36 @@ describe("repo github", () => {
   test("--orgs with invalid JSON from gh is an error", async () => {
     const result = await route(["repo", "github", "--orgs", "--json"], { environment: env, processAdapter: fakeGh({ "api user": "not json", "api user/orgs": "[]" }, []) });
     expect(result).toMatchObject({ kind: "failed", error: "gh api returned invalid JSON" });
+  });
+
+  test("bounds GitHub requests and fetches account and organisations concurrently", async () => {
+    const calls: Call[] = [];
+    const timeouts: Array<number | undefined> = [];
+    let active = 0;
+    let maximum = 0;
+    const process: ProcessAdapter = {
+      run: async (command, args, options) => {
+        if (command !== "gh") return failed(`${command} unavailable`);
+        calls.push(args);
+        timeouts.push(options?.timeoutMs);
+        if (args[0] === "auth") return ok({ stdout: "", stderr: "Logged in", exitCode: 0 });
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active -= 1;
+        const value = args[1] === "user"
+          ? { login: "operator" }
+          : [{ login: "acme" }];
+        return ok({ stdout: JSON.stringify(value), stderr: "", exitCode: 0 });
+      },
+      startDetached: async () => failed("unexpected detached process"),
+      invocationCount: () => calls.length,
+    };
+
+    const result = json<unknown[]>(await route(["repo", "github", "--orgs", "--json"], { environment: env, processAdapter: process }));
+
+    expect(result).toHaveLength(2);
+    expect(maximum).toBe(2);
+    expect(timeouts).toEqual([2_000, 2_000, 2_000]);
   });
 });
