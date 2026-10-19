@@ -134,6 +134,11 @@ async function megabrainUsage(environment: Environment, stateDir: string, option
   const dayOf = dayReader(options.timeZone);
   const today = dayOf(options.now.toISOString()) ?? "";
   const from = options.days === null ? null : rangeStart(today, options.days);
+  const nextDay = (day: string) => new Date(Date.parse(`${day}T00:00:00.000Z`) + 86_400_000).toISOString();
+  const bounds = from === null ? null : [
+    new Date(Date.parse(`${from}T00:00:00.000Z`) - 86_400_000).toISOString(),
+    new Date(Date.parse(`${nextDay(today)}`) + 86_400_000).toISOString(),
+  ] as const;
   const inRange = (timestamp: string) => {
     const day = dayOf(timestamp);
     return day !== null && (from === null || day >= from) && day <= today;
@@ -141,8 +146,8 @@ async function megabrainUsage(environment: Environment, stateDir: string, option
   const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return null;
   const rows = read(database.value, ({ db }) => db.query<{ created_at: string | null; ended_at: string | null }>(
-    `SELECT d.created_at, (SELECT MAX(m.created_at) FROM messages m WHERE m.dispatch_id = d.id AND m."from" = 'child') AS ended_at FROM dispatches d WHERE d.created_at IS NOT NULL`,
-  ).all());
+    `SELECT d.created_at, (SELECT MAX(m.created_at) FROM messages m WHERE m.dispatch_id = d.id AND m."from" = 'child') AS ended_at FROM dispatches d WHERE d.created_at IS NOT NULL${bounds === null ? "" : " AND d.created_at >= ? AND d.created_at < ?"}`,
+  ).all(...(bounds ?? [])));
   if (rows.kind !== "ok") return null;
   let dispatches = 0;
   let agentSeconds = 0;
