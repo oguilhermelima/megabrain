@@ -15,6 +15,7 @@ import { answeredItems, otherRepository } from '@/tasks/board-model'
 import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
 import { boardSheetFields } from '@/tasks/BoardFilterBar'
 import { Chips, ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
+import { ItemPanel, type FieldWrite } from '@/tasks/ItemPanel'
 import { cardChips, editedItems, groupField, laneField, optionOf, projectViews, readViewPrefs, shownView, sortedItems, swimlanes, viewColumns, writeViewPrefs, type CardChip, type PendingEdit, type ViewColumn } from '@/tasks/board-view'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
@@ -217,7 +218,7 @@ function ItemIcon({ item }: { item: GithubProjectItem }) {
   )
 }
 
-function Card({ item, repo, chips, moving, onPointerDown, onOpen, onMenu }: { item: GithubProjectItem; repo: string; chips: readonly CardChip[]; moving: boolean; onPointerDown: (event: PointerEvent<HTMLElement>) => void; onOpen: (() => void) | null; onMenu: (event: MouseEvent<HTMLElement>) => void }) {
+function Card({ item, repo, chips, moving, onPointerDown, onOpen, onMenu }: { item: GithubProjectItem; repo: string; chips: readonly CardChip[]; moving: boolean; onPointerDown: (event: PointerEvent<HTMLElement>) => void; onOpen: () => void; onMenu: (event: MouseEvent<HTMLElement>) => void }) {
   const other = otherRepository(item, repo)
   return (
     <li onPointerDown={onPointerDown} onContextMenu={onMenu} className={`group relative cursor-grab space-y-2 rounded-[14px] border border-white/[0.07] bg-ink-850 px-3 py-2.5 transition-opacity select-none active:cursor-grabbing ${moving ? 'opacity-40' : ''}`}>
@@ -226,13 +227,9 @@ function Card({ item, repo, chips, moving, onPointerDown, onOpen, onMenu }: { it
         {other !== null && <span className="min-w-0 truncate">{other}</span>}
         {item.number !== null && <span className="shrink-0 tabular-nums">#{item.number}</span>}
       </div>
-      {onOpen === null ? (
-        <p className="text-[13px] leading-snug font-semibold text-ink-100">{item.title}</p>
-      ) : (
-        <button type="button" onClick={onOpen} className="block text-left text-[13px] leading-snug font-semibold text-ink-100 hover:underline focus-visible:outline-2 focus-visible:outline-accent">
-          {item.title}
-        </button>
-      )}
+      <button type="button" onClick={onOpen} className="block text-left text-[13px] leading-snug font-semibold text-ink-100 hover:underline focus-visible:outline-2 focus-visible:outline-accent">
+        {item.title}
+      </button>
       {chips.length > 0 && (
         <div className="flex flex-wrap items-center gap-1">
           <Chips chips={chips} />
@@ -391,15 +388,41 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   }
   const { drag, start, swallowClick } = useCardDrag(move)
 
-  const opener = (item: GithubProjectItem): (() => void) | null => {
-    const inApp = item.type !== 'DRAFT_ISSUE' && item.number !== null && otherRepository(item, repo) === null
-    const url = item.url
-    if (!inApp && url === null) return null
-    return () => {
-      if (swallowClick()) return
-      if (inApp && item.number !== null) onOpenGithub(item.type === 'PULL_REQUEST' ? 'pr' : 'issue', item.number)
-      else if (url !== null) void openOnGithub(url)
-    }
+  /** The app's own detail for an issue or pull request of this repository; null for a draft or another repository's item. */
+  const detailOf = (item: GithubProjectItem): (() => void) | null => {
+    const number = item.number
+    if (item.type === 'DRAFT_ISSUE' || number === null || otherRepository(item, repo) !== null) return null
+    return () => onOpenGithub(item.type === 'PULL_REQUEST' ? 'pr' : 'issue', number)
+  }
+  // A card opens the side panel; the click a drag ends with does not.
+  const [selected, setSelected] = useState<string | null>(null)
+  const [writing, setWriting] = useState(false)
+  const opener = (item: GithubProjectItem) => () => {
+    if (!swallowClick()) setSelected(item.id)
+  }
+  /** One write from the side panel at a time: GitHub's answer replaces the item, a refusal leaves it and says why. */
+  const write = (item: GithubProjectItem, what: string, run: () => Promise<GithubProjectItem | null>) => {
+    setWriting(true)
+    run().then(
+      (answered) => {
+        if (answered !== null) answer(answered)
+        setWriting(false)
+      },
+      (cause: unknown) => {
+        setWriting(false)
+        setToast({ id: `write-${Date.now()}`, text: `Couldn’t ${what} “${item.title}”: ${cause instanceof Error ? cause.message : String(cause)}` })
+      },
+    )
+  }
+  const setField = (item: GithubProjectItem, { field, type, value }: FieldWrite) => write(item, `set ${field.name} on`, () => (field.id === board.statusField?.id ? api.githubProjectMove(root, board.number, item.id, value, board.owner) : api.githubProjectSetField(root, board.number, item.id, field.name, type, value, board.owner)))
+  const clearField = (item: GithubProjectItem, name: string) => write(item, `clear ${name} on`, () => api.githubProjectClearField(root, board.number, item.id, name, board.owner))
+  const archive = (item: GithubProjectItem) => {
+    const archived = item.isArchived !== true
+    write(item, archived ? 'archive' : 'restore', async () => {
+      const result = await api.githubProjectSetArchived(root, board.number, item.id, archived, board.owner)
+      if (result.isArchived) setSelected(null)
+      return { ...item, isArchived: result.isArchived }
+    })
   }
   const menuFor = (event: MouseEvent<HTMLElement>, item: GithubProjectItem, status: string | null) => {
     const moves: MenuRow[] = (field?.options ?? []).map((option) => ({ label: `Move to ${option.name}`, disabled: option.id === status, onSelect: () => move(item, option.id) }))
@@ -410,7 +433,8 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
 
   // The view's filter goes through the data layer's GitHub evaluator; the sheet's filters narrow what it matches.
   const matched = useMemo(() => (items === null ? null : query.trim() === '' ? { items, warnings: [] } : api.githubProjectFilter(board, items, query)), [board, items, query])
-  const shown = matched === null ? null : sortedItems(filterBoardItems(editedItems(matched.items, pending), { ...filters, query: '' }), board, view)
+  // An archived item leaves the board, as on GitHub.
+  const shown = matched === null ? null : sortedItems(filterBoardItems(editedItems(matched.items.filter((item) => item.isArchived !== true), pending), { ...filters, query: '' }), board, view)
   const columns = shown === null || field === null ? [] : viewColumns(field, shown)
   const noStatus = columns.find((column) => column.id === null)?.items.length ?? 0
   const sheetFields = boardSheetFields(filters, options, filter, field === null ? null : { on: showNoStatus, count: noStatus, onChange: setNoStatus })
@@ -419,6 +443,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
     <Card key={item.id} item={item} repo={repo} chips={cardChips(item, board, view, [field?.name ?? '', lane?.name ?? ''])} moving={moving.has(item.id) || drag?.item.id === item.id} onPointerDown={(event) => start(event, item)} onOpen={opener(item)} onMenu={(event) => menuFor(event, item, field === null ? null : optionOf(item, field))} />
   )
 
+  const panelItem = selected === null || items === null ? undefined : editedItems(items, pending).find((item) => item.id === selected)
   const laneMenu = (event: MouseEvent<HTMLElement>) => {
     const ids = shown === null || lane === null ? [] : swimlanes(lane, shown).map((entry) => entry.id ?? '')
     openMenu(event, [[{ label: 'Collapse all', onSelect: () => setCollapsedLanes(new Set(ids)) }, { label: 'Expand all', onSelect: () => setCollapsedLanes(new Set()) }]])
@@ -476,7 +501,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
           error === null && <SkeletonRows count={4} />
         ) : view?.layout === 'TABLE_LAYOUT' ? (
           <div className={`min-h-0 flex-1 overflow-auto border-t ${pageDivider} ${pageX} pb-5`}>
-            <ViewTable project={board} view={view} items={shown} onOpen={(item) => opener(item)?.()} />
+            <ViewTable project={board} view={view} items={shown} onOpen={(item) => setSelected(item.id)} />
           </div>
         ) : field === null ? (
           <div className={`min-h-0 flex-1 overflow-y-auto border-t ${pageDivider} pt-3 pb-5`}>
@@ -519,6 +544,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
         )}
         <ContextMenu menu={menu} onClose={closeMenu} />
       </div>
+      {panelItem !== undefined && <ItemPanel key={panelItem.id} item={panelItem} project={board} busy={writing} onSet={(entry) => setField(panelItem, entry)} onClear={(entry) => clearField(panelItem, entry.name)} onArchive={() => archive(panelItem)} onOpenDetail={detailOf(panelItem)} onClose={() => setSelected(null)} />}
       <FilterPanel sheet={sheet} fields={sheetFields} />
       <Toast toast={toast} onClose={closeToast} />
     </div>
