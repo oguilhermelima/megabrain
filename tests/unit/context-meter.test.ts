@@ -173,6 +173,16 @@ describe("Grok session updates", () => {
     expect(await readContextMeter({ agent: "grok", agentSessionId: sessionId, agentCwd: cwd, contextWindow: 256000 }, home)).toEqual({ status: "unknown" });
     expect(await readContextMeter({ agent: "grok", agentSessionId: "other", agentCwd: cwd, contextWindow: 256000 }, home)).toEqual({ status: "unknown" });
   });
+
+  test("reads Grok's context usage from the auto-compaction ACP update", async () => {
+    await put(updates, [{ method: "_x.ai/session/update", params: { update: { sessionUpdate: "auto_compact_started", tokens_used: 205610, context_window: 256000 } } }]);
+    expect(await readContextMeter({ agent: "grok", agentSessionId: sessionId, agentCwd: cwd }, home)).toEqual({
+      status: "known",
+      usedTokens: 205610,
+      percentUsed: 80.3,
+      sourceFrame: "grok session usage: 205610/256000 tokens",
+    });
+  });
 });
 
 test("agy and unknown agents have no structured source and stay unknown", async () => {

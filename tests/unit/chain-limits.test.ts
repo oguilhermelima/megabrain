@@ -143,6 +143,7 @@ describe("grok usage limits", () => {
       auth(home, new Date(Date.now() + 3_600_000).toISOString());
       const process = fakeProcess(() => ok({ stdout: body, stderr: "", exitCode: 0 }));
       expect(await readLimit("grok", "5h", live("grok"), { GROK_HOME: home }, process, home)).toMatchObject({ status: "unknown" });
+      expect(process.calls).toHaveLength(0);
     });
   });
 

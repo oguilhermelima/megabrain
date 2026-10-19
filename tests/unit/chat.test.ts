@@ -46,10 +46,10 @@ const processAdapter: ProcessAdapter = {
   invocationCount() { return 0; },
 };
 
-function call(args: readonly string[], env: ReturnType<typeof sandbox>) {
+function call(args: readonly string[], env: ReturnType<typeof sandbox>, adapter: ProcessAdapter = processAdapter) {
   return route(args, {
     environment: { HOME: env.root, MEGABRAIN_STATE_DIR: env.state, PATH: `${env.bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}`, CHAT_CAPTURE: env.capture, CHAT_USAGE_FIXTURE: join(process.cwd(), "tests/fixtures/chat-codex-usage.jsonl") },
-    processAdapter,
+    processAdapter: adapter,
   });
 }
 
@@ -498,6 +498,68 @@ rl.on("line", (line) => {
       const queue = await call(["chat", "queue", "list", chat.id, "--json"], env);
       expect(queue.kind).toBe("ok");
       if (queue.kind === "ok") expect(JSON.parse(queue.value)).toEqual([expect.objectContaining({ parts: [{ type: "text", text: "second" }] })]);
+    } finally { await daemon.close(); }
+  });
+
+  test("starts a Grok chat with the model the CLI marks as its default", async () => {
+    const env = sandbox();
+    fakeGrok(env.bin, `
+const readline = require("node:readline");
+const { appendFileSync } = require("node:fs");
+const rl = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\\n");
+rl.on("line", (line) => {
+  const request = JSON.parse(line); appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify(request) + "\\n");
+  if (request.method === "initialize") send({ id: request.id, result: {} });
+  if (request.method === "session/new") send({ id: request.id, result: { sessionId: "default-model-session" } });
+  if (request.id !== undefined && request.method !== "initialize" && request.method !== "session/new") send({ id: request.id, result: {} });
+});
+`);
+    const daemon = await socketDaemon(env);
+    const adapter: ProcessAdapter = {
+      async run(command) { return command === "grok" ? { kind: "ok", value: { stdout: "Default model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n", stderr: "", exitCode: 0 } } : failed(`${command} unavailable`); },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return 1; },
+    };
+    try {
+      const started = await call(["chat", "start", "--agent", "grok", "--cwd", env.cwd, "--json"], env, adapter);
+      expect(started.kind).toBe("ok");
+      if (started.kind !== "ok") return;
+      expect(JSON.parse(started.value)).toMatchObject({ model: "grok-4.7" });
+      await waitForChat((JSON.parse(started.value) as Chat).id, "idle", env);
+      expect(readFileSync(env.capture, "utf8")).toContain('"configId":"model","value":{"value":"grok-4.7"}');
+    } finally { await daemon.close(); }
+  });
+
+  test("shows ACP plan updates as update_plan tool calls", async () => {
+    const env = sandbox();
+    fakeGrok(env.bin, `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\\n");
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") send({ id: request.id, result: {} });
+  if (request.method === "session/new") send({ id: request.id, result: { sessionId: "plan-session" } });
+  if (request.method === "session/prompt") {
+    send({ method: "session/update", params: { sessionId: "plan-session", update: { sessionUpdate: "plan", entries: [{ content: "Inspect the flow", status: "in_progress" }] } } });
+    send({ method: "session/update", params: { sessionId: "plan-session", update: { sessionUpdate: "plan", entries: [{ content: "Inspect the flow", status: "completed" }, { content: "Fix the issue", status: "in_progress" }] } } });
+    send({ id: request.id, result: { stopReason: "end_turn" } });
+  } else if (request.id !== undefined) send({ id: request.id, result: {} });
+});
+`);
+    const daemon = await socketDaemon(env);
+    try {
+      const started = await call(["chat", "start", "--agent", "grok", "--cwd", env.cwd, "--parts", JSON.stringify([{ type: "text", text: "hello" }]), "--json"], env);
+      expect(started.kind).toBe("ok");
+      if (started.kind !== "ok") return;
+      const chat = JSON.parse(started.value) as Chat;
+      await waitForChat(chat.id, "idle", env);
+      const stored = await call(["chat", "events", chat.id, "--json"], env);
+      const lines = stored.kind === "ok" ? stored.value.trim().split("\n").map((line) => JSON.parse(line) as { event?: { kind: string; tool?: { name?: string; input?: string } } }) : [];
+      const calls = lines.flatMap((line) => line.event?.kind === "tool-call" && line.event.tool?.name === "update_plan" ? [line.event] : []);
+      expect(calls).toHaveLength(2);
+      expect(JSON.parse(calls[1]?.tool?.input ?? "{}")).toEqual([{ content: "Inspect the flow", status: "completed" }, { content: "Fix the issue", status: "in_progress" }]);
     } finally { await daemon.close(); }
   });
 

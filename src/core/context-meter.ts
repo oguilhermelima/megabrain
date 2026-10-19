@@ -209,6 +209,11 @@ function grokMeter(tail: string, registryWindow: number | undefined): ContextMet
   for (const entry of records(tail)) {
     const params = object(entry.params);
     const update = object(params?.update);
+    if ((entry.method === "_x.ai/session/update" || entry.method === "session/update") && update?.sessionUpdate === "auto_compact_started") {
+      const used = count(update.tokens_used);
+      const window = count(update.context_window);
+      if (used !== undefined && window !== undefined && window > 0) return measured("grok session usage", used, window);
+    }
     if (entry.method !== "_x.ai/session/update" || update?.sessionUpdate !== "turn_completed") continue;
     const used = count(object(update.usage)?.totalTokens);
     return used === undefined ? unknown : measured("grok session usage", used, registryWindow);
