@@ -139,11 +139,25 @@ async function grokHistory(home: string, cwd: string, cache: Cache): Promise<His
 
 export type AgyConversation = Readonly<{ workspace: string; title: string | null; first: number; last: number }>;
 
+type AgyIndexCacheEntry = { size: number; mtimeMs: number; ctimeMs: number; conversations: Map<string, AgyConversation> };
+const agyIndexCache = new Map<string, AgyIndexCacheEntry>();
+const AGY_INDEX_CACHE_LIMIT = 16;
+
 // agy keeps no per-folder tree; its prompt log tags every line with the workspace and conversation.
 export async function agyConversationIndex(home: string): Promise<Map<string, AgyConversation>> {
+  const path = join(home, ".gemini", "antigravity-cli", "history.jsonl");
+  let info: Awaited<ReturnType<typeof stat>>;
+  try { info = await stat(path); }
+  catch { agyIndexCache.delete(path); return new Map(); }
+  const cached = agyIndexCache.get(path);
+  if (cached !== undefined && cached.size === info.size && cached.mtimeMs === info.mtimeMs && cached.ctimeMs === info.ctimeMs) {
+    agyIndexCache.delete(path);
+    agyIndexCache.set(path, cached);
+    return new Map(cached.conversations);
+  }
   const conversations = new Map<string, { workspace: string; title: string | null; first: number; last: number }>();
   let contents: string;
-  try { contents = await readFile(join(home, ".gemini", "antigravity-cli", "history.jsonl"), "utf8"); } catch { return conversations; }
+  try { contents = await readFile(path, "utf8"); } catch { return new Map(); }
   for (const line of contents.split("\n")) {
     try {
       const entry = record(JSON.parse(line) as unknown);
@@ -159,7 +173,15 @@ export async function agyConversationIndex(home: string): Promise<Map<string, Ag
       conversations.set(id, known);
     } catch { /* Ignore partial and non-JSON lines. */ }
   }
-  return conversations;
+  const parsed = conversations as Map<string, AgyConversation>;
+  agyIndexCache.delete(path);
+  agyIndexCache.set(path, { size: info.size, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, conversations: parsed });
+  while (agyIndexCache.size > AGY_INDEX_CACHE_LIMIT) {
+    const oldest = agyIndexCache.keys().next().value;
+    if (oldest === undefined) break;
+    agyIndexCache.delete(oldest);
+  }
+  return new Map(parsed);
 }
 
 async function agyHistory(home: string, cwd: string): Promise<HistorySession[]> {
