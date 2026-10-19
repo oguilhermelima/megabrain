@@ -162,7 +162,8 @@ export async function scanProjects(options: ScanOptions): Promise<ScanResult> {
   for (const { repo, cwd, session, key, last, parent } of selected) {
     const location = await resolveLocation(cwd);
     let turns: DistillTurn[];
-    try { turns = (await readSessionTurns({ agent: session.agent as "claude" | "codex", cwd, agentSessionId: session.id }, home)).filter((turn) => turn.parentId === undefined); } catch { continue; }
+    try { turns = (await readSessionTurns({ agent: session.agent as "claude" | "codex", cwd, agentSessionId: session.id }, home)).filter((turn) => turn.parentId === undefined); }
+    catch (error) { result.errors.push(`${key}: ${error instanceof Error ? error.message : String(error)}`); continue; }
     const outcome = await pipeline.processSession({
       sessionKeys: [key], agent: session.agent, model: null, repo, cwd, branch: location.branch, worktree: location.worktree,
       startedAt: session.startedAt ?? last, endedAt: last, title: session.title, turns: turns.map((turn) => ({ kind: turn.kind, text: turn.text, at: turn.at, ...(turn.tool === undefined ? {} : { tool: turn.tool }) })),
