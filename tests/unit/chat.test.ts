@@ -517,7 +517,7 @@ rl.on("line", (line) => {
 `);
     const daemon = await socketDaemon(env);
     const adapter: ProcessAdapter = {
-      async run(command) { return command === "grok" ? { kind: "ok", value: { stdout: "Default model: grok-4.7\\n\\nAvailable models:\\n  * grok-4.7 (default)\\n  - grok-4.7-build-fast\\n", stderr: "", exitCode: 0 } } : failed(`${command} unavailable`); },
+      async run(command) { return command === "grok" ? { kind: "ok", value: { stdout: "Default model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n", stderr: "", exitCode: 0 } } : failed(`${command} unavailable`); },
       async startDetached() { return failed("not used"); },
       invocationCount() { return 1; },
     };
