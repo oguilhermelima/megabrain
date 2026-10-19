@@ -147,6 +147,18 @@ async function clearOwnComposer(root: string, meta: Meta, process: ProcessAdapte
   return (await runHostSend(host, process, call.value)).kind === "ok";
 }
 
+export async function resumeVerificationAndRecover(outboxId: string, resume: () => Promise<unknown>, recover: () => Promise<unknown>): Promise<void> {
+  try {
+    await resume();
+  } catch (cause: unknown) {
+    console.error(`could not schedule peer verification for ${outboxId}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    try { await recover(); }
+    catch (recoveryCause: unknown) {
+      console.error(`could not start peer verification recovery for ${outboxId}: ${recoveryCause instanceof Error ? recoveryCause.message : String(recoveryCause)}`);
+    }
+  }
+}
+
 export async function executeDeliveryWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter, ownerHandle?: DatabaseHandle): Promise<Result<string>> {
   const [outboxId, holder, leaseKey, deadlineValue, nestedValue] = args;
   if (!outboxId || !holder || !leaseKey || !deadlineValue) return failed("delivery worker requires outbox id, holder, lease key, and deadline", 2);
@@ -221,7 +233,11 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       acceptedAt: Date.now(), ...(transcript === undefined ? {} : { transcript, transcriptOffset }),
     });
     if (saved.kind !== "ok" || !saved.value) return;
-    await callStateOwner(root, { operation: "resume-verification", id: outboxId });
+    await resumeVerificationAndRecover(
+      outboxId,
+      () => callStateOwner(root, { operation: "resume-verification", id: outboxId }),
+      () => startSupervisorWorker(root, environment, process),
+    );
     void startSupervisorWorker(root, environment, process).catch(() => undefined);
   };
   const pointer = typeof payload.pointer === "string" ? payload.pointer : "mail: megabrain check";
