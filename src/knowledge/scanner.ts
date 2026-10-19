@@ -40,7 +40,7 @@ export type ScanOptions = {
 };
 
 export type ScanProjectPlan = { repo: string; inHorizon: number; older: number; estimatedCalls: number };
-export type ScanResult = { scanned: string[]; processed: number; projects: ScanProjectPlan[] };
+export type ScanResult = { scanned: string[]; processed: number; projects: ScanProjectPlan[]; errors: string[] };
 
 /** A project is looked at back this far the first time the scanner sees it. */
 export const LOOKBACK_DAYS = 7;
@@ -75,7 +75,11 @@ function storeHorizon(stateDir: string, repo: string, horizon: string): void {
 type Candidate = { repo: string; cwd: string; session: HistorySession; key: string; last: string; at: number; parent: string | undefined };
 
 function gitWorktrees(repo: string): Promise<string[]> {
-  return new Promise((done) => execFile("git", ["worktree", "list", "--porcelain"], { cwd: repo, timeout: 5000 }, (error, out) => done(error === null ? out.split("\n").filter((line) => line.startsWith("worktree ")).map((line) => resolve(line.slice(9))) : [])));
+  return new Promise((resolveResult, reject) => execFile("git", ["worktree", "list", "--porcelain"], { cwd: repo, timeout: 5000 }, (error, out, stderr) => {
+    if (error !== null && typeof stderr === "string" && stderr.includes("not a git repository")) { resolveResult([]); return; }
+    if (error !== null) { reject(new Error(`git worktree list failed: ${error.message}`, { cause: error })); return; }
+    resolveResult(out.split("\n").filter((line) => line.startsWith("worktree ")).map((line) => resolve(line.slice(9))));
+  }));
 }
 
 /** The registered repositories, read from the state database. */
@@ -109,12 +113,15 @@ export async function scanProjects(options: ScanOptions): Promise<ScanResult> {
   const { stateDir, home, environment, pipeline } = options;
   const now = options.now ?? (() => new Date());
   const links = options.dispatchLinks ?? dispatchSessionLinks(environment);
-  const result: ScanResult = { scanned: [], processed: 0, projects: [] };
+  const result: ScanResult = { scanned: [], processed: 0, projects: [], errors: [] };
   const candidates: Candidate[] = [];
   const plans = new Map<string, ScanProjectPlan>();
   for (const repo of options.projects ?? registeredProjects(environment)) {
     const toggles = togglesFor(stateDir, repo);
     if (!toggles.summaries || !toggles.topics || !toggles.sessions) continue;
+    let folders: string[];
+    try { folders = [...new Set([repo, ...await (options.worktrees ?? gitWorktrees)(repo)])]; }
+    catch (error) { result.errors.push(`${repo}: ${error instanceof Error ? error.message : String(error)}`); continue; }
     result.scanned.push(repo);
     let horizon = scanHorizon(stateDir, repo);
     if (horizon === null) {
@@ -125,7 +132,6 @@ export async function scanProjects(options: ScanOptions): Promise<ScanResult> {
     const plan: ScanProjectPlan = { repo, inHorizon: 0, older: 0, estimatedCalls: 0 };
     plans.set(repo, plan);
     const project = openProject(stateDir, repo);
-    const folders = [...new Set([repo, ...await (options.worktrees ?? gitWorktrees)(repo)])];
     for (const cwd of folders) {
       for (const session of await sessionHistory(cwd, undefined, { home, stateDir, limit: 10_000 })) {
         if (!READABLE.includes(session.agent)) continue;
@@ -156,7 +162,8 @@ export async function scanProjects(options: ScanOptions): Promise<ScanResult> {
   for (const { repo, cwd, session, key, last, parent } of selected) {
     const location = await resolveLocation(cwd);
     let turns: DistillTurn[];
-    try { turns = (await readSessionTurns({ agent: session.agent as "claude" | "codex", cwd, agentSessionId: session.id }, home)).filter((turn) => turn.parentId === undefined); } catch { continue; }
+    try { turns = (await readSessionTurns({ agent: session.agent as "claude" | "codex", cwd, agentSessionId: session.id }, home)).filter((turn) => turn.parentId === undefined); }
+    catch (error) { result.errors.push(`${key}: ${error instanceof Error ? error.message : String(error)}`); continue; }
     const outcome = await pipeline.processSession({
       sessionKeys: [key], agent: session.agent, model: null, repo, cwd, branch: location.branch, worktree: location.worktree,
       startedAt: session.startedAt ?? last, endedAt: last, title: session.title, turns: turns.map((turn) => ({ kind: turn.kind, text: turn.text, at: turn.at, ...(turn.tool === undefined ? {} : { tool: turn.tool }) })),

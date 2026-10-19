@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -171,6 +172,48 @@ describe("listing, searching, showing", () => {
     expect(entry).toBeDefined();
     expect(await showEntry(w.state, entry?.id ?? "")).toMatchObject({ id: entry?.id, text: "only one", branch: "feat/login" });
     expect(await showEntry(w.state, "nope")).toBeNull();
+  });
+
+  test("reuses unchanged summary files, reads appended entries, and keeps historical search", async () => {
+    const w = world();
+    const chatId = await seed(w, w.repo, ["old searchable decision"], { title: "Old" });
+    const path = join(w.state, "chats", chatId, "summaries.jsonl");
+    const original = fs.readFileSync;
+    let summaryReads = 0;
+    const read = spyOn(fs, "readFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+      if (String(file) === path) summaryReads += 1;
+      return Reflect.apply(original, fs, [file, ...args]) as ReturnType<typeof fs.readFileSync>;
+    }) as typeof fs.readFileSync);
+    const originalOpen = fs.openSync;
+    const originalRead = fs.readSync;
+    const summaryDescriptors = new Set<number>();
+    let appendedBytesRead = 0;
+    const opened = spyOn(fs, "openSync").mockImplementation(((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+      const descriptor = Reflect.apply(originalOpen, fs, [file, ...args]) as number;
+      if (String(file) === path) summaryDescriptors.add(descriptor);
+      return descriptor;
+    }) as typeof fs.openSync);
+    const readBytes = spyOn(fs, "readSync").mockImplementation(((descriptor: number, ...args: unknown[]) => {
+      const bytes = Reflect.apply(originalRead, fs, [descriptor, ...args]) as number;
+      if (summaryDescriptors.has(descriptor)) appendedBytesRead += bytes;
+      return bytes;
+    }) as typeof fs.readSync);
+    try {
+      expect((await searchEntries(w.state, "old searchable", {})).results.map((entry) => entry.text)).toEqual(["old searchable decision"]);
+      const readsAfterFirstSearch = summaryReads;
+      expect(readsAfterFirstSearch).toBe(1);
+      expect((await searchEntries(w.state, "old searchable", {})).results).toHaveLength(1);
+      expect(summaryReads).toBe(readsAfterFirstSearch);
+      expect(appendedBytesRead).toBe(0);
+
+      const appendedAt = at();
+      const appended = `${JSON.stringify({ id: randomUUID(), chatId, repo: w.repo, project: "api", worktree: w.repo, branch: "main", agent: "claude", createdAt: appendedAt, updatedAt: appendedAt, title: "New", text: "new indexed decision", model: "haiku", userTurns: 2 })}\n`;
+      appendFileSync(path, appended);
+      expect((await searchEntries(w.state, "new indexed", {})).results.map((entry) => entry.text)).toEqual(["new indexed decision"]);
+      expect(summaryReads).toBe(readsAfterFirstSearch);
+      expect(appendedBytesRead).toBe(Buffer.byteLength(appended));
+      expect((await searchEntries(w.state, "old searchable", {})).results.map((entry) => entry.text)).toEqual(["old searchable decision"]);
+    } finally { readBytes.mockRestore(); opened.mockRestore(); read.mockRestore(); }
   });
 
   test("the summaries verbs print the contract JSON and fail on bad usage", async () => {

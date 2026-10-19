@@ -84,12 +84,19 @@ export function searchSummaries(stateDir: string, text: string): SummaryIndexEnt
   if (needle === "") return [];
   return Object.values(readIndex(stateDir))
     .filter((entry) => existsSync(join(stateDir, "chats", entry.chatId, "chat.json")))
-    .map((entry) => {
-      // A rename after the summary changes the title; the record is the truth.
-      try { const record = JSON.parse(readFileSync(join(stateDir, "chats", entry.chatId, "chat.json"), "utf8")) as Chat; return { ...entry, title: record.title }; } catch { return entry; }
-    })
     .filter((entry) => [entry.project, entry.branch ?? "", entry.title ?? "", entry.summary].some((field) => field.toLowerCase().includes(needle)))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/** Keeps search titles current when a person renames a chat after it was summarized. */
+export function updateSummaryTitle(stateDir: string, chatId: string, title: string | null): void {
+  const index = readIndex(stateDir);
+  const entry = index[chatId];
+  if (entry === undefined || entry.title === title) return;
+  const target = indexPath(stateDir);
+  const temporary = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify({ ...index, [chatId]: { ...entry, title } })}\n`, { mode: 0o600 });
+  renameSync(temporary, target);
 }
 
 function gitBranch(cwd: string): Promise<string | null> {

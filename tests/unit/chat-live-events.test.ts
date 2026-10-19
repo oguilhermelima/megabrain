@@ -61,6 +61,16 @@ async function run(rows = stream) {
   return { h, chat, watcher };
 }
 
+async function runUntilAssistant(rows: string[]) {
+  const h = await harness(rows);
+  const chat = await h.daemon.handle({ operation: "start", agent: "claude", cwd: h.cwd }) as Chat;
+  const watcher = follow(h.state, chat.id);
+  await until(() => watcher.events().some((e) => e.kind === "state"), "state event on follow start");
+  await h.daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "go" }] });
+  await until(() => watcher.events().some((e) => e.kind === "assistant"), "final assistant");
+  return { h, chat, watcher };
+}
+
 describe("live chat events", () => {
   test("sends deltas grouped by message id and never stores them", async () => {
     const { h, chat, watcher } = await run();
@@ -110,7 +120,7 @@ describe("live chat events", () => {
 
   // Claude 5 streams thinking chunks but its complete message keeps only the block's signature.
   test("a thinking block with only a signature stores no thinking, and its tool call names no message", async () => {
-    const { h, chat, watcher } = await run(recorded("chat-claude-empty-thinking-stream.jsonl"));
+    const { h, chat, watcher } = await runUntilAssistant(recorded("chat-claude-empty-thinking-stream.jsonl"));
     try {
       const events = watcher.events();
       expect(events.filter((e) => e.kind === "delta" && e.stream === "thinking").map((e) => [e.messageId, e.text])).toEqual([["msg_01", "Checking the folder."]]);

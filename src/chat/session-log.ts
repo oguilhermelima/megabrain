@@ -372,8 +372,8 @@ const LOCAL_COMMAND = /^<(?:command-name|command-message|local-command-[a-z]+)>/
  * assistant message that stops for any reason but a tool call, a turn_duration line, or an interruption note;
  * Codex brackets each turn with task_started and task_complete or turn_aborted.
  */
-export function sessionTurnOpen(agent: Chat["agent"], content: string): boolean {
-  let open = false;
+export function sessionTurnOpen(agent: Chat["agent"], content: string, initialOpen = false): boolean {
+  let open = initialOpen;
   for (const row of records(content)) {
     if (agent === "agy") {
       if (row.type === "USER_INPUT" && row.status === "DONE") open = true;

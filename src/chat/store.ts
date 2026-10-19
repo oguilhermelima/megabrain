@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, appendFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, appendFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -31,6 +31,8 @@ export type Chat = {
   owner?: "chat" | "terminal" | "none";
   /** Last complete byte read from the agent's session log while its TUI owned the conversation. */
   terminalLogCursor?: { byteOffset: number; lastMessageId: string | null };
+  /** Whether the most recently read complete terminal log row leaves a turn open. */
+  terminalTurnOpen?: boolean;
   agentSessionId: string | null;
   createdAt: string;
   lastActivityAt: string | null;
@@ -58,6 +60,7 @@ export type QueuedChatMessage = { id: string; parts: ({ type: "text"; text: stri
 export type ChatLine = { cursor: string; chat?: Chat; event?: ChatEvent; approval?: ChatApproval; queue?: QueuedChatMessage[] };
 
 function safeId(id: string): boolean { return /^[a-f\d-]{36}$/i.test(id); }
+const CHAT_CACHE_LIMIT = 128;
 
 export class ChatStore {
   readonly chatsDir: string;
@@ -65,6 +68,16 @@ export class ChatStore {
   private readonly turnIds = new Map<string, Map<string, string>>();
   private readonly lastUsers = new Map<string, string>();
   constructor(readonly stateDir: string) { this.chatsDir = join(stateDir, "chats"); }
+
+  private cacheSet<T>(cache: Map<string, T>, id: string, value: T): void {
+    cache.delete(id);
+    cache.set(id, value);
+    while (cache.size > CHAT_CACHE_LIMIT) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  }
 
   async initialize(): Promise<void> { await mkdir(this.chatsDir, { recursive: true, mode: 0o700 }); await chmod(this.chatsDir, 0o700); }
   dir(id: string): string { if (!safeId(id)) throw new Error("invalid chat id"); return join(this.chatsDir, id); }
@@ -119,9 +132,9 @@ export class ChatStore {
     const line: ChatLine = { cursor: String(count + 1), event, ...(approval ? { approval } : {}) };
     await appendFile(file, `${JSON.stringify(line)}\n`, { mode: 0o600 });
     await chmod(file, 0o600);
-    if (event.kind === "user") this.lastUsers.set(id, event.id);
+    if (event.kind === "user") this.cacheSet(this.lastUsers, id, event.id);
     if (event.kind === "user" && event.turnId !== undefined) await this.recordTurnId(id, event.id, event.turnId);
-    this.counts.set(id, count + 1);
+    this.cacheSet(this.counts, id, count + 1);
     return line;
   }
 
@@ -132,9 +145,9 @@ export class ChatStore {
     const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, normalized.map((line) => JSON.stringify(line)).join("\n") + (normalized.length ? "\n" : ""), { mode: 0o600 });
     await rename(temporary, file);
-    this.counts.set(id, normalized.length);
+    this.cacheSet(this.counts, id, normalized.length);
     const lastUser = normalized.flatMap((line) => line.event?.kind === "user" ? [line.event.id] : []).at(-1);
-    if (lastUser === undefined) this.lastUsers.delete(id); else this.lastUsers.set(id, lastUser);
+    if (lastUser === undefined) this.lastUsers.delete(id); else this.cacheSet(this.lastUsers, id, lastUser);
     await this.replaceTurnIds(id, normalized);
   }
 
@@ -146,7 +159,7 @@ export class ChatStore {
 
   private async turnIdMap(id: string): Promise<Map<string, string>> {
     const cached = this.turnIds.get(id);
-    if (cached) return cached;
+    if (cached) { this.cacheSet(this.turnIds, id, cached); return cached; }
     const map = new Map<string, string>();
     try {
       const content = await readFile(this.turnIdsPath(id), "utf8");
@@ -155,7 +168,7 @@ export class ChatStore {
         if (typeof value.eventId === "string" && typeof value.turnId === "string") map.set(value.eventId, value.turnId);
       }
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-    this.turnIds.set(id, map);
+    this.cacheSet(this.turnIds, id, map);
     return map;
   }
 
@@ -172,22 +185,68 @@ export class ChatStore {
     const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
     await writeFile(temporary, records.map((record) => JSON.stringify(record)).join("\n") + (records.length ? "\n" : ""), { mode: 0o600 });
     await rename(temporary, file);
-    this.turnIds.set(id, new Map(records.map((record) => [record.eventId, record.turnId])));
+    this.cacheSet(this.turnIds, id, new Map(records.map((record) => [record.eventId, record.turnId])));
   }
 
   /** Drops what is cached for a chat whose files were deleted. */
   forget(id: string): void { this.counts.delete(id); this.turnIds.delete(id); this.lastUsers.delete(id); }
 
   async events(id: string, since = 0): Promise<ChatLine[]> {
+    if (since > 0 && this.counts.has(id)) {
+      const saved = await this.eventsAfter(id, since);
+      const turnIds = await this.turnIdMap(id);
+      return saved.map((line) => this.attachTurnId(id, line, turnIds));
+    }
     let content: string;
     try { content = await readFile(this.eventsPath(id), "utf8"); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
     const turnIds = await this.turnIdMap(id);
-    return content.split("\n").filter(Boolean).map((line) => {
-      const saved = JSON.parse(line) as ChatLine;
-      if (saved.event?.kind === "user") this.lastUsers.set(id, saved.event.id);
-      const turnId = saved.event?.kind === "user" ? turnIds.get(saved.event.id) : undefined;
-      return turnId === undefined || saved.event === undefined || saved.event.turnId !== undefined ? saved : { ...saved, event: { ...saved.event, turnId } };
-    }).filter((line) => Number(line.cursor) > since);
+    const lines = content.split("\n").filter(Boolean).map((line) => JSON.parse(line) as ChatLine);
+    this.cacheSet(this.counts, id, lines.reduce((count, line) => Math.max(count, Number(line.cursor) || 0), 0));
+    return lines.filter((line) => Number(line.cursor) > since).map((line) => this.attachTurnId(id, line, turnIds));
+  }
+
+  private attachTurnId(id: string, line: ChatLine, turnIds: Map<string, string>): ChatLine {
+    if (line.event?.kind === "user") this.cacheSet(this.lastUsers, id, line.event.id);
+    const turnId = line.event?.kind === "user" ? turnIds.get(line.event.id) : undefined;
+    return turnId === undefined || line.event === undefined || line.event.turnId !== undefined ? line : { ...line, event: { ...line.event, turnId } };
+  }
+
+  private async eventsAfter(id: string, since: number): Promise<ChatLine[]> {
+    const file = await open(this.eventsPath(id), "r").catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw error;
+    });
+    if (file === null) return [];
+    try {
+      const size = (await file.stat()).size;
+      const blockSize = 64 * 1024;
+      let end = size;
+      let carry = "";
+      let firstBlock = true;
+      let foundCursor = false;
+      const newer: ChatLine[] = [];
+      while (end > 0 && !foundCursor) {
+        const start = Math.max(0, end - blockSize);
+        const buffer = Buffer.alloc(end - start);
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, start);
+        const parts = `${buffer.subarray(0, bytesRead).toString("utf8")}${carry}`.split("\n");
+        carry = parts.shift() ?? "";
+        if (firstBlock) { parts.pop(); firstBlock = false; }
+        for (let index = parts.length - 1; index >= 0; index -= 1) {
+          const value = parts[index];
+          if (value === undefined || value === "") continue;
+          const line = JSON.parse(value) as ChatLine;
+          if (Number(line.cursor) === since) { foundCursor = true; break; }
+          if (Number(line.cursor) > since) newer.push(line);
+        }
+        end = start;
+      }
+      if (end === 0 && !foundCursor && carry !== "") {
+        const line = JSON.parse(carry) as ChatLine;
+        if (Number(line.cursor) > since) newer.push(line);
+      }
+      return newer.reverse();
+    } finally { await file.close(); }
   }
 }

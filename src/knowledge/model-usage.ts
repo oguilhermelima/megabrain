@@ -1,13 +1,22 @@
-import { appendFileSync, closeSync, fstatSync, linkSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 export type ModelCallKind = "summary" | "curator" | "title";
 export class ModelBudgetExceeded extends Error { constructor() { super("daily model-call budget reached"); this.name = "ModelBudgetExceeded"; } }
 export type ModelCall = { id: string; time: string; kind: ModelCallKind; project: string; session: string; agent: string; model: string; inputChars: number; outputChars: number; status: "pending" | "ok" | "error" };
 const ledger = (stateDir: string) => join(stateDir, "knowledge", "model-calls.jsonl");
+const ledgerDays = (stateDir: string) => join(stateDir, "knowledge", "model-calls");
+const RETENTION_DAYS = 90;
 
-function rows(stateDir: string): ModelCall[] {
-  try { return readFileSync(ledger(stateDir), "utf8").split("\n").filter(Boolean).flatMap((line, index) => { try { const value = JSON.parse(line) as Partial<ModelCall>; return [{ ...value, id: value.id ?? `legacy-${index}`, status: value.status ?? "ok" } as ModelCall]; } catch { return []; } }); } catch { return []; }
+function parseRows(content: string): ModelCall[] {
+  return content.split("\n").filter(Boolean).flatMap((line, index) => { try { const value = JSON.parse(line) as Partial<ModelCall>; return [{ ...value, id: value.id ?? `legacy-${index}`, status: value.status ?? "ok" } as ModelCall]; } catch { return []; } });
+}
+
+function rows(stateDir: string, day?: string): ModelCall[] {
+  try {
+    const path = day === undefined ? ledger(stateDir) : join(ledgerDays(stateDir), `${day}.jsonl`);
+    return parseRows(readFileSync(path, "utf8"));
+  } catch { return []; }
 }
 
 function localDay(at: Date): string { return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`; }
@@ -59,7 +68,79 @@ async function withLedgerLock<T>(root: string, action: () => T): Promise<T> {
   }
 }
 
-function append(root: string, row: ModelCall): void { appendFileSync(join(root, "model-calls.jsonl"), `${JSON.stringify(row)}\n`, { mode: 0o600 }); }
+function withLedgerLockSync(root: string, action: () => void): boolean {
+  const lock = join(root, "model-calls.lock");
+  let descriptor: number;
+  try { descriptor = openSync(lock, "wx", 0o600); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    try {
+      const observed = statSync(lock);
+      const pid = Number(readFileSync(lock, "utf8"));
+      if (Date.now() - observed.mtimeMs > 60_000 || Number.isSafeInteger(pid) && pid > 0 && !alive(pid)) {
+        const claim = `${lock}.${process.pid}.${crypto.randomUUID()}.stale`;
+        try {
+          linkSync(lock, claim);
+          const claimed = statSync(claim), current = statSync(lock);
+          if (claimed.dev === current.dev && claimed.ino === current.ino) unlinkSync(lock);
+        } catch (claimError) {
+          if ((claimError as NodeJS.ErrnoException).code !== "ENOENT" && (claimError as NodeJS.ErrnoException).code !== "EEXIST") throw claimError;
+        } finally { try { unlinkSync(claim); } catch { /* already removed */ } }
+        descriptor = openSync(lock, "wx", 0o600);
+      } else return false;
+    } catch (readError) {
+      if ((readError as NodeJS.ErrnoException).code === "ENOENT") return withLedgerLockSync(root, action);
+      if ((readError as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw readError;
+    }
+  }
+  try {
+    writeSync(descriptor, String(process.pid));
+    action();
+    return true;
+  } finally {
+    const owned = fstatSync(descriptor);
+    closeSync(descriptor);
+    try { const current = statSync(lock); if (current.dev === owned.dev && current.ino === owned.ino) unlinkSync(lock); } catch { /* another process reclaimed it */ }
+  }
+}
+
+function migrateLedger(stateDir: string, now: Date): void {
+  const directory = ledgerDays(stateDir);
+  if (statDirectory(directory)) return;
+  const temporary = `${directory}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  mkdirSync(temporary, { recursive: true, mode: 0o700 });
+  const cutoff = localDay(new Date(now.getTime() - (RETENTION_DAYS - 1) * 86_400_000));
+  const retained = rows(stateDir).filter((row) => localDay(new Date(row.time)) >= cutoff);
+  const grouped = new Map<string, ModelCall[]>();
+  for (const row of retained) {
+    const day = localDay(new Date(row.time));
+    const entries = grouped.get(day) ?? [];
+    entries.push(row);
+    grouped.set(day, entries);
+  }
+  for (const [day, entries] of grouped) writeFileSync(join(temporary, `${day}.jsonl`), `${entries.map((row) => JSON.stringify(row)).join("\n")}\n`, { mode: 0o600 });
+  renameSync(temporary, directory);
+  try { writeFileSync(ledger(stateDir), retained.map((row) => JSON.stringify(row)).join("\n") + (retained.length === 0 ? "" : "\n"), { mode: 0o600 }); } catch { /* the day files are authoritative after migration */ }
+}
+
+function statDirectory(path: string): boolean {
+  try { return statSync(path).isDirectory(); } catch { return false; }
+}
+
+function pruneLedger(stateDir: string, now: Date): void {
+  const cutoff = localDay(new Date(now.getTime() - (RETENTION_DAYS - 1) * 86_400_000));
+  for (const name of readdirSync(ledgerDays(stateDir))) {
+    const day = name.slice(0, -".jsonl".length);
+    if (name.endsWith(".jsonl") && /^\d{4}-\d{2}-\d{2}$/.test(day) && day < cutoff) unlinkSync(join(ledgerDays(stateDir), name));
+  }
+}
+
+function append(root: string, row: ModelCall): void {
+  const directory = join(root, "model-calls");
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  appendFileSync(join(directory, `${localDay(new Date(row.time))}.jsonl`), `${JSON.stringify(row)}\n`, { mode: 0o600 });
+}
 function callsOnDay(entries: ModelCall[], day: string): Map<string, ModelCall> {
   const calls = new Map<string, ModelCall>();
   for (const row of entries) {
@@ -79,13 +160,15 @@ export async function trackedModelCall<T>(options: { stateDir: string; dailyLimi
   const id = crypto.randomUUID();
   const reservation: ModelCall = { id, time: now.toISOString(), kind: options.kind, project: options.project, session: options.session, agent: options.agent, model: options.model, inputChars: options.prompt.length, outputChars: 0, status: "pending" };
   await withLedgerLock(root, () => {
-    if (callsOnDay(rows(stateDir), localDay(now)).size >= options.dailyLimit && options.force !== true) throw new ModelBudgetExceeded();
+    migrateLedger(stateDir, now);
+    pruneLedger(stateDir, now);
+    if (callsOnDay(rows(stateDir, localDay(now)), localDay(now)).size >= options.dailyLimit && options.force !== true) throw new ModelBudgetExceeded();
     append(root, reservation);
   });
   let result: T | undefined, failure: unknown, failed = false;
   try { result = await options.call(); } catch (error) { failure = error; failed = true; }
   const completion: ModelCall = { ...reservation, outputChars: failed ? 0 : options.outputChars?.(result as T) ?? (typeof result === "string" ? result.length : 0), status: failed ? "error" : "ok" };
-  await withLedgerLock(root, () => append(root, completion));
+  await withLedgerLock(root, () => { migrateLedger(stateDir, now); append(root, completion); });
   if (failed) throw failure;
   return result as T;
 }
@@ -94,7 +177,15 @@ export function modelUsage(stateDir: string, days = 7, now = new Date()): { days
   const cutoff = new Date(now.getTime() - Math.max(0, days - 1) * 86_400_000);
   const from = localDay(cutoff), today = localDay(now);
   const grouped = new Map<string, ModelCall[]>();
-  for (const row of rows(stateDir)) {
+  if (!statDirectory(ledgerDays(stateDir))) {
+    const root = join(stateDir, "knowledge");
+    mkdirSync(root, { recursive: true, mode: 0o700 });
+    withLedgerLockSync(root, () => { migrateLedger(stateDir, now); pruneLedger(stateDir, now); });
+  }
+  const dayFiles = statDirectory(ledgerDays(stateDir))
+    ? readdirSync(ledgerDays(stateDir)).filter((name) => name.endsWith(".jsonl")).map((name) => name.slice(0, -".jsonl".length)).filter((day) => day >= from && day <= today).flatMap((day) => rows(stateDir, day))
+    : rows(stateDir);
+  for (const row of dayFiles) {
     const day = localDay(new Date(row.time));
     if (day < from || day > today) continue;
     const entries = grouped.get(day) ?? [];

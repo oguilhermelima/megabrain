@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -60,6 +61,26 @@ afterEach(async () => {
 });
 
 describe("app terminal records", () => {
+  test("keeps concurrent updates from separate processes", async () => {
+    const stateDir = await mkdtemp(`${tmpdir()}/megabrain-app-state-`);
+    const modulePath = `${import.meta.dir}/../../src/core/app-terminals.ts`;
+    const script = `const { recordAppTerminal } = require(${JSON.stringify(modulePath)}); process.stdout.write("ready\\n"); process.stdin.once("data", () => { for (let i = 0; i < 12; i += 1) recordAppTerminal(process.argv[1], process.argv[2] + "-" + i, { title: "shell", command: "", cwd: "/work", createdAt: "2026-10-15T10:00:00.000Z" }); });`;
+    const children = Array.from({ length: 8 }, (_, index) => spawn(globalThis.process.execPath, ["-e", script, stateDir, `worker-${index}`], { stdio: ["pipe", "pipe", "pipe"] }));
+    const readiness = children.map((child) => new Promise<void>((resolve, reject) => {
+      let output = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; if (output.includes("ready\n")) resolve(); });
+      child.once("error", reject);
+      child.once("exit", (code) => { if (code !== 0) reject(new Error(`registry writer exited ${code}: ${output}`)); });
+    }));
+    await Promise.all(readiness);
+    for (const child of children) child.stdin.end("go");
+    await Promise.all(children.map((child) => new Promise<void>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`registry writer exited ${code}`)));
+    })));
+    expect(Object.keys(readAppTerminals(stateDir))).toHaveLength(96);
+  });
+
   test("records the title and command at creation and reads them back", async () => {
     const stateDir = await mkdtemp(`${tmpdir()}/megabrain-app-state-`);
     recordAppTerminal(stateDir, "mb-app-one", { title: "claude", command: "claude --resume x", cwd: "/work", createdAt: "2026-10-15T10:00:00.000Z" });

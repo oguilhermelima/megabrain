@@ -121,7 +121,7 @@ async function untilChatdGone(stateDir: string): Promise<void> {
   }
 }
 
-export type ChatdStatus = Readonly<{ running: false } | { running: true; compatible: boolean; pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[] }>;
+export type ChatdStatus = Readonly<{ running: false } | { running: true; compatible: boolean; pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[]; terminalRefreshError?: string }>;
 
 /** The running chatd as it reports itself; never starts one. */
 export async function chatdStatus(stateDir: string): Promise<ChatdStatus> {
@@ -137,7 +137,7 @@ export async function chatdStatus(stateDir: string): Promise<ChatdStatus> {
   const min = typeof status.protocol === "number" ? version : Number(protocol.min);
   const max = typeof status.protocol === "number" ? version : Number(protocol.max);
   const range = { version, min, max };
-  return { running: true, compatible: protocolCompatible(range), pid: Number(status.pid), protocol: range, daemonVersion: typeof status.daemonVersion === "string" ? status.daemonVersion : "unknown", superseded: status.superseded === true, liveChats: Number(status.liveChats ?? 0), build: Number(status.build), draining: status.draining === true, working: Array.isArray(status.working) ? status.working.filter((id): id is string => typeof id === "string") : [] };
+  return { running: true, compatible: protocolCompatible(range), pid: Number(status.pid), protocol: range, daemonVersion: typeof status.daemonVersion === "string" ? status.daemonVersion : "unknown", superseded: status.superseded === true, liveChats: Number(status.liveChats ?? 0), build: Number(status.build), draining: status.draining === true, working: Array.isArray(status.working) ? status.working.filter((id): id is string => typeof id === "string") : [], ...(typeof status.terminalRefreshError === "string" ? { terminalRefreshError: status.terminalRefreshError } : {}) };
 }
 
 function protocolCompatible(protocol: { min: number; max: number }): boolean {

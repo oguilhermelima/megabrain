@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyCuratorOutput, candidateTopics } from "../../src/knowledge/curator.js";
@@ -63,6 +64,19 @@ describe("knowledge store", () => {
     expect(project.chatBySession("claude:S1")?.id).toBe("c1");
     expect(project.chatBySession("claude:other")).toBeNull();
     expect(project.transcript("c1")).toEqual(LINES);
+  });
+
+  test("reuses an unchanged transcript between reads", () => {
+    const { project } = workspace();
+    project.writeTranscript("c1", LINES);
+    const path = join(project.dir, "chats", "c1", "transcript.jsonl");
+    writeFileSync(path, LINES.map((line) => JSON.stringify(line)).join("\n") + "\n");
+    const spy = spyOn(fs, "readFileSync");
+    try {
+      expect(project.transcript("c1")).toEqual(LINES);
+      expect(project.transcript("c1")).toEqual(LINES);
+      expect(spy.mock.calls.filter(([file]) => file === path)).toHaveLength(1);
+    } finally { spy.mockRestore(); }
   });
 });
 

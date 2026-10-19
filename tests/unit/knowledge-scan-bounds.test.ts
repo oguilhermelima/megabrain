@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { scanHorizon, scanProjects } from "../../src/knowledge/scanner.js";
 import { effectiveToggles, readKnowledgeSettings } from "../../src/knowledge/settings.js";
 import { openProject } from "../../src/knowledge/store.js";
 import { defaultSummarySettings } from "../../src/chat/summaries.js";
+import * as sessionLog from "../../src/chat/session-log.js";
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -50,6 +51,39 @@ function claudeLog(h: Harness, id: string, last: Date, texts: string[] = ["make 
 }
 
 describe("scan horizon", () => {
+  test("reports a transcript read failure while continuing the scan", async () => {
+    const h = harness();
+    claudeLog(h, "BROKEN", ago(1));
+    const spy = spyOn(sessionLog, "readSessionTurns").mockImplementation(async () => { throw new Error("permission denied"); });
+    try {
+      const result = await h.scan();
+      expect(result.processed).toBe(0);
+      expect(result.errors).toEqual(["claude:BROKEN: permission denied"]);
+    } finally { spy.mockRestore(); }
+  });
+
+  test("a non-Git project is scanned without linked worktrees", async () => {
+    const h = harness();
+    claudeLog(h, "LOCAL", ago(1));
+    const result = await h.scan({ dryRun: true });
+    expect(result.scanned).toEqual([h.repo]);
+    expect(result.projects[0]).toMatchObject({ repo: h.repo, inHorizon: 1 });
+  });
+
+  test("a failed worktree listing records that project error and continues with other projects", async () => {
+    const h = harness();
+    const other = join(h.root, "other-repo");
+    mkdirSync(other);
+    claudeLog(h, "GOOD", ago(1));
+    const result = await h.scan({
+      projects: [other, h.repo], dryRun: true,
+      worktrees: async (repo) => { if (repo === other) throw new Error("git worktree list failed"); return []; },
+    });
+    expect(result.errors).toEqual([`${other}: git worktree list failed`]);
+    expect(result.projects.map((project) => project.repo)).toEqual([h.repo]);
+    expect(result.projects[0]).toMatchObject({ inHorizon: 1 });
+  });
+
   test("the first scan of a project sets its horizon to now minus seven days and takes only newer sessions", async () => {
     const h = harness();
     claudeLog(h, "OLD", ago(30));

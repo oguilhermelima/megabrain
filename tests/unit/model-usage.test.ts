@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ModelBudgetExceeded, trackedModelCall } from "../../src/knowledge/model-usage.js";
+import { ModelBudgetExceeded, modelUsage, trackedModelCall } from "../../src/knowledge/model-usage.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -45,5 +45,35 @@ describe("tracked model-call reservations", () => {
     const lock = join(root, "model-calls.lock"); writeFileSync(lock, "999999999");
     const old = new Date(Date.now() - 61_000); utimesSync(lock, old, old);
     await expect(trackedModelCall(options(stateDir, async () => "ok"))).resolves.toBe("ok");
+  });
+
+  test("prunes ledger rows outside the accounting retention window", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "megabrain-model-usage-")); roots.push(stateDir);
+    const root = join(stateDir, "knowledge"); mkdirSync(root);
+    const now = new Date("2026-10-19T12:00:00.000Z");
+    const old = { id: "old", time: "2026-06-01T12:00:00.000Z", kind: "summary", project: "repo", session: "old", agent: "claude", model: "test", inputChars: 1, outputChars: 1, status: "ok" };
+    const recent = { ...old, id: "recent", time: "2026-10-09T12:00:00.000Z", session: "recent" };
+    const path = join(root, "model-calls.jsonl");
+    writeFileSync(path, `${JSON.stringify(old)}\n${JSON.stringify(recent)}\n`);
+
+    await trackedModelCall({ ...options(stateDir, async () => "ok"), now: () => now });
+
+    const entries = readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { id: string });
+    expect(entries.map((entry) => entry.id)).not.toContain("old");
+    expect(entries.map((entry) => entry.id)).toContain("recent");
+    expect(modelUsage(stateDir, 7, now).budgetUsed).toBe(1);
+  });
+
+  test("migrates a legacy ledger before producing a usage report", () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "megabrain-model-usage-")); roots.push(stateDir);
+    const root = join(stateDir, "knowledge"); mkdirSync(root);
+    const now = new Date("2026-10-19T12:00:00.000Z");
+    const old = { id: "old", time: "2026-06-01T12:00:00.000Z", kind: "summary", project: "repo", session: "old", agent: "claude", model: "test", inputChars: 1, outputChars: 1, status: "ok" };
+    const recent = { ...old, id: "recent", time: "2026-10-18T12:00:00.000Z", session: "recent" };
+    writeFileSync(join(root, "model-calls.jsonl"), `${JSON.stringify(old)}\n${JSON.stringify(recent)}\n`);
+
+    expect(modelUsage(stateDir, 7, now).days).toHaveLength(1);
+    expect(existsSync(join(root, "model-calls", "2026-10-18.jsonl"))).toBe(true);
+    expect(readFileSync(join(root, "model-calls.jsonl"), "utf8")).not.toContain("\"id\":\"old\"");
   });
 });

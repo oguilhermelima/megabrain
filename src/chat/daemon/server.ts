@@ -46,6 +46,7 @@ export async function start(daemon: ChatDaemon): Promise<void> {
     await chmod(chatPid(daemon.stateDir), 0o600);
     await daemon.resumeDrained();
     daemon.startKnowledge();
+    await daemon.syncTerminalPolling();
   }
 
 export async function handle(daemon: ChatDaemon, request: Request, socket?: Socket): Promise<unknown> {
@@ -74,6 +75,7 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
     };
     await daemon.save(chat);
+    await daemon.syncTerminalPolling();
     await daemon.publish(chat, event("system", `Started ${agent} chat`));
     const queue = daemon.queues.get(chat.id) ?? [];
     if (parts.length > 0) { queue.push(parts); daemon.queues.set(chat.id, queue); await daemon.publish(chat, event("user", firstText(parts), undefined, withImages(parts))); }
@@ -134,11 +136,11 @@ export async function liveChats(daemon: ChatDaemon): Promise<number> {
     return live;
   }
 
-export async function daemonStatus(daemon: ChatDaemon): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[] }> {
+export async function daemonStatus(daemon: ChatDaemon): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[]; terminalRefreshError?: string }> {
     const working = (await daemon.store.list()).filter((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval")).map((chat) => chat.id);
     let liveChats = 0;
     for (const chat of await daemon.store.list()) if (chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval" || (await daemon.loadQueue(chat.id)).length > 0)) liveChats += 1;
-    return { pid: process.pid, protocol: { version: daemon.protocol, min: CHAT_PROTOCOL_MIN_VERSION, max: daemon.protocol }, daemonVersion: daemon.version, superseded: daemon.superseded, liveChats, build: daemon.build, draining: daemon.draining, working };
+    return { pid: process.pid, protocol: { version: daemon.protocol, min: CHAT_PROTOCOL_MIN_VERSION, max: daemon.protocol }, daemonVersion: daemon.version, superseded: daemon.superseded, liveChats, build: daemon.build, draining: daemon.draining, working, ...(daemon.terminalRefreshError === null ? {} : { terminalRefreshError: daemon.terminalRefreshError }) };
   }
 
 export async function drainDaemon(daemon: ChatDaemon): Promise<{ drained: true; waitedMs: number; resumes: string[] }> {
@@ -260,14 +262,5 @@ export async function listen(daemon: ChatDaemon): Promise<void> {
       });
       daemon.server.once("error", reject);
       daemon.server.listen(socketPath, () => { void chmod(socketPath, 0o600).then(resolve, reject); });
-      const poll = timeoutMs(daemon.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
-      let refreshing = false;
-      daemon.terminalTimer = setInterval(() => {
-        if (refreshing || daemon.closed) return;
-        refreshing = true;
-        const task = daemon.refreshTerminalChats().catch(() => undefined).finally(() => { refreshing = false; });
-        daemon.terminalRefresh = task;
-      }, poll);
-      daemon.terminalTimer.unref?.();
     });
   }

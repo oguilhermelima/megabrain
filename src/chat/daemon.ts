@@ -187,6 +187,7 @@ export class ChatDaemon {
   terminalTimer: ReturnType<typeof setInterval> | undefined;
   terminalRefresh: Promise<void> | undefined;
   terminalRefreshTask: Promise<void> | undefined;
+  terminalRefreshError: string | null = null;
   /** Each terminal-mode chat's log as last read (size and mtime), so an unchanged idle log is not parsed again. */
   readonly terminalLogs = new Map<string, string>();
   readonly terminalHandoffs = new Set<string>();
@@ -201,6 +202,35 @@ export class ChatDaemon {
   constructor(readonly stateDir: string, readonly environment: Environment = process.env, readonly protocol: number = CHAT_PROTOCOL_VERSION, readonly build: number = chatBuild()) { this.appControl = new AppControlBroker(timeoutMs(environment.MEGABRAIN_APP_CONTROL_TIMEOUT_MS, 5000)); this.store = new ChatStore(stateDir); this.knowledge = new KnowledgePipeline({ stateDir, environment }); this.summarizer = new ChatSummarizer({ store: this.store, stateDir, environment, pipeline: this.knowledge, emit: (chat, value) => this.publish(chat, value), alive: (id) => !this.removed.has(id) }); }
 
 async start(): Promise<void> { return await startImpl(this); }
+
+  /** Runs terminal refresh polling while a terminal-mode chat or TUI owner needs refresh. */
+  async syncTerminalPolling(): Promise<void> {
+    const needsPolling = (await this.store.list()).some((chat) => chat.mode === "terminal" || chat.owner === "terminal");
+    if (needsPolling && this.terminalTimer === undefined && !this.closed) {
+      const poll = timeoutMs(this.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
+      let refreshing = false;
+      let refreshPending = false;
+      const refresh = () => {
+        if (this.closed) return;
+        if (refreshing) { refreshPending = true; return; }
+        refreshing = true;
+        const task = this.refreshTerminalChats().catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (this.terminalRefreshError !== message) process.stderr.write(`chat terminal refresh failed: ${message}\n`);
+          this.terminalRefreshError = message;
+        }).finally(() => {
+          refreshing = false;
+          if (refreshPending && !this.closed) { refreshPending = false; refresh(); }
+        });
+        this.terminalRefresh = task;
+      };
+      this.terminalTimer = setInterval(refresh, poll);
+      this.terminalTimer.unref?.();
+    } else if (!needsPolling && this.terminalTimer !== undefined) {
+      clearInterval(this.terminalTimer);
+      this.terminalTimer = undefined;
+    }
+  }
 
   /**
    * The knowledge base reads sessions from outside the app too. A minute after start the summaries already on disk are curated once
@@ -233,7 +263,7 @@ async busy(): Promise<boolean> { return await busyImpl(this); }
 
 async liveChats(): Promise<number> { return await liveChatsImpl(this); }
 
-async daemonStatus(): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[] }> { return await daemonStatusImpl(this); }
+async daemonStatus(): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[]; terminalRefreshError?: string }> { return await daemonStatusImpl(this); }
 
   /**
    * Gets out of the way of a newer chatd without stopping anyone's turn: every running turn finishes (however long

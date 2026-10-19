@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { basename, dirname, join, sep } from "node:path";
 import type { Chat } from "./store.js";
 import type { SummaryEntry, SummaryIndexEntry } from "./summaries.js";
 
@@ -38,11 +38,59 @@ function readJson<T>(path: string): T | null {
 }
 
 type Stored = Partial<SummaryEntry> & { text: string; updatedAt: string };
+type SummaryFileCache = { chatId: string; size: number; mtimeMs: number; dev: number; ino: number; endsWithNewline: boolean; entries: Stored[] };
+const SUMMARY_CACHE_LIMIT = 128;
+const summaryFileCache = new Map<string, SummaryFileCache>();
+
+function parseContent(content: string): Stored[] {
+  return content.split("\n").filter(Boolean).flatMap((line) => { try { return [JSON.parse(line) as Stored]; } catch { return []; } });
+}
+
+function rememberSummaryFile(path: string, info: Stats, content: string, entries: Stored[]): Stored[] {
+  summaryFileCache.delete(path);
+  summaryFileCache.set(path, { chatId: basename(dirname(path)), size: info.size, mtimeMs: info.mtimeMs, dev: info.dev, ino: info.ino, endsWithNewline: content.endsWith("\n"), entries });
+  while (summaryFileCache.size > SUMMARY_CACHE_LIMIT) {
+    const oldest = summaryFileCache.keys().next().value;
+    if (oldest === undefined) break;
+    summaryFileCache.delete(oldest);
+  }
+  return entries;
+}
+
+function appendedContent(path: string, start: number, end: number): string {
+  const descriptor = openSync(path, "r");
+  try {
+    const bytes = Buffer.alloc(end - start);
+    let read = 0;
+    while (read < bytes.length) {
+      const count = readSync(descriptor, bytes, read, bytes.length - read, start + read);
+      if (count === 0) break;
+      read += count;
+    }
+    return bytes.subarray(0, read).toString("utf8");
+  } finally { closeSync(descriptor); }
+}
 
 function parseLines(path: string): Stored[] {
-  let content: string;
-  try { content = readFileSync(path, "utf8"); } catch { return []; }
-  return content.split("\n").filter(Boolean).flatMap((line) => { try { return [JSON.parse(line) as Stored]; } catch { return []; } });
+  let info: Stats;
+  try { info = statSync(path); } catch { summaryFileCache.delete(path); return []; }
+  const cached = summaryFileCache.get(path);
+  if (cached !== undefined && cached.size === info.size && cached.mtimeMs === info.mtimeMs && cached.dev === info.dev && cached.ino === info.ino) {
+    summaryFileCache.delete(path);
+    summaryFileCache.set(path, cached);
+    return cached.entries;
+  }
+  if (cached !== undefined && cached.dev === info.dev && cached.ino === info.ino && info.size > cached.size && cached.endsWithNewline) {
+    const appended = appendedContent(path, cached.size, info.size);
+    return rememberSummaryFile(path, info, appended, [...cached.entries, ...parseContent(appended)]);
+  }
+  const content = readFileSync(path, "utf8");
+  return rememberSummaryFile(path, info, content, parseContent(content));
+}
+
+function dropRemovedChatCaches(stateDir: string, chatIds: ReadonlySet<string>): void {
+  const prefix = `${join(stateDir, "chats")}${sep}`;
+  for (const [path, cached] of summaryFileCache) if (path.startsWith(prefix) && !chatIds.has(cached.chatId)) summaryFileCache.delete(path);
 }
 
 /** Gives every entry written before branches existed its chat, repo, project, worktree and branch, once. Returns how many it changed. */
@@ -66,6 +114,7 @@ export async function migrateSummaries(stateDir: string): Promise<number> {
     const temporary = `${path}.${process.pid}.tmp`;
     writeFileSync(temporary, `${next.map((entry) => JSON.stringify(entry)).join("\n")}\n`, { mode: 0o600 });
     renameSync(temporary, path);
+    summaryFileCache.delete(path);
   }
   return migrated;
 }
@@ -73,7 +122,9 @@ export async function migrateSummaries(stateDir: string): Promise<number> {
 /** Every entry of every chat, newest first. */
 export async function allEntries(stateDir: string): Promise<SummaryEntry[]> {
   await migrateSummaries(stateDir);
-  const entries = chatDirectories(stateDir).flatMap((chatId) => parseLines(join(stateDir, "chats", chatId, "summaries.jsonl")).filter((entry) => entry.id !== undefined) as SummaryEntry[]);
+  const chats = chatDirectories(stateDir);
+  dropRemovedChatCaches(stateDir, new Set(chats));
+  const entries = chats.flatMap((chatId) => parseLines(join(stateDir, "chats", chatId, "summaries.jsonl")).filter((entry) => entry.id !== undefined) as SummaryEntry[]);
   return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 

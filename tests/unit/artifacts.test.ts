@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectId, resolveProject } from "../../src/knowledge/project-id.js";
@@ -116,6 +117,21 @@ describe("artifact formats", () => {
 });
 
 describe("the artifact store", () => {
+  test("loads one historical revision without parsing the full revision log", async () => {
+    const w = world();
+    const created = await createArtifact(w.state, { title: "History", kind: "plan", content: "revision 0", format: "markdown", project: w.repo, topics: [] });
+    expect(created.kind).toBe("ok");
+    if (created.kind !== "ok") return;
+    for (let index = 1; index <= 30; index += 1) await updateArtifact(w.state, created.value.id, { content: `revision ${index}`, format: "markdown" });
+    const path = join(w.state, "knowledge", projectId(w.repo), "artifacts", created.value.id, "revisions.jsonl");
+    const spy = spyOn(fs, "readFileSync");
+    try {
+      const revision = await showArtifact(w.state, created.value.id, 1);
+      expect(revision?.content).toBe("revision 0");
+      expect(spy.mock.calls.filter(([file]) => file === path)).toHaveLength(0);
+    } finally { spy.mockRestore(); }
+  });
+
   test("create writes artifact.json and index.html under the project's knowledge folder, fonts stripped", async () => {
     const w = world();
     const created = await createArtifact(w.state, { title: "Store layout", kind: "diagram", content: diagram, format: "html", project: w.repo, topics: ["topic-a"], chatId: "chat-1" });
