@@ -198,6 +198,7 @@ export function cancelQueuedMessage(handle: DatabaseHandle, dispatchId: string, 
           return item.targetKind === "child-delivery" && payload.sequence === sequence;
         });
       }
+      if (outbox?.status === "sent") return { kind: "refused" as const, message: `queued item ${itemId} was already sent` };
       if (outbox?.status === "sending") return { kind: "refused" as const, message: `queued item ${itemId} is currently being delivered` };
       const now = new Date().toISOString();
       const updated = db.run("UPDATE deliveries SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, delivery.id]);
