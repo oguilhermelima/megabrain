@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readOnlyStateDatabase, stateDatabase } from "../../src/adapters/state-db.js";
@@ -147,6 +147,27 @@ describe("usage stats across providers", () => {
     const report = await usageStats(environment, { days: 2, provider: "codex", now, timeZone });
     expect(report.scan.files).toBe(1);
     expect(report.scan.parsed).toBe(1);
+  });
+
+  test("does not parse a log whose modification time predates the requested range", async () => {
+    const { home, environment } = sandbox();
+    const old = join(home, ".codex", "sessions", "2020", "01", "01", "old.jsonl");
+    mkdirSync(join(old, ".."), { recursive: true });
+    cpSync(codexLog, old);
+    const oldTime = new Date("2020-01-01T00:00:00Z");
+    utimesSync(old, oldTime, oldTime);
+    const report = await usageStats(environment, { days: 2, provider: "codex", now, timeZone });
+    expect(report.scan).toMatchObject({ files: 1, parsed: 1 });
+    expect(report.totals.total).toBe(21300);
+  });
+
+  test("keeps in-range entries from a recent multi-day log", async () => {
+    const { home, environment } = sandbox();
+    const recent = join(home, ".claude", "projects", "-work-api", "5f1c-session.jsonl");
+    const recentTime = new Date("2026-10-16T12:00:00Z");
+    utimesSync(recent, recentTime, recentTime);
+    const report = await usageStats(environment, { days: 2, provider: "claude", now, timeZone });
+    expect(report.totals.total).toBe(110);
   });
 
   test("no logs at all is an empty report, not an error", async () => {
