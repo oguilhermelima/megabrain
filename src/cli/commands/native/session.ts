@@ -20,6 +20,7 @@ export const APPIUM_SESSION_DEFAULTS = {
   "appium:isHeadless": true,
   "appium:newCommandTimeout": 60,
 } as const;
+export const APPIUM_REQUEST_TIMEOUT_MS = 10_000;
 export function appiumSessionCapabilities(platform: NativePlatform, udid: string, bundleId: string): Record<string, string | boolean | number> {
   return { platformName: platform, ...APPIUM_SESSION_DEFAULTS, "appium:udid": udid, "appium:bundleId": bundleId };
 }
@@ -93,7 +94,7 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
   if (initialSnapshot.kind !== "ok") return failed(`could not read native session store: ${initialSnapshot.error}`);
   const initiallyRecorded = nativeSessionFor(initialSnapshot.value, key);
   if (initiallyRecorded !== undefined) {
-    const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${initiallyRecorded.sessionId}`]);
+    const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${initiallyRecorded.sessionId}`], { timeoutMs: APPIUM_REQUEST_TIMEOUT_MS });
     if (probe.kind === "ok") return ok({ session: { sessionId: initiallyRecorded.sessionId, stored: true } });
   }
 
@@ -109,7 +110,7 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
   const sessionId = created.value;
   const sessionUrl = `http://127.0.0.1:4723/session/${sessionId}`;
   const discardCreated = async (): Promise<string | undefined> => {
-    const removed = await processAdapter.run("curl", ["-fsS", "-X", "DELETE", sessionUrl]);
+    const removed = await processAdapter.run("curl", ["-fsS", "-X", "DELETE", sessionUrl], { timeoutMs: APPIUM_REQUEST_TIMEOUT_MS });
     return removed.kind === "ok" ? undefined : `could not delete losing Appium session ${sessionId}: ${removed.error}`;
   };
 
@@ -121,7 +122,7 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
     }
     const current = nativeSessionFor(snapshot.value, key);
     if (current !== undefined && current.sessionId !== initiallyRecorded?.sessionId) {
-      const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${current.sessionId}`]);
+      const probe = await processAdapter.run("curl", ["-fsS", `http://127.0.0.1:4723/session/${current.sessionId}`], { timeoutMs: APPIUM_REQUEST_TIMEOUT_MS });
       if (probe.kind === "ok") {
         const latest = store.read();
         if (latest.kind !== "ok") {
