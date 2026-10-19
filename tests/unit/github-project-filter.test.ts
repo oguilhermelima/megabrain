@@ -15,7 +15,7 @@ describe('GitHub project filters', () => {
   })
   test('handles presence, content kind, assignee, label, repository and title text', () => {
     expect(evaluateProjectFilter('no:status', items).items.map((i) => i.id)).toEqual(['I3'])
-    expect(evaluateProjectFilter('has:assignee is:open assignee:@me', items).items.map((i) => i.id)).toEqual(['I1'])
+    expect(evaluateProjectFilter('has:assignee is:open assignee:@me', items, { me: 'me' }).items.map((i) => i.id)).toEqual(['I1'])
     expect(evaluateProjectFilter('is:pr repo:other/repo label:bug docs', items).items.map((i) => i.id)).toEqual(['I2'])
     expect(evaluateProjectFilter('is:draft', items).items.map((i) => i.id)).toEqual(['I3'])
   })
@@ -23,5 +23,10 @@ describe('GitHub project filters', () => {
     expect(evaluateProjectFilter('estimate:>3', items).items.map((i) => i.id)).toEqual(['I1'])
     expect(evaluateProjectFilter('updated:>@today-7d', items, { today: '2026-10-19' }).items.map((i) => i.id)).toEqual(['I1'])
     expect(evaluateProjectFilter('bogus:value', items).warnings).toContain('bogus:value')
+  })
+  test('leaves @me filters visible and warns when the current login is unavailable', () => {
+    const result = evaluateProjectFilter('assignee:@me', items)
+    expect(result.items).toHaveLength(items.length)
+    expect(result.warnings).toEqual(['assignee:@me'])
   })
 })
