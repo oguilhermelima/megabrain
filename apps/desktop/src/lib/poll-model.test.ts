@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { deviceCatalogPolicy, devicesPolicy, githubCountsPolicy, mapLimited, planPoll, projectsPolicy, quickViewPolicy, retryDelay, statusPolicy, type PollPolicy } from '@/lib/poll-model'
+import { boardItemsPolicy, deviceCatalogPolicy, devicesPolicy, githubCountsPolicy, mapLimited, planPoll, projectsPolicy, quickViewPolicy, retryDelay, statusPolicy, type PollPolicy } from '@/lib/poll-model'
 
 const policy: PollPolicy = { visibleMs: 30_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 const hiddenToo: PollPolicy = { visibleMs: 5_000, hiddenMs: 30_000, refreshOn: { action: true, focus: true } }
@@ -111,5 +111,13 @@ describe('the Device tab inventory', () => {
     expect(deviceCatalogPolicy.visibleMs).toBeGreaterThanOrEqual(60_000)
     expect(deviceCatalogPolicy.hiddenMs).toBeNull()
     expect(planPoll(deviceCatalogPolicy, 'timer', { visible: true, now: 30_000, lastRunAt: 0 }).run).toBe(false)
+  })
+})
+
+describe('the Tasks board items', () => {
+  test('read again once a minute while the window shows, and never while it is hidden', () => {
+    expect(boardItemsPolicy.visibleMs).toBe(60_000)
+    expect(boardItemsPolicy.hiddenMs).toBeNull()
+    expect(planPoll(boardItemsPolicy, 'timer', { visible: false, now: 600_000, lastRunAt: 0 })).toEqual({ run: false, nextInMs: null })
   })
 })

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { fixtureBacklog, fixtureRoadmap, fixtureRoadmapItems } from '@/api/fixtures/github-projects'
 import type { GithubProjectItem } from '@/api/schema'
-import { boardCacheKey, boardKey, createBoardMemory, distinctItems, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
+import { boardCacheKey, boardKey, boardReadDue, createBoardMemory, distinctItems, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
 
 const item = (id: string): GithubProjectItem => ({ id, type: 'ISSUE', number: 1, title: id, url: null, state: 'OPEN', repository: 'o/r', status: null, assignees: [], labels: [], updatedAt: '2026-10-17T00:00:00.000Z' })
 const ids = (items: GithubProjectItem[]) => items.map((entry) => entry.id)
@@ -104,5 +104,14 @@ describe('the board cache in memory', () => {
     for (let board = 2; board <= keptEntries + 2; board++) memory.remember(withItems(memory.get(), `o/${board}`, [item('x')], board))
     expect(Object.keys(memory.get().items)).toHaveLength(keptEntries)
     expect(memory.get().items['o/1']).toBeUndefined()
+  })
+})
+
+describe('when a board is read again', () => {
+  test('a board read within the last minute is not read again unless asked', () => {
+    expect(boardReadDue(undefined, 1_000, false)).toBe(true)
+    expect(boardReadDue(1_000, 30_000, false)).toBe(false)
+    expect(boardReadDue(1_000, 30_000, true)).toBe(true)
+    expect(boardReadDue(1_000, 61_000, false)).toBe(true)
   })
 })
