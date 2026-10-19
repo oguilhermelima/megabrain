@@ -102,8 +102,29 @@ async function rolloutPaths(directory: string): Promise<string[]> {
   return nested.flat();
 }
 
+type RolloutPathCacheEntry = { expiresAt: number; paths?: string[]; pending?: Promise<string[]> };
+const rolloutPathCache = new Map<string, RolloutPathCacheEntry>();
+
+async function cachedRolloutPaths(home: string): Promise<string[]> {
+  const directory = join(home, ".codex", "sessions");
+  const cached = rolloutPathCache.get(directory);
+  if (cached?.pending !== undefined) return cached.pending;
+  if (cached?.paths !== undefined && cached.expiresAt > Date.now()) return cached.paths;
+  const pending = rolloutPaths(directory).then((paths) => {
+    rolloutPathCache.set(directory, { expiresAt: Date.now() + 1000, paths });
+    while (rolloutPathCache.size > 8) {
+      const oldest = rolloutPathCache.keys().next().value;
+      if (oldest === undefined) break;
+      rolloutPathCache.delete(oldest);
+    }
+    return paths;
+  });
+  rolloutPathCache.set(directory, { expiresAt: 0, pending });
+  return pending;
+}
+
 async function codexHistory(home: string, cwd: string, cache: Cache): Promise<HistorySession[]> {
-  const [paths, titles] = await Promise.all([rolloutPaths(join(home, ".codex", "sessions")), codexSessionTitles(home)]);
+  const [paths, titles] = await Promise.all([cachedRolloutPaths(home), codexSessionTitles(home)]);
   const files = await parsedFiles(await listed(paths), cache, async (path) => {
     const contents = await head(path);
     for (const line of contents.split("\n")) {
