@@ -50,9 +50,26 @@ function claudeLog(h: Harness, id: string, last: Date, texts: string[] = ["make 
 }
 
 describe("scan horizon", () => {
-  test("a failed git worktree enumeration fails the scan instead of appearing empty", async () => {
+  test("a non-Git project is scanned without linked worktrees", async () => {
     const h = harness();
-    await expect(h.scan({ dryRun: true })).rejects.toThrow("git worktree list failed");
+    claudeLog(h, "LOCAL", ago(1));
+    const result = await h.scan({ dryRun: true });
+    expect(result.scanned).toEqual([h.repo]);
+    expect(result.projects[0]).toMatchObject({ repo: h.repo, inHorizon: 1 });
+  });
+
+  test("a failed worktree listing records that project error and continues with other projects", async () => {
+    const h = harness();
+    const other = join(h.root, "other-repo");
+    mkdirSync(other);
+    claudeLog(h, "GOOD", ago(1));
+    const result = await h.scan({
+      projects: [other, h.repo], dryRun: true,
+      worktrees: async (repo) => { if (repo === other) throw new Error("git worktree list failed"); return []; },
+    });
+    expect(result.errors).toEqual([`${other}: git worktree list failed`]);
+    expect(result.projects.map((project) => project.repo)).toEqual([h.repo]);
+    expect(result.projects[0]).toMatchObject({ inHorizon: 1 });
   });
 
   test("the first scan of a project sets its horizon to now minus seven days and takes only newer sessions", async () => {
