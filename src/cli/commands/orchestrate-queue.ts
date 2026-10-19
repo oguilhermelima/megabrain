@@ -2,7 +2,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { openDispatchStates } from "../../core/dispatch-states.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { ownsDispatch } from "../../core/context.js";
-import { listDeliveries, listDispatches, listMessages, listOutbox, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { listDeliveries, listDispatches, listMessages, listOutbox, listOutboxForDispatch, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { callStateOwner } from "../../db/state-owner.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { resolveCaller } from "./queue-write.js";
@@ -34,14 +34,13 @@ function itemState(outboxState: string | undefined, deliveryState: string): stri
 }
 
 export function queueItems(database: Parameters<typeof listDispatches>[0], dispatchIds: readonly string[]): Result<QueueItem[]> {
-  const outboxResult = listOutbox(database);
-  if (outboxResult.kind !== "ok") return outboxResult;
   const dispatchResult = listDispatches(database);
   if (dispatchResult.kind !== "ok") return dispatchResult;
   const dispatchRecords = new Map(dispatchResult.value.map((record) => [record.dispatchId, record]));
-  const outbox = outboxResult.value;
   const items: QueueItem[] = [];
   for (const dispatchId of dispatchIds) {
+    const outboxResult = listOutboxForDispatch(database, dispatchId);
+    if (outboxResult.kind !== "ok") return outboxResult;
     const record = dispatchRecords.get(dispatchId);
     if (record?.state === "queued") items.push({
       id: dispatchId, kind: "spawn", dispatch: dispatchId, type: "spawn", createdAt: String(record.queuedAt ?? record.createdAt ?? ""),
@@ -52,7 +51,7 @@ export function queueItems(database: Parameters<typeof listDispatches>[0], dispa
     const deliveriesResult = listDeliveries(database, dispatchId);
     if (deliveriesResult.kind !== "ok") return deliveriesResult;
     const messages = messagesResult.value;
-    const dispatchOutbox = outbox.filter((entry) => entry.dispatchId === dispatchId);
+    const dispatchOutbox = outboxResult.value;
     const associated = new Set<string>();
     for (const delivery of deliveriesResult.value) {
       if (delivery.recipient !== "child" || (delivery.status !== "outstanding" && delivery.status !== "superseded")) continue;
