@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { join } from "node:path";
@@ -288,6 +288,19 @@ describe("single state owner", () => {
       await cleanupTrackedStateOwners([root]);
       owner = undefined;
     }
+  });
+
+  test("an owner exits when the worktree build that started it disappears", async () => {
+    const executable = join(root, "worktree", ".build", "megabrain");
+    mkdirSync(join(root, "worktree", ".build"), { recursive: true });
+    writeFileSync(executable, "test build");
+    owner = await startStateOwner(root, undefined, { ...process.env, MEGABRAIN_STATE_OWNER_EXECUTABLE: executable });
+
+    rmSync(executable);
+    const deadline = Date.now() + 1_500;
+    while (!owner.stopped && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(owner.stopped).toBe(true);
   });
 
   test("a write held beyond the client timeout returns its committed outcome", async () => {
