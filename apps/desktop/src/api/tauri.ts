@@ -8,7 +8,8 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { z } from 'zod'
 import { pictureExtensions } from '@/advanced/appearance-model'
 import { projectsArgs } from '@/api/projects-origin'
-import { chatDaemonRetireSchema } from '@/api/schema'
+import { chatDaemonRetireSchema, inputStreamSchema, inputRotationSchema, webDeviceSchema, webDeviceListSchema, webDeviceStopSchema, webActionResultSchema, viewportPresetListSchema } from '@/api/schema'
+import { webInputArgs, webStartArgs } from '@/api/device-cli'
 import { base64Of, pngFile } from '@/lib/image-bytes'
 import { CliError, type DesktopApi, type InstallExit, type PathLink } from '@/api/adapter'
 import { chatStreamReader, streamMarkerSchema } from '@/api/chat-stream'
@@ -231,6 +232,14 @@ export function createTauriApi(): DesktopApi {
     inputKey: (udid, name) => nativeJson(['native', 'input', 'key', udid, name, '--json'], inputActionSchema),
     inputButton: (udid, name) => nativeJson(['native', 'input', 'button', udid, name, '--json'], inputActionSchema),
     inputFrame: (udid) => nativeJson(['native', 'input', 'frame', udid, '--json'], inputFrameSchema),
+    inputStream: (udid) => nativeJson(['native', 'input', 'stream', udid, '--json'], inputStreamSchema),
+    inputRotate: (udid, orientation) => nativeJson(['native', 'input', 'rotate', udid, orientation, '--json'], inputRotationSchema),
+    webDeviceList: async () => (await cliJson(['web', 'device', 'list', '--json'], webDeviceListSchema)).devices,
+    webDeviceStart: async (url, preset, worktree) => cliJson(webStartArgs(url, preset, worktree), webDeviceSchema),
+    webDeviceStop: async (id) => { await cliJson(['web', 'device', 'stop', id, '--json'], webDeviceStopSchema) },
+    webDeviceInput: (id, action) => cliJson(['web', 'device', 'input', id, ...webInputArgs(action), '--json'], webActionResultSchema),
+    webDeviceViewport: (id, preset, landscape) => cliJson(['web', 'device', 'input', id, ...webInputArgs({ type: 'viewport', preset, landscape }), '--json'], webDeviceSchema),
+    webDevicePresets: async () => (await cliJson(['web', 'devices', 'list', '--json'], viewportPresetListSchema)).devices,
     inputStatus: (udid) => nativeJson(['native', 'input', 'status', udid, '--json'], inputStatusSchema),
     openInCode: (root, path, line) =>
       cliJson(['code', 'goto', root, path, ...(line === undefined ? [] : ['--line', String(line)]), '--json'], codeServerSchema),

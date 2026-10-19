@@ -87,7 +87,7 @@ async function request(process: ProcessAdapter, env: Environment, session: strin
   return ok(parsed.body);
 }
 export async function nativeInput(args: readonly string[], env: Environment, process: ProcessAdapter): Promise<Result<string>> {
-  if (args.length === 0 || args.includes("--help") || args.includes("-h")) return ok(`${usageText("native-input")}\n${usageText("native-input-stream")}\nCoordinates use device points; frames report image pixels and pixels per point.\n`);
+  if (args.length === 0 || args.includes("--help") || args.includes("-h")) return ok(`${usageText("native-input")}\n${usageText("native-input-stream")}\n${usageText("native-input-rotate")}\nCoordinates use device points; frames report image pixels and pixels per point.\n`);
   const [verb, udid, ...rawRest] = args.filter((arg) => arg !== "--json");
   const worker = rawRest.includes("--worker");
   const durationIndex = rawRest.indexOf("--duration");
@@ -179,6 +179,15 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
   const pending = readStatus(env, udid);
   if (pending?.state === "starting") return failed(`input session for ${udid} state starting (phase: ${pending.phase})`);
   if (!old) return failed(`no input session for ${udid}; run native input start ${udid} first`);
+  if (verb === "rotate") {
+    const orientation = rest[0];
+    if (rest.length !== 1 || (orientation !== "portrait" && orientation !== "landscape")) return failed("usage: megabrain native input rotate <udid> portrait|landscape [--json]", 2);
+    const changed = await request(process, env, old.session, "POST", "/orientation", { orientation: orientation.toUpperCase() });
+    if (changed.kind !== "ok") return changed;
+    const size = await windowSize(process, env, old.session);
+    if (!size) return failed("could not read simulator point dimensions from Appium after rotation");
+    return ok(`${JSON.stringify({ ok: true, orientation, width: size.width, height: size.height })}\n`);
+  }
   const started = Date.now(); let route = ""; let body: unknown;
   const nums = rest.slice(0, 6).map(Number);
   if (verb === "tap" && nums.length === 2) { route = "/execute/sync"; body = { script: "mobile: tap", args: [{ x: nums[0], y: nums[1] }] }; }

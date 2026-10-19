@@ -1,6 +1,6 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
 import type { DispatchMessage, OrchestrationGraph, OrchestrationTarget } from '@/api/schema'
-import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, HistorySession, GithubIssueList, GithubPullRequestList, GithubLabel, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame } from '@/api/schema'
+import type { AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, HistorySession, GithubIssueList, GithubPullRequestList, GithubLabel, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame, InputStream, InputRotation, WebDevice, ViewportPreset, WebInputAction, WebActionResult } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -127,6 +127,14 @@ export interface DesktopApi {
   inputKey(udid: string, name: string): Promise<InputAction>
   inputButton(udid: string, name: string): Promise<InputAction>
   inputFrame(udid: string): Promise<InputFrame>
+  inputStream(udid: string): Promise<InputStream>
+  inputRotate(udid: string, orientation: 'portrait' | 'landscape'): Promise<InputRotation>
+  webDeviceList(): Promise<WebDevice[]>
+  webDeviceStart(url: string, preset: string | null, worktree: string | null): Promise<WebDevice>
+  webDeviceStop(id: string): Promise<void>
+  webDeviceInput(id: string, action: WebInputAction): Promise<WebActionResult>
+  webDeviceViewport(id: string, preset: string, landscape: boolean): Promise<WebDevice>
+  webDevicePresets(): Promise<ViewportPreset[]>
   /** Everything the Settings window shows. */
   settings(): Promise<Settings>
   /** Only some top-level keys (`settings --json --only`), so one page never waits on another's work. */

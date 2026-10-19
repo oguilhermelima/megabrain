@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import type { ProjectScripts } from '@/api/schema'
+import { viewportPresetListSchema, webActionResultSchema, webDeviceListSchema, webDeviceSchema, type ViewportPreset } from '@/api/schema'
+import { webInputArgs, webStartArgs } from '@/api/device-cli'
 import { devServerUrl, presetGroups, viewportLabel, webDeviceName, webUrl } from '@/device/web-device-model'
-import { viewportPresetListSchema, webDeviceListSchema, webDeviceSchema, webInputArgs, webInputSchema, webStartArgs, webViewportSchema, type ViewportPreset } from '@/device/web-device-standin'
 
 const scripts = (run: string | null, port: number | null): ProjectScripts => ({
   repo: '/repo',
@@ -51,7 +52,7 @@ describe('web device rows', () => {
   })
 })
 
-describe('web device stand-in', () => {
+describe('web device API contracts', () => {
   const device = { id: 'web-1f2e', kind: 'web' as const, url: 'http://localhost:3000/', title: 'Canto', width: 402, height: 874, scale: 3, streamUrl: 'http://127.0.0.1:52011/' }
 
   test('start and list answer the contract shape', () => {
@@ -62,8 +63,8 @@ describe('web device stand-in', () => {
   })
 
   test('input, viewport and preset answers parse', () => {
-    expect(webInputSchema.parse({ ok: true, ms: 12 })).toEqual({ ok: true, ms: 12 })
-    expect(webViewportSchema.parse({ ok: true, width: 874, height: 402 })).toEqual({ ok: true, width: 874, height: 402 })
+    expect(webActionResultSchema.parse({ ok: true, ms: 12 })).toEqual({ ok: true, ms: 12 })
+    expect(webDeviceSchema.parse({ ...device, width: 874, height: 402 })).toMatchObject({ id: device.id, width: 874, height: 402 })
     const presets = viewportPresetListSchema.parse({ devices: [{ slug: 'fullhd', label: 'Full HD desktop', category: 'desktop', origin: 'owned', width: 1920, height: 1080, scale: 1, mobile: false }, { slug: 'x', label: 'X', category: 'mobile', origin: 'registry', width: null, height: null }] })
     expect(presets.devices.map((entry) => entry.slug)).toEqual(['fullhd', 'x'])
   })

@@ -526,8 +526,9 @@ megabrain native sim release <udid> [--json] — recommended when you need to re
 megabrain native sim rename <udid> <name> [--json] — recommended when you need to rename an Apple simulator.
 megabrain native sim idle [--sweep [--all]] [--touch] [--json] — recommended when you need the simulators megabrain booted and when they sleep, or to shut down idle ones.
 megabrain native sim screenshot <udid> [--json] — recommended when you need a headless screenshot of a booted simulator, saved in the state directory.
-megabrain native input start|stop|tap|swipe|scroll|type|key|button|frame|stream <udid> ... [--json] — recommended when you need a persistent headless input session, its WDA MJPEG stream or a live frame.
+megabrain native input start|stop|tap|swipe|scroll|type|key|button|frame|stream|rotate <udid> ... [--json] — recommended when you need a persistent headless input session, its WDA MJPEG stream, rotation or a live frame.
 megabrain native input stream <udid> [--json] — recommended when you need the existing simulator session's WDA MJPEG endpoint and frame dimensions.
+megabrain native input rotate <udid> portrait|landscape [--json] — recommended when you need to rotate the existing Appium simulator session.
 megabrain native sim shutdown <udid> [--json] — recommended when you need to shut down one simulator headlessly.
 megabrain native sim restart <udid> [--timeout <seconds>] [--json] — recommended when you need to restart one simulator headlessly and wait until it boots.
 megabrain native runtime list [<ios|tvos>] (--installed|--available) [--json] — recommended when you need to check which Apple simulator runtimes are installed or available.
@@ -547,12 +548,12 @@ megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill non
 megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] [--plan] [--json] — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
 megabrain web [--device SLUG|--category NAME|--viewport WxH] ... — recommended when you need to see browser viewport and visual-testing operations.
 megabrain web viewport set|show|devices ... — recommended when you need to set viewport dimensions, inspect the current settings, or manage device presets.
-megabrain web devices list [FILTER] [--orientation portrait|landscape|all] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG — recommended when you need to list, add, or remove named viewport device presets.
+megabrain web devices list [FILTER] [--orientation portrait|landscape|all] [--json] | add SLUG --viewport WxH --source SOURCE [options] | remove SLUG — recommended when you need to list, add, or remove named viewport device presets.
 megabrain web device start --url <url> [--device <slug>] [--worktree <path>] | list | stop <id> | input <id> <action> ... [--json] — recommended when you need to manage a headless Chromium device and drive it through its MJPEG stream.
 megabrain web device start --url <url> [--device <slug>] [--worktree <path>] [--json] — recommended when you need to open a persistent headless Chromium device.
 megabrain web device list [--json] — recommended when you need to list the running headless Chromium devices.
 megabrain web device stop <id> [--json] — recommended when you need to stop a headless Chromium device.
-megabrain web device input <id> tap <x> <y> | swipe <x1> <y1> <x2> <y2> [--ms n] | scroll <x> <y> <dx> <dy> | type <text> | key <name> | navigate <url> | back | forward | reload [--json] — recommended when you need to drive a web device.
+megabrain web device input <id> tap <x> <y> | swipe <x1> <y1> <x2> <y2> [--ms n] | scroll <x> <y> <dx> <dy> | type <text> | key <name> | navigate <url> | back | forward | reload | viewport <slug> [--landscape] [--json] — recommended when you need to drive or resize a web device.
 megabrain web capture --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options] — recommended when you need to capture a browser screenshot after the page reaches the requested state.
 megabrain web measure --url URL --screen NAME [--settle default|scroll] [--scroll-timeout MS] [options] — recommended when you need to measure browser element geometry and computed styles.
 megabrain web session save --url URL --output FILE [options] — recommended when you need to save a headful browser session for a workflow that needs a signed-in profile.

@@ -14,11 +14,10 @@ import { changesPolicy, devicesPolicy } from '@/lib/poll-model'
 import { native } from '@/lib/surface'
 import { usePoll } from '@/lib/usePoll'
 import { devServerUrl, webDeviceName } from '@/device/web-device-model'
-import { webDevices, type ViewportPreset, type WebDevice } from '@/device/web-device-standin'
+import type { Orientation, ViewportPreset, WebDevice } from '@/api/schema'
 import { nextOrientation, webRotation } from '@/device/controls-model'
 import { DeviceControls } from '@/device/DeviceControls'
 import { useInputSession } from '@/device/input-hooks'
-import { rotateSimulator, type Orientation } from '@/device/native-input-standin'
 
 const toAsset = native ? convertFileSrc : null
 
@@ -129,7 +128,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const refreshDevices = usePoll(
     devicesPolicy,
     async (current) => {
-      const [listed, phones, tvs, browsers] = await Promise.all([api.simListBooted().catch((error: unknown) => ({ error })), api.simulators('phone').catch(() => null), api.simulators('tv').catch(() => null), webDevices.list().catch((error: unknown) => ({ error }))])
+      const [listed, phones, tvs, browsers] = await Promise.all([api.simListBooted().catch((error: unknown) => ({ error })), api.simulators('phone').catch(() => null), api.simulators('tv').catch(() => null), api.webDeviceList().catch((error: unknown) => ({ error }))])
       if (!current()) return
       if ('error' in browsers) setWebError(message(browsers.error))
       else {
@@ -235,7 +234,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   }
   const startWeb = async (url: string, preset: string | null) => {
     setWebError(null)
-    const started = await webDevices.start(url, preset, root)
+    const started = await api.webDeviceStart(url, preset, root)
     setWeb((current) => [...current.filter((entry) => entry.id !== started.id), started])
     if (preset !== null) setPresetOf((current) => ({ ...current, [started.id]: preset }))
     setChosenDevice(started.id)
@@ -245,7 +244,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const stopWeb = async (target: WebDevice) => {
     setWebError(null)
     if (active && run.device === target.id) await stopRun(root)
-    await webDevices.stop(target.id)
+    await api.webDeviceStop(target.id)
     setWeb((current) => current.filter((entry) => entry.id !== target.id))
     refreshDevices()
   }
@@ -287,7 +286,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const browserShown = browser !== null
   useEffect(() => {
     if (!browserShown || presets !== null) return
-    webDevices.presets().then(setPresets, () => setPresets([]))
+    api.webDevicePresets().then(setPresets, () => setPresets([]))
   }, [browserShown, presets])
   const act = (work: () => Promise<unknown>) => {
     controlQueue.current = controlQueue.current.then(work).then(
@@ -295,21 +294,21 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       (error: unknown) => setControlError(message(error)),
     )
   }
-  const resized = (id: string, size: { width: number; height: number }) => setWeb((current) => current.map((entry) => (entry.id === id ? { ...entry, width: size.width, height: size.height } : entry)))
+  const resized = (next: WebDevice) => setWeb((current) => current.map((entry) => (entry.id === next.id ? next : entry)))
   const pressBrowser = (target: WebDevice, control: string) => {
     if (control === 'rotate') {
       const rotation = webRotation(presetOf[target.id] ?? null, target)
       if (rotation === null) return setControlError('Choose a viewport preset to rotate it.')
-      return act(() => webDevices.viewport(target.id, rotation.preset, rotation.landscape).then((size) => resized(target.id, size)))
+      return act(() => api.webDeviceViewport(target.id, rotation.preset, rotation.landscape).then(resized))
     }
-    if (control === 'back' || control === 'forward' || control === 'reload') act(() => webDevices.input(target.id, { type: control }).then(refreshDevices))
+    if (control === 'back' || control === 'forward' || control === 'reload') act(() => api.webDeviceInput(target.id, { type: control }).then(refreshDevices))
   }
   const pressSimulator = (target: OpenDevice, control: string) => {
     if (control === 'keyboard') return keyboard.current?.()
     if (control === 'screenshot') return act(() => api.simulatorScreenshot(target.udid).then((path) => api.revealPath(path)))
     if (control === 'rotate') {
       const next = nextOrientation(orientations[target.udid])
-      return act(() => rotateSimulator(target.udid, next).then(() => setOrientations((current) => ({ ...current, [target.udid]: next }))))
+      return act(() => api.inputRotate(target.udid, next).then(() => setOrientations((current) => ({ ...current, [target.udid]: next }))))
     }
     act(() => api.inputButton(target.udid, control))
   }
@@ -323,12 +322,12 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
         onPress={(control) => pressBrowser(browser, control)}
         address={{
           url: browser.url,
-          onNavigate: (url) => act(() => webDevices.input(browser.id, { type: 'navigate', url }).then(refreshDevices)),
+          onNavigate: (url) => act(() => api.webDeviceInput(browser.id, { type: 'navigate', url }).then(refreshDevices)),
           presets,
           preset: presetOf[browser.id] ?? null,
           onPreset: (slug) => {
             setPresetOf((current) => ({ ...current, [browser.id]: slug }))
-            act(() => webDevices.viewport(browser.id, slug, false).then((size) => resized(browser.id, size)))
+            act(() => api.webDeviceViewport(browser.id, slug, false).then(resized))
           },
         }}
       />

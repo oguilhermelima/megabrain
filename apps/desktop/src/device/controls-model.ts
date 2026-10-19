@@ -1,5 +1,5 @@
 import type { DeviceGroup } from '@/device/device-model'
-import type { Orientation } from '@/device/native-input-standin'
+import type { Orientation } from '@/api/schema'
 
 // The controls at the bottom of the Devices panel, for the selected device: an Apple TV's remote, a
 // phone's or tablet's hardware, or a browser's navigation, address and viewport. A control's name is

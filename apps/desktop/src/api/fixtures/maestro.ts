@@ -1,11 +1,11 @@
 import { CliError, type DesktopApi } from '@/api/adapter'
-import type { InputStatus, MaestroFlow, MaestroRun, Simulator, SimulatorKind } from '@/api/schema'
+import type { InputStatus, MaestroFlow, MaestroRun, Simulator, SimulatorKind, InputRotation, InputStream, WebDevice, ViewportPreset, WebInputAction } from '@/api/schema'
 
 // Maestro and the simulators for the mock adapter: megabrain's worktrees have flows, the others none
 // (the Device tab's empty state). A run queues briefly, then prints a step about every second; a flow
 // whose path names "login" fails on its third step.
 
-type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simClaim' | 'simRelease' | 'simRename' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot' | 'inputStart' | 'inputStop' | 'inputTap' | 'inputSwipe' | 'inputScroll' | 'inputType' | 'inputKey' | 'inputButton' | 'inputFrame' | 'inputStatus'>
+type MaestroApi = Pick<DesktopApi, 'maestroFlows' | 'maestroRuns' | 'maestroNewFlow' | 'maestroRun' | 'maestroStop' | 'simulators' | 'bootSimulator' | 'simClaim' | 'simRelease' | 'simRename' | 'simListBooted' | 'simShutdown' | 'simRestart' | 'simulatorsAsleep' | 'simulatorScreenshot' | 'inputStart' | 'inputStop' | 'inputTap' | 'inputSwipe' | 'inputScroll' | 'inputType' | 'inputKey' | 'inputButton' | 'inputFrame' | 'inputStatus' | 'inputStream' | 'inputRotate' | 'webDeviceList' | 'webDeviceStart' | 'webDeviceStop' | 'webDeviceInput' | 'webDeviceViewport' | 'webDevicePresets'>
 
 const seedFlows: MaestroFlow[] = [
   { path: '.maestro/smoke.yaml', name: 'Smoke', appId: 'com.megabrain.desktop' },
@@ -73,6 +73,18 @@ export function createMockMaestroApi(): MaestroApi {
   // Input sessions start in the background like the CLI's: phases for 8 s, then ready; the
   // iPhone 17 never gets there, its WebDriverAgent build fails after 5 s.
   const sessions = new Map<string, number>()
+  const browsers = new Map<string, WebDevice>()
+  let browserSequence = 0
+  const presets: ViewportPreset[] = [
+    { slug: 'iphone17', label: 'iPhone 17', category: 'mobile', origin: 'registry:iPhone 17', width: 402, height: 874, scale: 3, mobile: true },
+    { slug: 'ipadpro11', label: 'iPad Pro 11', category: 'tablet', origin: 'registry:iPad Pro 11', width: 834, height: 1194, scale: 2, mobile: true },
+    { slug: 'fullhd', label: 'Full HD desktop', category: 'desktop', origin: 'owned', width: 1920, height: 1080, scale: 1, mobile: false },
+  ]
+  const dimensions = (slug: string, landscape = false) => {
+    const preset = presets.find((entry) => entry.slug === slug)
+    if (preset === undefined || preset.width === null || preset.height === null) throw new CliError(`unknown viewport device: ${slug}`, 2)
+    return { width: landscape ? preset.height : preset.width, height: landscape ? preset.width : preset.height, scale: preset.scale ?? 1 }
+  }
   const failing = '5D2E8C10-3F4A-4B6E-9A7C-1E0F2B3C4D5E'
   const sessionState = (udid: string): InputStatus => {
     const startedAt = sessions.get(udid)
@@ -274,6 +286,15 @@ export function createMockMaestroApi(): MaestroApi {
       deviceOf(udid)
       return sessionState(udid)
     },
+    inputStream: async (udid): Promise<InputStream> => {
+      deviceOf(udid)
+      throw new CliError('mock simulator has no live stream', 1)
+    },
+    inputRotate: async (udid, orientation): Promise<InputRotation> => {
+      deviceOf(udid)
+      const landscape = orientation === 'landscape'
+      return { ok: true, orientation, width: landscape ? 852 : 393, height: landscape ? 393 : 852 }
+    },
     inputFrame: async (udid) => {
       await wait(40)
       const device = deviceOf(udid)
@@ -295,5 +316,28 @@ export function createMockMaestroApi(): MaestroApi {
       ].join('')
       return { image: mockScreen(face.title, face.line, face.hue, overlay), width: 1206, height: 2622, scale: 3, ms: 40 }
     },
+    webDeviceList: async () => [...browsers.values()],
+    webDeviceStart: async (url, preset, _worktree): Promise<WebDevice> => {
+      const chosen = preset === null ? { width: 1280, height: 720, scale: 1 } : dimensions(preset)
+      const id = `web-mock-${++browserSequence}`
+      const device: WebDevice = { id, kind: 'web', url, title: '', ...chosen, streamUrl: `http://127.0.0.1:${19110 + browserSequence}/` }
+      browsers.set(id, device)
+      return device
+    },
+    webDeviceStop: async (id) => {
+      if (!browsers.delete(id)) throw new CliError(`web device not found: ${id}`, 1)
+    },
+    webDeviceInput: async (id, _action: WebInputAction) => {
+      if (!browsers.has(id)) throw new CliError(`web device not found: ${id}`, 1)
+      return { ok: true, ms: 1 }
+    },
+    webDeviceViewport: async (id, preset, landscape) => {
+      const device = browsers.get(id)
+      if (device === undefined) throw new CliError(`web device not found: ${id}`, 1)
+      const next = { ...device, ...dimensions(preset, landscape) }
+      browsers.set(id, next)
+      return next
+    },
+    webDevicePresets: async () => presets,
   }
 }

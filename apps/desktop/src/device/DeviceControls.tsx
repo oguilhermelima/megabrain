@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
+import type { ViewportPreset } from '@/api/schema'
 import { controlsFor } from '@/device/controls-model'
 import type { DeviceGroup } from '@/device/device-model'
 import { glyphs } from '@/device/glyphs'
 import { webUrl } from '@/device/web-device-model'
-import type { ViewportPreset } from '@/device/web-device-standin'
 
 /** A browser's address and viewport, for the Web group's controls. */
 export interface AddressControls {

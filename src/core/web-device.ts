@@ -39,6 +39,11 @@ function writeRecord(env: Environment, record: WebDeviceRecord): void {
 
 export function webDeviceInputOperation(args: readonly string[]): Record<string, unknown> | undefined {
   const [action, ...rest] = args;
+  if (action === "viewport") {
+    const landscape = rest.includes("--landscape");
+    const positional = rest.filter((arg) => arg !== "--landscape");
+    if (positional.length === 1 && /^[a-z0-9][a-z0-9_-]*$/i.test(positional[0]!)) return { action, slug: positional[0], landscape };
+  }
   if (action === "tap" && rest.length === 2 && rest.every(validCoordinate)) return { action, args: rest.map(Number) };
   if (action === "swipe") {
     const durationIndex = rest.indexOf("--ms");
@@ -134,6 +139,14 @@ export async function executeWebDevice(args: readonly string[], env: Environment
     if (!operation) return failed("invalid web device input; expected tap|swipe|scroll|type|key|navigate|back|forward|reload", 2);
     const response = await post(new URL("__input", base).toString(), operation);
     if (response.status !== 200) return failed(response.body || `web device input failed (HTTP ${response.status})`);
+    if (operation.action === "viewport") {
+      let updated: WebDeviceRecord;
+      try { updated = JSON.parse(response.body) as WebDeviceRecord; } catch { return failed("web device returned an invalid viewport record"); }
+      if (updated.kind !== "web" || updated.id !== record.id || !Number.isInteger(updated.width) || updated.width <= 0 || !Number.isInteger(updated.height) || updated.height <= 0 || !Number.isFinite(updated.scale) || updated.scale <= 0 || updated.streamUrl !== record.streamUrl) return failed("web device returned an invalid viewport record");
+      writeRecord(env, { ...record, ...updated });
+      const { pid: _pid, ...device } = { ...record, ...updated };
+      return ok(json(device));
+    }
     return ok(`${response.body.trim()}\n`);
   }
   return failed("web device requires start|list|stop|input", 2);

@@ -51,4 +51,11 @@ describe("planWeb", () => {
       { slug: "office", label: "office", category: "desktop", origin: "custom", width: 1512, height: 982, scale: 2, mobile: false },
     ] });
   });
+
+  test("keeps registry scale and rotates custom presets in landscape", async () => {
+    const moduleUrl = new URL("../../scripts/playwright-web.mjs", import.meta.url).href;
+    const { listDevicePresets, resolveDeviceDescriptor } = await import(moduleUrl);
+    expect(listDevicePresets({ "iPhone 17": { viewport: { width: 402, height: 681 }, deviceScaleFactor: 3, isMobile: true } }, { filter: "iphone17" })[0]).toMatchObject({ deviceScaleFactor: 3, isMobile: true });
+    expect(resolveDeviceDescriptor({ device: "office", orientation: "landscape" }, {}, { office: { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2, isMobile: false, hasTouch: false, source: "test" } }).viewport).toEqual({ width: 720, height: 1280 });
+  });
 });

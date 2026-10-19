@@ -1,5 +1,5 @@
 import type { ProjectScripts } from '@/api/schema'
-import type { ViewportPreset, WebDevice } from '@/device/web-device-standin'
+import type { ViewportPreset, WebDevice } from '@/api/schema'
 
 // The Web group of the Device tab: a headless browser viewport (`megabrain web device`), started
 // from a URL and one of `web devices list`'s presets, shown and driven in CSS px.

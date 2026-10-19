@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { inputRotationSchema, inputStreamSchema } from '@/api/schema'
 import { createFrameStreamClient, type FrameStreamSource, type FrameUpdate } from './frame-stream'
 
 function fakeSource() {
@@ -16,6 +17,12 @@ function fakeSource() {
 }
 
 describe('frame stream client', () => {
+  test('native input API reports Appium rotation and its MJPEG dimensions', () => {
+    expect(inputRotationSchema.parse({ ok: true, orientation: 'landscape', width: 852, height: 393, refusal: null })).toMatchObject({ ok: true, orientation: 'landscape', width: 852, height: 393 })
+    expect(inputStreamSchema.parse({ streamUrl: 'http://127.0.0.1:9100/', width: 1206, height: 2622, scale: 3, refusal: null })).toMatchObject({ streamUrl: 'http://127.0.0.1:9100/', width: 1206, height: 2622, scale: 3 })
+    expect(inputStreamSchema.safeParse({ streamUrl: 'not a URL', width: 1, height: 1, scale: 1 }).success).toBe(false)
+  })
+
   test('shares one source for subscribers of the same URL and stops when the last leaves', () => {
     const fake = fakeSource()
     const client = createFrameStreamClient(fake.source)

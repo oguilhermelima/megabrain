@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:http";
-import { readWebDevices, webDeviceInputOperation } from "../../src/core/web-device.js";
+import { executeWebDevice, readWebDevices, webDeviceInputOperation } from "../../src/core/web-device.js";
 import { nativeInput } from "../../src/cli/commands/native/input.js";
 import { executeMaestro, listFlows } from "../../src/cli/commands/maestro.js";
 import { ok } from "../../src/core/result.js";
@@ -40,6 +40,30 @@ describe("web device records and input scenarios", () => {
 
   test.each([[[]], [["tap", "-1", "2"]], [["swipe", "1", "2", "3", "4", "--ms", "0"]]] as const)("rejects invalid input argv %j", (args) => {
     expect(webDeviceInputOperation(args)).toBeUndefined();
+  });
+
+  test("resizes the existing device, keeps its id and returns the updated record", async () => {
+    const state = await fixture();
+    const id = "web-11111111-1111-4111-8111-111111111111";
+    const received: unknown[] = [];
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      received.push(JSON.parse(Buffer.concat(chunks).toString()));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ id, kind: "web", url: "https://example.com", title: "Example", width: 844, height: 390, scale: 1, streamUrl: `http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/` }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const { mkdir } = await import("node:fs/promises");
+    await mkdir(join(state, "web-devices"));
+    await writeFile(join(state, "web-devices", `${id}.json`), JSON.stringify({ id, kind: "web", url: "https://example.com", title: "Example", width: 390, height: 844, scale: 1, streamUrl: `http://127.0.0.1:${port}/`, pid: process.pid }));
+    try {
+      const result = await executeWebDevice(["input", id, "viewport", "iphone16", "--landscape", "--json"], { MEGABRAIN_STATE_DIR: state }, { async run() { throw new Error("unexpected process"); }, async startDetached() { throw new Error("unexpected process"); }, invocationCount() { return 0; } });
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ id, width: 844, height: 390, scale: 1 });
+      expect(received).toEqual([{ action: "viewport", slug: "iphone16", landscape: true }]);
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
 });
 

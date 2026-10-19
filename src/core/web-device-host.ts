@@ -73,7 +73,8 @@ export async function startWebDeviceHost(options: Options): Promise<any> {
       import(pathToFileURL(join(root, "node_modules", "playwright", "index.mjs")).href),
       import(pathToFileURL(join(packageRoot, "scripts", "playwright-web.mjs")).href),
     ]);
-    const d = options.device ? helpers.resolveDeviceDescriptor({ device: options.device }, pw.devices) : { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false };
+    const customDevices = helpers.readCustomDevices(join(options.env.HOME ?? homedir(), ".megabrain", "devices.json"));
+    let d = options.device ? helpers.resolveDeviceDescriptor({ device: options.device }, pw.devices, customDevices) : { viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false };
     browser = await pw.chromium.launch({ headless: true, timeout: 20000 });
     const context = await browser.newContext({ viewport: d.viewport, deviceScaleFactor: d.deviceScaleFactor, isMobile: d.isMobile, hasTouch: d.hasTouch, ...(d.userAgent ? { userAgent: d.userAgent } : {}) });
     const page = await context.newPage(); page.setDefaultTimeout(10000);
@@ -104,7 +105,22 @@ export async function startWebDeviceHost(options: Options): Promise<any> {
       if (req.method === "POST" && req.url === "/__stop") { respond(res, 200, { ok: true }); setTimeout(() => { void stop(); }, 25); return; }
       if (req.method === "POST" && req.url === "/__input") {
         const start = Date.now();
-        try { await input(page, await body(req), d.viewport.width, d.viewport.height, d.hasTouch); respond(res, 200, { ok: true, ms: Date.now() - start }); }
+        try {
+          const operation = await body(req) as any;
+          if (operation?.action === "viewport") {
+            if (typeof operation.slug !== "string" || typeof operation.landscape !== "boolean") throw Error("viewport requires a device slug and orientation");
+            const next = helpers.resolveDeviceDescriptor({ device: operation.slug, orientation: operation.landscape ? "landscape" : "portrait" }, pw.devices, customDevices);
+            if (!next.viewport || next.viewport.width < 1 || next.viewport.height < 1) throw Error(`viewport device ${operation.slug} has no available dimensions`);
+            await page.setViewportSize(next.viewport);
+            await cdp.send("Emulation.setDeviceMetricsOverride", { width: next.viewport.width, height: next.viewport.height, deviceScaleFactor: next.deviceScaleFactor, mobile: next.isMobile, screenWidth: next.viewport.width, screenHeight: next.viewport.height });
+            await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: next.hasTouch });
+            if (next.userAgent) await cdp.send("Emulation.setUserAgentOverride", { userAgent: next.userAgent });
+            d = next;
+            const record = { id: options.id, kind: "web" as const, url: page.url(), title: await page.title().catch(() => ""), width: d.viewport.width, height: d.viewport.height, scale: d.deviceScaleFactor, streamUrl: `http://127.0.0.1:${(server!.address() as import("node:net").AddressInfo).port}/`, pid: process.pid, preset: operation.slug };
+            save(state, record); respond(res, 200, record); return;
+          }
+          await input(page, operation, d.viewport.width, d.viewport.height, d.hasTouch); respond(res, 200, { ok: true, ms: Date.now() - start });
+        }
         catch (e) { respond(res, 400, { ok: false, error: e instanceof Error ? e.message : String(e) }); }
         return;
       }

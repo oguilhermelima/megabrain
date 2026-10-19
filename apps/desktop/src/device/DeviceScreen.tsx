@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MutableRefObject, type PointerEvent, type WheelEvent } from 'react'
 import { api } from '@/api'
 import type { OpenDevice } from '@/device/device-model'
-import { useFrameStream } from '@/device/frame-stream-standin'
-import { useSimulatorStream } from '@/device/input-hooks'
+import { useFrameStream } from '@/device/frame-stream'
+import { useSimulatorFallbackFrame, useSimulatorStream } from '@/device/input-hooks'
 import { viewportLabel, webDeviceName } from '@/device/web-device-model'
-import { webDevices, type WebDevice, type WebInputAction } from '@/device/web-device-standin'
+import type { WebDevice, WebInputAction } from '@/api/schema'
 import { PanelIcon } from '@/advanced/WikiShell'
 import { glyphs } from '@/device/glyphs'
 import { elapsedLabel, failureDetail, preparingNote, type InputView } from '@/device/input-session'
@@ -62,6 +62,7 @@ export function DeviceScreen({ device, browser, booted, paused, session, keyboar
   // While a run drives the device or a step is pinned, its screenshots are shown and the stream rests.
   const resting = pinned !== null || (paused && still !== null)
   const live = useFrameStream(streamUrl, { paused: !ready || resting })
+  const fallback = useSimulatorFallbackFrame(device?.udid ?? null, browser === null && simulator.fallback && !resting)
   const [aspect, setAspect] = useState(1206 / 2622)
   const [zoom, setZoom] = useDeviceZoom(udid)
   const [full, setFull] = useState(false)
@@ -77,8 +78,9 @@ export function DeviceScreen({ device, browser, booted, paused, session, keyboar
   useEffect(() => setActionError(null), [udid])
 
   // While a run drives the device its latest screenshot beats the last live frame, which no longer moves.
-  const scale = frameScale(live.width, browser, simulator.stream?.scale ?? 1)
-  const frame = resting || live.src === null || live.width <= 0 || live.height <= 0 ? null : { src: live.src, width: live.width, height: live.height, scale }
+  const current = simulator.fallback ? fallback : live
+  const scale = frameScale(current.width, browser, simulator.fallback ? (fallback.scale ?? 1) : (simulator.stream?.scale ?? 1))
+  const frame = resting || current.src === null || current.width <= 0 || current.height <= 0 ? null : { src: current.src, width: current.width, height: current.height, scale }
   const shown = pinned ?? (frame === null ? still : { src: frame.src, step: null })
   const step = shown?.step ?? null
   const { shape, ratio } = deviceFrame(browser !== null ? 'web' : (device?.kind ?? null), browser !== null ? browser.width / browser.height : frame === null ? aspect : frame.width / frame.height)
@@ -104,7 +106,7 @@ export function DeviceScreen({ device, browser, booted, paused, session, keyboar
   const preparing = browser === null && booted && pinned === null ? session.view : null
   const covered = preparing?.kind === 'starting' || preparing?.kind === 'failed'
   // The stream reconnects on its own, so a failing one is said under the screen until it does.
-  const problemText = !ready || pinned !== null ? null : (simulator.error ?? live.error ?? actionError ?? (live.stalled ? 'The screen stopped updating' : null))
+  const problemText = !ready || pinned !== null ? null : (simulator.fallback ? `Live stream unavailable; using frame fallback. ${simulator.error ?? ''} ${fallback.error ?? ''} ${actionError ?? ''}`.trim() : simulator.error ?? live.error ?? actionError ?? (live.stalled ? 'The screen stopped updating' : null))
   const problem = problemText === null ? null : failureDetail(problemText).line
   const retry = () => {
     setActionError(null)
@@ -127,7 +129,7 @@ export function DeviceScreen({ device, browser, booted, paused, session, keyboar
   // A simulator takes `native input`, a browser `web device input`, in the same points.
   const send = (simulatorAction: (target: string) => Promise<unknown>, webAction: WebInputAction | null) => {
     if (!takesInput || udid === null) return
-    const run = browser !== null ? (webAction === null ? null : () => webDevices.input(browser.id, webAction)) : () => simulatorAction(udid)
+    const run = browser !== null ? (webAction === null ? null : () => api.webDeviceInput(browser.id, webAction)) : () => simulatorAction(udid)
     if (run === null) return
     queue.current = queue.current.then(run).then(
       () => setActionError(null),

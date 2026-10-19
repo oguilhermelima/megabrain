@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { api } from '@/api'
+import type { ViewportPreset, WebDevice } from '@/api/schema'
 import { PlusIcon } from '@/advanced/chrome'
 import type { AnchorRect } from '@/advanced/menu-placement'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { Popover } from '@/components/Popover'
 import { Spinner } from '@/components/ui'
 import { presetGroups, viewportLabel, webDeviceName, webUrl } from '@/device/web-device-model'
-import { webDevices, type ViewportPreset, type WebDevice } from '@/device/web-device-standin'
 import { sidePanelButton, sidePanelGroup, sidePanelNote, sidePanelRow, sidePanelSlot, sidePanelTrailing } from '@/lib/side-panel'
 import { usePresence } from '@/lib/usePresence'
 
@@ -122,7 +123,7 @@ function StartForm({ defaultUrl, onStart }: { defaultUrl: string; onStart: (url:
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let current = true
-    webDevices.presets().then(
+    api.webDevicePresets().then(
       (listed) => current && setPresets(listed),
       () => current && setPresets([]),
     )

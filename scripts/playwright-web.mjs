@@ -238,7 +238,14 @@ export function resolveDeviceDescriptor(options = {}, devices = {}, customDevice
   const request = options || {};
   if (request.device != null) {
     const custom = customDeviceEntry(customDevices, request.device);
-    if (custom) return normalizeDeviceDescriptor(custom);
+    if (custom) {
+      const orientation = request.orientation || 'portrait';
+      if (!['portrait', 'landscape'].includes(orientation)) throw new Error('orientation must be portrait or landscape');
+      const descriptor = normalizeDeviceDescriptor(custom);
+      return orientation === 'landscape'
+        ? normalizeDeviceDescriptor({ ...descriptor, viewport: { width: descriptor.viewport.height, height: descriptor.viewport.width } })
+        : descriptor;
+    }
     const normalized = normalizeDeviceSlug(request.device);
     const entry = VIEWPORT_DEVICES[normalized];
     if (!entry) throw new Error(`unknown viewport device: ${request.device}`);
@@ -479,6 +486,8 @@ export function listDevicePresets(devices, { filter = '', orientation = 'portrai
         ...(registry ? { registry } : {}),
         category: entry.category,
         viewport: orientedViewport || null,
+        deviceScaleFactor: entry.deviceScaleFactor ?? sourceDevice?.deviceScaleFactor ?? 1,
+        isMobile: entry.isMobile ?? sourceDevice?.isMobile ?? ['mobile', 'phone', 'tablet'].includes(entry.category),
         ...(entry.source ? { source: entry.source } : {}),
       };
     });
@@ -498,6 +507,19 @@ export function listDevicePresets(devices, { filter = '', orientation = 'portrai
       source: descriptor.source,
     }));
   return [...builtIns, ...custom];
+}
+
+export function formatDevicePresets(items) {
+  return { devices: items.map(item => ({
+    slug: item.slug,
+    label: item.label,
+    category: item.category,
+    origin: item.kind === 'registry' ? `registry:${item.registry}` : item.kind === 'custom' ? 'custom' : 'owned',
+    width: item.viewport?.width ?? null,
+    height: item.viewport?.height ?? null,
+    scale: item.deviceScaleFactor ?? 1,
+    mobile: item.isMobile ?? ['mobile', 'phone', 'tablet'].includes(item.category),
+  })) };
 }
 
 function chromiumPaths(root) {
@@ -1480,9 +1502,14 @@ async function main(args) {
       return;
     }
     case 'device-list': {
-      for (const item of await listDevices(root, args)) {
+      const items = await listDevices(root, args);
+      if (args.includes('--json')) {
+        console.log(JSON.stringify(formatDevicePresets(items)));
+        return;
+      }
+      for (const item of items) {
         const dimensions = item.viewport ? `${item.viewport.width}x${item.viewport.height}` : 'unavailable';
-        const origin = item.kind === 'registry' ? `registry:${item.registry}` : item.kind === 'custom' ? 'custom' : `owned:${item.source}`;
+        const origin = item.kind === 'registry' ? `registry:${item.registry}` : item.kind === 'custom' ? 'custom' : 'owned';
         console.log(`${item.slug}\t${item.label}\t${item.category}\t${origin}\t${dimensions}`);
       }
       return;

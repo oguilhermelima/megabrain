@@ -43,7 +43,9 @@ function planDevices(args: readonly string[]): WebPlan {
   for (let index = 0; index < remaining.length; index += 1) {
     const arg = remaining[index];
     if (arg === "-h" || arg === "--help") return { kind: "help" };
-    if (arg === "--filter" || arg === "--orientation" || arg === "--devices-file") {
+    if (arg === "--json") {
+      options.push(arg);
+    } else if (arg === "--filter" || arg === "--orientation" || arg === "--devices-file") {
       const value = remaining[index + 1];
       if (value === undefined || value.length === 0) return usage("web-error-devices");
       options.push(arg, value);

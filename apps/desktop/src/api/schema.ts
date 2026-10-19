@@ -4,6 +4,7 @@ export * from './schema/settings'
 export * from './schema/artifacts'
 export * from './schema/github'
 export * from './schema/knowledge'
+export * from './schema/device'
 
 import { z } from 'zod'
 
