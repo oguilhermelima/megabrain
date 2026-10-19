@@ -6,6 +6,8 @@ import { parseAgyLog, sessionLogPath, sessionTurnOpen } from "../../src/chat/ses
 import { ChatStore, type Chat, type ChatCapabilities } from "../../src/chat/store.js";
 import { ChatDaemon } from "../../src/chat/daemon.js";
 import { chatProtocolAdapters } from "../../src/chat/protocol.js";
+import { discoverAgyEnvironment } from "../../src/chat/session-log.js";
+import { ok, failed } from "../../src/core/result.js";
 
 const directories: string[] = [];
 const daemons: ChatDaemon[] = [];
@@ -83,6 +85,28 @@ describe("agy terminal-follow transcript", () => {
     const home = mkdtempSync(join(tmpdir(), "megabrain-agy-log-"));
     directories.push(home);
     await expect(sessionLogPath(agyChat(), home)).resolves.toBe(join(home, ".gemini/antigravity-cli/brain", sessionId, ".system_generated/logs/transcript_full.jsonl"));
+  });
+
+  test("reads only the endpoint from an agy process in the owned pane", async () => {
+    const calls: string[][] = [];
+    const process = {
+      async run(command: string, args: readonly string[]) {
+        calls.push([command, ...args]);
+        if (command !== "ps") return failed("unexpected command");
+        if (args[0] === "-axo") return ok({ stdout: "100 1 tmux pane\n101 100 /opt/homebrew/bin/agy --conversation session-1\n102 1 /opt/homebrew/bin/agy\n", stderr: "", exitCode: 0 });
+        if (args[0] === "eww" && args[2] === "101") return ok({ stdout: "101 ?? Ss 0:01 agy ANTIGRAVITY_LS_ADDRESS=127.0.0.1:7777 ANTIGRAVITY_CSRF_TOKEN=secret ANTIGRAVITY_CONVERSATION_ID=session-1 ANTIGRAVITY_LS_VERSION=1.4.2\n", stderr: "", exitCode: 0 });
+        return failed("unexpected process");
+      },
+      async startDetached() { return failed("unexpected detached process"); },
+      invocationCount() { return calls.length; },
+    };
+    await expect(discoverAgyEnvironment([100], process)).resolves.toEqual({
+      ANTIGRAVITY_LS_ADDRESS: "127.0.0.1:7777",
+      ANTIGRAVITY_CSRF_TOKEN: "secret",
+      ANTIGRAVITY_CONVERSATION_ID: "session-1",
+      ANTIGRAVITY_LS_VERSION: "1.4.2",
+    });
+    expect(calls.map((call) => call.join(" "))).toEqual(["ps -axo pid=,ppid=,command=", "ps eww -p 101"]);
   });
 
   test("persists agy and its truthful terminal-follow capabilities", async () => {
