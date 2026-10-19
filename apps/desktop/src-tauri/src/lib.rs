@@ -19,6 +19,8 @@ mod terminal_tests;
 #[cfg(test)]
 mod switch_trace_tests;
 #[cfg(test)]
+mod simulator_sweep_tests;
+#[cfg(test)]
 mod code_tests;
 
 use serde::Serialize;
