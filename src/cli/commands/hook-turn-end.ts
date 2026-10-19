@@ -682,9 +682,9 @@ export async function executeHookTurnEnd(
 
     await appendMessage(root, dispatchId, "child", "stalled", text, session.id, environment, processAdapter);
     return finish(defaultText);
-  } catch {
-    // A hook must never fail or block the agent's turn (megabrain_hook_finish's contract):
-    // whatever went wrong, print the same default response any other early bail would have.
+  } catch (cause: unknown) {
+    try { console.error(`turn-end hook failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
+    catch { /* Diagnostics cannot change the hook's never-fail contract. */ }
     return finish(defaultText);
   }
 }
