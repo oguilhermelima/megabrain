@@ -32,13 +32,13 @@ async function listFiles(root: string, keep: (path: string) => boolean): Promise
   } catch { return []; }
 }
 
-async function logFiles(home: string): Promise<Array<{ path: string; provider: UsageProvider }>> {
+async function logFiles(home: string, selected: UsageProvider | null): Promise<Array<{ path: string; provider: UsageProvider }>> {
   const jsonl = (path: string) => path.endsWith(".jsonl");
   const [claude, codex, archived, grok] = await Promise.all([
-    listFiles(join(home, ".claude", "projects"), jsonl),
-    listFiles(join(home, ".codex", "sessions"), jsonl),
-    listFiles(join(home, ".codex", "archived_sessions"), jsonl),
-    listFiles(join(home, ".grok", "sessions"), (path) => basename(path) === "usage.json"),
+    selected === null || selected === "claude" ? listFiles(join(home, ".claude", "projects"), jsonl) : [],
+    selected === null || selected === "codex" ? listFiles(join(home, ".codex", "sessions"), jsonl) : [],
+    selected === null || selected === "codex" ? listFiles(join(home, ".codex", "archived_sessions"), jsonl) : [],
+    selected === null || selected === "grok" ? listFiles(join(home, ".grok", "sessions"), (path) => basename(path) === "usage.json") : [],
   ]);
   return [
     ...claude.map((path) => ({ path, provider: "claude" as const })),
@@ -161,7 +161,7 @@ export async function usageStats(environment: Environment, options: UsageStatsOp
   const started = performance.now();
   const home = environment.HOME ?? process.env.HOME ?? "";
   const stateDir = environment.MEGABRAIN_STATE_DIR ?? join(home, ".megabrain");
-  const found = await logFiles(home);
+  const found = await logFiles(home, options.provider);
   const listed = (await mapLimited(found, async (file): Promise<Listed | null> => {
     try { const info = await stat(file.path); return { ...file, size: info.size, mtimeMs: info.mtimeMs }; } catch { return null; }
   })).filter((file): file is Listed => file !== null);
