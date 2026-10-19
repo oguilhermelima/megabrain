@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
-import { chatdNotice, onIncompatible, reconnectDecision, reconnectStep, watchesChatd, type PauseChoice, type PausePhase, type Reconnect } from '@/native-chat/chatd-reconnect'
+import { chatdNotice, chatdRetryMs, onIncompatible, reconnectDecision, reconnectStep, watchesChatd, type PauseChoice, type PausePhase, type Reconnect } from '@/native-chat/chatd-reconnect'
 
 /** How often an older or incompatible chatd is read again until it has gone. */
 const WATCH_MS = 3000
@@ -23,6 +23,7 @@ function useChatdReconnect(): { decision: Reconnect; phase: PausePhase; choose: 
     let draining = false
     let timer: ReturnType<typeof setTimeout> | undefined
     let appVersion: string | null = null
+    let failures = 0
 
     const drain = () => {
       draining = true
@@ -47,6 +48,7 @@ function useChatdReconnect(): { decision: Reconnect; phase: PausePhase; choose: 
       try {
         appVersion ??= (await api.installPlan()).version
         const next = reconnectDecision(await api.chatDaemonStatus(), appVersion)
+        failures = 0
         if (stopped) return
         setDecision(next)
         const step = reconnectStep(next, choice.current)
@@ -55,7 +57,9 @@ function useChatdReconnect(): { decision: Reconnect; phase: PausePhase; choose: 
         if (step === 'drain') return drain()
         if (watchesChatd(next)) timer = setTimeout(() => void read(), WATCH_MS)
       } catch {
-        // No status, no notice: a chat call that is refused brings the check back.
+        // No status, no notice: the read is tried again, backing off, so a slow start cannot end the watch.
+        failures += 1
+        if (!stopped) timer = setTimeout(() => void read(), chatdRetryMs(failures))
       } finally {
         running = false
       }

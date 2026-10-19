@@ -80,3 +80,8 @@ export function onIncompatible(listener: () => void): () => void {
   incompatibleListeners.add(listener)
   return () => incompatibleListeners.delete(listener)
 }
+
+/** How long to wait after `failures` failed status reads in a row: 1 s, doubling, never past a minute. */
+export function chatdRetryMs(failures: number): number {
+  return Math.min(1_000 * 2 ** Math.max(0, failures - 1), 60_000)
+}
