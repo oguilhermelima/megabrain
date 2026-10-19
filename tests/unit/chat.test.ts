@@ -531,6 +531,38 @@ rl.on("line", (line) => {
     } finally { await daemon.close(); }
   });
 
+  test("shows ACP plan updates as update_plan tool calls", async () => {
+    const env = sandbox();
+    fakeGrok(env.bin, `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+const send = (value) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...value }) + "\\n");
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.method === "initialize") send({ id: request.id, result: {} });
+  if (request.method === "session/new") send({ id: request.id, result: { sessionId: "plan-session" } });
+  if (request.method === "session/prompt") {
+    send({ method: "session/update", params: { sessionId: "plan-session", update: { sessionUpdate: "plan", entries: [{ content: "Inspect the flow", status: "in_progress" }] } } });
+    send({ method: "session/update", params: { sessionId: "plan-session", update: { sessionUpdate: "plan", entries: [{ content: "Inspect the flow", status: "completed" }, { content: "Fix the issue", status: "in_progress" }] } } });
+    send({ id: request.id, result: { stopReason: "end_turn" } });
+  } else if (request.id !== undefined) send({ id: request.id, result: {} });
+});
+`);
+    const daemon = await socketDaemon(env);
+    try {
+      const started = await call(["chat", "start", "--agent", "grok", "--cwd", env.cwd, "--parts", JSON.stringify([{ type: "text", text: "hello" }]), "--json"], env);
+      expect(started.kind).toBe("ok");
+      if (started.kind !== "ok") return;
+      const chat = JSON.parse(started.value) as Chat;
+      await waitForChat(chat.id, "idle", env);
+      const stored = await call(["chat", "events", chat.id, "--json"], env);
+      const lines = stored.kind === "ok" ? stored.value.trim().split("\n").map((line) => JSON.parse(line) as { event?: { kind: string; tool?: { name?: string; input?: string } } }) : [];
+      const calls = lines.flatMap((line) => line.event?.kind === "tool-call" && line.event.tool?.name === "update_plan" ? [line.event] : []);
+      expect(calls).toHaveLength(2);
+      expect(JSON.parse(calls[1]?.tool?.input ?? "{}")).toEqual([{ content: "Inspect the flow", status: "completed" }, { content: "Fix the issue", status: "in_progress" }]);
+    } finally { await daemon.close(); }
+  });
+
   test("loads persisted Grok sessions on resume and reports a failed session/load", async () => {
     const env = sandbox();
     fakeGrok(env.bin, `
