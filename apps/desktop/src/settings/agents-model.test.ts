@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { agentMode, agentRows, commandLine, defaultAgentSettings, parseAgentSettings, serialiseAgentSettings, withDefault, withEnabled, withMode, type AgentSettings } from '@/settings/agents-model'
+import { agentMode, agentRows, builtInCommands, commandLine, defaultAgentSettings, startCommandError, withCommand, parseAgentSettings, serialiseAgentSettings, withDefault, withEnabled, withMode, type AgentSettings } from '@/settings/agents-model'
 
 const plan = [
   { agent: 'claude', label: 'Claude Code', installed: true },
@@ -93,5 +93,36 @@ describe('commandLine', () => {
   test('quotes only the arguments that need it', () => {
     expect(commandLine(['codex', '--model', 'gpt-6-luna', '-c', 'model_reasoning_effort="high"', 'two words'])).toBe(`codex --model gpt-6-luna -c 'model_reasoning_effort="high"' 'two words'`)
     expect(commandLine(['grok', "it's"])).toBe(`grok 'it'\\''s'`)
+  })
+})
+
+describe('start commands', () => {
+  test('a typed command reads back and only valid ones are kept', () => {
+    const saved: AgentSettings = { version: 1, default: null, disabled: [], modes: {}, commands: { codex: 'codex --x' } }
+    expect(parseAgentSettings(JSON.parse(serialiseAgentSettings(saved)))).toEqual(saved)
+    expect(parseAgentSettings({ version: 1, default: null, disabled: [], modes: {}, commands: { codex: 'claude', grok: 7, gemini: 'gemini' } })).toEqual(defaultAgentSettings)
+  })
+
+  test('validation: not empty, no quotes, first word is the executable or an absolute path to it', () => {
+    expect(startCommandError('codex', 'codex -c a=1')).toBeNull()
+    expect(startCommandError('claude', '/opt/bin/claude --verbose')).toBeNull()
+    expect(startCommandError('claude', '  ')).toBe('Enter a command.')
+    expect(startCommandError('claude', 'codex')).toBe('Start with claude or an absolute path to it.')
+    expect(startCommandError('claude', 'bin/claude')).toBe('Start with claude or an absolute path to it.')
+    expect(startCommandError('codex', "codex -c 'a b'")).toBe('Quotes are not supported; separate arguments with spaces.')
+  })
+
+  test('saving normalises spaces, and reset or the built-in command removes the override', () => {
+    const typed = withCommand(defaultAgentSettings, 'grok', '  grok   --y ')
+    expect(typed.commands).toEqual({ grok: 'grok --y' })
+    expect(withCommand(typed, 'grok', null)).toEqual(defaultAgentSettings)
+    expect(withCommand(typed, 'grok', builtInCommands.grok ?? '')).toEqual(defaultAgentSettings)
+    expect(JSON.parse(serialiseAgentSettings(withCommand(typed, 'grok', null)))).not.toHaveProperty('commands')
+  })
+
+  test('rows carry the typed command', () => {
+    const rows = agentRows(plan, { ...defaultAgentSettings, commands: { codex: 'codex --x' } }, {})
+    expect(rows.find((row) => row.agent === 'codex')?.custom).toBe('codex --x')
+    expect(rows.find((row) => row.agent === 'claude')?.custom).toBeUndefined()
   })
 })

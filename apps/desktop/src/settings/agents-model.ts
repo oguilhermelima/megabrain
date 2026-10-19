@@ -1,8 +1,8 @@
 // The Agents page: which agent CLIs this machine has, the command each one starts with, which are
 // turned on for the app, the one New chat starts with, and whether each one's new chats open as a
 // chat or in its terminal. The choice is stored by the CLI (`settings get|set agents`) as
-// { version: 1, default, disabled, modes }; default null is Auto, the agent used last, and modes
-// holds only the modes the person chose.
+// { version: 1, default, disabled, modes, commands? }; default null is Auto, the agent used last,
+// modes holds only the modes the person chose, and commands only the start commands they replaced.
 
 export const AGENT_IDS = ['claude', 'codex', 'grok', 'agy'] as const
 
@@ -11,6 +11,8 @@ export interface AgentSettings {
   default: string | null
   disabled: string[]
   modes: Partial<Record<string, ChatMode>>
+  /** Start commands the person typed in place of the built-in one; absent when none was. */
+  commands?: Partial<Record<string, string>>
 }
 
 export type ChatMode = 'chat' | 'terminal'
@@ -28,11 +30,41 @@ export function parseAgentSettings(value: unknown): AgentSettings {
   const saved = typeof record.modes === 'object' && record.modes !== null && !Array.isArray(record.modes) ? Object.entries(record.modes as Record<string, unknown>) : []
   const modes: Partial<Record<string, ChatMode>> = {}
   for (const [agent, mode] of saved) if (known(agent) && (mode === 'chat' || mode === 'terminal')) modes[agent] = mode
-  return { version: 1, default: chosen, disabled, modes }
+  const typed = typeof record.commands === 'object' && record.commands !== null && !Array.isArray(record.commands) ? Object.entries(record.commands as Record<string, unknown>) : []
+  const commands: Partial<Record<string, string>> = {}
+  for (const [agent, command] of typed) if (known(agent) && typeof command === 'string' && startCommandError(agent, command) === null) commands[agent] = command
+  return { version: 1, default: chosen, disabled, modes, ...(Object.keys(commands).length === 0 ? {} : { commands }) }
 }
 
 export function serialiseAgentSettings(settings: AgentSettings): string {
-  return JSON.stringify({ version: 1, default: settings.default, disabled: settings.disabled, modes: settings.modes })
+  const commands = settings.commands ?? {}
+  return JSON.stringify({ version: 1, default: settings.default, disabled: settings.disabled, modes: settings.modes, ...(Object.keys(commands).length === 0 ? {} : { commands }) })
+}
+
+/** What each agent starts with when the person has not replaced it; the CLI builds the same words. */
+export const builtInCommands: Record<string, string> = {
+  claude: 'claude --dangerously-skip-permissions',
+  codex: 'codex --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false',
+  grok: 'grok --always-approve',
+  agy: 'agy --dangerously-skip-permissions',
+}
+
+/** Why a typed start command cannot be saved, or null when it can; the CLI checks the same rules. */
+export function startCommandError(agent: string, command: string): string | null {
+  const [first] = command.trim().split(/\s+/)
+  if (first === undefined || first === '') return 'Enter a command.'
+  if (/['"`\\]/.test(command)) return 'Quotes are not supported; separate arguments with spaces.'
+  if (first !== agent && !(first.startsWith('/') && first.split('/').at(-1) === agent)) return `Start with ${agent} or an absolute path to it.`
+  return null
+}
+
+/** Saves a typed start command; null, or the built-in one, resets to the built-in command. */
+export function withCommand(settings: AgentSettings, agent: string, command: string | null): AgentSettings {
+  const rest = Object.fromEntries(Object.entries(settings.commands ?? {}).filter(([key]) => key !== agent))
+  const typed = command?.trim().split(/\s+/).join(' ') ?? null
+  const commands = typed === null || typed === builtInCommands[agent] ? rest : { ...rest, [agent]: typed }
+  const base: AgentSettings = { version: 1, default: settings.default, disabled: settings.disabled, modes: settings.modes }
+  return Object.keys(commands).length === 0 ? base : { ...base, commands }
 }
 
 /** The mode a new chat of this agent opens in: the one chosen, else chat. */
@@ -68,6 +100,8 @@ export interface AgentRow {
   mode: ChatMode
   /** The command line it starts with; undefined while it loads, null when the CLI cannot give one. */
   command: string | null | undefined
+  /** The start command the person typed; absent for the built-in one. */
+  custom?: string
 }
 
 /** One row per agent in a fixed order; without the install report every agent is listed, none installed. */
@@ -83,6 +117,7 @@ export function agentRows(plan: readonly { agent: string; label: string; install
       isDefault: settings.default === agent,
       mode: agentMode(settings, agent),
       command: argv === undefined ? undefined : argv === null ? null : commandLine(argv),
+      custom: settings.commands?.[agent],
     }
   })
 }
