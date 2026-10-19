@@ -103,7 +103,7 @@ function optionResult(args: readonly string[]): Result<{ readonly repo?: string;
 }
 
 async function batchJson(process: ProcessAdapter, command: string, args: readonly string[]): Promise<unknown> {
-  const result = await process.run(command, args);
+  const result = await process.run(command, args, { timeoutMs: 2_000 });
   return result.kind === "ok" ? jsonValue(result.value.stdout) : undefined;
 }
 
