@@ -1,4 +1,4 @@
-use crate::cli_stream::{end_line, first_error_line, forward_stdout_lines};
+use crate::cli_stream::{end_line, first_error_line, forward_stdout_lines, stream_stdout};
 use std::io::Cursor;
 
 #[test]
@@ -46,4 +46,37 @@ fn cli_streams_kill_their_children_when_dropped() {
     drop(streams);
     // SAFETY: as above.
     assert_ne!(unsafe { libc::kill(pid, 0) }, 0, "child is gone once the streams drop");
+}
+
+/// Reads two lines, then fails as a broken pipe would.
+struct FailingReader {
+    sent: bool,
+}
+
+impl std::io::Read for FailingReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.sent {
+            return Err(std::io::Error::other("pipe broke"));
+        }
+        self.sent = true;
+        let bytes = b"{\"step\":1}\n{\"step\":2}\n";
+        buffer[..bytes.len()].copy_from_slice(bytes);
+        Ok(bytes.len())
+    }
+}
+
+#[test]
+fn install_stream_reports_a_stdout_read_error_after_the_lines_it_read() {
+    let mut lines = Vec::new();
+    let result = stream_stdout(std::io::BufReader::new(FailingReader { sent: false }), |line| lines.push(line));
+    assert_eq!(lines, vec!["{\"step\":1}".to_string(), "{\"step\":2}".to_string()]);
+    let error = result.expect_err("a read error must not look like a complete stream");
+    assert!(error.contains("pipe broke"), "{error}");
+}
+
+#[test]
+fn install_stream_reads_a_whole_stream() {
+    let mut lines = Vec::new();
+    stream_stdout(Cursor::new(b"a\nb\n"), |line| lines.push(line)).unwrap();
+    assert_eq!(lines, vec!["a".to_string(), "b".to_string()]);
 }
