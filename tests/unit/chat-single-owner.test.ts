@@ -613,7 +613,7 @@ describe("a chat in terminal mode", () => {
     let status: { terminalRefreshError?: string } = {};
     for (let attempt = 0; attempt < 80; attempt += 1) {
       status = await daemon.daemonStatus() as unknown as { terminalRefreshError?: string };
-      if (status.terminalRefreshError !== undefined) break;
+      if (status.terminalRefreshError !== undefined && calls > 1) break;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     expect(status.terminalRefreshError).toContain("ownership lookup failed");
