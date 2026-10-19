@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { idleRun, reduceRun } from '@/device/device-model'
-import { blurGraceMs, deviceFrame, fitZoom, frameScale, frameDelay, frameMs, gestureOf, inputPaused, keyAction, pausedNote, pointSize, screenPoint, tapSlop, tvAspect, zoomedSize, zoomIn, zoomLabel, zoomOut, zoomPercent, zoomSteps } from '@/device/screen-model'
+import { blurGraceMs, deviceFrame, fitZoom, frameScale, frameDelay, frameMs, gatherWheel, gestureOf, inputPaused, keyAction, pausedNote, pointSize, screenPoint, tapSlop, tvAspect, zoomedSize, zoomIn, zoomLabel, zoomOut, zoomPercent, zoomSteps, wheelScroll } from '@/device/screen-model'
 
 const UDID = '401F3DA8-E4C1-48B7-9BB9-2C8416115E1A'
 const OTHER = '110E1BF2-99F9-4475-916E-32FBA7CED248'
@@ -261,5 +261,21 @@ describe('web viewport sizing', () => {
     const scale = frameScale(603, { width: 402, scale: 3 }, 1)
     expect(screenPoint({ x: 201, y: 437 }, { left: 0, top: 0, width: 402, height: 874 }, { width: 603, height: 1311 }, scale)).toEqual({ x: 201, y: 437 })
     expect(pointSize({ width: 603, height: 1311, scale })).toEqual({ width: 402, height: 874 })
+  })
+})
+
+describe('wheel scrolls stay with their device', () => {
+  test('gathers deltas for the same device and starts again for another one', () => {
+    const first = gatherWheel(null, { target: UDID, x: 10, y: 20, dx: 1, dy: 2 })
+    const more = gatherWheel(first, { target: UDID, x: 99, y: 99, dx: 3, dy: 4 })
+    expect(more).toEqual({ target: UDID, x: 10, y: 20, dx: 4, dy: 6 })
+    expect(gatherWheel(more, { target: OTHER, x: 5, y: 6, dx: 7, dy: 8 })).toEqual({ target: OTHER, x: 5, y: 6, dx: 7, dy: 8 })
+  })
+
+  test('a gathered scroll goes to its own device only while that device is still shown', () => {
+    const gathered = { target: UDID, x: 10, y: 20, dx: 1.4, dy: -2.6 }
+    expect(wheelScroll(gathered, UDID)).toEqual({ target: UDID, x: 10, y: 20, dx: 1, dy: -3 })
+    expect(wheelScroll(gathered, OTHER)).toBeNull()
+    expect(wheelScroll(gathered, null)).toBeNull()
   })
 })

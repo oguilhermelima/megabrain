@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { KnowledgeChat, KnowledgeDecision, KnowledgeTopicSummary } from '@/api/schema'
-import { chatCards, decisionsOf, groupTopics, knowledgeItem, knowledgeItemIn, knowledgeView, nodeRadius, refLabel, refNumber, searchTopics, topicGraph } from '@/advanced/knowledge-model'
+import { chatCards, decisionsOf, groupTopics, knowledgeItem, knowledgeItemIn, knowledgeView, nodeRadius, refLabel, refNumber, searchTopics, settleTopicSearch, shownTopicSearch, topicGraph } from '@/advanced/knowledge-model'
 
 const topic = (id: string, updatedAt: string, extra: Partial<KnowledgeTopicSummary> = {}): KnowledgeTopicSummary => ({
   id,
@@ -202,5 +202,23 @@ describe('the Knowledge page item', () => {
     expect(knowledgeItemIn(['native:a', 'knowledge:home', 'terminal:t'])).toBe('knowledge:home')
     expect(knowledgeItemIn(['native:a', 'summary:sum-0002'])).toBe('summary:sum-0002')
     expect(knowledgeItemIn(['native:a', 'project:/work/canto'])).toBeNull()
+  })
+})
+
+describe('topic search answers', () => {
+  const found = [{ id: 't1' }]
+
+  test('a search that answers after one failed clears the error', () => {
+    const failed = settleTopicSearch(null, { key: 'repo\nauth', ok: false, error: new Error('boom') })
+    expect(shownTopicSearch(failed, 'repo\nauth')).toEqual({ results: null, error: new Error('boom') })
+    const answered = settleTopicSearch(failed, { key: 'repo\nauth', ok: true, results: found })
+    expect(shownTopicSearch(answered, 'repo\nauth')).toEqual({ results: found, error: null })
+  })
+
+  test('an error or results for other text are not shown for the text typed now', () => {
+    const failed = settleTopicSearch(null, { key: 'repo\nauth', ok: false, error: new Error('boom') })
+    expect(shownTopicSearch(failed, 'repo\nlogin')).toEqual({ results: null, error: null })
+    const answered = settleTopicSearch(null, { key: 'repo\nauth', ok: true, results: found })
+    expect(shownTopicSearch(answered, 'repo\nlogin')).toEqual({ results: null, error: null })
   })
 })

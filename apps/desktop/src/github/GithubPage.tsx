@@ -6,7 +6,7 @@ import type { SheetField } from '@/components/filter-sheet-model'
 import { FilterButton, FilterChips, FilterPanel } from '@/components/Filters'
 import { useSheet } from '@/components/Sheet'
 import { ErrorNote } from '@/components/ui'
-import { emptyPullRequestFilters, githubRepository, includesAuthor, otherPeople, type IssueFilters, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
+import { emptyPullRequestFilters, filterOptionsFrom, githubRepository, includesAuthor, otherPeople, type IssueFilters, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
 import { firstCursors, withNext } from '@/github/pager'
 import { CloseIcon, CommentIcon, MaximiseIcon, MilestoneIcon, RefreshIcon } from '@/github/icons'
 import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
@@ -15,6 +15,9 @@ import { BranchFlow, StatPill } from '@/github/ItemHero'
 import { ActionsPage } from '@/github/ActionsPage'
 import { Empty, IconButton, KindSwitch, Meta, OwnerPicture, Pager, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass, splitDetail, splitList, useSettled } from '@/github/page-parts'
 import type { GithubKind, GithubPageKind } from '@/github/useGithubCounts'
+import { readFence } from '@/lib/latest-load'
+import { githubListingPolicy } from '@/lib/poll-model'
+import { usePoll } from '@/lib/usePoll'
 import { reuse } from '@/lib/reuse'
 import { pageDivider, pageMx, pageX } from '@/lib/page'
 
@@ -23,8 +26,6 @@ import { pageDivider, pageMx, pageX } from '@/lib/page'
 // state's total, the tab a page at a time under a pager, search and filters GitHub applies to the
 // whole repository, and a detail pane on the right with the body, comments and, for a
 // pull request, its checks, review and line counts.
-
-const refreshMs = 60_000
 
 type Listing = { kind: 'prs'; page: GithubPullRequestList } | { kind: 'issues'; page: GithubIssueList }
 type ListRequest = { kind: 'prs'; state: PullRequestState; filters: PullRequestFilters } | { kind: 'issues'; state: IssueState; filters: IssueFilters }
@@ -37,7 +38,7 @@ async function readPage(root: string, request: ListRequest, after: string | null
 /**
  * One tab's listing a page at a time (github/pager): the page shown, the cursors that reach the pages
  * before and after it, and every state's total. Another repository, tab or filter starts again from the
- * first page; the shown page is read again every minute. The Tasks page lists issues with it too.
+ * first page; the shown page is read again every minute while the window shows (usePoll). The Tasks page lists issues with it too.
  */
 export function usePagedListing(root: string, request: ListRequest) {
   const key = JSON.stringify([root, request])
@@ -51,37 +52,35 @@ export function usePagedListing(root: string, request: ListRequest) {
   const cursor = place.cursors[index] ?? null
   const asked = useRef(request)
   asked.current = request
-  const current = useRef('')
-  current.current = `${key}\n${index}`
+  // Every read is numbered as it starts: an answer from an older one (another page, list, or the same page read
+  // again meanwhile) never replaces what a newer read shows.
+  const fence = useRef(readFence())
 
   const read = useCallback(async () => {
-    const reading = `${key}\n${index}`
+    const reading = fence.current.start()
     setLoading(true)
     try {
       const listing = await readPage(root, asked.current, cursor)
-      if (current.current !== reading) return
+      if (!fence.current.newest(reading)) return
       setShown((loaded) => reuse(loaded, { key, index, listing }))
       setAt((now) => (now.key === key ? { ...now, cursors: withNext(now.cursors, index, listing.page.nextCursor) } : now))
       setError(null)
     } catch (cause: unknown) {
-      if (current.current === reading) setError(cause)
+      if (fence.current.newest(reading)) setError(cause)
     } finally {
-      if (current.current === reading) setLoading(false)
+      if (fence.current.newest(reading)) setLoading(false)
     }
   }, [root, key, index, cursor])
 
-  useEffect(() => {
-    setError(null)
-    void read()
-    const timer = setInterval(() => void read(), refreshMs)
-    return () => clearInterval(timer)
-  }, [read])
+  useEffect(() => setError(null), [read])
+  // One read at a time, paused while the window is hidden; Refresh reads again at once.
+  const reload = usePoll(githubListingPolicy, read, [read])
 
   const go = useCallback((next: number) => setAt((now) => (now.key === key && next >= 0 && next < now.cursors.length ? { ...now, index: next } : now)), [key])
   // Another tab or filter shows nothing until its first page answers; another page of the same list keeps
   // the rows it had, under the pager's spinner, until the new page replaces them.
   const listing = shown?.key === key ? shown.listing : null
-  return { listing, error, loading, reload: read, index, cursors: place.cursors, go }
+  return { listing, error, loading, reload, index, cursors: place.cursors, go }
 }
 
 /** How long a typed search waits before GitHub is asked. */
@@ -91,24 +90,18 @@ export const searchSettleMs = 300
  * What a list's filters offer: every label of the repository and the people who can be assigned (they
  * answer for authors too), not only those on the page shown.
  */
-export function useFilterOptions(root: string): { labels: string[]; people: string[] } {
-  const [options, setOptions] = useState<{ root: string; labels: string[]; people: string[] } | null>(null)
+export function useFilterOptions(root: string): { labels: string[]; people: string[]; error: string | null } {
+  const [options, setOptions] = useState<{ root: string; labels: string[]; people: string[]; error: string | null } | null>(null)
   useEffect(() => {
     let stopped = false
-    const sorted = (values: string[]) => [...new Set(values)].sort((left, right) => left.localeCompare(right))
     void Promise.allSettled([api.githubLabels(root), api.assignableReviewers(root, '')]).then(([labels, people]) => {
-      if (stopped) return
-      setOptions({
-        root,
-        labels: labels.status === 'fulfilled' ? sorted(labels.value.map((label) => label.name)) : [],
-        people: people.status === 'fulfilled' ? sorted(people.value.filter((person) => person.isTeam !== true).map((person) => person.login)) : [],
-      })
+      if (!stopped) setOptions({ root, ...filterOptionsFrom(labels, people) })
     })
     return () => {
       stopped = true
     }
   }, [root])
-  return options?.root === root ? options : { labels: [], people: [] }
+  return options?.root === root ? options : { labels: [], people: [], error: null }
 }
 
 function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullRequest; selected: boolean; now: number; onSelect: () => void }) {
@@ -444,7 +437,7 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
           {selected !== null && <DetailPane key={selected} project={project} kind="prs" number={selected} pullRequest={selectedPr} issue={null} onMaximise={() => onMaximise('pr', selected)} onClose={() => setSelected(null)} />}
         </div>
       </div>
-      <FilterPanel sheet={sheet} fields={sheetFields} />
+      <FilterPanel sheet={sheet} fields={sheetFields} error={options.error} />
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { NativeChat, Project, ProjectScripts, ProjectSession, ProjectWorktree } from '@/api/schema'
-import { changeCounts, defaultBranch, newestFirst, recentChats, scriptRows, scriptState, worktreeSummaries } from '@/advanced/project-page-model'
+import { changeCounts, changesUnavailable, defaultBranch, issuesNote, pullDetail, newestFirst, recentChats, scriptRows, scriptState, worktreeSummaries } from '@/advanced/project-page-model'
 import type { RunTab, WorktreePanel } from '@/run-panel/run-model'
 
 const session = (sessionId: string, lastActivityAt: string | null, extra: Partial<ProjectSession> = {}): ProjectSession => ({
@@ -211,5 +211,24 @@ describe('scriptState', () => {
     expect(scriptState(panel([tab('run', { kind: 'exited', code: 1 })]), 'run')).toEqual({ kind: 'failed', code: 1 })
     expect(scriptState(panel([tab('run', { kind: 'exited', code: 0 })]), 'run')).toEqual({ kind: 'stopped' })
     expect(scriptState(panel([tab('run', { kind: 'exited', code: null })]), 'run')).toEqual({ kind: 'stopped' })
+  })
+})
+
+describe('summary reads that fail', () => {
+  test('a pull request whose detail could not be read is unavailable, not a pull request without checks', () => {
+    expect(pullDetail(null)).toBe('unavailable')
+    expect(pullDetail({ checks: [], reviewDecision: null })).toEqual({ checks: [], review: null })
+    expect(pullDetail({ checks: [], reviewDecision: 'approved' })).toEqual({ checks: [], review: 'approved' })
+  })
+
+  test('the Issues line says the count could not be read instead of looking like it is still coming', () => {
+    expect(issuesNote({ state: 'failed', error: new Error('gh: 502') })).toBe('Could not read the open issues.')
+    expect(issuesNote({ state: 'loading' })).toBe('Issues are listed on the Tasks page.')
+    expect(issuesNote({ state: 'ready', value: { counts: { open: 0 }, totalCount: 0 } })).toBe('No open issues.')
+    expect(issuesNote({ state: 'ready', value: { counts: { open: 2 }, totalCount: 5 } })).toBe('2 open issues, listed on the Tasks page.')
+  })
+
+  test('a worktree whose changes could not be read says so; one with none is clean', () => {
+    expect(changesUnavailable).toBe('Changes unavailable')
   })
 })

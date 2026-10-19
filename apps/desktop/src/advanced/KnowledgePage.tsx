@@ -9,7 +9,7 @@ import { KnowledgeMap } from '@/advanced/KnowledgeMap'
 import { BarSearch, WikiShell, barToggle } from '@/advanced/WikiShell'
 import { Blank, ProjectSwitcher, Section, SectionCount, listBox } from '@/advanced/WikiParts'
 import { wikiPanels } from '@/advanced/wiki-shell-model'
-import { chatCards, decisionsOf, groupTopics, kindColors, kindGroups, refLabel, refNumber, statusLabels, type KnowledgeView } from '@/advanced/knowledge-model'
+import { chatCards, decisionsOf, groupTopics, kindColors, kindGroups, refLabel, refNumber, settleTopicSearch, shownTopicSearch, statusLabels, type KnowledgeView, type TopicSearch } from '@/advanced/knowledge-model'
 import { branchGroups, githubRefGroups, readTopicTab, shownTopicTab, topicTabs, writeTopicTab, type GithubRefRow as GithubRefRowData, type TopicTab } from '@/advanced/topic-tabs-model'
 import { displayName } from '@/advanced/appearance-model'
 import { emptyTopicFilters, filterTopics, topicSheetFields, type TopicFilters } from '@/advanced/page-filters'
@@ -82,8 +82,7 @@ function useKnowledgeList() {
 
 /** The project's topics matching the text; a search waits for the typing to stop, and an answer to older text or another project is dropped. */
 function useTopicSearch(repo: string | null, query: string) {
-  const [error, setError] = useState<unknown>(null)
-  const [found, setFound] = useState<{ key: string; results: KnowledgeTopicSummary[] } | null>(null)
+  const [search, setSearch] = useState<TopicSearch<KnowledgeTopicSummary> | null>(null)
   const text = query.trim()
   const key = `${repo ?? ''}\n${text}`
   useEffect(() => {
@@ -91,8 +90,8 @@ function useTopicSearch(repo: string | null, query: string) {
     let current = true
     const timer = setTimeout(() => {
       api.searchKnowledge(text, repo).then(
-        (next) => current && setFound({ key, results: next.results }),
-        (caught: unknown) => current && setError(caught),
+        (next) => current && setSearch((last) => settleTopicSearch(last, { key, ok: true, results: next.results })),
+        (caught: unknown) => current && setSearch((last) => settleTopicSearch(last, { key, ok: false, error: caught })),
       )
     }, 250)
     return () => {
@@ -100,7 +99,7 @@ function useTopicSearch(repo: string | null, query: string) {
       clearTimeout(timer)
     }
   }, [text, repo, key])
-  return { results: found?.key === key ? found.results : null, error }
+  return shownTopicSearch(search, key)
 }
 
 const statusDot: Record<KnowledgeStatus, string> = { active: 'bg-accent', shipped: 'bg-ok', dropped: 'bg-ink-500' }

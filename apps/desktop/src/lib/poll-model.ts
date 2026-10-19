@@ -14,11 +14,19 @@ export const statusPolicy: PollPolicy = { visibleMs: 5_000, hiddenMs: 30_000, re
 export const projectsPolicy: PollPolicy = { visibleMs: 30_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 // The Device tab's simulators: a device shut down anywhere (simctl, another app) leaves within 5 s.
 export const devicesPolicy: PollPolicy = { visibleMs: 5_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
+// The simulators that can be booted: the catalog changes only when a runtime or device type is added.
+export const deviceCatalogPolicy: PollPolicy = { visibleMs: 120_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
 // The action bar's Diff badge: git status and a merge-base diff, both native and cheap.
 export const changesPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 export const quickViewPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
 // A simulator screenshot while a Maestro run goes on: one simctl capture, the screen's refresh rate in the Device tab.
 export const screenPolicy: PollPolicy = { visibleMs: 2_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
+// The Tasks board's items: up to 20 GitHub pages a read, so once a minute and only while the window shows.
+export const boardItemsPolicy: PollPolicy = { visibleMs: 60_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
+// The Tasks page's list of a repository's GitHub Projects: rarely changes, so every five minutes and on focus.
+export const boardListPolicy: PollPolicy = { visibleMs: 300_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
+// The GitHub listing's shown page: once a minute while the window shows, at once when it shows again.
+export const githubListingPolicy: PollPolicy = { visibleMs: 60_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
 // The CLI caches each GitHub answer for 60 s; the badges can wait twice that.
 export const githubCountsPolicy: PollPolicy = { visibleMs: 120_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
 // Workflow runs: every 10 s while one shown is queued or running, else once a minute; paused while hidden.

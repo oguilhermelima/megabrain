@@ -36,6 +36,25 @@ export function pointsPerPixel(box: Box, image: { width: number; height: number 
   return 1 / Math.min(box.width / image.width, box.height / image.height) / (scale > 0 ? scale : 1)
 }
 
+/** Wheel deltas gathered for one device, in its points, from where the wheel started. */
+export interface WheelGather extends Point {
+  target: string
+  dx: number
+  dy: number
+}
+
+/** Adds a wheel event to the gathered one; an event for another device starts again. */
+export function gatherWheel(pending: WheelGather | null, next: WheelGather): WheelGather {
+  if (pending === null || pending.target !== next.target) return next
+  return { ...pending, dx: pending.dx + next.dx, dy: pending.dy + next.dy }
+}
+
+/** The scroll to send once the wheel rests, or null when another device (or none) is shown by then. */
+export function wheelScroll(gather: WheelGather, shown: string | null): WheelGather | null {
+  if (gather.target !== shown) return null
+  return { ...gather, dx: Math.round(gather.dx), dy: Math.round(gather.dy) }
+}
+
 /** How far, in screen pixels, a pointer may move between down and up and still be a tap. */
 export const tapSlop = 8
 const minSwipeMs = 50

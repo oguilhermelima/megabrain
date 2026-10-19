@@ -174,3 +174,23 @@ export function knowledgeView(id: string): KnowledgeView {
 
 /** The Knowledge page among a layout's items, if one shows it; a Summaries page a past run left counts. */
 export const knowledgeItemIn = (items: readonly string[]): string | null => items.find((item) => parseItem(item)?.kind === 'knowledge') ?? null
+
+/** The last topic search answer, for the repository and text in `key`: its results, or the error it failed with. */
+export interface TopicSearch<T> {
+  key: string
+  results: T[] | null
+  error: unknown
+}
+
+export type TopicSearchAnswer<T> = { key: string; ok: true; results: T[] } | { key: string; ok: false; error: unknown }
+
+/** Takes a search answer: results clear an earlier error; a failure keeps the results last found for the same text. */
+export function settleTopicSearch<T>(state: TopicSearch<T> | null, answer: TopicSearchAnswer<T>): TopicSearch<T> {
+  if (answer.ok) return { key: answer.key, results: answer.results, error: null }
+  return { key: answer.key, results: state?.key === answer.key ? state.results : null, error: answer.error }
+}
+
+/** What the search shows for the text typed now: nothing from an answer to other text, error included. */
+export function shownTopicSearch<T>(state: TopicSearch<T> | null, key: string): { results: T[] | null; error: unknown } {
+  return state?.key === key ? { results: state.results, error: state.error } : { results: null, error: null }
+}

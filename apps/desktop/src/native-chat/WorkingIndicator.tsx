@@ -3,6 +3,7 @@ import { Chevron } from '@/advanced/chrome'
 import { ToolIcon } from '@/chat/ToolIcon'
 import { thinkingTail } from '@/chat/thinking-tail'
 import { AgentIcon } from '@/components/agent-icons'
+import { useClock } from '@/lib/clock'
 import { formatElapsed, formatTokens, type ThinkingProgress, type WorkingStatus } from '@/native-chat/chat-model'
 
 /**
@@ -11,16 +12,13 @@ import { formatElapsed, formatTokens, type ThinkingProgress, type WorkingStatus 
  * arrive, a retry or a silent API, and the thinking text it streams.
  */
 export function WorkingIndicator({ agent, status, progress }: { agent: string; status: WorkingStatus; progress?: (now: number) => ThinkingProgress | null }) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [])
+  const now = useClock(1000)
   const since = status.since === null ? Number.NaN : Date.parse(status.since)
   const waiting = status.label === 'Waiting for approval'
   const report = progress?.(now) ?? null
   return (
-    <li role="status" aria-live="polite" className="motion-rise py-1 text-chat-ui">
+    // Only what the agent does is announced: the elapsed time and token count change every second.
+    <li className="motion-rise py-1 text-chat-ui">
       <div className="flex items-center gap-2.5">
         {status.tool === undefined ? (
           <span aria-hidden="true" className="contents text-ink-400">
@@ -29,7 +27,9 @@ export function WorkingIndicator({ agent, status, progress }: { agent: string; s
         ) : (
           <ToolIcon name={status.tool} status="running" size={14} />
         )}
-        <span className={`font-medium ${waiting ? 'text-warn' : 'shimmer'}`}>{status.label}</span>
+        <span role="status" aria-live="polite" className={`font-medium ${waiting ? 'text-warn' : 'shimmer'}`}>
+          {status.label}
+        </span>
         {!Number.isNaN(since) && <span className="text-ink-400 tabular-nums">{formatElapsed(now - since)}</span>}
         {report !== null && report.tokens !== null && (
           <span className="flex items-center gap-1.5 text-ink-400 tabular-nums">

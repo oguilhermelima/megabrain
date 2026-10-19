@@ -11,7 +11,8 @@ export type AppControlRequest =
 
 export type AppControlIds = { pane(): string; group(): string; launcher(): string }
 export type AppControlResult = Layout | LayoutListing | { status: 'already-joined'; layout: Layout }
-export type LayoutListing = { panes: Array<{ id: string; target: string; focused: boolean }>; focused: string }
+/** Each pane by its id, the target `app open` takes for what it shows, and its pane item. */
+export type LayoutListing = { panes: Array<{ id: string; target: string; item: string; focused: boolean }>; focused: string }
 
 function itemFor(target: string): string {
   if (/^(chat|session|terminal|worktree|project|page|file|url|code):/.test(target)) {
@@ -29,6 +30,19 @@ function itemFor(target: string): string {
     if (target.startsWith('code:')) return target
   }
   throw new Error(`unknown target: ${target}`)
+}
+
+/** The CLI target for a pane item, the inverse of itemFor: a native chat pane is `chat:<id>`, a page `page:<name>`. */
+function targetFor(item: string): string {
+  const colon = item.indexOf(':')
+  const kind = item.slice(0, colon)
+  const id = item.slice(colon + 1)
+  if (colon === -1 || id === '') return item
+  if (kind === 'native') return `chat:${id}`
+  if (kind === 'tasks') return 'page:tasks'
+  if (kind === 'knowledge') return id === 'settings' ? 'page:settings' : id === 'home' ? 'page:knowledge' : `page:knowledge/${id}`
+  if (kind === 'artifact') return id === 'home' ? 'page:artifacts' : `page:artifacts/${id}`
+  return item
 }
 
 function leafFor(layout: Layout, id: string): PaneLeaf | undefined {
@@ -52,7 +66,7 @@ function focusPane(layout: Layout, id: string): Layout {
 export function listAppLayout(layout: Layout): LayoutListing {
   const shown = shownPanes(layout)
   const leaves = paneList(shown.root)
-  return { panes: leaves.map((leaf) => ({ id: leaf.id, target: leaf.item, focused: leaf.id === shown.focused })), focused: shown.focused }
+  return { panes: leaves.map((leaf) => ({ id: leaf.id, target: targetFor(leaf.item), item: leaf.item, focused: leaf.id === shown.focused })), focused: shown.focused }
 }
 
 /** Applies remote app requests through the same pure pane model used by desktop interactions. */

@@ -36,6 +36,14 @@ describe('desktop app layout control', () => {
     expect(result).toMatchObject({ panes: [{ id: 'p1', target: 'chat:a', focused: true }] })
   })
 
+  test('lists a chat pane by the chat target app commands take, its pane item kept apart', () => {
+    const pair = applyAppControl(start(), { action: 'open', target: 'chat:b', split: 'right' }, ids)
+    const listed = applyAppControl(pair, { action: 'layout' }, ids)
+    expect(listed.panes.find((pane) => pane.id === 'p2')).toEqual({ id: 'p2', target: 'chat:b', item: 'native:b', focused: true })
+    const reopened = applyAppControl(pair, { action: 'open', target: listed.panes.find((pane) => pane.id === 'p2')?.target ?? '' }, ids)
+    expect(paneList(reopened.groups[0]?.panes.root ?? reopened.single.root).map((pane) => pane.item)).toEqual(['chat:a', 'native:b'])
+  })
+
   test('refuses unknown targets without changing the layout', () => {
     expect(() => applyAppControl(start(), { action: 'open', target: 'unknown:x' }, ids)).toThrow(/unknown target/)
   })

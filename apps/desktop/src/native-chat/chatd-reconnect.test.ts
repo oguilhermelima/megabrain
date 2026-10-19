@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { CliError } from '@/api/adapter'
 import type { ChatDaemonStatus } from '@/api/schema'
-import { chatdNotice, isIncompatible, reconnectDecision, reconnectStep, watchesChatd } from '@/native-chat/chatd-reconnect'
+import { chatdNotice, chatdRetryMs, isIncompatible, reconnectDecision, reconnectStep, watchesChatd } from '@/native-chat/chatd-reconnect'
 
 const APP = '0.3.0'
 const protocol = { version: 3, min: 2, max: 3 }
@@ -108,5 +108,13 @@ describe('the notice', () => {
       dismissible: false,
       actions: [],
     })
+  })
+})
+
+describe('chatdRetryMs', () => {
+  test('a failed status read is tried again after 1 s, doubling, never past a minute', () => {
+    expect([1, 2, 3, 4].map(chatdRetryMs)).toEqual([1_000, 2_000, 4_000, 8_000])
+    expect(chatdRetryMs(7)).toBe(60_000)
+    expect(chatdRetryMs(40)).toBe(60_000)
   })
 })

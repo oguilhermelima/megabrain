@@ -284,3 +284,26 @@ export function otherPeople<T extends { login: string }>(author: string | null, 
     return true
   })
 }
+
+/**
+ * A list's filter options from the labels and assignable people reads: each sorted, each name once, teams left
+ * out; a read that failed offers nothing and says so, so a failure never looks like a repository without any.
+ */
+export function filterOptionsFrom(labels: PromiseSettledResult<{ name: string }[]>, people: PromiseSettledResult<{ login: string; isTeam?: boolean | null }[]>): { labels: string[]; people: string[]; error: string | null } {
+  const sorted = (values: string[]) => [...new Set(values)].sort((left, right) => left.localeCompare(right))
+  const failure = (what: string, reason: unknown) => `Could not read the ${what}: ${reason instanceof Error ? reason.message : String(reason)}`
+  const errors = [...(labels.status === 'rejected' ? [failure('labels', labels.reason)] : []), ...(people.status === 'rejected' ? [failure('people', people.reason)] : [])]
+  return {
+    labels: labels.status === 'fulfilled' ? sorted(labels.value.map((label) => label.name)) : [],
+    people: people.status === 'fulfilled' ? sorted(people.value.filter((person) => person.isTeam !== true).map((person) => person.login)) : [],
+    error: errors.length === 0 ? null : errors.join('. '),
+  }
+}
+
+/** The tab a key moves a tablist to: arrows to the next or previous one, wrapping, Home and End to the ends; null for any other key. */
+export function tabKeyTarget<T>(tabs: readonly T[], current: T, key: string): T | null {
+  if (tabs.length === 0) return null
+  const at = Math.max(0, tabs.indexOf(current))
+  const index = key === 'ArrowRight' ? (at + 1) % tabs.length : key === 'ArrowLeft' ? (at - 1 + tabs.length) % tabs.length : key === 'Home' ? 0 : key === 'End' ? tabs.length - 1 : null
+  return index === null ? null : (tabs[index] ?? null)
+}

@@ -50,7 +50,8 @@ export function FilterChips({ fields, className = '' }: { fields: readonly Sheet
 }
 
 /** Every filter of the page on its Sheet, with Clear while any is set. */
-export function FilterPanel({ sheet, fields }: { sheet: SheetState; fields: readonly SheetField[] }) {
+/** The filters sheet; `error` says which options could not be read, so their empty lists are not taken for none. */
+export function FilterPanel({ sheet, fields, error = null }: { sheet: SheetState; fields: readonly SheetField[]; error?: string | null }) {
   const count = activeCount(fields)
   const clear = (
     <button type="button" onClick={() => clearAll(fields)} className="h-8 rounded-full px-3 text-[12.5px] font-semibold text-ink-300 hover:bg-white/[0.06] hover:text-ink-100">
@@ -60,6 +61,11 @@ export function FilterPanel({ sheet, fields }: { sheet: SheetState; fields: read
   return (
     <Sheet sheet={sheet} title="Filters" note={count > 0 ? `${count} set` : undefined} footer={count > 0 ? clear : undefined}>
       <div className="space-y-4">
+        {error !== null && (
+          <p role="alert" className="text-[12.5px] leading-relaxed text-bad select-text">
+            {error}
+          </p>
+        )}
         {fields.map((field) =>
           field.kind === 'select' ? (
             <label key={field.label} className="block space-y-1.5">

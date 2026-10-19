@@ -22,3 +22,9 @@ export function settleLoad<T>(state: LatestLoad<T>, result: LoadResult<T>): Late
   if (result.ok) return { value: result.value, error: null, failures: 0, settled: result.seq }
   return { ...state, error: result.error, failures: state.failures + 1, settled: result.seq }
 }
+
+/** Numbers reads as they start; only the newest one started may write its answer. */
+export function readFence(): { start: () => number; newest: (read: number) => boolean } {
+  let last = 0
+  return { start: () => ++last, newest: (read) => read === last }
+}

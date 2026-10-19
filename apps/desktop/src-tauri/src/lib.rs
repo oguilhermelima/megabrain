@@ -10,6 +10,7 @@ mod cli_stream_tests;
 mod attachment;
 pub mod path_link;
 mod process_tree;
+mod simulator_sweep;
 mod switch_trace;
 mod terminal;
 mod terminal_tmux_config;
@@ -19,10 +20,12 @@ mod terminal_tests;
 #[cfg(test)]
 mod switch_trace_tests;
 #[cfg(test)]
+mod simulator_sweep_tests;
+#[cfg(test)]
 mod code_tests;
 
 use serde::Serialize;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::{ipc::Channel, Emitter, Manager, RunEvent, State, WindowEvent};
@@ -236,10 +239,17 @@ async fn stream_cli(app: tauri::AppHandle, cli: State<'_, Cli>, id: String, args
                 text
             })
         });
-        if let Some(stdout) = child.stdout.take() {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        let read = match child.stdout.take() {
+            Some(stdout) => cli_stream::stream_stdout(BufReader::new(stdout), |line| {
                 let _ = app.emit("cli-line", CliLine { id: id.clone(), line });
-            }
+            }),
+            None => Ok(()),
+        };
+        // A stream cut short is an error, whatever the exit code: the progress after it was never read.
+        if let Err(error) = read {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
         }
         let status = child.wait().map_err(|error| error.to_string())?;
         Ok(CliOutput {
@@ -355,8 +365,12 @@ fn stop_code_servers(app: &tauri::AppHandle) {
 }
 
 // Simulators megabrain booted go to sleep when idle (`native sim idle`): checked every minute, and all
-// of them when the app quits. It only ever touches a simulator the CLI itself recorded booting.
+// of them when the app quits. It only ever touches a simulator the CLI itself recorded booting, so
+// with none recorded the CLI is not started at all.
 fn sweep_simulators(app: &tauri::AppHandle, all: bool) {
+    if !simulator_sweep::state_dir().is_some_and(|state| simulator_sweep::has_recorded_simulators(&state)) {
+        return;
+    }
     let mut args = vec!["native".to_string(), "sim".to_string(), "idle".to_string(), "--sweep".to_string()];
     if all {
         args.push("--all".to_string());

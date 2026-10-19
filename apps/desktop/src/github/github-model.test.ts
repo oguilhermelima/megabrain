@@ -4,6 +4,8 @@ import { mockGithubIssues, mockGithubPullRequests } from '@/api/fixtures/mock'
 import { createMockApi } from '@/api/mock'
 import {
   filtersSet,
+  filterOptionsFrom,
+  tabKeyTarget,
   noAssignee,
   avatarUrl,
   checkSummary,
@@ -394,5 +396,37 @@ describe('the filters a list read sends', () => {
     expect(unassigned.totalCount).toBe(1)
     const drafts = await api.githubPullRequests('/repo', 'all', 25, null, pullRequestSearch({ ...emptyPullRequestFilters, draft: 'draft', author: 'operator' }))
     expect(drafts.items.map((item) => item.number)).toEqual([109, 84, 83])
+  })
+})
+
+describe('filterOptionsFrom', () => {
+  const fulfilled = <T,>(value: T): PromiseSettledResult<T> => ({ status: 'fulfilled', value })
+  const rejected = <T,>(reason: unknown): PromiseSettledResult<T> => ({ status: 'rejected', reason })
+
+  test('sorts each list once, people without teams, and reports no error when both answered', () => {
+    expect(filterOptionsFrom(fulfilled([{ name: 'bug' }, { name: 'area' }, { name: 'bug' }]), fulfilled([{ login: 'zoe' }, { login: 'team', isTeam: true }, { login: 'ana' }]))).toEqual({ labels: ['area', 'bug'], people: ['ana', 'zoe'], error: null })
+  })
+
+  test('says which options could not be read instead of offering empty lists as if there were none', () => {
+    expect(filterOptionsFrom(rejected(new Error('gh: 502')), fulfilled([{ login: 'ana' }]))).toEqual({ labels: [], people: ['ana'], error: 'Could not read the labels: gh: 502' })
+    expect(filterOptionsFrom(rejected(new Error('a')), rejected('b'))).toEqual({ labels: [], people: [], error: 'Could not read the labels: a. Could not read the people: b' })
+  })
+})
+
+describe('tabKeyTarget', () => {
+  const tabs = ['open', 'merged', 'closed', 'all'] as const
+
+  test('arrows move to the next or previous tab, wrapping at the ends', () => {
+    expect(tabKeyTarget(tabs, 'open', 'ArrowRight')).toBe('merged')
+    expect(tabKeyTarget(tabs, 'all', 'ArrowRight')).toBe('open')
+    expect(tabKeyTarget(tabs, 'open', 'ArrowLeft')).toBe('all')
+    expect(tabKeyTarget(tabs, 'closed', 'ArrowLeft')).toBe('merged')
+  })
+
+  test('Home and End go to the first and last tab; other keys move nothing', () => {
+    expect(tabKeyTarget(tabs, 'closed', 'Home')).toBe('open')
+    expect(tabKeyTarget(tabs, 'merged', 'End')).toBe('all')
+    expect(tabKeyTarget(tabs, 'merged', 'Enter')).toBeNull()
+    expect(tabKeyTarget(tabs, 'merged', 'ArrowDown')).toBeNull()
   })
 })

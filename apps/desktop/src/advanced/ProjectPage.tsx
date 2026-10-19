@@ -1,11 +1,11 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { api } from '@/api'
-import type { GithubActionRun, GithubCheck, GithubDetail, GithubIssue, GithubPullRequest, NativeChat, Project, ProjectScripts } from '@/api/schema'
+import type { GithubActionRun, GithubIssue, GithubPullRequest, NativeChat, Project, ProjectScripts } from '@/api/schema'
 import { displayName, projectTint } from '@/advanced/appearance-model'
 import { NewWorktreeDialog } from '@/advanced/NewWorktreeDialog'
 import { ProjectPicture } from '@/advanced/ProjectPicture'
 import { projectColor } from '@/advanced/picture-model'
-import { changeCounts, defaultBranch, newestFirst, recentChats, scriptRows, scriptState, worktreeSummaries, type ChangeCounts, type RecentChat, type ScriptRow, type ScriptState, type WorktreeOpen, type WorktreeSummary } from '@/advanced/project-page-model'
+import { changeCounts, changesUnavailable, defaultBranch, issuesNote, newestFirst, pullDetail, recentChats, scriptRows, scriptState, worktreeSummaries, type ChangeCounts, type RecentChat, type ScriptRow, type ScriptState, type PullDetail, type SummaryLoad, type WorktreeOpen, type WorktreeSummary } from '@/advanced/project-page-model'
 import { useStackDetails } from '@/advanced/useStackDetails'
 import { AgentIcon } from '@/components/agent-icons'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
@@ -49,7 +49,7 @@ export interface ProjectPageActions {
   open: (open: WorktreeOpen, path: string) => void
 }
 
-type Load<T> = { state: 'loading' } | { state: 'ready'; value: T } | { state: 'failed'; error: unknown }
+type Load<T> = SummaryLoad<T>
 
 /** One read per key; a key that changes starts over from loading. */
 function useLoad<T>(key: string | null, read: () => Promise<T>): Load<T> {
@@ -70,10 +70,6 @@ function useLoad<T>(key: string | null, read: () => Promise<T>): Load<T> {
 }
 
 /** What one pull request's detail adds to its row. */
-interface PullDetail {
-  checks: GithubCheck[]
-  review: GithubDetail['reviewDecision'] | null
-}
 
 const hover = 'transition-colors duration-[var(--motion-enter)] ease-[var(--motion-ease-out)]'
 const focusRing = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
@@ -108,7 +104,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
     Object.fromEntries(
       await mapLimited(topPulls, 2, async (item) => {
         const detail = await api.githubPullRequest(project.path, item.number).catch(() => null)
-        return [item.number, { checks: detail?.checks ?? [], review: detail?.reviewDecision ?? null } satisfies PullDetail] as const
+        return [item.number, pullDetail(detail)] as const
       }),
     ),
   )
@@ -117,7 +113,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
     const parents = new Map(project.worktrees.map((worktree) => [worktree.path, worktree.parent]))
     const counts = await mapLimited(worktrees, 3, async (worktree) => {
       try {
-        const [uncommitted, branch] = await Promise.all([api.codeChanges(worktree.path), api.codeBranchChanges(worktree.path, parents.get(worktree.path) ?? null).catch(() => null)])
+        const [uncommitted, branch] = await Promise.all([api.codeChanges(worktree.path), api.codeBranchChanges(worktree.path, parents.get(worktree.path) ?? null)])
         return [worktree.path, changeCounts(uncommitted, branch)] as const
       } catch {
         return [worktree.path, null] as const
@@ -253,7 +249,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
                 render={(items: GithubPullRequest[]) =>
                   newestFirst(items, shownItems).map((item) => (
                     <GithubRow key={item.number} icon={<PullRequestStateIcon item={item} size={15} />} title={item.title} labels={item.labels} number={item.number} author={item.author?.login ?? 'unknown'} at={ago(item.updatedAt, now)} comments={item.comments} onClick={() => actions.github(project, 'prs', item.number)}>
-                      <PullStatus detail={details.state === 'ready' ? details.value[item.number] : details.state === 'failed' ? null : undefined} />
+                      <PullStatus detail={details.state === 'ready' ? details.value[item.number] : details.state === 'failed' ? 'unavailable' : undefined} />
                     </GithubRow>
                   ))
                 }
@@ -263,7 +259,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
           {/* The project's issues are listed, searched and read on the Tasks page; here, how many are open. */}
           {repository !== null && (
             <Section title="Issues" count={openCount(issues)}>
-              <EmptyState text={issuesNote(openCount(issues))} action={{ label: 'Open in Tasks', onClick: () => actions.github(project, 'issues') }} />
+              <EmptyState text={issuesNote(issues)} action={{ label: 'Open in Tasks', onClick: () => actions.github(project, 'issues') }} />
             </Section>
           )}
 
@@ -423,9 +419,6 @@ function Expandable<T>({ items, noun, children }: { items: readonly T[]; noun: s
   )
 }
 
-/** The Issues section's one line: how many are open, once the count is known. */
-const issuesNote = (open: number | null) => (open === null ? 'Issues are listed on the Tasks page.' : open === 0 ? 'No open issues.' : `${open} open ${open === 1 ? 'issue' : 'issues'}, listed on the Tasks page.`)
-
 function EmptyState({ text, action }: { text: string; action: { label: string; onClick: () => void } }) {
   return (
     <div className="flex min-h-[52px] flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
@@ -536,7 +529,7 @@ function RowAction({ icon, label, onClick, danger = false }: { icon: MenuIcon; l
 /** Changed files by kind; a pulse while read, a quiet "Clean" when there are none. */
 function Changes({ counts }: { counts: ChangeCounts | null | undefined }) {
   if (counts === undefined) return <Bone width="w-16" />
-  if (counts === null) return null
+  if (counts === null) return <span className="text-[12px] text-bad">{changesUnavailable}</span>
   const total = counts.added + counts.modified + counts.deleted
   if (total === 0) return <span className="text-[12px] text-ink-500">Clean</span>
   const parts = [
@@ -624,10 +617,10 @@ function GithubRow({ icon, title, labels, number, author, at, comments, onClick,
   )
 }
 
-/** A pull request's review decision and checks; a pulse while its detail is read, nothing when unknown. */
-function PullStatus({ detail }: { detail: PullDetail | null | undefined }) {
+/** A pull request's review decision and checks; a pulse while its detail is read, a note when it could not be. */
+function PullStatus({ detail }: { detail: PullDetail | 'unavailable' | undefined }) {
   if (detail === undefined) return <Bone width="w-20" className="h-3" />
-  if (detail === null) return null
+  if (detail === 'unavailable') return <span className="shrink-0 text-[11.5px] font-semibold text-bad">Checks unavailable</span>
   const summary = checkSummary(detail.checks)
   const review = reviewStates.find((state) => state === detail.review) ?? null
   const tone = summary.state === 'failing' ? 'text-bad' : summary.state === 'pending' ? 'text-warn' : 'text-ok'
