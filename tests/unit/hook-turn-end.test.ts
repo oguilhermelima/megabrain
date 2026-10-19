@@ -174,16 +174,27 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
     await withRoot("reused-waiter", async (root) => {
       const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (database.kind !== "ok") throw new Error(database.error);
-      const dispatch = createDispatch(database.value, { dispatchId: "reused", state: "running" });
-      if (dispatch.kind !== "ok") throw new Error(dispatch.error);
-      const waiter = putWaiter(database.value, {
-        dispatchId: "reused", pid: process.pid, parentSessionId: "coord-term", parentHost: "orca",
-        createdAt: new Date().toISOString(), processStartIdentity: "not-the-current-process",
-      });
-      if (waiter.kind !== "ok") throw new Error(waiter.error);
+      const now = Date.now();
+      const entries = [
+        { dispatchId: "reused", pid: process.pid, createdAt: new Date(now).toISOString(), startTime: now + 5_000 },
+        { dispatchId: "active", pid: process.pid, createdAt: new Date(now).toISOString(), startTime: now - 5_000 },
+        { dispatchId: "exited", pid: 2_000_000_000, createdAt: new Date(now).toISOString(), startTime: undefined },
+      ];
+      for (const entry of entries) {
+        const dispatch = createDispatch(database.value, { dispatchId: entry.dispatchId, state: "running" });
+        if (dispatch.kind !== "ok") throw new Error(dispatch.error);
+        const waiter = putWaiter(database.value, {
+          dispatchId: entry.dispatchId, pid: entry.pid, parentSessionId: "coord-term", parentHost: "orca", createdAt: entry.createdAt,
+        });
+        if (waiter.kind !== "ok") throw new Error(waiter.error);
+      }
 
-      expect(await waiterIsActive(root, "reused")).toBe(false);
+      const startFor = (expected: number | undefined) => (_pid: number): number | undefined => expected;
+      expect(await waiterIsActive(root, "reused", startFor(entries[0]?.startTime))).toBe(false);
+      expect(await waiterIsActive(root, "active", startFor(entries[1]?.startTime))).toBe(true);
+      expect(await waiterIsActive(root, "exited", startFor(entries[2]?.startTime))).toBe(false);
       expect(database.value.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("reused")).toBeNull();
+      expect(database.value.db.query("SELECT dispatch_id FROM waiters WHERE dispatch_id = ?").get("exited")).toBeNull();
     });
   });
 
