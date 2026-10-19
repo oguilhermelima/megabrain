@@ -3,7 +3,7 @@ import { evaluateProjectFilter } from '../../src/cli/commands/github/project-fil
 
 const items = [
   { id: 'I1', title: 'Café polish', type: 'ISSUE', state: 'OPEN', repository: 'cantospace/app', status: 'Ready', assignees: [{ login: 'me' }], labels: [{ name: 'Bug' }], fields: { Estimate: 5, Updated: '2026-10-18' } },
-  { id: 'I2', title: 'Docs', type: 'PULL_REQUEST', state: 'MERGED', repository: 'other/repo', status: 'Blocked', assignees: [], labels: [], fields: { Estimate: 2, Updated: '2026-10-01' } },
+  { id: 'I2', title: 'Docs', type: 'PULL_REQUEST', state: 'MERGED', repository: 'other/repo', status: 'Blocked', assignees: [], labels: [{ name: 'bug' }], fields: { Estimate: 2, Updated: '2026-10-01' } },
   { id: 'I3', title: 'Draft task', type: 'DRAFT_ISSUE', state: null, repository: null, status: null, assignees: [], labels: [], fields: {} },
 ] as const
 
