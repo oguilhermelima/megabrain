@@ -411,3 +411,21 @@ describe('filterOptionsFrom', () => {
     expect(filterOptionsFrom(rejected(new Error('a')), rejected('b'))).toEqual({ labels: [], people: [], error: 'Could not read the labels: a. Could not read the people: b' })
   })
 })
+
+describe('tabKeyTarget', () => {
+  const tabs = ['open', 'merged', 'closed', 'all'] as const
+
+  test('arrows move to the next or previous tab, wrapping at the ends', () => {
+    expect(tabKeyTarget(tabs, 'open', 'ArrowRight')).toBe('merged')
+    expect(tabKeyTarget(tabs, 'all', 'ArrowRight')).toBe('open')
+    expect(tabKeyTarget(tabs, 'open', 'ArrowLeft')).toBe('all')
+    expect(tabKeyTarget(tabs, 'closed', 'ArrowLeft')).toBe('merged')
+  })
+
+  test('Home and End go to the first and last tab; other keys move nothing', () => {
+    expect(tabKeyTarget(tabs, 'closed', 'Home')).toBe('open')
+    expect(tabKeyTarget(tabs, 'merged', 'End')).toBe('all')
+    expect(tabKeyTarget(tabs, 'merged', 'Enter')).toBeNull()
+    expect(tabKeyTarget(tabs, 'merged', 'ArrowDown')).toBeNull()
+  })
+})
