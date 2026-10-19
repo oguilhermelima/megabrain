@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProcessAdapter, type ProcessAdapter, type ProcessOutput } from "../../src/adapters/proc.js";
@@ -470,6 +470,19 @@ describe("github cache", () => {
     await Bun.write(file as string, "{broken");
     expect((await github(["prs", path, "--json"], 1_000_001)).kind).toBe("ok");
     expect(calls).toHaveLength(2);
+  });
+
+  test("collects expired cache files when writing a fresh entry", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    await github(["prs", path, "--json"], 1_000_000);
+    const [expiredFile] = cacheFiles();
+    const expired = JSON.parse(readFileSync(expiredFile as string, "utf8")) as Record<string, unknown>;
+    writeFileSync(expiredFile as string, JSON.stringify({ ...expired, fetchedAt: 1 }));
+
+    await github(["issues", path, "--json"], 1_000_000);
+
+    expect(cacheFiles()).toHaveLength(1);
+    expect(cacheFiles()[0]).not.toBe(expiredFile);
   });
 });
 
