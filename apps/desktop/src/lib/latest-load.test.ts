@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { initialLoad, settleLoad } from '@/lib/latest-load'
+import { initialLoad, readFence, settleLoad } from '@/lib/latest-load'
 
 const good = ['a', 'b', 'c']
 
@@ -27,5 +27,24 @@ describe('settleLoad', () => {
     expect(settleLoad(newer, { seq: 1, ok: true, value: [] })).toBe(newer)
     expect(settleLoad(newer, { seq: 1, ok: false, error: 'late' })).toBe(newer)
     expect(settleLoad(newer, { seq: 2, ok: true, value: [] })).toBe(newer)
+  })
+})
+
+describe('readFence', () => {
+  test('only the newest read started may write, however the answers arrive', () => {
+    const fence = readFence()
+    const slow = fence.start()
+    const fresh = fence.start()
+    expect(fence.newest(fresh)).toBe(true)
+    expect(fence.newest(slow)).toBe(false)
+  })
+
+  test('a read started after the last one settled is newest again', () => {
+    const fence = readFence()
+    const first = fence.start()
+    expect(fence.newest(first)).toBe(true)
+    const second = fence.start()
+    expect(fence.newest(first)).toBe(false)
+    expect(fence.newest(second)).toBe(true)
   })
 })
