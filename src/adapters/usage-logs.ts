@@ -29,16 +29,19 @@ async function listFiles(root: string, keep: (path: string) => boolean): Promise
   try {
     const entries = await readdir(root, { recursive: true });
     return entries.map((entry) => join(root, entry)).filter(keep);
-  } catch { return []; }
+  } catch (cause: unknown) {
+    if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT") return [];
+    throw new Error(`could not list usage logs in ${root}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+  }
 }
 
-async function logFiles(home: string): Promise<Array<{ path: string; provider: UsageProvider }>> {
+async function logFiles(home: string, selected: UsageProvider | null): Promise<Array<{ path: string; provider: UsageProvider }>> {
   const jsonl = (path: string) => path.endsWith(".jsonl");
   const [claude, codex, archived, grok] = await Promise.all([
-    listFiles(join(home, ".claude", "projects"), jsonl),
-    listFiles(join(home, ".codex", "sessions"), jsonl),
-    listFiles(join(home, ".codex", "archived_sessions"), jsonl),
-    listFiles(join(home, ".grok", "sessions"), (path) => basename(path) === "usage.json"),
+    selected === null || selected === "claude" ? listFiles(join(home, ".claude", "projects"), jsonl) : [],
+    selected === null || selected === "codex" ? listFiles(join(home, ".codex", "sessions"), jsonl) : [],
+    selected === null || selected === "codex" ? listFiles(join(home, ".codex", "archived_sessions"), jsonl) : [],
+    selected === null || selected === "grok" ? listFiles(join(home, ".grok", "sessions"), (path) => basename(path) === "usage.json") : [],
   ]);
   return [
     ...claude.map((path) => ({ path, provider: "claude" as const })),
@@ -85,12 +88,14 @@ async function grokProject(usagePath: string): Promise<string | null> {
   try { return decodeURIComponent(basename(dirname(dirname(usagePath)))); } catch { return null; }
 }
 
-async function parseFile(file: Listed, timeZone: string): Promise<FileUsage | null> {
+async function parseFile(file: Listed, timeZone: string): Promise<FileUsage> {
   try {
     if (file.provider === "grok") return parseGrokUsage(await readFile(file.path, "utf8"), await grokProject(file.path), timeZone);
     const usage = await feedLines(file.path, file.provider === "claude" ? claudeParser(timeZone) : codexParser(timeZone));
     return usage.session === "" ? { ...usage, session: file.path } : usage;
-  } catch { return null; }
+  } catch (cause: unknown) {
+    throw new Error(`could not read ${file.provider} usage log ${file.path}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+  }
 }
 
 async function readCache(stateDir: string, timeZone: string): Promise<Map<string, CacheEntry>> {
@@ -129,6 +134,11 @@ async function megabrainUsage(environment: Environment, stateDir: string, option
   const dayOf = dayReader(options.timeZone);
   const today = dayOf(options.now.toISOString()) ?? "";
   const from = options.days === null ? null : rangeStart(today, options.days);
+  const nextDay = (day: string) => new Date(Date.parse(`${day}T00:00:00.000Z`) + 86_400_000).toISOString();
+  const bounds = from === null ? null : [
+    new Date(Date.parse(`${from}T00:00:00.000Z`) - 86_400_000).toISOString(),
+    new Date(Date.parse(`${nextDay(today)}`) + 86_400_000).toISOString(),
+  ] as const;
   const inRange = (timestamp: string) => {
     const day = dayOf(timestamp);
     return day !== null && (from === null || day >= from) && day <= today;
@@ -136,8 +146,8 @@ async function megabrainUsage(environment: Environment, stateDir: string, option
   const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return null;
   const rows = read(database.value, ({ db }) => db.query<{ created_at: string | null; ended_at: string | null }>(
-    `SELECT d.created_at, (SELECT MAX(m.created_at) FROM messages m WHERE m.dispatch_id = d.id AND m."from" = 'child') AS ended_at FROM dispatches d WHERE d.created_at IS NOT NULL`,
-  ).all());
+    `SELECT d.created_at, (SELECT MAX(m.created_at) FROM messages m WHERE m.dispatch_id = d.id AND m."from" = 'child') AS ended_at FROM dispatches d WHERE d.created_at IS NOT NULL${bounds === null ? "" : " AND d.created_at >= ? AND d.created_at < ?"}`,
+  ).all(...(bounds ?? [])));
   if (rows.kind !== "ok") return null;
   let dispatches = 0;
   let agentSeconds = 0;
@@ -161,9 +171,19 @@ export async function usageStats(environment: Environment, options: UsageStatsOp
   const started = performance.now();
   const home = environment.HOME ?? process.env.HOME ?? "";
   const stateDir = environment.MEGABRAIN_STATE_DIR ?? join(home, ".megabrain");
-  const found = await logFiles(home);
+  const found = await logFiles(home, options.provider);
+  const today = dayReader(options.timeZone)(options.now.toISOString()) ?? options.now.toISOString().slice(0, 10);
+  const from = options.days === null ? null : rangeStart(today, options.days);
+  // A log cannot contain an entry written after its mtime. Allow 14 hours before local midnight
+  // so the cutoff remains conservative for every UTC offset.
+  const cutoff = from === null ? null : Date.parse(`${from}T00:00:00.000Z`) - 14 * 60 * 60 * 1000;
   const listed = (await mapLimited(found, async (file): Promise<Listed | null> => {
-    try { const info = await stat(file.path); return { ...file, size: info.size, mtimeMs: info.mtimeMs }; } catch { return null; }
+    try {
+      const info = await stat(file.path);
+      if (cutoff !== null && info.mtimeMs < cutoff) return null;
+      return { ...file, size: info.size, mtimeMs: info.mtimeMs };
+    }
+    catch (cause: unknown) { throw new Error(`could not inspect usage log ${file.path}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
   })).filter((file): file is Listed => file !== null);
 
   const cache = await readCache(stateDir, options.timeZone);
@@ -171,18 +191,18 @@ export async function usageStats(environment: Environment, options: UsageStatsOp
   let parsed = 0;
   const usages = await mapLimited(listed, async (file) => {
     const hit = cache.get(file.path);
-    if (hit !== undefined && hit.size === file.size && hit.mtimeMs === file.mtimeMs) {
+    if (hit !== undefined && hit.usage !== null && hit.size === file.size && hit.mtimeMs === file.mtimeMs) {
       next.set(file.path, hit);
-      return hit.usage === null ? null : { ...hit.usage, provider: file.provider };
+      return { ...hit.usage, provider: file.provider };
     }
     parsed += 1;
     const usage = await parseFile(file, options.timeZone);
     next.set(file.path, { size: file.size, mtimeMs: file.mtimeMs, usage });
-    return usage === null ? null : { ...usage, provider: file.provider };
+    return { ...usage, provider: file.provider };
   });
   if (parsed > 0 || next.size !== cache.size) await writeCache(stateDir, options.timeZone, next);
 
-  const report = aggregateUsage(usages.filter((usage) => usage !== null), options);
+  const report = aggregateUsage(usages, options);
   const megabrain = await megabrainUsage(environment, stateDir, options);
   const since = [report.trackingSince, megabrain?.since ?? null].filter((day): day is string => day !== null).sort()[0] ?? null;
   return {

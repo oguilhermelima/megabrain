@@ -33,18 +33,17 @@ function validatedOutput(valid: Result<ChainConfig>, value: string): Result<stri
 }
 export function readConfig(environment: ChainEnvironment): Result<ChainConfig> {
   const path = chainPath(environment); if (!existsSync(path)) return ok(emptyConfig);
-  try {
-    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (typeof value !== "object" || value === null) return error(`chain file is not valid JSON: ${path}`);
-    if (!isChainConfig(value)) return error(`chain file is not valid: ${path}`);
-    const config = value;
-    if (config.usageLimits !== undefined && record(config.usageLimits) === undefined) return ok(config);
-    const usage = record(config.usageLimits) ?? {};
-    const notice = record(usage.notice) ?? {};
-    const normalized: ChainConfig = { ...config, usageLimits: { liveProviders: [], cacheTtlSeconds: 60, timeoutSeconds: 5, ...usage, notice: { enabled: false, intervalSeconds: 3600, ...notice } } };
-    if (JSON.stringify(normalized) !== JSON.stringify(value)) writeFileSync(path, JSON.stringify(normalized, null, 2) + "\n");
-    return ok(normalized);
-  } catch { return error(`chain file is not valid JSON: ${path}`); }
+  let value: unknown;
+  try { value = JSON.parse(readFileSync(path, "utf8")); }
+  catch (cause: unknown) { return error(cause instanceof SyntaxError ? `chain file is not valid JSON: ${path}` : `could not read chain file ${path}: ${cause instanceof Error ? cause.message : String(cause)}`); }
+  if (typeof value !== "object" || value === null) return error(`chain file is not valid JSON: ${path}`);
+  if (!isChainConfig(value)) return error(`chain file is not valid: ${path}`);
+  const config = value;
+  if (config.usageLimits !== undefined && record(config.usageLimits) === undefined) return ok(config);
+  const usage = record(config.usageLimits) ?? {};
+  const notice = record(usage.notice) ?? {};
+  const normalized: ChainConfig = { ...config, usageLimits: { liveProviders: [], cacheTtlSeconds: 60, timeoutSeconds: 5, ...usage, notice: { enabled: false, intervalSeconds: 3600, ...notice } } };
+  return ok(normalized);
 }
 export function validateConfig(config: ChainConfig, environment: ChainEnvironment): Result<ChainConfig> {
   const { template: modelsPath } = modelRegistryPaths(environment); let models: Set<string> | undefined; let modelIds: ReadonlyArray<{ agent: string; model: string }> = []; let modelEntries: ReadonlyArray<Model> = [];

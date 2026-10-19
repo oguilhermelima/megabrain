@@ -18,7 +18,7 @@ import { defaultSummarySettings, parseSummarySettings } from "../../chat/summari
 import { defaultKnowledgeSettings, parseKnowledgeSettings, readKnowledgeSettings } from "../../knowledge/settings.js";
 import { emptyModelSettings, modelEnabled, modelSettingsFile, parseModelSettings, type ModelSettings } from "../../core/model-settings.js";
 import { agentUpdateStatus, readAgentAutoUpdateSettings, writeAgentAutoUpdateSettings } from "../../core/agent-update.js";
-import { loadAndPersistModelRegistry } from "../../core/model.js";
+import { loadAndPersistModelRegistry, type Model } from "../../core/model.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -275,24 +275,34 @@ type SettingsValue = {
 
 const SETTINGS_KEYS = ["terminalEngine", "supervisor", "resources", "limits", "chains", "models", "terminal", "agents"] as const;
 type SettingsKey = typeof SETTINGS_KEYS[number];
+const emptyChainConfig: ChainConfig = { chains: {}, defaultSteps: [] };
 
 /** `only` limits the read to those top-level keys, so one page of the desktop window never pays for another's (limits go to the network). */
 async function readSettings(environment: Environment, processAdapter: ProcessAdapter, only: ReadonlySet<SettingsKey> | null = null): Promise<Result<Partial<SettingsValue>>> {
   const want = (key: SettingsKey): boolean => only === null || only.has(key);
-  const registryStatus = await loadAndPersistModelRegistry(environment);
-  if (registryStatus.kind !== "loaded") return failed(registryStatus.error, registryStatus.exitCode);
-  const database = readOnlyStateDatabase(environment);
-  if (database.kind !== "ok") return failed(database.error, database.exitCode);
-
-  const chainConfig = readConfig(environment);
+  const needsChainConfig = want("chains") || want("limits");
+  const needsRegistry = want("models") || needsChainConfig;
+  const database = want("supervisor") ? readOnlyStateDatabase(environment) : undefined;
+  if (database !== undefined && database.kind !== "ok") return failed(database.error, database.exitCode);
+  let registryModels: readonly Model[] = [];
+  if (needsRegistry) {
+    if (want("models")) {
+      const loaded = await loadAndPersistModelRegistry(environment);
+      if (loaded.kind !== "loaded") return failed(loaded.error, loaded.exitCode);
+      registryModels = loaded.registry.models;
+    } else {
+      const loaded = modelRegistry(environment);
+      if (loaded.kind !== "ok") return loaded;
+      registryModels = loaded.value;
+    }
+  }
+  const chainConfig = needsChainConfig ? readConfig(environment) : ok(emptyChainConfig);
   if (chainConfig.kind !== "ok") return chainConfig;
-  const registry = modelRegistry(environment);
-  if (registry.kind !== "ok") return registry;
   // A step naming a model the registry dropped must not fail the whole read: it is flagged below and validation skips it.
-  const stale = staleChainSteps(chainConfig.value, registry.value);
+  const stale = needsChainConfig ? staleChainSteps(chainConfig.value, registryModels) : [];
   const staleKeys = new Set(stale.map((entry) => `${entry.chain}/${entry.step}`));
   const lenient: ChainConfig = { ...chainConfig.value, chains: Object.fromEntries(Object.entries(chainConfig.value.chains).map(([name, chain]) => [name, { ...chain, steps: chain.steps.map((step, index) => staleKeys.has(`${name}/${index + 1}`) ? { ...step, unvalidated: true } : step) }])) };
-  const validated = validateConfig(lenient, environment);
+  const validated = needsChainConfig ? validateConfig(lenient, environment) : ok(emptyChainConfig);
   if (validated.kind !== "ok") return validated;
 
   const [historyEnabled, storedPolicy, configuredDefault, readings, terminalEngine, modelSettings, updates] = await Promise.all([
@@ -313,7 +323,7 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
   const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : null);
   // A registry written before statuses meant current, older or deprecated said active or retired.
   const status = (value: unknown): SettingsValue["models"][number]["status"] => (value === "older" ? "older" : value === "deprecated" || value === "retired" ? "deprecated" : "current");
-  const models = registry.value.map((model) => ({
+  const models = registryModels.map((model) => ({
     agent: model.agent,
     model: model.model,
     name: typeof model.name === "string" ? model.name : model.model,
@@ -325,7 +335,7 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
     reasoning: { levels: [...(model.reasoning?.levels ?? [])], default: text(model.reasoning?.default) },
     enabled: modelEnabled(modelSettings, model),
   }));
-  const watcher = supervisorWatcher(database.value);
+  const watcher = database === undefined ? { running: false, pid: null } : supervisorWatcher(database.value);
   const chains = Object.entries(chainConfig.value.chains).map(([name, chain]) => ({
     ...chain,
     name,
@@ -333,7 +343,7 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
       const entry = stale.find((candidate) => candidate.chain === name && candidate.step === index + 1);
       if (entry === undefined) return step;
       const effort = (step as { effort?: unknown }).effort;
-      return { ...step, stale: true, reason: `model '${entry.model}' is not registered for agent '${entry.agent}'`, suggested: suggestModel(registry.value, entry.agent, typeof effort === "string" ? effort : undefined) };
+      return { ...step, stale: true, reason: `model '${entry.model}' is not registered for agent '${entry.agent}'`, suggested: suggestModel(registryModels, entry.agent, typeof effort === "string" ? effort : undefined) };
     }),
   }));
   const defaultNotice = validated.value.usageLimits?.notice;
@@ -408,8 +418,8 @@ export async function executeSettings(args: readonly string[], environment: Envi
     else if (arg === "-h" || arg === "--help") return ok(usageText("settings"));
     else return failed(`unknown settings option: ${arg}`, 2);
   }
+  if (only !== null && !asJson) return failed("settings --only needs --json", 2);
   const result = await readSettings(environment, processAdapter, only);
   if (result.kind !== "ok") return result;
-  if (only !== null && !asJson) return failed("settings --only needs --json", 2);
   return ok(asJson ? `${JSON.stringify(result.value, null, 2)}\n` : summary(result.value as SettingsValue));
 }

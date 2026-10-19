@@ -52,6 +52,16 @@ function writeDispatchMeta(stateDir: string, dispatchId: string, dispatchState: 
   if (result.kind !== "ok") throw new Error(result.error);
 }
 
+test("doctor JSON includes the database report without a module filter", async () => {
+  const state = mkdtempSync("/tmp/megabrain-doctor-database-json-");
+  const result = await executeDoctor(["--json"], { HOME: state, MEGABRAIN_STATE_DIR: state }, processFor({}));
+  expect(result.kind).toBe("ok");
+  if (result.kind === "ok") {
+    const reports = JSON.parse(result.value) as Array<{ module: string; status: string }>;
+    expect(reports.some((report) => report.module === "database" && report.status === "ok")).toBe(true);
+  }
+});
+
 describe("doctor orchestration health counts (shell parity)", () => {
   // Mirrors the shell's megabrain_dispatch_health_counts: a dispatch is prunable when its state is
   // terminal (closed/done/failed/orphaned/circuit_broken) AND its updatedAt (or createdAt when

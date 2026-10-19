@@ -35,6 +35,22 @@ describe("chain selection", () => {
   });
 });
 
+describe("chain config reads", () => {
+  test("normalizes legacy defaults in memory without rewriting the config", async () => {
+    const { readConfig } = await import("../../src/cli/commands/chain.js");
+    const directory = mkdtempSync(join(tmpdir(), "megabrain-chain-read-"));
+    const path = join(directory, "chains.json");
+    const original = JSON.stringify({ chains: {}, defaultSteps: [] });
+    try {
+      writeFileSync(path, original);
+      const result = readConfig({ MEGABRAIN_STATE_DIR: directory });
+      expect(result.kind).toBe("ok");
+      expect(readFileSync(path, "utf8")).toBe(original);
+      if (result.kind === "ok") expect(result.value.usageLimits).toMatchObject({ liveProviders: [], cacheTtlSeconds: 60 });
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  });
+});
+
 function registry(models: ModelRegistry["models"]): ModelRegistry { return { version: 1, models }; }
 
 describe("chain validation reads the state model registry", () => {

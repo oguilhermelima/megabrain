@@ -62,6 +62,40 @@ async function settings(env: ReturnType<typeof sandbox>): Promise<Record<string,
 }
 
 describe("megabrain settings", () => {
+  test("rejects --only without --json before reading settings", async () => {
+    const env = sandbox();
+    const result = await run(["settings", "--only", "models"], env);
+    expect(result).toMatchObject({ kind: "failed", error: "settings --only needs --json", exitCode: 2 });
+    expect(existsSync(join(env.state, "megabrain.sqlite"))).toBe(false);
+  });
+
+  test("--only models does not read or validate chain configuration", async () => {
+    const env = sandbox();
+    writeFileSync(join(env.state, "chains.json"), "not valid JSON");
+    const result = await run(["settings", "--json", "--only", "models"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(Object.keys(JSON.parse(result.value))).toEqual(["models"]);
+  });
+
+  test("--only terminalEngine does not load the model registry or database", async () => {
+    const env = sandbox();
+    rmSync(join(env.root, ".megabrain", "models.json"));
+    const result = await run(["settings", "--json", "--only", "terminalEngine"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(JSON.parse(result.value)).toEqual({ terminalEngine: "native" });
+    expect(existsSync(join(env.state, "megabrain.sqlite"))).toBe(false);
+  });
+
+  test("reading a desktop setting leaves legacy state untouched", async () => {
+    const env = sandbox();
+    const legacy = join(env.state, "state.json");
+    writeFileSync(legacy, "{}");
+    const result = await run(["settings", "get", "sidebar-state"], env);
+    expect(result.kind).toBe("ok");
+    expect(existsSync(legacy)).toBe(true);
+    expect(existsSync(join(env.state, "legacy"))).toBe(false);
+  });
+
   test("returns the desktop schema keys with empty settings", async () => {
     const env = sandbox();
     const value = await settings(env);

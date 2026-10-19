@@ -175,7 +175,7 @@ export async function executeDoctor(args: readonly string[], environment: Enviro
   const dbReport = databaseReport();
   const unhealthy = values.some((value) => value.status !== "ok") || dbReport.status !== "ok";
   const text = module === undefined && json
-    ? `${JSON.stringify(values, null, 2)}\n`
+    ? `${JSON.stringify([...values, dbReport], null, 2)}\n`
     : `${values.map((value) => output(value, json)).join("")}${module === undefined ? output(dbReport, json) : ""}`;
   const hook = values.find((value) => value.module === "orchestration-hooks");
   const hookStderr = hook?.reason.includes("codex: entry-present")
