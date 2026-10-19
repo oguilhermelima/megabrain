@@ -10,6 +10,7 @@ mod cli_stream_tests;
 mod attachment;
 pub mod path_link;
 mod process_tree;
+mod simulator_sweep;
 mod switch_trace;
 mod terminal;
 mod terminal_tmux_config;
@@ -364,8 +365,12 @@ fn stop_code_servers(app: &tauri::AppHandle) {
 }
 
 // Simulators megabrain booted go to sleep when idle (`native sim idle`): checked every minute, and all
-// of them when the app quits. It only ever touches a simulator the CLI itself recorded booting.
+// of them when the app quits. It only ever touches a simulator the CLI itself recorded booting, so
+// with none recorded the CLI is not started at all.
 fn sweep_simulators(app: &tauri::AppHandle, all: bool) {
+    if !simulator_sweep::state_dir().is_some_and(|state| simulator_sweep::has_recorded_simulators(&state)) {
+        return;
+    }
     let mut args = vec!["native".to_string(), "sim".to_string(), "idle".to_string(), "--sweep".to_string()];
     if all {
         args.push("--all".to_string());
