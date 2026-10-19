@@ -36,6 +36,12 @@ export const boardFreshMs = 60_000
 /** Whether a board read last at `at` reads again now: never read, older than a minute, or asked for. */
 export const boardReadDue = (at: number | undefined, now: number, asked: boolean) => asked || at === undefined || now - at >= boardFreshMs
 
+/** How old a repository's list of projects may be before it is read again on its own. */
+export const boardListFreshMs = 300_000
+
+/** Whether a list of projects read last at `at` is read again now: never read, five minutes old, or asked for. */
+export const boardListReadDue = (at: number | undefined, now: number, asked: boolean) => asked || at === undefined || now - at >= boardListFreshMs
+
 /** A board's identity, the same under every repository whose items it holds. */
 export const boardKey = (board: Pick<GithubProject, 'owner' | 'number'>) => `${board.owner}/${board.number}`
 

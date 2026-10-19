@@ -12,11 +12,11 @@ import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts
 import { Avatar, LabelChip, OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
 import { pageDivider, pageX } from '@/lib/page'
 import { answeredItems, boardColumns, movesItem, otherRepository, shownItems, withoutMove, type BoardColumn, type PendingMove } from '@/tasks/board-model'
-import { boardKey, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
+import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
 import { BoardSearch, boardSheetFields } from '@/tasks/BoardFilterBar'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
-import { boardItemsPolicy } from '@/lib/poll-model'
+import { boardItemsPolicy, boardListPolicy } from '@/lib/poll-model'
 import { usePoll } from '@/lib/usePoll'
 
 // The Tasks page's board: one of the repository's GitHub Projects, picked under the bar, its items
@@ -37,32 +37,38 @@ const browserStorage = () => localStorage
 const memory = createBoardMemory(browserStorage)
 const boardCache = memory.get
 const remember = memory.remember
-/** The repositories whose projects this run has read: opening their board again reads none until Refresh. */
-const readProjects = new Set<string>()
 
-/** The repository's projects: the last read at once, read again only the first time this run. */
+/** The repository's projects: the last read at once, read again when five minutes old (usePoll), or on Refresh. */
 function useBoards(root: string) {
   const [boards, setBoards] = useState<GithubProject[] | null>(() => boardCache().projects[root]?.value ?? null)
   const [error, setError] = useState<unknown>(null)
-  const read = useCallback(() => {
-    let stopped = false
-    setError(null)
-    api.githubProjects(root).then(
-      (list) => {
-        readProjects.add(root)
-        remember(withProjects(boardCache(), root, list.projects, Date.now()))
-        if (!stopped) setBoards(list.projects)
-      },
-      (cause: unknown) => !stopped && setError(cause),
-    )
-    return () => {
-      stopped = true
-    }
-  }, [root])
+  const asked = useRef(false)
   useEffect(() => {
     setBoards(boardCache().projects[root]?.value ?? null)
-    if (!readProjects.has(root)) return read()
-  }, [root, read])
+    setError(null)
+  }, [root])
+  const poll = usePoll(
+    boardListPolicy,
+    async (current) => {
+      const force = asked.current
+      asked.current = false
+      if (!boardListReadDue(boardCache().projects[root]?.at, Date.now(), force)) return
+      try {
+        const list = await api.githubProjects(root)
+        remember(withProjects(boardCache(), root, list.projects, Date.now()))
+        if (!current()) return
+        setBoards(list.projects)
+        setError(null)
+      } catch (cause: unknown) {
+        if (current()) setError(cause)
+      }
+    },
+    [root],
+  )
+  const read = useCallback(() => {
+    asked.current = true
+    poll()
+  }, [poll])
   return { boards, error, reload: read }
 }
 
