@@ -1,8 +1,9 @@
 import { answerMockApproval, changeMockQueue, editLastMockChat, followMockChat, forkMockChat, grokCapabilities, interruptMockChat, mockAgyChat, mockCodexChat, mockCutChat, mockGrokChat, mockLongChat, mockNativeChat, publishMockArtifacts, readMockChat, sendMockChat, setMockChatMode, takeOverMockChat } from '@/api/fixtures/chat'
 import { mockChatArtifact, mockChatArtifacts, touchMockChatArtifact } from '@/api/fixtures/chat-artifacts'
 import { CliError, type DesktopApi, type PathLink } from '@/api/adapter'
+import { filterGithubProjectItems } from '@/api/project-filter'
 import { sessionsOfOrigin } from '@/api/projects-origin'
-import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep, NativeChat } from '@/api/schema'
+import type { AgentUpdateEntry, ArchivedWorktree, CodeChange, GithubDetail, GithubProjectItem, Project, ProjectAppearance, ProjectScripts, Chain, ChainStep, NativeChat } from '@/api/schema'
 import { mockSettings, mockGithubDetail, mockGithubIssues, mockGithubPullRequests, mockGithubRepositories, mockGithubOwners, mockDiscovered, mockPage, mockImported, mockProjects, mockChatRead, mockBranchChanges, mockCodeChanges, mockCodeDiff, mockCodeFiles, mockNewFileDiff, mockCodeTree, mockDoctor, mockInstallPlan, mockInstallRun, mockStatus, mockTranscript, mockWorktrees, mockDispatchReport, mockSessionHistory } from '@/api/fixtures/mock'
 import { explainChains } from '@/api/fixtures/chain-explain'
 import { fixtureGraph, fixtureLiveEvents, withLiveEvent } from '@/api/fixtures/orchestration-graph'
@@ -379,6 +380,7 @@ export function createMockApi(): DesktopApi {
       const page = items.slice(offset, offset + 100)
       return { project: structuredClone(project), items: structuredClone(page), next: offset + page.length < items.length ? String(offset + page.length) : null }
     },
+    githubProjectFilter: (project, items, filter, options) => filterGithubProjectItems(project, items, filter, options),
     githubProjectMove: async (_root, number, itemId, status, owner) => {
       const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
       if (!project) throw new CliError(`GitHub project ${number} was not found`, 1)
@@ -388,6 +390,56 @@ export function createMockApi(): DesktopApi {
       const updated = { ...items[index]!, status, updatedAt: new Date().toISOString() }
       items[index] = updated
       return structuredClone(updated)
+    },
+    githubProjectSetField: async (_root, number, itemId, field, type, value, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      const items = githubProjectItems[number] ?? []
+      const index = items.findIndex((item) => item.id === itemId)
+      if (!project || index < 0) throw new CliError(`GitHub project item ${itemId} was not found`, 1)
+      const statusOption = project.fields.find((candidate) => candidate.name.toLowerCase() === field.toLowerCase())?.options.find((option) => option.id === value || option.name.toLowerCase() === value.toLowerCase())
+      const fieldValue: NonNullable<GithubProjectItem['fieldValues']>[number] = type === 'single-select'
+        ? { kind: 'singleSelect', field, value: { optionId: statusOption?.id ?? value, name: statusOption?.name ?? value } }
+        : type === 'number' ? { kind: 'number', field, value: Number(value) }
+        : type === 'date' ? { kind: 'date', field, value }
+        : type === 'text' ? { kind: 'text', field, value }
+        : { kind: 'iteration', field, value: { title: value, startDate: '', duration: null } }
+      const updated = { ...items[index]!, ...(field.toLowerCase() === 'status' && type === 'single-select' ? { status: statusOption?.id ?? value } : {}), fieldValues: [...(items[index]!.fieldValues ?? []).filter((entry) => entry.field !== field), fieldValue], updatedAt: new Date().toISOString() }
+      items[index] = updated
+      return structuredClone(updated)
+    },
+    githubProjectClearField: async (_root, number, itemId, field, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      const items = githubProjectItems[number] ?? []
+      const index = items.findIndex((item) => item.id === itemId)
+      if (!project || index < 0) throw new CliError(`GitHub project item ${itemId} was not found`, 1)
+      const updated = { ...items[index]!, ...(field.toLowerCase() === 'status' ? { status: null } : {}), fieldValues: (items[index]!.fieldValues ?? []).filter((entry) => entry.field !== field), updatedAt: new Date().toISOString() }
+      items[index] = updated
+      return structuredClone(updated)
+    },
+    githubProjectAddItem: async (_root, number, reference, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      if (!project) throw new CliError(`GitHub project ${number} was not found`, 1)
+      const items = githubProjectItems[number] ?? []
+      const id = `MOCK_${number}_${items.length + 1}`
+      const item: GithubProjectItem = { id, type: 'ISSUE', number: Number(reference.match(/#(\d+)$/)?.[1] ?? reference.match(/\/(?:issues|pull)\/(\d+)/)?.[1] ?? 1), title: reference, url: reference.startsWith('http') ? reference : null, state: 'OPEN', repository: null, status: null, assignees: [], labels: [], updatedAt: new Date().toISOString(), isArchived: false, fieldValues: [] }
+      items.push(item)
+      return structuredClone(item)
+    },
+    githubProjectCreateDraft: async (_root, number, title, body, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      if (!project) throw new CliError(`GitHub project ${number} was not found`, 1)
+      const items = githubProjectItems[number] ?? []
+      const item: GithubProjectItem = { id: `MOCK_${number}_${items.length + 1}`, type: 'DRAFT_ISSUE', number: null, title, body: body ?? null, url: null, state: null, repository: null, status: null, assignees: [], labels: [], updatedAt: new Date().toISOString(), isArchived: false, fieldValues: [] }
+      items.push(item)
+      return structuredClone(item)
+    },
+    githubProjectSetArchived: async (_root, number, itemId, archived, owner) => {
+      const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))
+      const items = githubProjectItems[number] ?? []
+      const index = items.findIndex((item) => item.id === itemId)
+      if (!project || index < 0) throw new CliError(`GitHub project item ${itemId} was not found`, 1)
+      items[index] = { ...items[index]!, isArchived: archived }
+      return { id: itemId, isArchived: archived }
     },
     githubPullRequest: async (_root, number) => {
       await wait(300)
