@@ -370,6 +370,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
   const opened = openDatabase({ MEGABRAIN_STATE_DIR: stateDir });
   if (opened.kind !== "ok") { logOwner(stateDir, "startup-failed", { error: opened.error }); await unlink(lockPath).catch(() => undefined); throw new Error(`state owner could not open the database: ${opened.error}`); }
   const handle = opened.value;
+  handle.db.exec("PRAGMA wal_autocheckpoint = 10000");
   const initializedRequests = withWrite(handle, (db) => {
     db.run("CREATE TABLE IF NOT EXISTS state_owner_requests (request_id TEXT PRIMARY KEY, result_json TEXT NOT NULL, applied_at TEXT NOT NULL)");
     db.run("CREATE INDEX IF NOT EXISTS state_owner_requests_applied_at ON state_owner_requests(applied_at)");
