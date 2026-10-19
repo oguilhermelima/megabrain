@@ -1,38 +1,31 @@
 import { useEffect, useRef, useState } from 'react'
 import { Chevron } from '@/advanced/chrome'
-import { ToolIcon } from '@/chat/ToolIcon'
 import { thinkingTail } from '@/chat/thinking-tail'
-import { AgentIcon } from '@/components/agent-icons'
 import { useClock } from '@/lib/clock'
-import { formatElapsed, formatTokens, type ThinkingProgress, type WorkingStatus } from '@/native-chat/chat-model'
+import { formatTokens, type ThinkingProgress, type WorkingStatus } from '@/native-chat/chat-model'
 
 /**
- * Under the newest message while a turn runs: the agent's mark at work (a running tool's icon), what it does and for
- * how long, then what the agent reports of its progress at this instant: its output tokens, a pulse while they
- * arrive, a retry or a silent API, and the thinking text it streams.
+ * Under the newest row while a turn runs: a spinner and "Working…" (the wait for an approval instead, in its
+ * own words), then what the agent reports of its progress at this instant: its output tokens, a pulse while they
+ * arrive, a retry or a silent API, and the thinking text it streams. The turn's elapsed time is in its header.
  */
-export function WorkingIndicator({ agent, status, progress }: { agent: string; status: WorkingStatus; progress?: (now: number) => ThinkingProgress | null }) {
+export function WorkingIndicator({ status, progress }: { status: WorkingStatus; progress?: (now: number) => ThinkingProgress | null }) {
   const now = useClock(1000)
-  const since = status.since === null ? Number.NaN : Date.parse(status.since)
   const waiting = status.label === 'Waiting for approval'
   const report = progress?.(now) ?? null
   return (
-    // Only what the agent does is announced: the elapsed time and token count change every second.
+    // Only what the agent does is announced: the token count changes every second.
     <li className="motion-rise py-1 text-chat-ui">
       <div className="flex items-center gap-2.5">
-        {status.tool === undefined ? (
-          <span aria-hidden="true" className="contents text-ink-400">
-            <AgentIcon agent={agent} size={14} activity={waiting ? 'waiting' : 'working'} />
+        <span aria-hidden="true" className="inline-block size-3.5 shrink-0 animate-spin rounded-full border-[1.5px] border-ink-600 border-t-ink-300 motion-reduce:animate-none" />
+        <div className="flex min-w-0 items-center">
+          <span role="status" aria-live="polite" className={`truncate ${waiting ? 'font-medium text-warn' : 'text-ink-300'}`}>
+            {waiting ? status.label : 'Working…'}
+            {!waiting && <span className="text-ink-400"> · {status.label}</span>}
           </span>
-        ) : (
-          <ToolIcon name={status.tool} status="running" size={14} />
-        )}
-        <span role="status" aria-live="polite" className={`font-medium ${waiting ? 'text-warn' : 'shimmer'}`}>
-          {status.label}
-        </span>
-        {!Number.isNaN(since) && <span className="text-ink-400 tabular-nums">{formatElapsed(now - since)}</span>}
+        </div>
         {report !== null && report.tokens !== null && (
-          <span className="flex items-center gap-1.5 text-ink-400 tabular-nums">
+          <span aria-live="off" className="flex items-center gap-1.5 text-ink-400 tabular-nums">
             · {formatTokens(report.tokens)}
             <span aria-hidden="true" className={`size-1.5 rounded-full bg-current transition-opacity duration-500 ${report.receiving ? 'animate-pulse opacity-100' : 'opacity-0'}`} />
           </span>

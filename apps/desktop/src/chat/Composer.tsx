@@ -11,7 +11,7 @@ import { deleteRange, draftLength, draftText, insertText, messagePartsFromText, 
 import { useComposerModel } from '@/chat/ComposerModel'
 import { composerBanner, sendState, type Notice } from '@/chat/composer-look'
 import { Lightbox, type LightboxImage } from '@/chat/Lightbox'
-import { ComposerSurface } from '@/chat/ComposerSurface'
+import { ComposerSurface, type ComposerActivity } from '@/chat/ComposerSurface'
 import { readDraft, relabel, renderDraft, selectionOffsets, setCaret, type TokenView } from '@/chat/rich-input'
 import { insertBlock } from '@/chat/chat-menu-model'
 import type { ComposeChannel } from '@/chat/chat-menu'
@@ -74,6 +74,7 @@ export function Composer({
   initCommands,
   queue,
   above,
+  activity,
   edge,
   sendDraft,
   lastMessage = null,
@@ -109,6 +110,8 @@ export function Composer({
   queue?: QueueControls
   /** Shown above the queue and the box, inside the composer's gutter: a native chat's artifacts row. */
   above?: ReactNode
+  /** Set for native chats: the work running outside the transcript, as a tray that also holds the queue. */
+  activity?: ComposerActivity
   /** A line attached to the box's top edge, where a notice would sit; a notice takes its place while shown. */
   edge?: ReactNode
   /** Filled with the box's send while it is mounted, so the view can send the draft that waits in it. */
@@ -415,6 +418,7 @@ export function Composer({
         dispatchQueue={dispatchQueue}
         sendable={sendable}
         above={above}
+        {...(activity === undefined ? {} : { activity })}
         edge={editingLast ? <EditLastStrip onCancel={cancelEditLast} /> : edge}
         queue={queue}
         editing={editing}

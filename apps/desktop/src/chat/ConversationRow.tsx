@@ -7,10 +7,12 @@ import { relayedPreview, relayedTarget, thoughtLabel, type ConversationItem, typ
 import { ToolIcon } from '@/chat/ToolIcon'
 import { CallText, StateMark, ToolItem } from '@/chat/ToolItem'
 import { markMenu } from '@/chat/chat-menu'
-import { groupToolRuns, toolGroupSummary, toolName, type DisplayItem } from '@/chat/tool-groups'
-import { toolRunLine } from '@/chat/tool-sentence'
+import { groupToolRuns, type DisplayItem } from '@/chat/tool-groups'
+import { activityLabel, activityRows, type ActivityRow } from '@/chat/activity-rows'
 import { subagentGroupSummary, subagentSummary, visibleSteps, type SubagentItem, type SubagentState } from '@/chat/subagent-model'
 import { formatElapsed } from '@/native-chat/chat-model'
+import { turnHeaderLabel, type TurnSpan } from '@/native-chat/turn-header'
+import { useClock } from '@/lib/clock'
 import { MarkdownText } from '@/chat/markdown'
 import { CommandOutput } from '@/chat/CommandOutput'
 import { UserMessageBody } from '@/chat/MessageImages'
@@ -41,6 +43,34 @@ function AssistantMessage({ event, streaming = false }: { event: TranscriptEvent
       {!streaming && <SelectTarget event={event} />}
       <MarkdownText text={event.text} />
       {!streaming && <MessageActions event={event} side="left" />}
+    </li>
+  )
+}
+
+/** A native chat's turns, by the id of the message that started each; empty where no header shows. */
+export const TurnSpansContext = createContext<ReadonlyMap<string, TurnSpan>>(new Map())
+
+/** A message of the person, then how long the agent worked on it. */
+function UserTurn({ event, pending }: { event: TranscriptEvent; pending: boolean }) {
+  const span = useContext(TurnSpansContext).get(event.id)
+  return (
+    <>
+      <UserMessage event={event} pending={pending} />
+      {span !== undefined && (span.end === null ? <RunningTurnHeader span={span} /> : <TurnHeader text={turnHeaderLabel(span, span.end)} />)}
+    </>
+  )
+}
+
+function RunningTurnHeader({ span }: { span: TurnSpan }) {
+  const now = useClock(1000)
+  return <TurnHeader text={turnHeaderLabel(span, now)} />
+}
+
+// The counter is not announced: it changes every second.
+function TurnHeader({ text }: { text: string }) {
+  return (
+    <li aria-live="off" className="mt-4 border-b border-white/[0.06] pb-2 text-[13px] text-ink-400 tabular-nums">
+      {text}
     </li>
   )
 }
@@ -189,28 +219,34 @@ function ThinkingMessage({ event, thoughtMs }: { event: TranscriptEvent; thought
   )
 }
 
-/** A run of calls as one sentence; opened, one row per call. */
+/** A run of calls as one row per stretch of the same kind of work; opened, a row lists its calls. */
 function ToolGroup({ group, onOpenChat }: { group: Extract<DisplayItem, { type: 'tool-group' }>; onOpenChat: OpenChat | undefined }) {
-  const [open, setOpen] = useState(false)
-  const line = toolRunLine(group)
-  const summary = toolGroupSummary(group)
-  const first = group.items.find((item) => item.type === 'tool')
+  const rows = activityRows(group.items)
   return (
     <li className="max-w-[85%]">
-      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="group/run flex max-w-full items-center gap-2 rounded-lg py-1 pr-2 pl-0.5 text-left text-[13px] text-ink-300 hover:text-ink-100">
-        <ToolIcon name={first?.type === 'tool' ? toolName(first) : summary.tool} status={line.state === 'running' ? 'running' : 'ok'} size={13} />
-        <span className="min-w-0 truncate">{line.sentence}</span>
-        {/* While it runs, what is running now. */}
-        {line.state === 'running' && summary.detail !== '' && <span title={summary.detail} className="min-w-0 truncate font-mono text-[12px] text-ink-400">{summary.detail}</span>}
-        {line.failed > 0 && line.state !== 'running' && <span className="shrink-0 text-warn">· {line.failed} failed</span>}
-        <StateMark state={line.state} />
-        <svg viewBox="0 0 16 16" width={11} height={11} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`shrink-0 text-ink-500 transition-transform group-hover/run:text-ink-300 ${open ? 'rotate-90' : ''}`}>
-          <path d="m6 3.5 4.5 4.5L6 12.5" />
-        </svg>
+      <ol className="space-y-0.5">
+        {rows.map((row) => (
+          <ActivityRowItem key={row.id} row={row} onOpenChat={onOpenChat} />
+        ))}
+      </ol>
+    </li>
+  )
+}
+
+/** One stretch of work: its icon, the verb and count, then the latest call muted beside them. */
+function ActivityRowItem({ row, onOpenChat }: { row: ActivityRow; onOpenChat: OpenChat | undefined }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li>
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="group/run flex w-full min-w-0 items-center gap-2 rounded-lg py-1 pr-2 pl-0.5 text-left text-[13px] text-ink-300 hover:text-ink-100">
+        <ToolIcon name={row.tool} status={row.state === 'running' ? 'running' : 'ok'} size={13} />
+        <span className="shrink-0">{activityLabel(row)}</span>
+        {row.detail !== '' && <span title={row.detail} className="min-w-0 truncate text-ink-400">{row.detail}</span>}
+        {row.failed > 0 && row.state !== 'running' && <span className="shrink-0 text-warn">· {row.failed} failed</span>}
       </button>
       {open && (
-        <ol className="mt-1 ml-[7px] space-y-0.5 border-l border-white/[0.08] pl-2.5">
-          {group.items.map((item) => (
+        <ol className="mt-1 mb-1 ml-[7px] space-y-0.5 border-l border-white/[0.08] pl-2.5">
+          {row.items.map((item) => (
             <Item key={item.type === 'tool' ? item.id : item.event.id} item={item} onOpenChat={onOpenChat} />
           ))}
         </ol>
@@ -386,7 +422,7 @@ export const Item = memo(function Item({ item, onOpenChat }: { item: Conversatio
   if (item.type === 'tool') return <ToolItem item={item} />
   const event = item.event
   if (event.origin !== undefined) return <RelayedMessage event={event} onOpenChat={onOpenChat} />
-  if (event.kind === 'user') return <UserMessage event={event} pending={item.pending} />
+  if (event.kind === 'user') return <UserTurn event={event} pending={item.pending === true} />
   if (event.kind === 'command-output') return <CommandMessage event={event} command={event.command ?? ''} />
   if (event.kind === 'assistant' && event.command !== undefined) return <CommandMessage event={event} command={event.command} />
   if (event.kind === 'assistant') return <AssistantMessage event={event} streaming={item.streaming === true} />

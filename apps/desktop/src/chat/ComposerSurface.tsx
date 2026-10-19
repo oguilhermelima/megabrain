@@ -6,6 +6,14 @@ import type { AnchorRect } from '@/advanced/menu-placement'
 import type { Banner } from '@/chat/composer-look'
 import { NoticeBanner, QueuePills } from '@/chat/ComposerSupport'
 import { QueueStrip, type QueueControls } from '@/chat/QueueStrip'
+import { ActivityTray, type TrayAction } from '@/native-chat/ActivityTray'
+import { trayEntries, type TrayEntry } from '@/native-chat/activity-tray'
+
+/** A native chat's work outside its transcript, shown as the tray with the queue folded in. */
+export interface ComposerActivity {
+  entries: TrayEntry[]
+  action: (entry: TrayEntry) => TrayAction | null
+}
 import { ComposerToolbar } from '@/chat/ComposerToolbar'
 import type { QueueState } from '@/chat/queue-model'
 import type { MenuNotice } from '@/chat/slash-commands'
@@ -14,11 +22,12 @@ import { pageX } from '@/lib/page'
 /** The box's text inset inside the card (px-4), where the placeholder sits too. */
 const boxInset = 16
 
-export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, edge, queue, editing, onEdit, menu, banner, send, onDismiss, box, frame, editor, placeholder, empty, disabled, onInput, onFocus, onKeyDown, onPaste, onContextMenu, onClick, onPointerDown, onPointerMove, onPointerLeave, onDragOver, onDragLeave, onDrop, onDragEnd, dropCaret, toolbar }: {
+export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, activity, edge, queue, editing, onEdit, menu, banner, send, onDismiss, box, frame, editor, placeholder, empty, disabled, onInput, onFocus, onKeyDown, onPaste, onContextMenu, onClick, onPointerDown, onPointerMove, onPointerLeave, onDragOver, onDragLeave, onDrop, onDragEnd, dropCaret, toolbar }: {
   dispatchId?: string
   dispatchQueue: QueueState
   sendable: boolean
   above?: ReactNode
+  activity?: ComposerActivity
   edge?: ReactNode
   queue?: QueueControls
   editing: string | null
@@ -58,8 +67,21 @@ export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, ed
           {/* What waits to go out and the chat's chips; gone, with its hairline, when none of them shows. */}
           <div className="border-b border-white/[0.06] px-3 pt-2.5 pb-1 empty:hidden">
             {dispatchId !== undefined && <QueuePills state={dispatchQueue} empty={!sendable} />}
-            {above}
-            {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => onEdit(item.id)} />}
+            {activity === undefined ? (
+              <>
+                {above}
+                {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => onEdit(item.id)} />}
+              </>
+            ) : (
+              <>
+                <ActivityTray
+                  entries={queue === undefined ? activity.entries : activity.entries.concat(trayEntries({ tasks: [], events: [], lanes: [], queue: queue.items }))}
+                  action={activity.action}
+                  {...(queue === undefined ? {} : { queue: { body: <QueueStrip queue={queue} editing={editing} onEdit={(item) => onEdit(item.id)} />, open: editing !== null } })}
+                />
+                {above}
+              </>
+            )}
           </div>
           {banner !== null ? <NoticeBanner banner={banner} onRetry={send} onDismiss={onDismiss} /> : edge}
           <div ref={frame} className="relative min-w-0 px-4 pt-3">
