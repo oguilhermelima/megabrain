@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { createConnection } from "node:net";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeArtifact } from "../../src/cli/commands/artifact.js";
@@ -8,6 +9,7 @@ import { executeChat } from "../../src/cli/commands/chat.js";
 import { ChatDaemon } from "../../src/chat/daemon.js";
 import { claudeLogPath } from "../../src/chat/session-log.js";
 import { ChatStore, type ChatLine } from "../../src/chat/store.js";
+import { chatArtifactStoreFingerprint } from "../../src/chat/artifacts.js";
 import { createArtifact, listArtifacts, updateArtifact } from "../../src/knowledge/artifacts.js";
 import { usageText } from "../../src/core/usage.js";
 
@@ -47,6 +49,21 @@ async function waitFor(check: () => boolean, description: string): Promise<void>
 }
 
 describe("chat artifact CLI", () => {
+  test("shares project metadata enumeration across chat watchers", () => {
+    const w = world();
+    const knowledge = join(w.state, "knowledge");
+    mkdirSync(knowledge);
+    mkdirSync(join(knowledge, "project-a", "artifacts"), { recursive: true });
+    mkdirSync(join(knowledge, "project-b", "artifacts"), { recursive: true });
+    const spy = spyOn(fs, "readdirSync");
+    try {
+      const first = chatArtifactStoreFingerprint(w.state, []);
+      const second = chatArtifactStoreFingerprint(w.state, []);
+      expect(second).toBe(first);
+      expect(spy.mock.calls.filter(([directory]) => directory === knowledge)).toHaveLength(1);
+    } finally { spy.mockRestore(); }
+  });
+
   test("lists megabrain and Claude artifacts newest first with stable ids", async () => {
     const w = world();
     await transcript(w, remoteFixture);
