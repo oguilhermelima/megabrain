@@ -1,6 +1,6 @@
 import { createConnection, createServer, type Socket } from "node:net";
 import { appendFile, chmod, mkdir, open, readFile, unlink } from "node:fs/promises";
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
@@ -17,6 +17,7 @@ import { encode } from "./queries/types.js";
 import { classifyQueueMail, recipientForQueueMessage } from "../core/queue-write.js";
 import { formatDispatchMessage } from "../core/chat-message-format.js";
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { ackDelivery as claimAndAckDelivery, acknowledgeImplicitDelivery as acknowledgeMail, acknowledgeImplicitDeliveryInTransaction as acknowledgeMailInTransaction, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, listDeliveriesInTransaction as listMailDeliveries, putWaiter as putMailWaiter, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
 import { createDispatch as createDispatchState, mutateDispatch as mutateDispatchState, noDispatchChange } from "../adapters/state/dispatches.js";
 import { putInstallModule as putInstallState, deleteInstallModule, mutateInstallModule, putTerminal, deleteTerminal, putTmuxSession, deleteTmuxSession, saveModels, type ModelRegistry } from "../adapters/state/machine.js";
@@ -92,7 +93,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "settle-closed-parent-backlog" }
   )
 >;
-export type StateOwner = { readonly stateDir: string; readonly executablePath: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
+export type StateOwner = { readonly stateDir: string; readonly executablePath: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; socketIdentity?: { dev: number; ino: number }; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
 type Response = { ok: true; value: unknown } | { ok: false; error: string };
 
 function ownerLogPath(stateDir: string): string { return join(stateDir, "logs", "state-owner.log"); }
@@ -106,6 +107,44 @@ function logOwner(stateDir: string, event: string, fields: Readonly<Record<strin
 
 export function stateOwnerPid(stateDir: string): string { return join(stateDir, "state-owner", "owner.pid"); }
 function stateOwnerLock(stateDir: string): string { return join(stateDir, "state-owner", "owner.lock"); }
+
+function ownsStateOwnerLock(owner: StateOwner): boolean {
+  try { return readFileSync(owner.lockPath, "utf8").trim() === String(process.pid); }
+  catch { return false; }
+}
+
+async function waitForPreviousOwner(stateDir: string): Promise<void> {
+  let previousPid = 0;
+  try { previousPid = Number(readFileSync(stateOwnerPid(stateDir), "utf8").trim()); } catch { return; }
+  if (!Number.isSafeInteger(previousPid) || previousPid <= 0 || previousPid === process.pid) return;
+  const expectedDirectory = resolve(stateDir);
+  const isPreviousOwner = (): boolean => {
+    const command = spawnSync("ps", ["-o", "command=", "-p", String(previousPid)], { encoding: "utf8", timeout: 1_000 });
+    if (command.status !== 0 || !/(^|\s)__state-owner(?:\s|$)/.test(command.stdout)) return false;
+    const environment = spawnSync("ps", ["eww", "-p", String(previousPid), "-o", "command="], { encoding: "utf8", timeout: 1_000 });
+    if (environment.status !== 0) return true;
+    const escapedDirectory = expectedDirectory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const directoryPattern = new RegExp(`(?:^|\\s)MEGABRAIN_STATE_OWNER_DIR=${escapedDirectory}(?=\\s|$)`);
+    return !/(?:^|\s)MEGABRAIN_STATE_OWNER_DIR=/.test(environment.stdout) || directoryPattern.test(environment.stdout);
+  };
+  const isPreviousOwnerAlive = (): boolean => {
+    try { process.kill(previousPid, 0); }
+    catch { return false; }
+    return isPreviousOwner();
+  };
+  const waitUntil = async (timeoutMs: number): Promise<boolean> => {
+    const deadline = Date.now() + timeoutMs;
+    while (isPreviousOwnerAlive() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    return isPreviousOwnerAlive();
+  };
+
+  if (!await waitUntil(2_000)) return;
+  if (!isPreviousOwnerAlive()) return;
+  try { process.kill(previousPid, "SIGTERM"); }
+  catch { return; }
+  if (!await waitUntil(2_000)) return;
+  throw new Error(`previous state owner did not exit after losing its lock (pid ${previousPid})`);
+}
 
 export async function inspectStateOwner(stateDir: string): Promise<{ running: false; error?: string } | { running: true; pid: number }> {
   if (!existsSync(stateOwnerSocket(stateDir))) return { running: false };
@@ -400,11 +439,14 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
   server.on("connection", (socket) => accept(owner, socket));
   try {
     // The lock proves no live owner can still be using the socket path.
+    await waitForPreviousOwner(stateDir);
     await unlink(stateOwnerSocket(stateDir)).catch(() => undefined);
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(stateOwnerSocket(stateDir), () => { server.removeListener("error", reject); resolve(); });
     });
+    const socketStat = statSync(stateOwnerSocket(stateDir));
+    owner.socketIdentity = { dev: socketStat.dev, ino: socketStat.ino };
     await chmod(stateOwnerSocket(stateDir), 0o600);
     await writeFilePid(stateDir);
     logOwner(stateDir, "ready", { socket: stateOwnerSocket(stateDir) });
@@ -412,7 +454,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
       await appendFile(environment.MEGABRAIN_STATE_OWNER_TEST_REGISTRY, `${JSON.stringify({ pid: process.pid, stateDir: resolve(stateDir) })}\n`, { mode: 0o600 });
     }
     owner.lifecycleTimer = setInterval(() => {
-      if (!existsSync(owner.stateDir) || !existsSync(owner.executablePath)) { stopForLifecycle(owner); return; }
+      if (!existsSync(owner.stateDir) || !existsSync(owner.executablePath) || !existsSync(stateOwnerSocket(owner.stateDir)) || !ownsStateOwnerLock(owner)) { stopForLifecycle(owner); return; }
       const parentPid = owner.environment.MEGABRAIN_STATE_OWNER_TEST_MODE === "1" ? Number(owner.environment.MEGABRAIN_STATE_OWNER_TEST_PARENT_PID) : 0;
       if (!Number.isSafeInteger(parentPid) || parentPid <= 0) return;
       const parentStart = owner.environment.MEGABRAIN_STATE_OWNER_TEST_PARENT_START;
@@ -452,7 +494,16 @@ export async function stopStateOwner(owner: StateOwner): Promise<void> {
   await new Promise<void>((resolve) => owner.server.close(() => resolve()));
   owner.handle.close();
   logOwner(owner.stateDir, "stopped");
-  await Promise.all([unlink(stateOwnerSocket(owner.stateDir)).catch(() => undefined), unlink(stateOwnerPid(owner.stateDir)).catch(() => undefined), unlink(owner.lockPath).catch(() => undefined)]);
+  // A replacement may already own these paths. Only the process whose lock is still
+  // present may remove the published socket and pid during normal shutdown.
+  const ownsLock = ownsStateOwnerLock(owner);
+  let ownsSocket = false;
+  try {
+    const current = statSync(stateOwnerSocket(owner.stateDir));
+    ownsSocket = current.dev === owner.socketIdentity?.dev && current.ino === owner.socketIdentity?.ino;
+  } catch { /* socket is already gone */ }
+  if (ownsSocket) await unlink(stateOwnerSocket(owner.stateDir)).catch(() => undefined);
+  if (ownsLock) await Promise.all([unlink(stateOwnerPid(owner.stateDir)).catch(() => undefined), unlink(owner.lockPath).catch(() => undefined)]);
 }
 
 function requestOnce(stateDir: string, request: StateOwnerRequest, timeoutMs: number): Promise<unknown> {

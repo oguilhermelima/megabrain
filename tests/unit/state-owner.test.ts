@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
-import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerSocket, stopStateOwner, type StateOwnerRequest } from "../../src/db/state-owner.js";
+import { spawn, spawnSync } from "node:child_process";
+import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerPid, stateOwnerSocket, stopStateOwner, type StateOwnerRequest } from "../../src/db/state-owner.js";
 import { inspectDatabase, openDatabase, openDatabaseReadOnly } from "../../src/db/db.js";
 import { createDispatch } from "../../src/adapters/state/dispatches.js";
 import { getTmuxSession, putTmuxSession } from "../../src/adapters/state/machine.js";
@@ -18,6 +18,16 @@ import { cleanupTrackedStateOwners, trackStateOwnerCleanup } from "../helpers/st
 let root: string;
 let owner: Awaited<ReturnType<typeof startStateOwner>> | undefined;
 
+function processCpuSeconds(pid: number): number {
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "time="], { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`could not sample CPU time for state owner ${pid}`);
+  const parts = result.stdout.trim().split(":").map(Number);
+  const seconds = parts.pop() ?? 0;
+  const minutes = parts.pop() ?? 0;
+  const hours = parts.pop() ?? 0;
+  return hours * 3_600 + minutes * 60 + seconds;
+}
+
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), "mb-state-owner-")); });
 afterEach(async () => {
   if (owner !== undefined) await stopStateOwner(owner);
@@ -26,6 +36,44 @@ afterEach(async () => {
 });
 
 describe("single state owner", () => {
+  test("a live unrelated process in the pid file does not block a new owner", async () => {
+    const unrelated = spawn("sleep", ["60"], { stdio: "ignore" });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        unrelated.once("spawn", resolve);
+        unrelated.once("error", reject);
+      });
+      mkdirSync(join(root, "state-owner"), { recursive: true });
+      writeFileSync(stateOwnerPid(root), `${unrelated.pid}\n`);
+      owner = await startStateOwner(root);
+      expect(await inspectStateOwner(root)).toMatchObject({ running: true, pid: process.pid });
+    } finally {
+      unrelated.kill("SIGTERM");
+    }
+  });
+
+  test("a previous owner that lost its lock receives SIGTERM", async () => {
+    const signalPath = join(root, "owner-signal");
+    const script = `process.on("SIGTERM", () => { require("node:fs").writeFileSync(${JSON.stringify(signalPath)}, "SIGTERM"); process.exit(0); }); setInterval(() => {}, 1000);`;
+    const previous = spawn(process.execPath, ["-e", script, "__state-owner"], {
+      env: { ...process.env, MEGABRAIN_STATE_OWNER_DIR: root },
+      stdio: "ignore",
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        previous.once("spawn", resolve);
+        previous.once("error", reject);
+      });
+      mkdirSync(join(root, "state-owner"), { recursive: true });
+      writeFileSync(stateOwnerPid(root), `${previous.pid}\n`);
+      owner = await startStateOwner(root);
+      expect(readFileSync(signalPath, "utf8")).toBe("SIGTERM");
+      expect(await inspectStateOwner(root)).toMatchObject({ running: true, pid: process.pid });
+    } finally {
+      if (previous.exitCode === null && previous.signalCode === null) previous.kill("SIGKILL");
+    }
+  });
+
   test("status reports a stopped owner without starting it", async () => {
     const stopped = await inspectStateOwner(root);
     expect(stopped).toMatchObject({ running: false });
@@ -284,6 +332,57 @@ describe("single state owner", () => {
         if (!exited) await new Promise((resolve) => setTimeout(resolve, 20));
       }
       expect(exited).toBe(true);
+    } finally {
+      await cleanupTrackedStateOwners([root]);
+      owner = undefined;
+    }
+  });
+
+  test("a detached owner exits promptly after losing its socket and lock", async () => {
+    const binary = join(process.cwd(), ".build", "megabrain");
+    const environment = { ...process.env, HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root, MEGABRAIN_STATE_OWNER_IDLE_MS: "60000", MEGABRAIN_STATE_OWNER_TEST_MODE: "0" };
+    delete environment.MEGABRAIN_DISPATCH_ID;
+    const first = spawn(binary, ["__state-owner"], { detached: true, stdio: "ignore", env: environment });
+    trackStateOwnerCleanup(root);
+    try {
+      const firstDeadline = Date.now() + 5_000;
+      let firstStatus = await inspectStateOwner(root);
+      while (!firstStatus.running && Date.now() < firstDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        firstStatus = await inspectStateOwner(root);
+      }
+      expect(firstStatus).toMatchObject({ running: true });
+      if (!firstStatus.running) throw new Error("first detached owner did not start");
+
+      // Model a takeover after an external actor removes the stale owner's ownership files.
+      rmSync(stateOwnerSocket(root), { force: true });
+      rmSync(join(root, "state-owner", "owner.lock"), { force: true });
+      const cpuBefore = processCpuSeconds(firstStatus.pid);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const cpuAfter = processCpuSeconds(firstStatus.pid);
+      expect(cpuAfter - cpuBefore).toBeLessThan(0.25);
+      const second = spawn(binary, ["__state-owner"], { detached: true, stdio: "ignore", env: environment });
+      const secondDeadline = Date.now() + 5_000;
+      let secondStatus = await inspectStateOwner(root);
+      while ((!secondStatus.running || secondStatus.pid === firstStatus.pid) && Date.now() < secondDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        secondStatus = await inspectStateOwner(root);
+      }
+      expect(secondStatus).toMatchObject({ running: true });
+      expect(secondStatus.running && secondStatus.pid).not.toBe(firstStatus.pid);
+
+      const exitDeadline = Date.now() + 2_500;
+      let firstExited = false;
+      while (!firstExited && Date.now() < exitDeadline) {
+        try { process.kill(firstStatus.pid, 0); }
+        catch (cause: unknown) { firstExited = cause instanceof Error && "code" in cause && cause.code === "ESRCH"; }
+        if (!firstExited) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(firstExited).toBe(true);
+      // The replacement must retain its socket after the stale process exits.
+      const replacementStatus = await inspectStateOwner(root);
+      expect(replacementStatus).toMatchObject({ running: true, pid: secondStatus.running ? secondStatus.pid : -1 });
+      try { process.kill(second.pid as number, "SIGTERM"); } catch { /* already exited */ }
     } finally {
       await cleanupTrackedStateOwners([root]);
       owner = undefined;
