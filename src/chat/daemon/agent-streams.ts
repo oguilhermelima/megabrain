@@ -349,6 +349,15 @@ export async function handleGrok(daemon: ChatDaemon, id: string, frame: { params
     if (output || ["completed", "failed"].includes(text(update.status))) {
       await daemon.publish(chat, event("tool-result", output, { name, status: text(update.status) === "failed" ? "error" : "ok" }, withMessage(callId)));
     }
+  } else if (kind === "plan" && Array.isArray(update.entries)) {
+    const entries = update.entries.map(object).map((entry) => ({
+      ...(text(entry.content) ? { content: text(entry.content) } : {}),
+      ...(text(entry.priority) ? { priority: text(entry.priority) } : {}),
+      ...(text(entry.status) ? { status: text(entry.status) } : {}),
+    }));
+    const callId = `grok-plan-${randomUUID()}`;
+    await daemon.publish(chat, event("tool-call", "update_plan", { name: "update_plan", input: JSON.stringify(entries) }, withMessage(callId)));
+    await daemon.publish(chat, event("tool-result", "Plan updated", { name: "update_plan", status: "ok" }, withMessage(callId)));
   } else if (kind === "auto_compact_started") {
     const tokens = count(update.tokens_used);
     const window = count(update.context_window);
