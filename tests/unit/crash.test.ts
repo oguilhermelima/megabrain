@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseCrashReport, selectCrashReports } from "../../src/core/crash.js";
+import { parseCrashReport, selectCrashReportFiles, selectCrashReports } from "../../src/core/crash.js";
 
 const report = [
   JSON.stringify({ app_name: "ExampleApp", app_version: "1.2", bug_type: "309", incident_id: "abc", os_version: "macOS", timestamp: "2026-09-16 01:02:03" }),
@@ -58,5 +58,18 @@ describe("crash report parsing and selection", () => {
     ], "com.example.app", 1);
     expect(selected).toHaveLength(1);
     expect(selected[0]?.path).toBe("new.ips");
+  });
+
+  test("reads only the newest matching reports needed by last", () => {
+    const read: string[] = [];
+    const selected = selectCrashReportFiles([
+      { path: "old.ips", modifiedAt: 10 },
+      { path: "new.ips", modifiedAt: 20 },
+    ], "com.example.app", 1, (path) => {
+      read.push(path);
+      return report;
+    });
+    expect(selected.reports.map((entry) => entry.path)).toEqual(["new.ips"]);
+    expect(read).toEqual(["new.ips"]);
   });
 });
