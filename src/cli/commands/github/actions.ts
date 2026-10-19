@@ -119,18 +119,21 @@ export async function executeActions(verb: string, args: readonly string[], envi
     const workflows = await gh(process, ["api", `repos/${repo}/actions/workflows?per_page=100`], { name: "gh api actions workflows" });
     if (workflows.kind !== "ok") return workflows;
     const workflowRows = Array.isArray(row(workflows.value).workflows) ? row(workflows.value).workflows as unknown[] : [];
-    const metadataResults: { dispatchable: boolean; inputs: WorkflowInput[] }[] = [];
-    for (let offset = 0; offset < workflowRows.length; offset += 5) {
-      const batch = await Promise.all(workflowRows.slice(offset, offset + 5).map((item) => workflowMetadata(process, repo, item)));
-      metadataResults.push(...batch);
-    }
-    const workflowRowsWithMetadata = workflowRows.map((item, index) => {
-      const metadata = metadataResults[index];
-      return workflow(item, metadata ?? unavailableWorkflowMetadata());
-    });
     const requestedWorkflow = parsed.flags["--workflow"];
     const matchedWorkflow = requestedWorkflow === undefined ? undefined
       : workflowRows.find((item) => str(row(item).name) === requestedWorkflow || String(row(item).id) === requestedWorkflow);
+    const metadataRows = requestedWorkflow === undefined ? workflowRows : matchedWorkflow === undefined ? [] : [matchedWorkflow];
+    const metadataResults: { dispatchable: boolean; inputs: WorkflowInput[] }[] = [];
+    for (let offset = 0; offset < metadataRows.length; offset += 5) {
+      const batch = await Promise.all(metadataRows.slice(offset, offset + 5).map((item) => workflowMetadata(process, repo, item)));
+      metadataResults.push(...batch);
+    }
+    const workflowRowsWithMetadata = workflowRows.map((item, index) => {
+      const metadata = requestedWorkflow === undefined
+        ? metadataResults[index]
+        : item === matchedWorkflow ? metadataResults[0] : undefined;
+      return workflow(item, metadata ?? unavailableWorkflowMetadata());
+    });
     const resolvedWorkflow = matchedWorkflow === undefined ? undefined : row(matchedWorkflow).id;
     const selectedWorkflow = resolvedWorkflow === undefined ? requestedWorkflow : String(resolvedWorkflow);
     const runsQuery = [`per_page=${parsed.limit}`, `page=${page}`, ...(parsed.flags["--branch"] ? [`branch=${encodeURIComponent(parsed.flags["--branch"]!)}`] : []), ...(selectedWorkflow ? [`workflow_id=${encodeURIComponent(selectedWorkflow)}`] : []), ...(parsed.flags["--status"] ? [`status=${encodeURIComponent(parsed.flags["--status"]!)}`] : [])].join("&");
