@@ -107,4 +107,15 @@ describe("repo github", () => {
     expect(maximum).toBe(2);
     expect(timeouts).toEqual([2_000, 2_000, 2_000]);
   });
+
+  test("requests the maximum paginated GitHub repository listing", async () => {
+    const calls: Call[] = [];
+    const repos = Array.from({ length: 205 }, (_, index) => ({ nameWithOwner: `operator/repo-${index}`, url: `https://github.com/operator/repo-${index}` }));
+
+    const result = json<unknown[]>(await route(["repo", "github", "--json"], { environment: env, processAdapter: fakeGh({ "repo list": JSON.stringify(repos) }, calls) }));
+
+    const list = calls.find((args) => args[0] === "repo");
+    expect(result).toHaveLength(205);
+    expect(list?.[list.indexOf("--limit") + 1]).toBe("1000");
+  });
 });
