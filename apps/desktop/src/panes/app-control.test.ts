@@ -41,7 +41,7 @@ describe('desktop app layout control', () => {
     const listed = applyAppControl(pair, { action: 'layout' }, ids)
     expect(listed.panes.find((pane) => pane.id === 'p2')).toEqual({ id: 'p2', target: 'chat:b', item: 'native:b', focused: true })
     const reopened = applyAppControl(pair, { action: 'open', target: listed.panes.find((pane) => pane.id === 'p2')?.target ?? '' }, ids)
-    expect(paneList(reopened.groups[0]!.panes.root).map((pane) => pane.item)).toEqual(['chat:a', 'native:b'])
+    expect(paneList(reopened.groups[0]?.panes.root ?? reopened.single.root).map((pane) => pane.item)).toEqual(['chat:a', 'native:b'])
   })
 
   test('refuses unknown targets without changing the layout', () => {
