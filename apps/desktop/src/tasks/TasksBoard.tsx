@@ -16,6 +16,7 @@ import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPage
 import { boardSheetFields } from '@/tasks/BoardFilterBar'
 import { Chips, ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
 import { ItemPanel, type FieldWrite } from '@/tasks/ItemPanel'
+import { ProjectActions } from '@/tasks/ProjectActions'
 import { cardChips, editedItems, parseAddition, groupField, laneField, optionOf, projectViews, readViewPrefs, shownView, sortedItems, swimlanes, viewColumns, writeViewPrefs, type CardChip, type PendingEdit, type ViewColumn } from '@/tasks/board-view'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
@@ -550,6 +551,9 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
         <div className={`flex items-center gap-2 ${pageX} pt-4`}>
           <FilterSelect label="Project" value={String(board.number)} options={boards.map((entry) => ({ value: String(entry.number), label: entry.closed ? `${entry.title} (closed)` : entry.title }))} onChange={(value) => onPick(Number(value))} />
           <ViewTabs views={views} shown={view?.id ?? null} onShow={showView} />
+          <span className="ml-auto flex shrink-0 items-center gap-2">
+            <ProjectActions root={root} project={board} />
+          </span>
         </div>
         <div className={`flex items-center gap-2 ${pageX} pt-3 pb-4`}>
           <ViewFilterBar value={query} saved={view?.filter ?? ''} count={shown?.length ?? null} warnings={matched?.warnings ?? []} onChange={setQuery} />
