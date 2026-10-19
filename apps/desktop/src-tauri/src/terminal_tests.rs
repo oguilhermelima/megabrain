@@ -70,14 +70,35 @@ fn tmux_engine_builds_private_server_commands_for_new_and_existing_sessions() {
 
 #[test]
 fn chat_tmux_sessions_keep_the_exited_pane_and_its_output() {
-    assert_eq!(
-        tmux_create_argv("megabrain-app", "mb-app-test", "/tmp/work", None, Some(&["claude".into(), "--resume".into(), "session id".into()]), true),
-        ["-L", "megabrain-app", "new-session", "-d", "-s", "mb-app-test", "-c", "/tmp/work", "/bin/sh", "-c", "tmux -L megabrain-app set-option -p -t =mb-app-test remain-on-exit on && exec \"$@\"", "megabrain-app-pane", "claude", "--resume", "session id"]
-    );
-    assert_eq!(
-        tmux_create_argv("megabrain-app", "term-test", "/tmp/work", None, Some(&["/bin/zsh".into()]), false),
-        ["-L", "megabrain-app", "new-session", "-d", "-s", "term-test", "-c", "/tmp/work", "/bin/zsh"]
-    );
+    let server = format!("mb-chat-exit-{}", uuid::Uuid::new_v4());
+    let _server = PrivateTmuxServer(server.clone());
+    let session = "mb-app-exit-test";
+    let command = ["/bin/sh", "-c", "printf 'agent-output-marker'; exit 7"].map(String::from);
+    let created = Command::new("tmux")
+        .args(tmux_create_argv(&server, session, "/tmp", None, Some(&command), true))
+        .status()
+        .expect("tmux must be installed for the private-server test");
+    assert!(created.success());
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let status = loop {
+        let listed = Command::new("tmux")
+            .args(["-L", &server, "list-panes", "-t", &format!("={session}"), "-F", "#{pane_dead}\t#{pane_dead_status}"])
+            .output()
+            .unwrap();
+        assert!(listed.status.success(), "the chat pane should survive its command: {}", String::from_utf8_lossy(&listed.stderr));
+        let value = String::from_utf8_lossy(&listed.stdout).trim().to_string();
+        if value.starts_with("1\t") { break value; }
+        assert!(Instant::now() < deadline, "the pane did not exit: {value:?}");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(status, "1\t7");
+    let captured = Command::new("tmux")
+        .args(["-L", &server, "capture-pane", "-p", "-t", &format!("={session}")])
+        .output()
+        .unwrap();
+    assert!(captured.status.success());
+    assert!(String::from_utf8_lossy(&captured.stdout).contains("agent-output-marker"));
 }
 
 #[test]
