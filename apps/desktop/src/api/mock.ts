@@ -16,6 +16,7 @@ import { createMockActionsApi } from '@/api/fixtures/github-actions'
 import { mockGithubProjectItems, mockGithubProjects } from '@/api/fixtures/github-projects'
 import { validateRule } from '@/settings/chain-rules'
 import { effectiveToggles, inEffect, parseKnowledgeSettings } from '@/settings/knowledge-model'
+import { agentMode, parseAgentSettings } from '@/settings/agents-model'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -453,6 +454,8 @@ export function createMockApi(): DesktopApi {
         title: null,
         state: agent === 'agy' ? 'idle' : 'starting',
         ...(agent === 'grok' ? { capabilities: grokCapabilities } : agent === 'agy' ? { capabilities: { approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true }, mode: 'terminal', owner: 'terminal' } : { capabilities: mockNativeChat.capabilities }),
+        // Like chatd, a new chat opens in its agent's default mode from Settings > Agents.
+        ...(agent !== 'agy' && agentMode(parseAgentSettings(agentSettings), agent) === 'terminal' ? { mode: 'terminal' as const, state: 'idle' as const } : {}),
       }
     },
     sendChat: async (chatId, parts) => {
