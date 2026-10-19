@@ -5,7 +5,7 @@ import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js";
-import { getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, listPendingOutboxPeerVerifications, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, listPendingOutboxPeerVerifications, listChildAnsweredDispatches, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
@@ -132,8 +132,9 @@ async function promptText(database: Parameters<typeof getDispatch>[0], dispatch:
   return messages.value.find((message) => message.from === "parent" && message.type === "prompt")?.text;
 }
 
-function childAnswered(database: Parameters<typeof getDispatch>[0], meta: RecordValue, dispatch: string): boolean {
+function childAnswered(database: Parameters<typeof getDispatch>[0], meta: RecordValue, dispatch: string, answeredDispatches?: ReadonlySet<string>): boolean {
   if (string(meta.promptReceipt) === "received") return true;
+  if (answeredDispatches !== undefined) return answeredDispatches.has(dispatch);
   const messages = listMessages(database, dispatch);
   return messages.kind === "ok" && messages.value.some((message) => message.from === "child" && (message.type === "received" || message.type === "ask" || message.type === "done"));
 }
@@ -147,10 +148,10 @@ async function paneTitle(meta: RecordValue, process: ProcessAdapter): Promise<st
 
 // The visible screen is not enough to call a prompt lost: a long finished turn has scrolled it away. Lost is
 // only judged after the scrollback was searched for the prompt as well.
-async function judgePrompt(database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, frame: string, process: ProcessAdapter): Promise<PromptState> {
+async function judgePrompt(database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, frame: string, process: ProcessAdapter, answeredDispatches?: ReadonlySet<string>): Promise<PromptState> {
   const prompt = await promptText(database, dispatch);
   if (prompt === undefined) return "unknown";
-  const input = { agent: string(meta.agent) ?? "", frame, prompt, received: childAnswered(database, meta, dispatch), title: await paneTitle(meta, process) };
+  const input = { agent: string(meta.agent) ?? "", frame, prompt, received: childAnswered(database, meta, dispatch, answeredDispatches), title: await paneTitle(meta, process) };
   const first = classifyPromptState(input).state;
   if (first !== "lost" || meta.runtime !== "tmux" || string(meta.tmuxPane) === undefined) return first;
   const history = await getTmux().capturePane(String(meta.tmuxPane), 5000, process, false, string(meta.tmuxSessionId));
@@ -253,7 +254,7 @@ async function notifyParent(root: string, database: Parameters<typeof getDispatc
   outbox: { id: outboxId, targetKind: "parent-pointer", target: string(meta.parentSessionId) ?? dispatch, payload: { meta, dispatchId: dispatch, targetKind: "parent-pointer", pointer: `mail: megabrain orchestrate watch ${dispatch}`, fullMessage } } }).catch(() => undefined);
 }
 
-async function inspectDispatch(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, environment: Environment, process: ProcessAdapter, now: number): Promise<SupervisionFinding> {
+async function inspectDispatch(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, environment: Environment, process: ProcessAdapter, now: number, answeredDispatches?: ReadonlySet<string>): Promise<SupervisionFinding> {
   const files = await changedFiles(meta, process);
   const panePresent = await paneExists(meta, process);
   if (panePresent === false) return { cause: "pane-gone", paneId: string(meta.tmuxPane), worktreePath: string(meta.worktreePath), dirtyFiles: files };
@@ -276,7 +277,7 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   // Spawn owns the first prompt until its transport step settles: an agent launched with the brief on
   // its command line may idle at an empty composer for seconds before submitting it.
   const inTransport = meta.state === "spawning" && meta.promptTransport === "pending";
-  const promptState = inTransport ? "unknown" : await judgePrompt(database, dispatch, meta, frame, process);
+  const promptState = inTransport ? "unknown" : await judgePrompt(database, dispatch, meta, frame, process, answeredDispatches);
   const promptProblem = promptFinding(promptState);
   if (promptProblem.cause !== "unknown") return promptProblem;
   const idle = classifyLiveness(agent, frame).status === "idle";
@@ -361,6 +362,8 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
   await sweepGrokLeaders(root, ownedGrokLeaders(listed.value), process);
   const openDispatches = listed.value.filter((record) => ["queued", "spawning", "running", "waiting_for_reply", "orphaned"].includes(String(record.state)));
   if (!hasOpenDispatches(openDispatches.map((record) => String(record.state)))) return { open: pendingPeerVerifications, findings: 0 };
+  const answerState = listChildAnsweredDispatches(database, openDispatches.map((record) => String(record.dispatchId)));
+  const answeredDispatches = answerState.kind === "ok" ? answerState.value : undefined;
   let findings = 0;
   for (const queued of openDispatches.filter((record) => (record.state === "queued" || record.state === "spawning") && record.admissionQueueEntry === true)) {
     const dispatch = queued.dispatchId;
@@ -390,7 +393,7 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const meta = current.value as RecordValue;
     await settleImplicitChildReads(root, database, dispatch);
     await retryPendingParentPointers(root, database, dispatch);
-    const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now);
+    const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now, answeredDispatches);
     const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
     const running = screen?.kind === "ok" ? backgroundTasks(screen.value) : undefined;
     if (screen?.kind === "ok") await retryPendingChildReplies(root, database, dispatch);

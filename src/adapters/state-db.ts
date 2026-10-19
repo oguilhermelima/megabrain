@@ -47,6 +47,7 @@ export {
   listOutbox,
   listOutboxForDispatch,
   getQueuedDispatchId,
+  listChildAnsweredDispatches,
   listOutboxPage,
   listPendingOutboxPeerVerifications,
   nudgeCursor,

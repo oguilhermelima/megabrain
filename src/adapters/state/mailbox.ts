@@ -445,6 +445,21 @@ export function getQueuedDispatchId(handle: DatabaseHandle, itemId: string): Res
   });
 }
 
+export function listChildAnsweredDispatches(handle: DatabaseHandle, dispatchIds: readonly string[]): Result<ReadonlySet<string>> {
+  return read(handle, ({ db }) => {
+    const answered = new Set<string>();
+    const unique = [...new Set(dispatchIds)].filter((dispatchId) => dispatchId !== "");
+    for (let offset = 0; offset < unique.length; offset += 500) {
+      const batch = unique.slice(offset, offset + 500);
+      if (batch.length === 0) continue;
+      const placeholders = batch.map(() => "?").join(", ");
+      const rows = db.query<{ dispatch_id: string }>(`SELECT DISTINCT dispatch_id FROM messages WHERE dispatch_id IN (${placeholders}) AND "from" = 'child' AND type IN ('received', 'ask', 'done') ORDER BY dispatch_id LIMIT ?`).all(...batch, 500);
+      for (const row of rows) answered.add(row.dispatch_id);
+    }
+    return answered;
+  });
+}
+
 export function listLeases(handle: DatabaseHandle): Result<QueryLeaseRecord[]> {
   return read(handle, ({ db }) => queryLeases(db));
 }
