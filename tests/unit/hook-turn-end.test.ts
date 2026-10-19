@@ -49,8 +49,22 @@ test("transcript tail reads only the bounded suffix", async () => {
     return content.subarray(position, position + length);
   });
 
-  expect(reads).toEqual([{ position: Math.max(0, content.length - 8_000), length: Math.min(content.length, 8_000) }]);
-  expect(result).toBe(content.subarray(Math.max(0, content.length - 8_000)).toString("utf8"));
+  expect(reads.reduce((total, read) => total + read.length, 0)).toBeLessThanOrEqual(8_000);
+  expect(reads.every((read) => read.position >= content.length - 8_000)).toBe(true);
+  expect(result).toBe(content.toString("utf8").split("\n").slice(-20).join("\n"));
+});
+
+test("transcript tail caps reads for a huge file with no line breaks", async () => {
+  const fileSize = 100_000_000;
+  const reads: Array<Readonly<{ position: number; length: number }>> = [];
+  const result = await tailTranscriptFromFile(fileSize, async (position, length) => {
+    reads.push({ position, length });
+    return Buffer.alloc(length, "x");
+  });
+
+  expect(reads.reduce((total, read) => total + read.length, 0)).toBeLessThanOrEqual(8_000);
+  expect(reads.every((read) => read.position >= fileSize - 8_000)).toBe(true);
+  expect(Buffer.byteLength(result)).toBeLessThanOrEqual(8_000);
 });
 
 async function writeMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
