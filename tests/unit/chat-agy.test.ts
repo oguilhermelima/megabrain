@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseAgyLog, sessionLogPath, sessionTurnOpen } from "../../src/chat/session-log.js";
 import { ChatStore, type Chat, type ChatCapabilities } from "../../src/chat/store.js";
+import { ChatDaemon } from "../../src/chat/daemon.js";
 
 const directories: string[] = [];
-afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+const daemons: ChatDaemon[] = [];
+afterEach(async () => { for (const daemon of daemons.splice(0)) await daemon.close(); for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 const transcript = readFileSync(join(import.meta.dir, "../fixtures/chat-agy-transcript.jsonl"), "utf8");
 const sessionId = "eaaac49a-ca19-480a-8f26-f6cf6337e7a2";
@@ -39,6 +41,16 @@ function agyChat(overrides: Partial<Chat> = {}): Chat {
 }
 
 describe("agy terminal-follow transcript", () => {
+  test("starts in the requested native chat mode while the terminal retains ownership", async () => {
+    const root = mkdtempSync(join(tmpdir(), "megabrain-agy-start-"));
+    directories.push(root);
+    const daemon = new ChatDaemon(join(root, "state"), { HOME: root });
+    await daemon.start();
+    daemons.push(daemon);
+    const chat = await daemon.startChat({ operation: "start", agent: "agy", cwd: join(root, "project"), mode: "chat" });
+    expect(chat).toMatchObject({ agent: "agy", mode: "chat", owner: "terminal", state: "idle" });
+  });
+
   test("shares the native chat agent union and capability record shape", () => {
     const grokAndAgy: Chat["agent"][] = ["grok", "agy"];
     expect(grokAndAgy).toEqual(["grok", "agy"]);
