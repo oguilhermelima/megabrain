@@ -3,7 +3,7 @@ import { addSupersedeSummary, supersedeDelivery, type SupersedeSummary } from ".
 import { randomUUID } from "node:crypto";
 import { failed, ok, type Result } from "../../core/result.js";
 import { insertDelivery, listDeliveries as queryDeliveries, toDelivery, type DeliveryRecord } from "../../db/queries/deliveries.js";
-import { insertMessage, listMessages as queryMessages, toMessage, type MessageRecord } from "../../db/queries/messages.js";
+import { getMessage as queryMessage, insertMessage, listMessages as queryMessages, toMessage, type MessageRecord } from "../../db/queries/messages.js";
 import { decode, encode, object, type DatabaseAdapter } from "../../db/queries/types.js";
 import { listLeases as queryLeases, toOutbox, type LeaseRecord as QueryLeaseRecord, type OutboxRecord } from "../../db/queries/outbox-leases.js";
 import type { DatabaseHandle } from "../../db/db.js";
@@ -65,7 +65,7 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
       seq: nextMessageSequence(db, dispatchId),
       createdAt: typeof message.createdAt === "string" ? message.createdAt : new Date().toISOString(),
     };
-    const previous = queryMessages(db, dispatchId);
+    const previous = options.derive === undefined ? [] : queryMessages(db, dispatchId);
     insertMessage(db, dispatchId, assigned);
     const derived = options.derive?.(previous) ?? {};
     const delivery = options.delivery ?? derived.delivery;
@@ -81,7 +81,9 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
       });
     }
     if (outbox !== undefined) enqueueOutboxValue(db, { ...outbox, dispatchId }, new Date().toISOString());
-    return queryMessages(db, dispatchId).at(-1) as MessageRecord;
+    const inserted = queryMessage(db, dispatchId, assigned.seq);
+    if (inserted === undefined) throw new Error("appended message was not visible");
+    return inserted;
   });
   if (appended.kind === "ok" && message.from === "child") {
     const deliveries = queryDeliveries(handle.db, dispatchId);
