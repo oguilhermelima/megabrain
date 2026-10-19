@@ -4,6 +4,7 @@ pub mod cli;
 pub mod code;
 mod code_servers;
 mod cli_stream;
+mod frame_stream;
 #[cfg(test)]
 mod cli_stream_tests;
 mod attachment;
@@ -91,6 +92,20 @@ fn app_control_error(control: State<'_, app_control::AppControl>, id: String, er
 fn error_log(record: serde_json::Value) -> Result<(), String> {
     let state = app_terminals::state_dir().ok_or_else(|| "HOME is not set".to_string())?;
     switch_trace::append_error_log(&state, &record).map(|_| ())
+}
+
+#[tauri::command]
+fn frame_stream_subscribe(
+    app: tauri::AppHandle,
+    streams: State<'_, frame_stream::FrameStreams>,
+    url: String,
+) -> Result<frame_stream::FrameSubscription, String> {
+    streams.subscribe(app, url)
+}
+
+#[tauri::command]
+fn frame_stream_unsubscribe(streams: State<'_, frame_stream::FrameStreams>, url: String) {
+    streams.unsubscribe(&url);
 }
 
 #[tauri::command]
@@ -366,7 +381,26 @@ pub(crate) fn show_main(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     cli::scrub_agent_env();
+    let frame_streams = frame_stream::FrameStreams::default();
+    let protocol_streams = frame_streams.clone();
     let app = tauri::Builder::default()
+        .manage(frame_streams)
+        .register_uri_scheme_protocol("device-frame", move |_ctx, request| {
+            let key = request.uri().host().unwrap_or_default();
+            let response = protocol_streams.frame(key).map(|bytes| {
+                tauri::http::Response::builder()
+                    .header("content-type", "image/jpeg")
+                    .header("cache-control", "no-store")
+                    .body(bytes)
+                    .unwrap()
+            });
+            response.unwrap_or_else(|| {
+                tauri::http::Response::builder()
+                    .status(404)
+                    .body(Vec::new())
+                    .unwrap()
+            })
+        })
         .setup(|app| {
             let executable = sidecar(&std::env::current_exe()?);
             let root = app.path().resource_dir()?.join("megabrain");
@@ -437,7 +471,9 @@ pub fn run() {
             save_image,
             app_control_reply,
             app_control_error,
-            error_log
+            error_log,
+            frame_stream_subscribe,
+            frame_stream_unsubscribe
         ])
         .build(tauri::generate_context!())
         .expect("error while building megabrain desktop");
