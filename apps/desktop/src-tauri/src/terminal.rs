@@ -90,6 +90,7 @@ pub fn tmux_create_argv(
     cwd: &str,
     size: Option<(u16, u16)>,
     command: Option<&[String]>,
+    retain_exit: bool,
 ) -> Vec<String> {
     let mut args = vec![
         "-L".into(),
@@ -105,9 +106,20 @@ pub fn tmux_create_argv(
     }
     args.extend(["-c".into(), cwd.into()]);
     if let Some(command) = command {
-        args.extend(command.iter().cloned());
+        if retain_exit {
+            let command = command.iter().map(|part| shell_quote(part)).collect::<Vec<_>>().join(" ");
+            args.push(format!(
+                "tmux set-option -w -t \"$TMUX_PANE\" remain-on-exit on && exec {command}"
+            ));
+        } else {
+            args.extend(command.iter().cloned());
+        }
     }
     args
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// The agent session a TUI command resumes: `claude --resume <id>` or `codex resume <id>`.
@@ -389,7 +401,7 @@ impl TerminalManager {
                     Some(value) => split_tmux_target(value)?,
                     None => {
                         let session = format!("{APP_SESSION_PREFIX}{id}");
-                        create_tmux_session(cli_path, &session, &cwd, (options.cols, options.rows), options.command.as_deref())?;
+                        create_tmux_session(cli_path, &session, &cwd, (options.cols, options.rows), options.command.as_deref(), options.chat_id.is_some())?;
                         created_session = Some(session.clone());
                         (Some(TMUX_SERVER.to_string()), session)
                     }
@@ -755,9 +767,10 @@ fn create_tmux_session(
     cwd: &Path,
     size: (u16, u16),
     command: Option<&[String]>,
+    retain_exit: bool,
 ) -> Result<(), String> {
     let cwd = cwd.to_string_lossy();
-    let args = tmux_create_argv(tmux_server_name(), session, &cwd, Some(size), command);
+    let args = tmux_create_argv(tmux_server_name(), session, &cwd, Some(size), command, retain_exit);
     let tmux = find_on_path("tmux", cli_path)
         .ok_or_else(|| "tmux was not found on the login PATH".to_string())?;
     let output = Command::new(&tmux)
