@@ -51,7 +51,7 @@ export async function executeProjectWorkflows(args: readonly string[], environme
   let after: string | null = null
   const workflows: ProjectWorkflow[] = []
   do {
-    const answer = await graphqlCall(process, 'gh api graphql', PROJECT_WORKFLOWS_QUERY, { owner, number: options.number, after })
+    const answer = await graphqlCall(process, 'gh api graphql', PROJECT_WORKFLOWS_QUERY, { owner, number: options.number, ...(after === null ? {} : { after }) })
     if (answer.kind !== 'ok') return answer
     const project = record(answer.value.data.repositoryOwner)?.projectV2
     const entry = record(project)

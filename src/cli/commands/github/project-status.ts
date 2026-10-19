@@ -75,7 +75,7 @@ function normalizeStatusUpdate(value: unknown): ProjectStatusUpdate | null {
 }
 
 async function projectMetadata(owner: string, number: number, process: ProcessAdapter) {
-  const answer = await graphqlCall(process, 'gh api graphql', PROJECT_STATUS_QUERY, { owner, number, after: null })
+  const answer = await graphqlCall(process, 'gh api graphql', PROJECT_STATUS_QUERY, { owner, number })
   if (answer.kind !== 'ok') return answer
   const project = record(answer.value.data.repositoryOwner)?.projectV2
   const entry = record(project)
@@ -94,7 +94,7 @@ export async function executeProjectStatus(args: readonly string[], environment:
   let after: string | null = null
   const updates: ProjectStatusUpdate[] = []
   do {
-    const variables = { owner, number: options.number, after }
+    const variables = { owner, number: options.number, ...(after === null ? {} : { after }) }
     const answer = await graphqlCall(process, 'gh api graphql', PROJECT_STATUS_QUERY, variables)
     if (answer.kind !== 'ok') return answer
     const project = record(answer.value.data.repositoryOwner)?.projectV2
@@ -127,8 +127,10 @@ export async function executeProjectStatusCreate(args: readonly string[], enviro
   const project = await projectMetadata(owner, options.number, process)
   if (project.kind !== 'ok') return project
   const created = await graphqlCall(process, 'gh api graphql', CREATE_PROJECT_STATUS_UPDATE, {
-    projectId: project.value.id, status: options.status, body: options.body ?? null,
-    startDate: options.start ?? null, targetDate: options.target ?? null,
+    projectId: project.value.id, status: options.status,
+    ...(options.body === undefined ? {} : { body: options.body }),
+    ...(options.start === undefined ? {} : { startDate: options.start }),
+    ...(options.target === undefined ? {} : { targetDate: options.target }),
   }, { retry: false })
   if (created.kind !== 'ok') return created
   const update = normalizeStatusUpdate(record(created.value.data.createProjectV2StatusUpdate)?.statusUpdate)
