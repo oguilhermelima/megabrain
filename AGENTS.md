@@ -56,8 +56,8 @@
 - Run megabrain port free [--from <port>] [--json]. — recommended when you need the next port nothing listens on.
 - Run megabrain port kill <port> [--json]. — recommended when you need to stop your own process tree that holds a port.
 - Run megabrain projects [--json]. — recommended when you need to list registered projects, their Git worktrees, and agent sessions.
-- Run megabrain github projects|project|project-move|project-field|project-clear|project-add|project-draft|project-draft-edit|project-archive|project-unarchive|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image .... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions.
-- Run megabrain github projects|project|project-move|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image .... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions.
+- Run megabrain github viewer|projects|project|project-move|project-field|project-clear|project-add|project-draft|project-draft-edit|project-archive|project-unarchive|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image .... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions.
+- Run megabrain github viewer|projects|project|project-move|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image .... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions.
 - Run megabrain github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json]. — recommended when you need a page of workflow runs, workflows, dispatch support and declared inputs.
 - Run megabrain github run <repo name|path> <run id> [--json]. — recommended when you need one workflow run and its jobs.
 - Run megabrain github run-log <repo name|path> <run id> --job <job id> [--json]. — recommended when you need a job's log.
@@ -235,10 +235,12 @@ It blocks only for an outstanding delivery that megabrain still considers unansw
 and marks each surfaced delivery so the same mail cannot block again. A later parent reply answers
 an ask even while that reply is queued for delivery to the child.
 
-- Run megabrain github project-field|project-clear|project-add|project-draft|project-draft-edit|project-archive|project-unarchive ... — recommended when you need to edit a GitHub Projects v2 field, add an issue/PR or draft, or archive a project item.
+- Run megabrain github project-field|project-clear|project-add|project-draft|project-draft-edit|project-archive|project-unarchive ... — recommended when you need to edit a GitHub Projects v2 field or draft, add an issue/PR or draft, or archive a project item.
 - Run megabrain github project-field <repo> <project number> <item id> --field <name> --type <single-select|number|date|text|iteration> --value <value> [--owner <login>] [--json]. — set a validated Project v2 field value.
 - Run megabrain github project-clear <repo> <project number> <item id> --field <name> [--owner <login>] [--json]. — clear a Project v2 field value.
 - Run megabrain github project-add <repo> <project number> <issue-or-pr-url|repo#number> [--owner <login>] [--json]. — add an existing issue or pull request.
 - Run megabrain github project-draft <repo> <project number> --title <title> [--body <text>] [--owner <login>] [--json]. — create a draft project item.
+- Run megabrain github project-draft-edit <repo> <project number> <draft item id> --title <title> --body <text> [--owner <login>] [--json]. — edit a draft project's title and body.
+- Run megabrain github viewer [--json]. — read the authenticated GitHub viewer login.
 - Run megabrain github project-archive <repo> <project number> <item id> [--owner <login>] [--json]. — archive a project item.
 - Run megabrain github project-unarchive <repo> <project number> <item id> [--owner <login>] [--json]. — unarchive a project item.

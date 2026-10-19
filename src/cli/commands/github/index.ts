@@ -84,8 +84,8 @@ import { executeGithubLabels } from "./labels.js";
 export async function executeGithub(args: readonly string[], environment: Environment, process: ProcessAdapter = createProcessAdapter(), now: Clock = Date.now): Promise<Result<string>> {
   const [verbArgument, ...rest] = args;
   if (verbArgument === "viewer") {
-    if (rest.includes("-h") || rest.includes("--help")) return ok("github viewer [--json]\n");
-    if (rest.some((arg) => arg !== "--json")) return failed("usage: github viewer [--json]", 2);
+    if (rest.includes("-h") || rest.includes("--help")) return ok(usageText("github-viewer"));
+    if (rest.some((arg) => arg !== "--json")) return failed(usageMessage("github-viewer"), 2);
     const result = await process.run("gh", ["api", "user"], { timeoutMs: 20_000 });
     if (result.kind !== "ok") return result;
     try {
