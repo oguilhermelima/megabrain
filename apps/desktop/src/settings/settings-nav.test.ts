@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { adjacentKey, initialKey, navGroups, navKeys, projectKey, sectionInfo, settingsSections } from '@/settings/settings-nav'
+import { adjacentKey, initialKey, navGroups, navKeys, projectKey, resolveSection, sectionInfo, settingsSections } from '@/settings/settings-nav'
 
 const project = (name: string, path: string, appearance?: { name?: string }) => ({ name, path, worktrees: [{ path }], ...(appearance === undefined ? {} : { appearance }) })
 
@@ -14,7 +14,7 @@ const projects = [
 describe('settings navigation', () => {
   test('every fixed section is reachable exactly once; projects are no longer a section', () => {
     const keys = settingsSections.map((section) => section.key)
-    expect([...keys].sort()).toEqual(['agents', 'chains', 'knowledge', 'limits', 'models', 'shortcuts', 'supervisor', 'terminal', 'usage', 'worktrees'])
+    expect([...keys].sort()).toEqual(['agents', 'chains', 'knowledge', 'models', 'shortcuts', 'supervisor', 'terminal', 'usage', 'worktrees'])
     expect(new Set(keys).size).toBe(keys.length)
   })
 
@@ -74,5 +74,21 @@ describe('settings navigation', () => {
 
   test('sectionInfo finds a section by key', () => {
     expect(sectionInfo('terminal').label).toBe('Terminal')
+  })
+
+  test('Supervisor sits under System and Limits is no longer listed', () => {
+    const system = navGroups([]).find((group) => group.label === 'System')
+    expect(system?.items.map((item) => item.key)).toContain('supervisor')
+    expect(navKeys([])).not.toContain('limits' as never)
+  })
+
+  test('an old limits id opens supervisor; a known id is itself; anything else is null', () => {
+    expect(resolveSection('limits')).toBe('supervisor')
+    expect(resolveSection('knowledge')).toBe('knowledge')
+    expect(resolveSection('nope')).toBeNull()
+  })
+
+  test('only Usage and Agents use the full width; every other page keeps the readable cap', () => {
+    expect(settingsSections.filter((section) => section.wide === true).map((section) => section.key).sort()).toEqual(['agents', 'usage'])
   })
 })

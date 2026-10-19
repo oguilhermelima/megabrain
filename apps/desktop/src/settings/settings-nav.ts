@@ -4,7 +4,7 @@
 import { compareByDisplayName, displayName } from '@/advanced/appearance-model'
 import type { ProjectAppearance } from '@/api/schema'
 
-export type Section = 'usage' | 'agents' | 'shortcuts' | 'models' | 'chains' | 'knowledge' | 'supervisor' | 'limits' | 'terminal' | 'worktrees'
+export type Section = 'usage' | 'agents' | 'shortcuts' | 'models' | 'chains' | 'knowledge' | 'supervisor' | 'terminal' | 'worktrees'
 
 /** A section, or one project's page by its repository path. */
 export type NavKey = Section | `project:${string}`
@@ -18,18 +18,19 @@ export interface SectionInfo {
   description: string
   icon: SectionIcon
   group: 'General' | 'Agents' | 'System'
+  /** Uses the content column's full width; every other page caps its content at a readable width. */
+  wide?: boolean
 }
 
 /** In navigation order; groups follow the order their first section appears in. */
 export const settingsSections: SectionInfo[] = [
-  { key: 'usage', label: 'Usage', description: 'Tokens, estimated cost and limits across your agents, from their own logs.', icon: 'gauge', group: 'General' },
+  { key: 'usage', label: 'Usage', description: 'Tokens, estimated cost and limits across your agents, from their own logs.', icon: 'gauge', group: 'General', wide: true },
   { key: 'shortcuts', label: 'Shortcuts', description: 'The keys for the window’s actions, Orca’s where Orca has the same action.', icon: 'keyboard', group: 'General' },
-  { key: 'agents', label: 'Agents', description: 'The agents installed here, the command each starts with, and the one New chat uses.', icon: 'agents', group: 'Agents' },
+  { key: 'agents', label: 'Agents', description: 'The agents installed here, the command each starts with, and the one New chat uses.', icon: 'agents', group: 'Agents', wide: true },
   { key: 'models', label: 'Models', description: 'Which models each agent offers in the picker, and what new chats start on.', icon: 'cpu', group: 'Agents' },
   { key: 'chains', label: 'Chains', description: 'Which agent and model a dispatch tries first, and what it falls back to.', icon: 'link', group: 'Agents' },
   { key: 'knowledge', label: 'Knowledge', description: 'What each project keeps from its chats, and the model that writes it up.', icon: 'note', group: 'Agents' },
-  { key: 'supervisor', label: 'Supervisor', description: 'The watcher that reports stuck, finished or dead children, and setup.', icon: 'eye', group: 'Agents' },
-  { key: 'limits', label: 'Limits', description: 'When a new agent may start, by machine load, and resource history.', icon: 'sliders', group: 'System' },
+  { key: 'supervisor', label: 'Supervisor', description: 'The watcher that reports stuck, finished or dead children, when a new agent may start, and setup.', icon: 'eye', group: 'System' },
   { key: 'terminal', label: 'Terminal', description: 'The terminal engine inside the app and the one opened outside it.', icon: 'terminal', group: 'System' },
   { key: 'worktrees', label: 'Worktrees', description: 'Where new worktrees are created, for every project or one at a time.', icon: 'folder', group: 'System' },
 ]
@@ -82,6 +83,14 @@ export function navKeys(projects: NavProject[]): NavKey[] {
 /** A section's title, line and icon; a project key gets the first section's, which its page does not show. */
 export function sectionInfo(key: NavKey): SectionInfo {
   return settingsSections.find((section) => section.key === key) ?? (settingsSections[0] as SectionInfo)
+}
+
+/** Old section ids a stored or linked value can still carry, and the section that now holds them. */
+const sectionAliases: Record<string, Section> = { limits: 'supervisor' }
+
+/** The section an id opens: itself, the section an old id moved into, or null for anything else. */
+export function resolveSection(id: string): Section | null {
+  return settingsSections.find((section) => section.key === id)?.key ?? sectionAliases[id] ?? null
 }
 
 /**
