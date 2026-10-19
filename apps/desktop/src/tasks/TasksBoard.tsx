@@ -16,7 +16,7 @@ import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPage
 import { boardSheetFields } from '@/tasks/BoardFilterBar'
 import { Chips, ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
 import { ItemPanel, type FieldWrite } from '@/tasks/ItemPanel'
-import { cardChips, editedItems, groupField, laneField, optionOf, projectViews, readViewPrefs, shownView, sortedItems, swimlanes, viewColumns, writeViewPrefs, type CardChip, type PendingEdit, type ViewColumn } from '@/tasks/board-view'
+import { cardChips, editedItems, parseAddition, groupField, laneField, optionOf, projectViews, readViewPrefs, shownView, sortedItems, swimlanes, viewColumns, writeViewPrefs, type CardChip, type PendingEdit, type ViewColumn } from '@/tasks/board-view'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
 import { boardItemsPolicy, boardListPolicy } from '@/lib/poll-model'
@@ -124,7 +124,16 @@ function useBoardItems(root: string, board: GithubProject) {
     },
     [key],
   )
-  return { items, answer, error, loading, reload: read }
+  /** An item added to the board: shown at once at the end, and kept, until the next read lists it. */
+  const add = useCallback(
+    (item: GithubProjectItem) => {
+      setItems((current) => (current === null ? [item] : [...current.filter((entry) => entry.id !== item.id), item]))
+      const entry = boardCache().items[key]
+      if (entry !== undefined) remember(withItems(boardCache(), key, [...entry.value.filter((value) => value.id !== item.id), item], entry.at))
+    },
+    [key],
+  )
+  return { items, answer, add, error, loading, reload: read }
 }
 
 interface CardDrag {
@@ -276,6 +285,53 @@ function Column({ column, field, droppable, over, collapsed, onMenu, children }:
   )
 }
 
+/** The foot of a column: Add item opens a line that takes an issue or pull request URL, owner/repo#number, or a draft's title. */
+function AddItem({ onAdd }: { onAdd: (text: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="mx-2.5 mb-2.5 shrink-0 rounded-[12px] px-2 py-1.5 text-left text-[12.5px] font-semibold text-ink-400 hover:bg-white/[0.05] hover:text-ink-100">
+        + Add item
+      </button>
+    )
+  }
+  const submit = () => {
+    if (text.trim() === '' || busy) return
+    setBusy(true)
+    onAdd(text).then(
+      () => {
+        setText('')
+        setBusy(false)
+      },
+      () => setBusy(false),
+    )
+  }
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault()
+        submit()
+      }}
+      className="mx-2.5 mb-2.5 shrink-0">
+      <input
+        autoFocus
+        value={text}
+        disabled={busy}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') setOpen(false)
+        }}
+        onBlur={() => text === '' && setOpen(false)}
+        placeholder="Paste a URL, owner/repo#1, or type a draft title"
+        aria-label="Add item"
+        className="h-8 w-full rounded-[10px] border border-white/[0.08] bg-white/[0.05] px-2.5 text-[12.5px] text-ink-100 outline-none placeholder:text-ink-500 focus:border-accent/60 disabled:opacity-50"
+      />
+    </form>
+  )
+}
+
 /** A swimlane: a collapsible band with its value, count and a menu, over the columns of its items. */
 function Lane({ name, color, count, collapsed, onToggle, onMenu, children }: { name: string; color: string | null; count: number; collapsed: boolean; onToggle: () => void; onMenu: (event: MouseEvent<HTMLElement>) => void; children: ReactNode }) {
   return (
@@ -321,7 +377,7 @@ export function TasksBoard({ root, repo, remembered, onPick, onOpenGithub }: { r
 }
 
 function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub }: { root: string; repo: string; board: GithubProject; boards: GithubProject[]; onReloadBoards: () => void; onPick: (number: number) => void; onOpenGithub: (kind: 'pr' | 'issue', number: number) => void }) {
-  const { items, answer, error, loading, reload } = useBoardItems(root, board)
+  const { items, answer, add, error, loading, reload } = useBoardItems(root, board)
   const [pending, setPending] = useState<PendingEdit[]>([])
   const [toast, setToast] = useState<ToastMessage | null>(null)
   const closeToast = useCallback(() => setToast(null), [])
@@ -443,6 +499,24 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
     <Card key={item.id} item={item} repo={repo} chips={cardChips(item, board, view, [field?.name ?? '', lane?.name ?? ''])} moving={moving.has(item.id) || drag?.item.id === item.id} onPointerDown={(event) => start(event, item)} onOpen={opener(item)} onMenu={(event) => menuFor(event, item, field === null ? null : optionOf(item, field))} />
   )
 
+  /**
+   * Adds an issue or pull request by reference, or a draft titled with the text, then sets the column's
+   * option and the lane's when they are single selects, so it lands where it was typed.
+   */
+  const addTo = async (text: string, column: string | null, laneOption: string | null) => {
+    const addition = parseAddition(text)
+    if (addition === null || field === null) return
+    try {
+      let item = addition.kind === 'reference' ? await api.githubProjectAddItem(root, board.number, addition.reference, board.owner) : await api.githubProjectCreateDraft(root, board.number, addition.title, undefined, board.owner)
+      add(item)
+      if (column !== null) item = field.id === board.statusField?.id ? await api.githubProjectMove(root, board.number, item.id, column, board.owner) : await api.githubProjectSetField(root, board.number, item.id, field.name, 'single-select', column, board.owner)
+      if (laneOption !== null && lane !== null && lane.dataType === 'SINGLE_SELECT') item = await api.githubProjectSetField(root, board.number, item.id, lane.name, 'single-select', laneOption, board.owner)
+      add(item)
+    } catch (cause: unknown) {
+      setToast({ id: `add-${Date.now()}`, text: `Couldn’t add “${text.trim()}”: ${cause instanceof Error ? cause.message : String(cause)}` })
+      throw cause
+    }
+  }
   const panelItem = selected === null || items === null ? undefined : editedItems(items, pending).find((item) => item.id === selected)
   const laneMenu = (event: MouseEvent<HTMLElement>) => {
     const ids = shown === null || lane === null ? [] : swimlanes(lane, shown).map((entry) => entry.id ?? '')
@@ -456,7 +530,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
       { label: 'Hide column', onSelect: () => setHiddenColumns((set) => new Set(set).add(id)) },
     ]])
   }
-  const columnsFor = (list: ViewColumn[]) =>
+  const columnsFor = (list: ViewColumn[], laneOption: string | null = null) =>
     field !== null &&
     list
       .filter((column) => (showNoStatus || column.id !== null) && !hiddenColumns.has(column.id ?? ''))
@@ -465,6 +539,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
           <ul onKeyDown={openMenuFromKeyboard} className="min-h-12 space-y-2 overflow-y-auto px-2.5 pb-2.5">
             {column.items.map(card)}
           </ul>
+          <AddItem onAdd={(text) => addTo(text, column.id, laneOption)} />
         </Column>
       ))
 
@@ -528,7 +603,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
                   const id = entry.id ?? ''
                   return (
                     <Lane key={id} name={entry.name} color={entry.color} count={entry.items.length} collapsed={collapsedLanes.has(id)} onToggle={() => setCollapsedLanes((set) => toggled(set, id))} onMenu={laneMenu}>
-                      <div className={`flex items-start gap-3 ${pageX} pb-4`}>{columnsFor(viewColumns(field, entry.items))}</div>
+                      <div className={`flex items-start gap-3 ${pageX} pb-4`}>{columnsFor(viewColumns(field, entry.items), entry.id)}</div>
                     </Lane>
                   )
                 })}
