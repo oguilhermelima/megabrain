@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The desktop app opens its tmux terminals as sessions named mb-app-<id> on the megabrain-app
@@ -14,6 +14,13 @@ export type AppTerminalRecord = Readonly<{
   createdAt: string;
 }>;
 export type AppTerminalRecords = Readonly<Record<string, AppTerminalRecord>>;
+
+const LOCK_WAIT_MS = 5_000;
+const LOCK_STALE_MS = 30_000;
+
+function sleep(milliseconds: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
 
 function recordsFile(stateDir: string): string {
   return join(stateDir, "app-terminals.json");
@@ -45,18 +52,41 @@ function writeAppTerminals(
   renameSync(temporary, file);
 }
 
+function withAppTerminalLock<T>(stateDir: string, update: () => T): T {
+  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  const lock = `${recordsFile(stateDir)}.lock`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try { mkdirSync(lock, { mode: 0o700 }); break; }
+    catch (cause: unknown) {
+      if (typeof cause !== "object" || cause === null || !("code" in cause) || cause.code !== "EEXIST") throw cause;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          rmSync(lock, { recursive: true, force: true });
+          continue;
+        }
+      } catch { continue; }
+      if (Date.now() > deadline) throw new Error("app-terminals.json is locked by another writer");
+      sleep(10);
+    }
+  }
+  try { return update(); }
+  finally { rmSync(lock, { recursive: true, force: true }); }
+}
+
 export function recordAppTerminal(
   stateDir: string,
   sessionName: string,
   record: AppTerminalRecord,
 ): void {
-  writeAppTerminals(stateDir, {
-    ...readAppTerminals(stateDir),
-    [sessionName]: record,
+  withAppTerminalLock(stateDir, () => {
+    writeAppTerminals(stateDir, { ...readAppTerminals(stateDir), [sessionName]: record });
   });
 }
 
 export function forgetAppTerminal(stateDir: string, sessionName: string): void {
-  const { [sessionName]: _removed, ...rest } = readAppTerminals(stateDir);
-  writeAppTerminals(stateDir, rest);
+  withAppTerminalLock(stateDir, () => {
+    const { [sessionName]: _removed, ...rest } = readAppTerminals(stateDir);
+    writeAppTerminals(stateDir, rest);
+  });
 }
