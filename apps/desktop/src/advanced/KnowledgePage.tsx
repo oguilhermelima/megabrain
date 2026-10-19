@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { Artifact, KnowledgeChat, KnowledgeKind, KnowledgeList, KnowledgeRef, KnowledgeStatus, KnowledgeTopic, KnowledgeTopicSummary, Project } from '@/api/schema'
 import { ArtifactStrip } from '@/advanced/ArtifactStrip'
@@ -14,7 +14,8 @@ import { branchGroups, githubRefGroups, readTopicTab, shownTopicTab, topicTabs, 
 import { displayName } from '@/advanced/appearance-model'
 import { emptyTopicFilters, filterTopics, topicSheetFields, type TopicFilters } from '@/advanced/page-filters'
 import { activeCount } from '@/components/filter-sheet-model'
-import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
+import { FilterButton, FilterChips, FilterPanel } from '@/components/Filters'
+import { useSheet } from '@/components/Sheet'
 import { relativeAge } from '@/advanced/projects-model'
 import { MarkdownText } from '@/chat/markdown'
 import { AgentIcon } from '@/components/agent-icons'
@@ -660,8 +661,7 @@ export function KnowledgePage({
   const [query, setQuery] = useState(memory.query)
   const [folded, setFolded] = useState<ReadonlySet<KnowledgeKind>>(memory.folded)
   const [filters, setFilters] = useState(memory.filters)
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const closeSheet = useCallback(() => setSheetOpen(false), [])
+  const sheet = useSheet('knowledge.filters')
   const sheetFields = topicSheetFields(filters, (patch) => setFilters((current) => ({ ...current, ...patch })))
   useEffect(() => {
     memory.query = query
@@ -755,13 +755,13 @@ export function KnowledgePage({
               {/* A narrow bar keeps the icon alone; its title still names it. */}
               <span className="@max-[420px]/header:hidden">Map</span>
             </button>
-            {on && <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="bar" />}
+            {on && <FilterButton fields={sheetFields} sheet={sheet} place="bar" />}
           </>
         )
       }
       panelLabel={on ? 'Topics' : null}
       panelCount={shownCount}
-      sheet={<FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />}
+      sheet={<FilterPanel sheet={sheet} fields={sheetFields} />}
       panel={
         <>
           <FilterChips fields={sheetFields} className="px-1 pb-2" />

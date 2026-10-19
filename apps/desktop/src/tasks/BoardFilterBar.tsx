@@ -1,10 +1,10 @@
 import { SearchIcon } from '@/advanced/SidebarTools'
-import type { SheetField } from '@/components/filter-sheet-model'
+import { updatedWithinOptions, type SheetField } from '@/components/filter-sheet-model'
 import { anyValue, fromAny, people } from '@/github/page-parts'
 import type { BoardFilterOptions, BoardFilters, BoardItemState, BoardItemType } from '@/tasks/board-filters'
 
 // The Tasks board's filters (board-filters.ts): the search stays in the bar's row after the project
-// picker; the rest go in the filter sheet (components/FilterSheet), with Show No status as a setting.
+// picker; the rest go in the filter sheet (components/Filters), with Show No status as a setting.
 
 const typeNames: Record<BoardItemType, string> = { ISSUE: 'Issues', PULL_REQUEST: 'Pull requests', DRAFT_ISSUE: 'Drafts' }
 const stateNames: Record<BoardItemState, string> = { OPEN: 'Open', CLOSED: 'Closed', MERGED: 'Merged' }
@@ -43,6 +43,7 @@ export function boardSheetFields(filters: BoardFilters, options: BoardFilterOpti
     { kind: 'select', label: 'Label', value: filters.label ?? anyValue, options: people('Any label', options.labels), onChange: (value) => set({ label: fromAny(value) }) },
   ]
   if (options.repositories.length > 0) fields.push({ kind: 'select', label: 'Repository', value: filters.repository ?? anyValue, options: people('Any repository', options.repositories), onChange: (value) => set({ repository: fromAny(value) }) })
+  fields.push({ kind: 'select', label: 'Updated', value: filters.updated, options: updatedWithinOptions, onChange: (updated) => set({ updated }) })
   if (noStatus !== null) fields.push({ kind: 'switch', label: noStatus.count > 0 ? `Show No status (${noStatus.count})` : 'Show No status', on: noStatus.on, onChange: noStatus.onChange, setting: true })
   return fields
 }

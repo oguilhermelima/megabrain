@@ -1,8 +1,9 @@
 import type { GithubProjectItem } from '@/api/schema'
+import { updatedWithin, updatedWithinOptions } from '@/components/filter-sheet-model'
 import type { WidthStorage } from '@/lib/panel-width'
 
 // What the Tasks board narrows its items to, over every column at once: words in the title or the
-// number, an assignee, a label, the item's kind, its state and its repository. The board remembers
+// number, an assignee, a label, the item's kind, its state, its repository and how recently it changed. The board remembers
 // its filters per viewer, for each board (board-cache.ts boardKey), and whether it shows No status,
 // for every board. Like the page's memory, that is a
 // convenience: storage missing, blocked or holding something else remembers nothing.
@@ -17,9 +18,11 @@ export interface BoardFilters {
   type: BoardItemType | null
   state: BoardItemState | null
   repository: string | null
+  /** Days, or "" for any time (filter-sheet-model updatedWithin). */
+  updated: string
 }
 
-export const emptyBoardFilters: BoardFilters = { query: '', assignee: null, label: null, type: null, state: null, repository: null }
+export const emptyBoardFilters: BoardFilters = { query: '', assignee: null, label: null, type: null, state: null, repository: null, updated: '' }
 
 export const itemTypes: readonly BoardItemType[] = ['ISSUE', 'PULL_REQUEST', 'DRAFT_ISSUE']
 export const itemStates: readonly BoardItemState[] = ['OPEN', 'CLOSED', 'MERGED']
@@ -27,7 +30,7 @@ export const itemStates: readonly BoardItemState[] = ['OPEN', 'CLOSED', 'MERGED'
 /** An item's state as the filter reads it: a draft, which GitHub gives none, is open. */
 export const itemState = (item: Pick<GithubProjectItem, 'state'>): BoardItemState => item.state ?? 'OPEN'
 
-export const isFiltered = (filters: BoardFilters) => filters.query.trim() !== '' || filters.assignee !== null || filters.label !== null || filters.type !== null || filters.state !== null || filters.repository !== null
+export const isFiltered = (filters: BoardFilters) => filters.query.trim() !== '' || filters.assignee !== null || filters.label !== null || filters.type !== null || filters.state !== null || filters.repository !== null || filters.updated !== ''
 
 /** Whether the words match the item: in its title, ignoring case, or as the start of its number, with or without #. */
 function matchesQuery(item: Pick<GithubProjectItem, 'title' | 'number'>, query: string): boolean {
@@ -38,18 +41,19 @@ function matchesQuery(item: Pick<GithubProjectItem, 'title' | 'number'>, query: 
   return /^\d+$/.test(digits) && item.number !== null && String(item.number).startsWith(digits)
 }
 
-export function matchesBoardFilters(item: GithubProjectItem, filters: BoardFilters): boolean {
+export function matchesBoardFilters(item: GithubProjectItem, filters: BoardFilters, now = Date.now()): boolean {
   return (
     matchesQuery(item, filters.query) &&
     (filters.assignee === null || item.assignees.some((assignee) => assignee.login === filters.assignee)) &&
     (filters.label === null || item.labels.some((label) => label.name === filters.label)) &&
     (filters.type === null || item.type === filters.type) &&
     (filters.state === null || itemState(item) === filters.state) &&
-    (filters.repository === null || item.repository === filters.repository)
+    (filters.repository === null || item.repository === filters.repository) &&
+    updatedWithin(item.updatedAt, filters.updated, now)
   )
 }
 
-export const filterBoardItems = (items: readonly GithubProjectItem[], filters: BoardFilters): GithubProjectItem[] => items.filter((item) => matchesBoardFilters(item, filters))
+export const filterBoardItems = (items: readonly GithubProjectItem[], filters: BoardFilters, now = Date.now()): GithubProjectItem[] => items.filter((item) => matchesBoardFilters(item, filters, now))
 
 export interface BoardFilterOptions {
   assignees: string[]
@@ -102,6 +106,7 @@ function readFilters(value: unknown): BoardFilters {
     type: oneOf(itemTypes, value.type),
     state: oneOf(itemStates, value.state),
     repository: stringOrNull(value.repository),
+    updated: updatedWithinOptions.find((option) => option.value === value.updated)?.value ?? '',
   }
 }
 

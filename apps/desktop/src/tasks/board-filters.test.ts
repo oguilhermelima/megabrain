@@ -115,3 +115,24 @@ describe('remembering filters per board', () => {
     expect(readBoardPrefs(memoryStorage({ [boardPrefsKey]: JSON.stringify({ filters: {}, showNoStatus: 'yes' }) }).storage).showNoStatus).toBe(false)
   })
 })
+
+describe('updated within', () => {
+  const now = Date.parse('2026-10-18T12:00:00Z')
+  const recent = item('recent', { updatedAt: '2026-10-18T00:00:00Z' })
+  const old = item('old', { updatedAt: '2026-09-01T00:00:00Z' })
+
+  test('keeps the items changed in the days chosen; any time keeps all', () => {
+    expect(ids(filterBoardItems([recent, old], only({ updated: '7' }), now))).toEqual(['recent'])
+    expect(ids(filterBoardItems([recent, old], only({ updated: '90' }), now))).toEqual(['recent', 'old'])
+    expect(ids(filterBoardItems([recent, old], emptyBoardFilters, now))).toEqual(['recent', 'old'])
+    expect(isFiltered(only({ updated: '30' }))).toBe(true)
+  })
+
+  test('is remembered per board, and a value it does not offer reads as any time', () => {
+    const { storage } = memoryStorage()
+    writeBoardPrefs(storage, { ...emptyBoardPrefs, filters: { 'o/1': only({ updated: '30' }) } })
+    expect(readBoardPrefs(storage).filters).toEqual({ 'o/1': only({ updated: '30' }) })
+    const stored = { filters: { 'o/2': { label: 'bug', updated: '12' } } }
+    expect(readBoardPrefs(memoryStorage({ [boardPrefsKey]: JSON.stringify(stored) }).storage).filters).toEqual({ 'o/2': only({ label: 'bug' }) })
+  })
+})

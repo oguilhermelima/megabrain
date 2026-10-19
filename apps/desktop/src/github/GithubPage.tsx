@@ -3,7 +3,8 @@ import { api } from '@/api'
 import type { GithubDetail, GithubIssue, GithubIssueList, GithubPullRequest, GithubPullRequestList, Project } from '@/api/schema'
 import { DetailSkeleton } from '@/components/Skeleton'
 import type { SheetField } from '@/components/filter-sheet-model'
-import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
+import { FilterButton, FilterChips, FilterPanel } from '@/components/Filters'
+import { useSheet } from '@/components/Sheet'
 import { ErrorNote } from '@/components/ui'
 import { emptyPullRequestFilters, githubRepository, includesAuthor, otherPeople, type IssueFilters, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
 import { firstCursors, withNext } from '@/github/pager'
@@ -328,8 +329,7 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
   const options = useFilterOptions(project.path)
   const listRef = useRef<HTMLDivElement>(null)
   useEffect(() => void listRef.current?.scrollTo({ top: 0 }), [index])
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const closeSheet = useCallback(() => setSheetOpen(false), [])
+  const sheet = useSheet('github.prs.filters')
   const set = (patch: Partial<PullRequestFilters>) => setFilters((current) => ({ ...current, ...patch }))
   const sheetFields: SheetField[] = [
     { kind: 'select', label: 'Author', value: filters.author ?? anyValue, options: people('Any author', options.people), onChange: (value) => set({ author: fromAny(value) }) },
@@ -367,82 +367,84 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <header className={`flex items-center gap-4 ${pageX} pt-6 pb-4`}>
-        <OwnerPicture owner={repository.owner} />
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-[24px] font-semibold tracking-[-0.02em] text-ink-100">Pull requests</h1>
-          <p className="flex min-w-0 items-center gap-1.5 text-[13.5px] text-ink-400">
-            <span className="truncate">
-              {repository.owner} / <span className="font-semibold text-ink-200">{repository.name}</span>
-            </span>
-            {listing !== null && (
-              <>
-                {dot}
-                <span className="shrink-0">updated {ago(listing.page.fetchedAt, now)}</span>
-              </>
+    <div className="relative flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className={`flex items-center gap-4 ${pageX} pt-6 pb-4`}>
+          <OwnerPicture owner={repository.owner} />
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[24px] font-semibold tracking-[-0.02em] text-ink-100">Pull requests</h1>
+            <p className="flex min-w-0 items-center gap-1.5 text-[13.5px] text-ink-400">
+              <span className="truncate">
+                {repository.owner} / <span className="font-semibold text-ink-200">{repository.name}</span>
+              </span>
+              {listing !== null && (
+                <>
+                  {dot}
+                  <span className="shrink-0">updated {ago(listing.page.fetchedAt, now)}</span>
+                </>
+              )}
+            </p>
+          </div>
+          <KindSwitch kind="prs" onKind={onKind} />
+          <IconButton label="Refresh" onClick={() => void reload()} spinning={loading && known}>
+            <RefreshIcon size={15} />
+          </IconButton>
+          <IconButton label="Close" onClick={onClose}>
+            <CloseIcon size={14} />
+          </IconButton>
+        </header>
+        <div className={`flex items-center gap-2 ${pageX} pb-4`}>
+          <Tabs
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { value: 'open', label: 'Open', count: counted('open') },
+              { value: 'merged', label: 'Merged', count: counted('merged') },
+              { value: 'closed', label: 'Closed', count: counted('closed') },
+              { value: 'all', label: 'All', count: counted('all') },
+            ]}
+          />
+          <SearchBox value={filters.query} placeholder="Search title, number, branch, author, label" onChange={(text) => setFilters((current) => ({ ...current, query: text }))} />
+          <FilterButton fields={sheetFields} sheet={sheet} place="row" />
+        </div>
+        <FilterChips fields={sheetFields} className={`${pageX} -mt-1.5 pb-3`} />
+        <div className={`flex min-h-0 flex-1 border-t ${pageDivider}`}>
+          <div ref={listRef} className={splitList(selected !== null)}>
+            {!known && loading && <SkeletonRows />}
+            {!known && !loading && error !== null && (
+              <div className={`space-y-3 ${pageX} py-4`}>
+                <ErrorNote error={error} />
+                <button type="button" onClick={() => void reload()} className={pillButton}>
+                  Try again
+                </button>
+              </div>
             )}
-          </p>
-        </div>
-        <KindSwitch kind="prs" onKind={onKind} />
-        <IconButton label="Refresh" onClick={() => void reload()} spinning={loading && known}>
-          <RefreshIcon size={15} />
-        </IconButton>
-        <IconButton label="Close" onClick={onClose}>
-          <CloseIcon size={14} />
-        </IconButton>
-      </header>
-      <div className={`flex items-center gap-2 ${pageX} pb-4`}>
-        <Tabs
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { value: 'open', label: 'Open', count: counted('open') },
-            { value: 'merged', label: 'Merged', count: counted('merged') },
-            { value: 'closed', label: 'Closed', count: counted('closed') },
-            { value: 'all', label: 'All', count: counted('all') },
-          ]}
-        />
-        <SearchBox value={filters.query} placeholder="Search title, number, branch, author, label" onChange={(text) => setFilters((current) => ({ ...current, query: text }))} />
-        <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="row" />
-      </div>
-      <FilterChips fields={sheetFields} className={`${pageX} -mt-1.5 pb-3`} />
-      <div className={`flex min-h-0 flex-1 border-t ${pageDivider}`}>
-        <div ref={listRef} className={splitList(selected !== null)}>
-          {!known && loading && <SkeletonRows />}
-          {!known && !loading && error !== null && (
-            <div className={`space-y-3 ${pageX} py-4`}>
-              <ErrorNote error={error} />
-              <button type="button" onClick={() => void reload()} className={pillButton}>
-                Try again
-              </button>
-            </div>
-          )}
-          {known && error !== null && (
-            <div className={`${pageX} pb-2`}>
-              <ErrorNote error={error} />
-            </div>
-          )}
-          {known && prs.length === 0 &&
-            (filtered ? (
-              <Empty title={`No ${tab === 'all' ? '' : `${tab} `}pull requests match`} detail="Try other words or clear the filters." action={<button type="button" onClick={clearFilters} className={pillButton}>Clear filters</button>} />
-            ) : (
-              <Empty title={`No ${tab === 'all' ? '' : `${tab} `}pull requests`} detail={`${repository.nameWithOwner} has none right now.`} />
-            ))}
-          {known && prs.length > 0 && (
-            <ul className={`${pageMx} divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60`}>
-              {prs.map((item) => (
-                <li key={item.number}>
-                  <PullRequestRow item={item} selected={item.number === selected} now={now} onSelect={() => setSelected(item.number === selected ? null : item.number)} />
-                </li>
+            {known && error !== null && (
+              <div className={`${pageX} pb-2`}>
+                <ErrorNote error={error} />
+              </div>
+            )}
+            {known && prs.length === 0 &&
+              (filtered ? (
+                <Empty title={`No ${tab === 'all' ? '' : `${tab} `}pull requests match`} detail="Try other words or clear the filters." action={<button type="button" onClick={clearFilters} className={pillButton}>Clear filters</button>} />
+              ) : (
+                <Empty title={`No ${tab === 'all' ? '' : `${tab} `}pull requests`} detail={`${repository.nameWithOwner} has none right now.`} />
               ))}
-            </ul>
-          )}
-          {listing !== null && prs.length > 0 && <Pager index={index} cursors={cursors} total={listing.page.totalCount} shown={prs.length} loading={loading} onPage={go} />}
+            {known && prs.length > 0 && (
+              <ul className={`${pageMx} divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60`}>
+                {prs.map((item) => (
+                  <li key={item.number}>
+                    <PullRequestRow item={item} selected={item.number === selected} now={now} onSelect={() => setSelected(item.number === selected ? null : item.number)} />
+                  </li>
+                ))}
+              </ul>
+            )}
+            {listing !== null && prs.length > 0 && <Pager index={index} cursors={cursors} total={listing.page.totalCount} shown={prs.length} loading={loading} onPage={go} />}
+          </div>
+          {selected !== null && <DetailPane key={selected} project={project} kind="prs" number={selected} pullRequest={selectedPr} issue={null} onMaximise={() => onMaximise('pr', selected)} onClose={() => setSelected(null)} />}
         </div>
-        {selected !== null && <DetailPane key={selected} project={project} kind="prs" number={selected} pullRequest={selectedPr} issue={null} onMaximise={() => onMaximise('pr', selected)} onClose={() => setSelected(null)} />}
       </div>
-      <FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />
+      <FilterPanel sheet={sheet} fields={sheetFields} />
     </div>
   )
 }

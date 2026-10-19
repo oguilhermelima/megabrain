@@ -75,7 +75,7 @@ export function WikiShell({
   panelLabel: string | null
   panelCount?: number | null
   panel: ReactNode
-  /** The page's filter sheet (components/FilterSheet), over the whole page, panel included. */
+  /** The page's filter sheet (components/Sheet): floating over the whole page, panel included; pinned, beside the panel. */
   sheet?: ReactNode
   children: ReactNode
 }) {
@@ -103,6 +103,7 @@ export function WikiShell({
         </header>
         <div className="min-h-0 flex-1">{children}</div>
       </div>
+      {sheet}
       {panelLabel !== null && (
         // The left sidebar's glass over the window's vibrancy, its hairline at the edge it faces.
         <SlidePanel open={layout.panel} side="right" width={width.width} maxWidth="50cqw" className={wikiPanelSurface} handle={<ResizeHandle edge="left" label={`Resize ${panelLabel.toLowerCase()}`} panel={width} grip />}>
@@ -123,7 +124,6 @@ export function WikiShell({
           </nav>
         </SlidePanel>
       )}
-      {sheet}
     </div>
   )
 }

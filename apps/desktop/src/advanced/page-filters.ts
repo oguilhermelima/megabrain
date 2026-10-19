@@ -3,7 +3,7 @@ import { artifactKinds, type ArtifactProject } from '@/advanced/artifacts-model'
 import { kindGroups, statusLabels } from '@/advanced/knowledge-model'
 import { updatedWithin, updatedWithinOptions, type SheetField } from '@/components/filter-sheet-model'
 
-// The Knowledge and Artifacts pages' filter sheets (components/FilterSheet), over what their lists
+// The Knowledge and Artifacts pages' filter sheets (components/Filters), over what their lists
 // already hold. Topics narrow by kind, status, when they last changed and the work they link to (an
 // issue or pull request, commits); artifacts by kind, format, topic, the chat that filed them and when
 // they last changed. Each `set` applies a patch to the latest filters, as the sheet's Clear needs.

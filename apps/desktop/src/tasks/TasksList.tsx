@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Project } from '@/api/schema'
 import type { SheetField } from '@/components/filter-sheet-model'
-import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
+import { FilterButton, FilterChips, FilterPanel } from '@/components/Filters'
+import { useSheet } from '@/components/Sheet'
 import { ErrorNote } from '@/components/ui'
 import { emptyIssueFilters, noAssignee, type IssueFilters, type IssueTab } from '@/github/github-model'
 import { DetailPane, IssueRow, searchSettleMs, useFilterOptions, usePagedListing } from '@/github/GithubPage'
@@ -39,8 +40,7 @@ export function TasksList({
   const issues = useMemo(() => (listing?.kind === 'issues' ? listing.page.items : []), [listing])
   const options = useFilterOptions(project.path)
   const assignees = useMemo(() => [{ value: anyValue, label: 'Any assignee' }, { value: noAssignee, label: 'No assignee' }, ...options.people.map((login) => ({ value: login, label: login }))], [options.people])
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const closeSheet = useCallback(() => setSheetOpen(false), [])
+  const sheet = useSheet('tasks.list.filters')
   const sheetFields: SheetField[] = [
     { kind: 'select', label: 'Label', value: picked.label ?? anyValue, options: people('Any label', options.labels), onChange: (value) => setPicked((current) => ({ ...current, label: fromAny(value) })) },
     { kind: 'select', label: 'Assignee', value: picked.assignee ?? anyValue, options: assignees, onChange: (value) => setPicked((current) => ({ ...current, assignee: fromAny(value) })) },
@@ -75,57 +75,59 @@ export function TasksList({
   }, [selected, onSelect])
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
-      <div className={`flex items-center gap-2 ${pageX} pt-4 pb-4`}>
-        <Tabs
-          value={tab}
-          onChange={setTab}
-          tabs={[
-            { value: 'open', label: 'Open', count: counted('open') },
-            { value: 'closed', label: 'Closed', count: counted('closed') },
-            { value: 'all', label: 'All', count: counted('all') },
-          ]}
-        />
-        <span className="ml-auto" />
-        <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="row" />
-      </div>
-      <FilterChips fields={sheetFields} className={`${pageX} -mt-1.5 pb-3`} />
-      <div className={`flex min-h-0 flex-1 border-t ${pageDivider}`}>
-        <div ref={listRef} className={splitList(selected !== null)}>
-          {!known && loading && <SkeletonRows />}
-          {!known && !loading && error !== null && (
-            <div className={`space-y-3 ${pageX} py-4`}>
-              <ErrorNote error={error} />
-              <button type="button" onClick={() => void reload()} className={pillButton}>
-                Try again
-              </button>
-            </div>
-          )}
-          {known && error !== null && (
-            <div className={`${pageX} pb-2`}>
-              <ErrorNote error={error} />
-            </div>
-          )}
-          {known && issues.length === 0 &&
-            (filtered ? (
-              <Empty title={`No ${noun} match`} detail="Try other words or clear the filters." action={<button type="button" onClick={clear} className={pillButton}>Clear filters</button>} />
-            ) : (
-              <Empty title={`No ${noun}`} detail={`${project.name} has none right now.`} />
-            ))}
-          {known && issues.length > 0 && (
-            <ul className={`${pageMx} divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60`}>
-              {issues.map((item) => (
-                <li key={item.number}>
-                  <IssueRow item={item} selected={item.number === selected} now={now} onSelect={() => onSelect(item.number === selected ? null : item.number)} />
-                </li>
-              ))}
-            </ul>
-          )}
-          {listing !== null && issues.length > 0 && <Pager index={index} cursors={cursors} total={listing.page.totalCount} shown={issues.length} loading={loading} onPage={go} />}
+    <div className="relative flex h-full min-h-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className={`flex items-center gap-2 ${pageX} pt-4 pb-4`}>
+          <Tabs
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { value: 'open', label: 'Open', count: counted('open') },
+              { value: 'closed', label: 'Closed', count: counted('closed') },
+              { value: 'all', label: 'All', count: counted('all') },
+            ]}
+          />
+          <span className="ml-auto" />
+          <FilterButton fields={sheetFields} sheet={sheet} place="row" />
         </div>
-        {selected !== null && <DetailPane key={selected} project={project} kind="issues" number={selected} pullRequest={null} issue={selectedIssue} onMaximise={() => onMaximise(selected)} onClose={() => onSelect(null)} />}
+        <FilterChips fields={sheetFields} className={`${pageX} -mt-1.5 pb-3`} />
+        <div className={`flex min-h-0 flex-1 border-t ${pageDivider}`}>
+          <div ref={listRef} className={splitList(selected !== null)}>
+            {!known && loading && <SkeletonRows />}
+            {!known && !loading && error !== null && (
+              <div className={`space-y-3 ${pageX} py-4`}>
+                <ErrorNote error={error} />
+                <button type="button" onClick={() => void reload()} className={pillButton}>
+                  Try again
+                </button>
+              </div>
+            )}
+            {known && error !== null && (
+              <div className={`${pageX} pb-2`}>
+                <ErrorNote error={error} />
+              </div>
+            )}
+            {known && issues.length === 0 &&
+              (filtered ? (
+                <Empty title={`No ${noun} match`} detail="Try other words or clear the filters." action={<button type="button" onClick={clear} className={pillButton}>Clear filters</button>} />
+              ) : (
+                <Empty title={`No ${noun}`} detail={`${project.name} has none right now.`} />
+              ))}
+            {known && issues.length > 0 && (
+              <ul className={`${pageMx} divide-y divide-white/[0.05] overflow-hidden rounded-[20px] border border-white/[0.07] bg-ink-900/60`}>
+                {issues.map((item) => (
+                  <li key={item.number}>
+                    <IssueRow item={item} selected={item.number === selected} now={now} onSelect={() => onSelect(item.number === selected ? null : item.number)} />
+                  </li>
+                ))}
+              </ul>
+            )}
+            {listing !== null && issues.length > 0 && <Pager index={index} cursors={cursors} total={listing.page.totalCount} shown={issues.length} loading={loading} onPage={go} />}
+          </div>
+          {selected !== null && <DetailPane key={selected} project={project} kind="issues" number={selected} pullRequest={null} issue={selectedIssue} onMaximise={() => onMaximise(selected)} onClose={() => onSelect(null)} />}
+        </div>
       </div>
-      <FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />
+      <FilterPanel sheet={sheet} fields={sheetFields} />
     </div>
   )
 }

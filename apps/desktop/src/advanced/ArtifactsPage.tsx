@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Components } from 'react-markdown'
 import { api } from '@/api'
 import type { Artifact, ArtifactContent, ArtifactKind, NativeChat, Project } from '@/api/schema'
@@ -15,7 +15,8 @@ import { artifactKindLabel, artifactKinds, artifactOfItem, artifactRevisionEntri
 import { artifactFilterOptions, artifactSheetFields, emptyArtifactFilters, filterArtifacts, type ArtifactFilters } from '@/advanced/page-filters'
 import { MarkdownText } from '@/chat/markdown'
 import { activeCount } from '@/components/filter-sheet-model'
-import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
+import { FilterButton, FilterChips, FilterPanel } from '@/components/Filters'
+import { useSheet } from '@/components/Sheet'
 import { Collapse } from '@/components/Collapse'
 import { SegmentedTabs } from '@/components/SegmentedTabs'
 import { TextSkeleton } from '@/components/Skeleton'
@@ -302,8 +303,7 @@ export function ArtifactsPage({
   const [query, setQuery] = useState(memory.query)
   const [folded, setFolded] = useState<ReadonlySet<ArtifactKind>>(memory.folded)
   const [filters, setFilters] = useState(memory.filters)
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const closeSheet = useCallback(() => setSheetOpen(false), [])
+  const sheet = useSheet('artifacts.filters')
   useEffect(() => {
     memory.query = query
     memory.folded = folded
@@ -397,13 +397,13 @@ export function ArtifactsPage({
           <>
             {revisions !== null && entries.length > 1 && ready !== null && <RevisionPicker entries={entries} shown={revisions.shown} old={revisions.old} title={ready.title} now={now} onPick={(pick) => setKept({ ...view, pick })} />}
             <BarSearch value={query} onChange={setQuery} label="Search artifacts" />
-            <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="bar" />
+            <FilterButton fields={sheetFields} sheet={sheet} place="bar" />
           </>
         )
       }
       panelLabel={none ? null : 'Artifacts'}
       panelCount={shownCount}
-      sheet={<FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />}
+      sheet={<FilterPanel sheet={sheet} fields={sheetFields} />}
       panel={
         <>
           <FilterChips fields={sheetFields} className="px-1 pb-2" />

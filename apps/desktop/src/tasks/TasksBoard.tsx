@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent, typ
 import { api } from '@/api'
 import type { GithubProject, GithubProjectItem } from '@/api/schema'
 import { ContextMenu, openMenuFromKeyboard, useContextMenu, type MenuRow } from '@/components/ContextMenu'
-import { FilterButton, FilterChips, FilterSheet } from '@/components/FilterSheet'
+import { FilterButton, FilterChips, FilterPanel } from '@/components/Filters'
+import { useSheet } from '@/components/Sheet'
 import { Toast, type ToastMessage } from '@/components/Toast'
 import { ErrorNote } from '@/components/ui'
 import { stateColors } from '@/github/github-model'
@@ -317,8 +318,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
     setShowNoStatus(on)
     writeBoardPrefs(browserStorage, { ...readBoardPrefs(browserStorage), showNoStatus: on })
   }
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const closeSheet = useCallback(() => setSheetOpen(false), [])
+  const sheet = useSheet('tasks.board.filters')
   const options = useMemo(() => boardFilterOptions(items ?? [], filters), [items, filters])
 
   const move = (item: GithubProjectItem, status: string) => {
@@ -367,58 +367,60 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   )
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
-      {/* One row: the project and the search on the left; Refresh, Filter and Open on GitHub on the right. */}
-      <div className={`flex items-center gap-2 ${pageX} pt-4 pb-4`}>
-        <FilterSelect label="Project" value={String(board.number)} options={boards.map((entry) => ({ value: String(entry.number), label: entry.closed ? `${entry.title} (closed)` : entry.title }))} onChange={(value) => onPick(Number(value))} />
-        <BoardSearch query={filters.query} onChange={(query) => filter({ query })} />
-        <span className="ml-auto" />
-        <IconButton
-          label="Refresh"
-          onClick={() => {
-            onReloadBoards()
-            void reload()
-          }}
-          spinning={loading && items !== null}>
-          <RefreshIcon size={15} />
-        </IconButton>
-        <FilterButton fields={sheetFields} open={sheetOpen} onClick={() => setSheetOpen(!sheetOpen)} place="row" />
-        <OpenLink url={board.url} />
+    <div className="relative flex h-full min-h-0">
+      <div className="flex min-w-0 flex-1 flex-col">
+        {/* One row: the project and the search on the left; Refresh, Filter and Open on GitHub on the right. */}
+        <div className={`flex items-center gap-2 ${pageX} pt-4 pb-4`}>
+          <FilterSelect label="Project" value={String(board.number)} options={boards.map((entry) => ({ value: String(entry.number), label: entry.closed ? `${entry.title} (closed)` : entry.title }))} onChange={(value) => onPick(Number(value))} />
+          <BoardSearch query={filters.query} onChange={(query) => filter({ query })} />
+          <span className="ml-auto" />
+          <IconButton
+            label="Refresh"
+            onClick={() => {
+              onReloadBoards()
+              void reload()
+            }}
+            spinning={loading && items !== null}>
+            <RefreshIcon size={15} />
+          </IconButton>
+          <FilterButton fields={sheetFields} sheet={sheet} place="row" />
+          <OpenLink url={board.url} />
+        </div>
+        <FilterChips fields={sheetFields} className={`${pageX} -mt-1.5 pb-3`} />
+        {error !== null && (
+          <div className={`${pageX} pb-3`}>
+            <ErrorNote error={error} />
+          </div>
+        )}
+        {shown === null ? (
+          error === null && <SkeletonRows count={4} />
+        ) : field === null ? (
+          <div className={`min-h-0 flex-1 overflow-y-auto border-t ${pageDivider} pt-3 pb-5`}>
+            <p className={`${pageX} pb-3 text-[13px] text-ink-400`}>{board.title} has no Status field, so its items show as a list. Add a Status field on GitHub to see them as a board.</p>
+            <ul onKeyDown={openMenuFromKeyboard} className={`${pageX} grid max-w-[720px] gap-2`}>
+              {shown.map(card)}
+            </ul>
+          </div>
+        ) : (
+          <div className={`flex min-h-0 flex-1 items-start gap-3 overflow-x-auto border-t ${pageDivider} ${pageX} pt-3 pb-5`}>
+            {columns.filter((column) => showNoStatus || column.id !== null).map((column) => (
+              <Column key={column.id ?? ''} column={column} droppable={column.id !== null} over={drag !== null && drag.over !== null && drag.over === column.id} count={column.items.length}>
+                <ul onKeyDown={openMenuFromKeyboard} className="min-h-12 space-y-2 overflow-y-auto px-2.5 pb-2.5">
+                  {column.items.map(card)}
+                </ul>
+              </Column>
+            ))}
+          </div>
+        )}
+        {drag !== null && (
+          <div style={{ left: drag.x + 12, top: drag.y + 12 }} className="pointer-events-none fixed z-[70] max-w-64 rounded-[10px] border border-white/[0.12] bg-ink-850 px-2.5 py-1 text-[12.5px] text-ink-100 shadow-xl">
+            <div className="text-[11px] font-medium text-accent">{drag.over === null ? 'Drop on a status' : `Move to ${field?.options.find((option) => option.id === drag.over)?.name ?? ''}`}</div>
+            <div className="truncate">{drag.item.title}</div>
+          </div>
+        )}
+        <ContextMenu menu={menu} onClose={closeMenu} />
       </div>
-      <FilterChips fields={sheetFields} className={`${pageX} -mt-1.5 pb-3`} />
-      {error !== null && (
-        <div className={`${pageX} pb-3`}>
-          <ErrorNote error={error} />
-        </div>
-      )}
-      {shown === null ? (
-        error === null && <SkeletonRows count={4} />
-      ) : field === null ? (
-        <div className={`min-h-0 flex-1 overflow-y-auto border-t ${pageDivider} pt-3 pb-5`}>
-          <p className={`${pageX} pb-3 text-[13px] text-ink-400`}>{board.title} has no Status field, so its items show as a list. Add a Status field on GitHub to see them as a board.</p>
-          <ul onKeyDown={openMenuFromKeyboard} className={`${pageX} grid max-w-[720px] gap-2`}>
-            {shown.map(card)}
-          </ul>
-        </div>
-      ) : (
-        <div className={`flex min-h-0 flex-1 items-start gap-3 overflow-x-auto border-t ${pageDivider} ${pageX} pt-3 pb-5`}>
-          {columns.filter((column) => showNoStatus || column.id !== null).map((column) => (
-            <Column key={column.id ?? ''} column={column} droppable={column.id !== null} over={drag !== null && drag.over !== null && drag.over === column.id} count={column.items.length}>
-              <ul onKeyDown={openMenuFromKeyboard} className="min-h-12 space-y-2 overflow-y-auto px-2.5 pb-2.5">
-                {column.items.map(card)}
-              </ul>
-            </Column>
-          ))}
-        </div>
-      )}
-      {drag !== null && (
-        <div style={{ left: drag.x + 12, top: drag.y + 12 }} className="pointer-events-none fixed z-[70] max-w-64 rounded-[10px] border border-white/[0.12] bg-ink-850 px-2.5 py-1 text-[12.5px] text-ink-100 shadow-xl">
-          <div className="text-[11px] font-medium text-accent">{drag.over === null ? 'Drop on a status' : `Move to ${field?.options.find((option) => option.id === drag.over)?.name ?? ''}`}</div>
-          <div className="truncate">{drag.item.title}</div>
-        </div>
-      )}
-      <ContextMenu menu={menu} onClose={closeMenu} />
-      <FilterSheet open={sheetOpen} fields={sheetFields} onClose={closeSheet} />
+      <FilterPanel sheet={sheet} fields={sheetFields} />
       <Toast toast={toast} onClose={closeToast} />
     </div>
   )
