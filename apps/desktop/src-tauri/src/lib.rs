@@ -22,7 +22,7 @@ mod switch_trace_tests;
 mod code_tests;
 
 use serde::Serialize;
-use std::io::{BufRead, BufReader};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tauri::{ipc::Channel, Emitter, Manager, RunEvent, State, WindowEvent};
@@ -236,10 +236,17 @@ async fn stream_cli(app: tauri::AppHandle, cli: State<'_, Cli>, id: String, args
                 text
             })
         });
-        if let Some(stdout) = child.stdout.take() {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        let read = match child.stdout.take() {
+            Some(stdout) => cli_stream::stream_stdout(BufReader::new(stdout), |line| {
                 let _ = app.emit("cli-line", CliLine { id: id.clone(), line });
-            }
+            }),
+            None => Ok(()),
+        };
+        // A stream cut short is an error, whatever the exit code: the progress after it was never read.
+        if let Err(error) = read {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
         }
         let status = child.wait().map_err(|error| error.to_string())?;
         Ok(CliOutput {

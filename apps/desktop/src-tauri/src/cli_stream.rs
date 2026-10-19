@@ -129,6 +129,16 @@ where
     Ok(())
 }
 
+/// Forwards each stdout line of a streaming command; a read that fails part way is an error naming
+/// the cause, so a stream cut short never reads as complete.
+pub fn stream_stdout<R, F>(reader: R, on_line: F) -> Result<(), String>
+where
+    R: BufRead,
+    F: FnMut(String),
+{
+    forward_stdout_lines(reader, on_line).map_err(|error| format!("could not read megabrain output: {error}"))
+}
+
 pub fn end_line() -> String {
     json!({ "cursor": "", "end": true }).to_string()
 }
