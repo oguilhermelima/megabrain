@@ -341,3 +341,16 @@ export async function bootThenRun(needsBoot: boolean, boot: () => Promise<void>,
   if (needsBoot) await boot()
   run()
 }
+
+/** A Device tab read whose failure leaves its last answer on screen. */
+export type DeviceInventory = 'phones' | 'tvs' | 'asleep'
+
+const inventoryNames: Record<DeviceInventory, string> = { phones: 'the phone simulators', tvs: 'the TV simulators', asleep: 'the sleeping simulators' }
+
+/** The note under the devices while some reads fail: what could not be refreshed, the rest still shown as last read. */
+export function staleDeviceNote(failed: readonly DeviceInventory[]): string | null {
+  if (failed.length === 0) return null
+  const names = failed.map((read) => inventoryNames[read])
+  const listed = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  return `Could not refresh ${listed}; showing the last list.`
+}

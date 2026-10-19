@@ -2,7 +2,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { BootedSimulator, MaestroFlow, MaestroRun } from '@/api/schema'
-import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, groupOf, isActive, panelPlaces, openDevices, pickerChoices, screenSource, selectDevice, stepRows, type DeviceChoice, type DevicePanel, type OpenDevice, type ProjectRef } from '@/device/device-model'
+import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, groupOf, isActive, panelPlaces, openDevices, pickerChoices, screenSource, selectDevice, staleDeviceNote, stepRows, type DeviceChoice, type DeviceInventory, type DevicePanel, type OpenDevice, type ProjectRef } from '@/device/device-model'
 import { readPanelOpen, writePanelOpen } from '@/advanced/wiki-shell-model'
 import { SlidePanel } from '@/components/SlidePanel'
 import { DeviceScreen } from '@/device/DeviceScreen'
@@ -87,6 +87,8 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const [playError, setPlayError] = useState<string | null>(null)
   const [selectedStep, setSelectedStep] = useState<number | null>(null)
   const [asleep, setAsleep] = useState<string[]>([])
+  const [catalogFailed, setCatalogFailed] = useState<DeviceInventory[]>([])
+  const [asleepFailed, setAsleepFailed] = useState(false)
   const [waking, setWaking] = useState(false)
   // Which project each worktree belongs to, to tell this project's devices from the rest; read once, as the list barely changes.
   const [projects, setProjects] = useState<ProjectRef[]>([])
@@ -138,7 +140,9 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       setBooted('error' in listed ? { kind: 'error', error: listed.error } : { kind: 'ready', value: listed })
       // The tab showing is what keeps a simulator megabrain booted awake; this also lists the ones it put to sleep.
       const sleeping = await api.simulatorsAsleep().catch(() => null)
-      if (current() && sleeping !== null) setAsleep(sleeping)
+      if (!current()) return
+      setAsleepFailed(sleeping === null)
+      if (sleeping !== null) setAsleep(sleeping)
     },
     [],
   )
@@ -149,7 +153,15 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
     async (current) => {
       const [phones, tvs] = await Promise.all([api.simulators('phone').catch(() => null), api.simulators('tv').catch(() => null)])
       if (!current()) return
-      if (phones !== null || tvs !== null) setAvailable([...(phones ?? []).map((device) => ({ ...device, kind: 'phone' as const })), ...(tvs ?? []).map((device) => ({ ...device, kind: 'tv' as const }))])
+      setCatalogFailed([...(phones === null ? (['phones'] as const) : []), ...(tvs === null ? (['tvs'] as const) : [])])
+      // A catalog that failed keeps its last answer.
+      if (phones !== null || tvs !== null)
+        setAvailable((last) => [
+          ...(phones === null ? (last ?? []).filter((device) => device.kind === 'phone') : phones.map((device) => ({ ...device, kind: 'phone' as const }))),
+          ...(tvs === null ? (last ?? []).filter((device) => device.kind === 'tv') : tvs.map((device) => ({ ...device, kind: 'tv' as const }))),
+        ])
+      // A failed catalog is tried again sooner than the schedule.
+      if (phones === null || tvs === null) throw new Error('simulator catalog read failed')
     },
     [],
   )
@@ -352,6 +364,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       elsewhereCount={sections.elsewhereCount}
       booting={booting}
       error={booted.kind === 'error' ? message(booted.error) : lifecycleError}
+      stale={staleDeviceNote([...catalogFailed, ...(asleepFailed ? (['asleep'] as const) : [])])}
       loading={booted.kind === 'loading'}
       selected={udid}
       locked={active}

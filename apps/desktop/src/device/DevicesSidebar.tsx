@@ -32,6 +32,7 @@ export function DevicesSidebar({
   elsewhereCount,
   booting,
   error,
+  stale,
   loading,
   selected,
   locked,
@@ -54,6 +55,8 @@ export function DevicesSidebar({
   /** Picked from the + and still booting: shown as rows until the booted list has them. */
   booting: DeviceChoice[]
   error: string | null
+  /** Which reads failed while their last answer stays on screen. */
+  stale: string | null
   loading: boolean
   selected: string | null
   /** A run is going: the selection stays on its device. */
@@ -125,6 +128,7 @@ export function DevicesSidebar({
       </div>
       <div style={{ scrollbarGutter: 'stable' }} className={sidePanelList}>
         {error !== null && <p className={`${sidePanelNote} text-bad select-text`}>{error}</p>}
+        {stale !== null && <p className={`${sidePanelNote} text-warn select-text`}>{stale}</p>}
         {loading && open.length === 0 && <p className={sidePanelNote}>Reading simulators…</p>}
         {!loading && error === null && open.length === 0 && booting.length === 0 && web.devices.length === 0 && <p className={sidePanelNote}>No device is open. Boot a simulator with +, or start a browser from Web.</p>}
         {groupDevices([...open, ...booting.filter((device) => !open.some((entry) => entry.udid === device.udid))]).map(({ group, devices }) => {
