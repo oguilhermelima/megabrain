@@ -3,6 +3,22 @@ import { verifyClaudePeerConsumption } from "../../src/core/claude-peer-delivery
 import { formatDeliveryAcknowledgment } from "../../src/core/chat-message-format.js";
 
 describe("Claude peer verification", () => {
+  test("stops when verifier lease renewal fails without settling or queuing fallback", async () => {
+    let scans = 0;
+    let fallbacks = 0;
+    const result = await verifyClaudePeerConsumption({
+      heartbeat: async () => false,
+      acknowledged: async () => true,
+      status: async () => "busy",
+      scan: async () => { scans += 1; return undefined; },
+      sleep: async () => undefined,
+      fallback: async () => { fallbacks += 1; },
+    });
+    expect(result).toBe("lost");
+    expect(scans).toBe(0);
+    expect(fallbacks).toBe(0);
+  });
+
   test("formats the receiver's acknowledgment command for each mailbox direction", () => {
     expect(formatDeliveryAcknowledgment("dispatch-1", "delivery-2", "child")).toBe("After reading, acknowledge with: megabrain ack delivery-2");
     expect(formatDeliveryAcknowledgment("dispatch-1", "delivery-2", "parent")).toBe("After reading, acknowledge with: megabrain orchestrate ack dispatch-1 delivery-2");
