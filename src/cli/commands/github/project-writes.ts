@@ -1,18 +1,20 @@
 import type { ProcessAdapter } from '../../../adapters/proc.js'
 import { failed, ok, type Result } from '../../../core/result.js'
 import { usageMessage, usageText } from '../../../core/usage.js'
-import { graphqlCall, repositoryVariables, resolveRepository } from './client.js'
-import { normalizeProject, normalizeProjectItem, PROJECT_FIELDS, CONTENT_FIELDS } from './projects.js'
+import { graphqlCall, resolveRepository } from './client.js'
+import { normalizeProject, normalizeProjectItem, PROJECT_FIELDS, CONTENT_FIELDS, PROJECT_ITEM_FIELD_VALUES } from './projects.js'
 
 type Verb = 'project-field' | 'project-clear' | 'project-add' | 'project-draft' | 'project-archive' | 'project-unarchive'
 type Env = Readonly<Record<string, string | undefined>>
 type Opts = { repo: string; number: number; owner?: string; item?: string; field?: string; type?: string; value?: string; title?: string; body?: string; json: boolean }
 const rec = (value: unknown): Record<string, any> => value && typeof value === 'object' ? value as Record<string, any> : {}
 const METADATA = `query($owner:String!,$number:Int!){repositoryOwner(login:$owner){... on ProjectV2Owner{projectV2(number:$number){${PROJECT_FIELDS}}}}}`
-const ITEM_FIELDS = `id isArchived updatedAt content{${CONTENT_FIELDS}} fieldValues(first:30){nodes{__typename ... on ProjectV2ItemFieldSingleSelectValue{name optionId field{... on ProjectV2FieldCommon{name}}} ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2FieldCommon{name}}} ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2FieldCommon{name}}} ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{name}}} ... on ProjectV2ItemFieldIterationValue{title startDate duration field{... on ProjectV2FieldCommon{name}}}}}`
+const ITEM_FIELDS = `id isArchived updatedAt content{${CONTENT_FIELDS}} ${PROJECT_ITEM_FIELD_VALUES}`
 
 function parse(verb: Verb, args: readonly string[]): Result<Opts> {
-  const [repo, numberText, item, ...rest] = args
+  const [repo, numberText, ...tail] = args
+  const item = verb === 'project-draft' ? undefined : tail[0]
+  const rest = verb === 'project-draft' ? tail : tail.slice(1)
   if (!repo || !numberText || !/^\d+$/.test(numberText) || Number(numberText) < 1) return failed(usageMessage(`github-${verb}`), 2)
   const flags: Record<string, string> = {}
   let json = false
@@ -39,7 +41,7 @@ async function metadata(opts: Opts, env: Env, process: ProcessAdapter) {
   if (answer.kind !== 'ok') return answer
   const raw = rec(rec(answer.value.data.repositoryOwner).projectV2)
   const project = normalizeProject(raw)
-  return project ? ok({ project, owner, repo: repo.value.nameWithOwner }) : failed(`GitHub project ${opts.number} was not found for ${owner}`)
+  return project ? ok({ project }) : failed(`GitHub project ${opts.number} was not found for ${owner}`)
 }
 
 export async function executeProjectWrite(verb: Verb, args: readonly string[], env: Env, process: ProcessAdapter): Promise<Result<string>> {
@@ -49,7 +51,7 @@ export async function executeProjectWrite(verb: Verb, args: readonly string[], e
   const opts = parsed.value
   const data = await metadata(opts, env, process)
   if (data.kind !== 'ok') return data
-  const { project, owner, repo } = data.value
+  const { project } = data.value
   let query = '', variables: Record<string, string | number> = { projectId: project.id }, shape: 'item' | 'archive' = 'item'
   if (verb === 'project-field' || verb === 'project-clear') {
     const field = project.fields.find((entry) => entry.name.toLocaleLowerCase() === opts.field!.toLocaleLowerCase())
@@ -64,10 +66,11 @@ export async function executeProjectWrite(verb: Verb, args: readonly string[], e
       let arg = '', value: string | number = opts.value!
       if (type === 'single-select') { const option = field.options.find((entry) => entry.id === opts.value || entry.name.toLocaleLowerCase() === opts.value!.toLocaleLowerCase()); if (!option) return failed(`option ${opts.value} does not belong to field ${field.name}`); arg = `singleSelectOptionId`; value = option.id }
       else if (type === 'number') { const n = Number(opts.value); if (!Number.isFinite(n)) return failed('number value must be finite'); arg = 'number'; value = n }
-      else if (type === 'date') { if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.value!) || Number.isNaN(Date.parse(opts.value!))) return failed('date must use YYYY-MM-DD'); arg = 'date' }
+      else if (type === 'date') { const date = new Date(`${opts.value}T00:00:00Z`); const validDate = /^\d{4}-\d{2}-\d{2}$/.test(opts.value!) && !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === opts.value; if (!validDate) return failed('date must use a valid YYYY-MM-DD date'); arg = 'date' }
       else if (type === 'text') arg = 'text'
       else { if (!field.iterations.some((iteration) => iteration.id === opts.value || iteration.title.toLowerCase() === opts.value!.toLowerCase())) return failed(`iteration ${opts.value} does not belong to field ${field.name}`); const iteration = field.iterations.find((entry) => entry.id === opts.value || entry.title.toLowerCase() === opts.value!.toLowerCase())!; arg = 'iterationId'; value = iteration.id }
-      query = `mutation($projectId:ID!,$itemId:ID!,$fieldId:ID!,$value:${type === 'number' ? 'Float' : 'String'}!){updateProjectV2ItemFieldValue(input:{projectId:$projectId,itemId:$itemId,fieldId:$fieldId,value:{${arg}:$value}}){projectV2Item{${ITEM_FIELDS}}}}`
+      const valueType = type === 'number' ? 'Float' : type === 'date' ? 'Date' : 'String'
+      query = `mutation($projectId:ID!,$itemId:ID!,$fieldId:ID!,$value:${valueType}!){updateProjectV2ItemFieldValue(input:{projectId:$projectId,itemId:$itemId,fieldId:$fieldId,value:{${arg}:$value}}){projectV2Item{${ITEM_FIELDS}}}}`
       variables = { projectId: project.id, itemId: opts.item!, fieldId: field.id, value }
     }
   } else if (verb === 'project-add') {
@@ -78,10 +81,10 @@ export async function executeProjectWrite(verb: Verb, args: readonly string[], e
     if (lookup.kind !== 'ok') return lookup
     const contentId = rec(rec(lookup.value.data.repository)[isPr ? 'pullRequest' : 'issue']).id
     if (typeof contentId !== 'string') return failed(`GitHub item ${opts.item} was not found`)
-    query = 'mutation($projectId:ID!,$contentId:ID!){addProjectV2ItemById(input:{projectId:$projectId,contentId:$contentId}){item{id isArchived updatedAt content{__typename ... on Issue{number title url state updatedAt repository{nameWithOwner}} ... on PullRequest{number title url state updatedAt repository{nameWithOwner}}}}}}'
+    query = `mutation($projectId:ID!,$contentId:ID!){addProjectV2ItemById(input:{projectId:$projectId,contentId:$contentId}){item{id isArchived updatedAt content{__typename ... on Issue{number title url state updatedAt repository{nameWithOwner}} ... on PullRequest{number title url state updatedAt repository{nameWithOwner}}} ${PROJECT_ITEM_FIELD_VALUES}}}}`
     variables = { projectId: project.id, contentId }
   } else if (verb === 'project-draft') {
-    query = 'mutation($projectId:ID!,$title:String!,$body:String){addProjectV2DraftIssue(input:{projectId:$projectId,title:$title,body:$body}){projectV2Item{id isArchived updatedAt content{__typename ... on DraftIssue{title}}}}}'
+    query = `mutation($projectId:ID!,$title:String!,$body:String){addProjectV2DraftIssue(input:{projectId:$projectId,title:$title,body:$body}){projectV2Item{id isArchived updatedAt content{__typename ... on DraftIssue{title body}} ${PROJECT_ITEM_FIELD_VALUES}}}}`
     variables = { projectId: project.id, title: opts.title!, ...(opts.body === undefined ? {} : { body: opts.body }) }
   } else {
     shape = 'archive'
@@ -98,6 +101,5 @@ export async function executeProjectWrite(verb: Verb, args: readonly string[], e
     const normalized = normalizeProjectItem({ ...rec(item), content: rec(item).content ?? { __typename: 'DraftIssue', title: opts.title ?? '' } })
     output = { item: normalized ?? { id: rec(item).id ?? null } }
   }
-  void owner; void repo
   return opts.json ? ok(`${JSON.stringify(output, null, 2)}\n`) : ok(`${JSON.stringify(output)}\n`)
 }

@@ -21,7 +21,9 @@ export type ProjectItem = {
   id: string; type: 'ISSUE' | 'PULL_REQUEST' | 'DRAFT_ISSUE'; number: number | null; title: string; url: string | null;
   state: 'OPEN' | 'CLOSED' | 'MERGED' | null; repository: string | null; status: string | null;
   assignees: { login: string; avatarUrl: string }[]; labels: { name: string; color: string }[]; updatedAt: string; isArchived: boolean;
-  fieldValues: { kind: string; field: string; value: unknown }[]
+  fieldValues: { kind: 'singleSelect' | 'number' | 'date' | 'text' | 'iteration' | 'labels' | 'milestone' | 'users' | 'repository' | 'pullRequests' | 'reviewers' | 'issue'; field: string; value: unknown }[]
+  body: string | null
+  milestone: { title: string; dueOn: string | null } | null; parentIssue: { number: number; title: string; url: string; repository: string | null } | null; subIssuesProgress: { total: number; completed: number } | null
 }
 
 function normalizeFieldRef(value: unknown): { id: string; name: string } | null {
@@ -59,24 +61,37 @@ function normalizeFieldValues(value: unknown): ProjectItem['fieldValues'] {
   return list(record(value)?.nodes).flatMap((raw) => {
     const entry = record(raw)
     if (!entry || typeof entry.__typename !== 'string') return []
-    const kind = entry.__typename.replace('ProjectV2ItemField', '').replace('Value', '').toLowerCase()
+    const suffix = entry.__typename.replace('ProjectV2ItemField', '').replace('Value', '').replace('ProjectV2Item', '').replace('Field', '')
+    const kinds: Record<string, ProjectItem['fieldValues'][number]['kind']> = { SingleSelect: 'singleSelect', Number: 'number', Date: 'date', Text: 'text', Iteration: 'iteration', Label: 'labels', Milestone: 'milestone', User: 'users', Repository: 'repository', PullRequest: 'pullRequests', Reviewer: 'reviewers', Issue: 'issue' }
+    const kind = kinds[suffix]
+    if (!kind) return []
     const field = text(record(entry.field)?.name)
-    const value = entry.optionId ?? entry.number ?? entry.date ?? entry.text ?? (entry.title ? { title: entry.title, startDate: entry.startDate, duration: entry.duration } : entry.users ?? entry.repository ?? entry.pullRequests ?? entry.labels ?? entry.milestone)
+    const value = kind === 'singleSelect' ? { optionId: nullableText(entry.optionId), name: nullableText(entry.name) }
+      : kind === 'iteration' ? { title: text(entry.title), startDate: text(entry.startDate), duration: typeof entry.duration === 'number' ? entry.duration : null }
+      : kind === 'labels' ? list(record(entry.labels)?.nodes).map((label) => ({ name: text(label.name), color: text(label.color) }))
+      : kind === 'milestone' ? record(entry.milestone) ? { title: text(record(entry.milestone)?.title), dueOn: nullableText(record(entry.milestone)?.dueOn) } : null
+      : kind === 'users' ? list(record(entry.users)?.nodes).map((user) => text(user.login))
+      : kind === 'repository' ? nullableText(record(entry.repository)?.nameWithOwner)
+      : kind === 'pullRequests' ? list(record(entry.pullRequests)?.nodes).map((pr) => ({ number: pr.number, title: text(pr.title), url: text(pr.url) }))
+      : kind === 'reviewers' ? list(record(entry.reviewers)?.nodes).map((reviewer) => text(reviewer.login ?? reviewer.name))
+      : kind === 'issue' ? record(entry.issueFieldValue) ? { kind: text(record(entry.issueFieldValue)?.__typename), value: record(entry.issueFieldValue)?.value ?? record(entry.issueFieldValue)?.optionId ?? null, name: nullableText(record(entry.issueFieldValue)?.name) } : null
+      : entry.number ?? entry.date ?? entry.text ?? null
     return [{ kind, field, value: value ?? null }]
   })
 }
 
-const FIELD_NODE = `__typename ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name color description } } ... on ProjectV2IterationField { id name dataType configuration { iterations { id title startDate duration } } } ... on ProjectV2MultiSelectField { id name dataType options { id name color description } }`
+const FIELD_NODE = `__typename ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name color description } } ... on ProjectV2IterationField { id name dataType configuration { iterations { id title startDate duration } } } ... on ProjectV2MultiSelectField { id name dataType }`
 const STATUS_FIELD = `fields(first: 100) { nodes { ${FIELD_NODE} } }`
 export const PROJECT_FIELDS = `id number title url closed owner { ... on User { login } ... on Organization { login } } ${STATUS_FIELD}`
 const VIEW_FIELDS = `views(first: 50) { nodes { id number name layout filter groupByFields(first: 50) { nodes { ${FIELD_NODE} } } verticalGroupByFields(first: 50) { nodes { ${FIELD_NODE} } } sortByFields(first: 50) { nodes { direction field { ... on ProjectV2Field { id name } ... on ProjectV2SingleSelectField { id name } ... on ProjectV2IterationField { id name } ... on ProjectV2MultiSelectField { id name } } } } configuration { visibleFields(first: 50) { nodes { ${FIELD_NODE} } } } } } fields(first: 100) { nodes { ${FIELD_NODE} } }`
 export const CONTENT_FIELDS = `
   __typename
-  ... on Issue { number title url state updatedAt repository { nameWithOwner } assignees(first: 100) { nodes { login avatarUrl } } labels(first: 100) { nodes { name color } } }
-  ... on PullRequest { number title url state updatedAt repository { nameWithOwner } assignees(first: 100) { nodes { login avatarUrl } } labels(first: 100) { nodes { name color } } }
-  ... on DraftIssue { title }
+  ... on Issue { number title url state updatedAt repository { nameWithOwner } assignees(first: 100) { nodes { login avatarUrl } } labels(first: 100) { nodes { name color } } milestone { title dueOn } parent { number title url repository { nameWithOwner } } subIssuesSummary { total completed } }
+  ... on PullRequest { number title url state updatedAt repository { nameWithOwner } assignees(first: 100) { nodes { login avatarUrl } } labels(first: 100) { nodes { name color } } milestone { title dueOn } }
+  ... on DraftIssue { title body }
 `
-const ITEM_FIELD_VALUES = `fieldValues(first: 30) { nodes { __typename ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title startDate duration field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldLabelValue { labels(first: 20) { nodes { name color } } } ... on ProjectV2ItemFieldMilestoneValue { milestone { title } } ... on ProjectV2ItemFieldUserValue { users(first: 20) { nodes { login } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldRepositoryValue { repository { nameWithOwner } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldPullRequestValue { pullRequests(first: 20) { nodes { number title url } } field { ... on ProjectV2FieldCommon { name } } } } }`
+const ITEM_FIELD_VALUES = `fieldValues(first: 30) { nodes { __typename ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title startDate duration field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldLabelValue { field { ... on ProjectV2FieldCommon { name } } labels(first: 20) { nodes { name color } } } ... on ProjectV2ItemFieldMilestoneValue { field { ... on ProjectV2FieldCommon { name } } milestone { title dueOn } } ... on ProjectV2ItemFieldUserValue { users(first: 20) { nodes { login } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldRepositoryValue { repository { nameWithOwner } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldPullRequestValue { pullRequests(first: 20) { nodes { number title url } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldReviewerValue { field { ... on ProjectV2FieldCommon { name } } reviewers(first: 20) { nodes { __typename ... on User { login } ... on Team { name } } } } ... on ProjectV2ItemIssueFieldValue { field { ... on ProjectV2FieldCommon { name } } issueFieldValue { __typename ... on IssueFieldDateValue { value } ... on IssueFieldNumberValue { value } ... on IssueFieldTextValue { value } ... on IssueFieldSingleSelectValue { name optionId } } } } }`
+export const PROJECT_ITEM_FIELD_VALUES = ITEM_FIELD_VALUES
 const PROJECT_ITEMS = `items(first: 100, after: $after) { nodes { id isArchived updatedAt ${ITEM_FIELD_VALUES} fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CONTENT_FIELDS} } } pageInfo { hasNextPage endCursor } }`
 
 export const PROJECTS_QUERY = `query projectsDiscovery($owner: String!, $name: String!) {
@@ -146,6 +161,10 @@ export function normalizeProjectItem(value: unknown): ProjectItem | null {
     labels: list(record(content.labels)?.nodes).flatMap((label) => typeof label.name === 'string'
       ? [{ name: label.name, color: text(label.color) }] : []),
     updatedAt: text(entry.updatedAt ?? content.updatedAt), isArchived: entry.isArchived === true, fieldValues: normalizeFieldValues(entry.fieldValues),
+    milestone: record(content.milestone) ? { title: text(record(content.milestone)?.title), dueOn: nullableText(record(content.milestone)?.dueOn) } : null,
+    parentIssue: record(content.parent) ? { number: typeof record(content.parent)?.number === 'number' ? record(content.parent)!.number : 0, title: text(record(content.parent)?.title), url: text(record(content.parent)?.url), repository: nullableText(record(record(content.parent)?.repository)?.nameWithOwner) } : null,
+    subIssuesProgress: record(content.subIssuesSummary) ? { total: typeof record(content.subIssuesSummary)?.total === 'number' ? record(content.subIssuesSummary)!.total : 0, completed: typeof record(content.subIssuesSummary)?.completed === 'number' ? record(content.subIssuesSummary)!.completed : 0 } : null,
+    body: nullableText(content.body),
   }
 }
 

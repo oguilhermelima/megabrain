@@ -39,16 +39,20 @@ export function evaluateProjectFilter<T extends FilterItem>(source: string, item
     const key = colon < 0 ? '' : value.slice(0, colon).toLocaleLowerCase()
     const wanted = colon < 0 ? value : value.slice(colon + 1)
     const compareField = Object.keys(items[0]?.fields ?? {}).find((f) => norm(f) === norm(key))
+    const presenceField = Object.keys(items[0]?.fields ?? {}).find((f) => norm(f) === norm(wanted))
     let predicate: (item: T) => boolean
     if (!key) predicate = (i) => norm(i.title).includes(norm(value))
-    else if (key === 'is') predicate = (i) => wanted.toLowerCase() === 'open' ? i.state === 'OPEN' : wanted.toLowerCase() === 'closed' ? i.state === 'CLOSED' : wanted.toLowerCase() === 'issue' ? i.type === 'ISSUE' : wanted.toLowerCase() === 'pr' ? i.type === 'PULL_REQUEST' : wanted.toLowerCase() === 'draft' ? i.type === 'DRAFT_ISSUE' : true
-    else if (key === 'no') predicate = (i) => wanted.toLowerCase() === 'status' ? i.status === null : wanted.toLowerCase() === 'assignee' ? !i.assignees.length : wanted.toLowerCase() === 'label' ? !i.labels.length : i.fields[wanted] == null
-    else if (key === 'has') predicate = (i) => wanted.toLowerCase() === 'assignee' ? !!i.assignees.length : wanted.toLowerCase() === 'label' ? !!i.labels.length : wanted.toLowerCase() === 'status' ? i.status !== null : i.fields[wanted] != null
-    else if (key === 'assignee') predicate = (i) => i.assignees.some((a) => wanted === '@me' && !options.me || norm(a.login) === norm(wanted === '@me' ? options.me : wanted))
-    else if (key === 'label') predicate = (i) => i.labels.some((a) => norm(a.name) === norm(wanted))
-    else if (key === 'repo') predicate = (i) => norm(i.repository) === norm(wanted)
+    else if (key === 'is') predicate = (i) => wanted.toLowerCase() === 'open' ? i.state === 'OPEN' : wanted.toLowerCase() === 'closed' ? i.state === 'CLOSED' || i.state === 'MERGED' : wanted.toLowerCase() === 'issue' ? i.type === 'ISSUE' : wanted.toLowerCase() === 'pr' ? i.type === 'PULL_REQUEST' : wanted.toLowerCase() === 'draft' ? i.type === 'DRAFT_ISSUE' : true
+    else if (key === 'no') predicate = (i) => wanted.toLowerCase() === 'status' ? i.status === null : wanted.toLowerCase() === 'assignee' ? !i.assignees.length : wanted.toLowerCase() === 'label' ? !i.labels.length : i.fields[presenceField ?? wanted] == null
+    else if (key === 'has') predicate = (i) => wanted.toLowerCase() === 'assignee' ? !!i.assignees.length : wanted.toLowerCase() === 'label' ? !!i.labels.length : wanted.toLowerCase() === 'status' ? i.status !== null : i.fields[presenceField ?? wanted] != null
+    else if (key === 'assignee') {
+      if (wanted.includes('@me') && !options.me) { warnings.add(token); predicate = () => true }
+      else predicate = (i) => wanted.split(',').some((w) => i.assignees.some((a) => norm(a.login) === norm(w === '@me' ? options.me : w)))
+    }
+    else if (key === 'label') predicate = (i) => wanted.split(',').some((w) => i.labels.some((a) => norm(a.name) === norm(w)))
+    else if (key === 'repo') predicate = (i) => wanted.split(',').some((w) => norm(i.repository) === norm(w))
     else if (key === 'status') predicate = (i) => wanted.split(',').some((v) => norm(i.status) === norm(v))
-    else if (compareField || ['estimate','size','priority','updated','created','closed','start date','target date'].includes(key)) predicate = (i) => compare(i.fields[compareField ?? key] ?? (key === 'updated' ? i.fields.Updated : undefined), wanted, today)
+    else if (compareField || ['estimate','size','priority','updated','created','closed','start date','target date'].includes(key)) predicate = (i) => wanted.split(',').some((part) => compare(i.fields[compareField ?? key] ?? (key === 'updated' ? i.fields.Updated : undefined), part, today))
     else if (key === 'title') predicate = (i) => norm(i.title).includes(norm(wanted))
     else { warnings.add(token); predicate = () => true }
     return (i: T) => negative ? !predicate(i) : predicate(i)
