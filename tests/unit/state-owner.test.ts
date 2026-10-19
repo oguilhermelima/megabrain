@@ -394,7 +394,7 @@ describe("single state owner", () => {
     expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM messages WHERE dispatch_id = ? AND type IN ('ask', 'done')").get("owner-atomic-report")?.count).toBe(2);
   });
 
-  test("a changed done report creates fresh parent mail while an identical repeat stays protocol", async () => {
+  test("each new done event creates fresh parent mail, including identical text", async () => {
     const seeded = openDatabase({ MEGABRAIN_STATE_DIR: root });
     expect(seeded.kind).toBe("ok");
     if (seeded.kind !== "ok") throw new Error(seeded.error);
@@ -410,7 +410,7 @@ describe("single state owner", () => {
     await append("finished the first part");
     await append("finished the updated report");
     await append("finished the updated report");
-    expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM outbox WHERE dispatch_id = ?").get("dispatch-owner")?.count).toBe(2);
+    expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM outbox WHERE dispatch_id = ?").get("dispatch-owner")?.count).toBe(3);
     expect(owner.handle.db.query<{ count: number }>("SELECT count(*) AS count FROM messages WHERE dispatch_id = ? AND type = 'done'").get("dispatch-owner")?.count).toBe(3);
   });
 

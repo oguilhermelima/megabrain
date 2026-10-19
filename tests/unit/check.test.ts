@@ -11,7 +11,7 @@ describe("orderMessages", () => {
 });
 
 describe("classifyMail", () => {
-  test.each([["child", "ask", false, "actionable"], ["child", "done", false, "actionable"], ["child", "stalled", false, "actionable"], ["megabrain", "usage", false, "actionable"], ["parent", "withdrawal", false, "actionable"], ["child", "received", false, "protocol"], ["child", "ack", false, "protocol"], ["child", "done", true, "protocol"], ["parent", "interrupt", false, "protocol"], ["parent", "interrupt-result", false, "protocol"]] as const)("classifies %s:%s", (from, type, priorDone, expected) => { expect(classifyMail(from, type, priorDone)).toBe(expected); });
+  test.each([["child", "ask", false, "actionable"], ["child", "done", false, "actionable"], ["child", "stalled", false, "actionable"], ["megabrain", "usage", false, "actionable"], ["parent", "withdrawal", false, "actionable"], ["child", "received", false, "protocol"], ["child", "ack", false, "protocol"], ["child", "done", true, "actionable"], ["parent", "interrupt", false, "protocol"], ["parent", "interrupt-result", false, "protocol"]] as const)("classifies %s:%s", (from, type, priorDone, expected) => { expect(classifyMail(from, type, priorDone)).toBe(expected); });
   test("returns unknown for an unrecognised key", () => { expect(classifyMail("child", "unknown", false)).toEqual({ kind: "unknown" }); });
 });
 

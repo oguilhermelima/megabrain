@@ -49,7 +49,7 @@ describe("queue message decisions", () => {
   test.each([
     ["child", "ask", false, "actionable"],
     ["child", "done", false, "actionable"],
-    ["child", "done", true, "protocol"],
+    ["child", "done", true, "actionable"],
     ["child", "received", false, "protocol"],
     ["child", "ack", false, "protocol"],
     ["parent", "reply", false, undefined],
