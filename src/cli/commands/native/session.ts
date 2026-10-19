@@ -5,7 +5,7 @@ import { nativeUsage, validateTimeout } from "../../../core/native.js";
 import { type ProcessAdapter } from "../../../adapters/proc.js";
 import { type NativeHealth, type NativePlatform } from "../../../core/native.js";
 import { failed, ok, type Result } from "../../../core/result.js";
-import { nativeSessionFor, type NativeSessionKey } from "../../../core/native-session.js";
+import { nativeSessionArbitrationDelayMs, nativeSessionFor, type NativeSessionKey } from "../../../core/native-session.js";
 import { createNativeSessionStore } from "../../../adapters/native-session-store.js";
 import { resolveStateDirectory } from "../../../core/state.js";
 
@@ -109,12 +109,22 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
 
   const sessionId = created.value;
   const sessionUrl = `http://127.0.0.1:4723/session/${sessionId}`;
+  const arbitrationDeadline = Date.now() + 30_000;
+  let arbitrationAttempt = 0;
+  const pauseBeforeRetry = async (): Promise<boolean> => {
+    const remaining = arbitrationDeadline - Date.now();
+    if (remaining <= 0) return false;
+    const delay = Math.min(nativeSessionArbitrationDelayMs(arbitrationAttempt), remaining);
+    arbitrationAttempt += 1;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    return Date.now() < arbitrationDeadline;
+  };
   const discardCreated = async (): Promise<string | undefined> => {
     const removed = await processAdapter.run("curl", ["-fsS", "-X", "DELETE", sessionUrl], { timeoutMs: APPIUM_REQUEST_TIMEOUT_MS });
     return removed.kind === "ok" ? undefined : `could not delete losing Appium session ${sessionId}: ${removed.error}`;
   };
 
-  while (true) {
+  while (Date.now() < arbitrationDeadline) {
     const snapshot = store.read();
     if (snapshot.kind !== "ok") {
       const warning = await discardCreated();
@@ -134,6 +144,7 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
           const warning = await discardCreated();
           return ok({ session: { sessionId: current.sessionId, stored: true }, ...(warning === undefined ? {} : { warning }) });
         }
+        if (!(await pauseBeforeRetry())) break;
         continue;
       }
     }
@@ -144,7 +155,10 @@ export async function appiumSession(environment: Environment, processAdapter: Pr
       return failed(`could not store Appium session: ${saved.error}${warning === undefined ? "" : `; ${warning}`}`);
     }
     if (saved.value) return ok({ session: { sessionId, stored: true } });
+    if (!(await pauseBeforeRetry())) break;
   }
+  const warning = await discardCreated();
+  return failed(`timed out arbitrating native session for ${key.udid}${warning === undefined ? "" : `; ${warning}`}`);
 }
 
 export async function appium(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
