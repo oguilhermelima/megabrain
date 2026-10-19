@@ -330,6 +330,8 @@ export interface DesktopApi {
   agentDefaults(): Promise<AgentDefaults>
   /** The argv that starts an agent's own interactive TUI, prompts skipped (`agent command`), or resumes one of its sessions; rejects when its CLI is not installed. */
   agentCommand(agent: string, options?: { resume?: string; model?: string; effort?: string }): Promise<string[]>
+  /** The effective start argv with no model, effort or resume, and the built-in one a typed command replaces. */
+  agentStartCommand(agent: string): Promise<{ argv: string[]; builtin: string[] }>
   /** Past sessions started in a folder, newest first, from each agent's own storage (`sessions history`). */
   sessionHistory(cwd: string, agent?: string): Promise<HistorySession[]>
   /** Live events from cursor on; returns a function that stops the subscription. onEnd fires once if the follow ends without being stopped. */

@@ -442,6 +442,10 @@ export function createTauriApi(): DesktopApi {
     agentDefaults: () => cliJson(['agent', 'defaults', '--json'], agentDefaultsSchema),
     agentCommand: async (agent, options = {}) =>
       (await cliJson(['agent', 'command', agent, ...(options.resume === undefined ? [] : ['--resume', options.resume]), ...(options.model === undefined ? [] : ['--model', options.model]), ...(options.effort === undefined ? [] : ['--effort', options.effort]), '--json'], agentCommandSchema)).argv,
+    agentStartCommand: async (agent) => {
+      const { argv, builtin } = await cliJson(['agent', 'command', agent, '--json'], agentCommandSchema)
+      return { argv, builtin }
+    },
     sessionHistory: (cwd, agent) => cliJson(['sessions', 'history', '--cwd', cwd, ...(agent === undefined ? [] : ['--agent', agent]), '--json'], sessionHistorySchema),
     followChat: (chatId, since, onLine, onEnd) => cliStream(['chat', 'events', chatId, ...(since === null ? [] : ['--since', since]), '--follow', '--json'], chatStreamReader(onLine, onEnd)),
     chatEvents: async (chatId, since) =>

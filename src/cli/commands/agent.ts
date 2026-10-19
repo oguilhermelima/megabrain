@@ -1,4 +1,4 @@
-import { agentCommand, INTERACTIVE_AGENTS } from "../../adapters/agent-command.js";
+import { agentCommand, builtinStartCommand, INTERACTIVE_AGENTS } from "../../adapters/agent-command.js";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { readAgentDefaults } from "../../core/agent-defaults.js";
 import { readAgentSettings, startCommand } from "../../core/agent-settings.js";
@@ -82,7 +82,7 @@ export async function executeAgent(args: readonly string[], environment: Environ
     void scheduleAgentAutoUpdate(agent as AgentUpdateId, environment, processAdapter).catch(() => undefined);
     const base = startCommand(await readAgentSettings(environment.MEGABRAIN_STATE_DIR ?? join(environment.HOME ?? process.cwd(), ".megabrain")), agent);
     const argv = await agentCommand(agent, { model, effort, resume, base }, processAdapter);
-    return ok(json ? `${JSON.stringify({ agent, argv })}\n` : `${argv.join(" ")}\n`);
+    return ok(json ? `${JSON.stringify({ agent, argv, builtin: builtinStartCommand(agent) })}\n` : `${argv.join(" ")}\n`);
   } catch (cause: unknown) {
     return failed(cause instanceof Error ? cause.message : String(cause), 1);
   }

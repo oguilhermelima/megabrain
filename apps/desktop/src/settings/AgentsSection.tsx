@@ -5,22 +5,24 @@ import { AgentIcon } from '@/components/agent-icons'
 import { Bone } from '@/components/Skeleton'
 import { ErrorNote, Segmented, Spinner } from '@/components/ui'
 import { AgentUpdatesGroup, type AgentUpdates } from '@/settings/AgentUpdates'
-import { agentNames, agentRows, builtInCommands, defaultAgentSettings, parseAgentSettings, serialiseAgentSettings, startCommandError, withCommand, withDefault, withEnabled, withMode, type AgentRow, type AgentSettings } from '@/settings/agents-model'
+import { agentNames, agentRows, defaultAgentSettings, parseAgentSettings, serialiseAgentSettings, startCommandError, withCommand, withDefault, withEnabled, withMode, type AgentRow, type AgentSettings } from '@/settings/agents-model'
 import { quiet, SettingsGroup, Switch } from '@/settings/settings-ui'
 
 type Plan = InstallPlan['agents']
 
-/** The install report, the saved choice, and each installed agent's launch command, read together; Refresh reads them again. */
+/** The install report, the saved choice, and each installed agent's launch command and built-in one, read together; Refresh reads them again. */
 function useAgents(generation: number) {
   const [plan, setPlan] = useState<Plan | null>(null)
   const [settings, setSettings] = useState<AgentSettings | null>(null)
   const [commands, setCommands] = useState<Record<string, string[] | null | undefined>>({})
+  const [builtins, setBuiltins] = useState<Record<string, string[] | null | undefined>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
   useEffect(() => {
     let stopped = false
     setLoading(true)
     setCommands({})
+    setBuiltins({})
     Promise.all([api.installPlan(), api.agentSettings()]).then(
       ([report, saved]) => {
         if (stopped) return
@@ -30,9 +32,17 @@ function useAgents(generation: number) {
         setLoading(false)
         for (const entry of report.agents) {
           if (!entry.installed) continue
-          api.agentCommand(entry.agent).then(
-            (argv) => !stopped && setCommands((current) => ({ ...current, [entry.agent]: argv })),
-            () => !stopped && setCommands((current) => ({ ...current, [entry.agent]: null })),
+          api.agentStartCommand(entry.agent).then(
+            ({ argv, builtin }) => {
+              if (stopped) return
+              setCommands((current) => ({ ...current, [entry.agent]: argv }))
+              setBuiltins((current) => ({ ...current, [entry.agent]: builtin }))
+            },
+            () => {
+              if (stopped) return
+              setCommands((current) => ({ ...current, [entry.agent]: null }))
+              setBuiltins((current) => ({ ...current, [entry.agent]: null }))
+            },
           )
         }
       },
@@ -46,7 +56,7 @@ function useAgents(generation: number) {
       stopped = true
     }
   }, [generation])
-  return { plan, settings, setSettings, commands, loading, error }
+  return { plan, settings, setSettings, commands, builtins, loading, error }
 }
 
 const pill = 'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40'
@@ -92,7 +102,6 @@ function Subsection({ title, children }: { title: string; children: ReactNode })
 }
 
 function StartCommand({ row, onSave }: { row: AgentRow; onSave: (command: string | null) => Promise<boolean> }) {
-  const builtIn = builtInCommands[row.agent] ?? row.agent
   const [draft, setDraft] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const error = draft === null ? null : startCommandError(row.agent, draft)
@@ -108,7 +117,7 @@ function StartCommand({ row, onSave }: { row: AgentRow; onSave: (command: string
         <p className="min-w-0 flex-1 font-mono text-[11px] leading-relaxed break-all text-ink-300 select-text">
           {row.command === undefined ? <Bone width="w-[60%]" className="mt-1 h-2.5" /> : (row.command ?? <span className="font-sans text-ink-500">No launch command</span>)}
         </p>
-        <button type="button" className={quiet} onClick={() => setDraft(row.custom ?? builtIn)} aria-label={`Edit the ${row.label} start command`}>
+        <button type="button" className={quiet} onClick={() => setDraft(row.custom ?? row.builtin ?? row.agent)} aria-label={`Edit the ${row.label} start command`}>
           Edit
         </button>
       </div>
@@ -127,7 +136,7 @@ function StartCommand({ row, onSave }: { row: AgentRow; onSave: (command: string
       {error !== null && <p className="text-[12px] text-bad">{error}</p>}
       <p className="font-mono text-[11px] break-all text-ink-500">
         <span className="font-sans">Built-in: </span>
-        {builtIn}
+        {row.builtin ?? <span className="font-sans">unknown</span>}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={quiet} disabled={saving || error !== null} onClick={() => void finish(draft)}>
@@ -203,7 +212,7 @@ function AgentCard({ row, onEnabled, onDefault, onMode, onCommand }: { row: Agen
 /** `updates` is read by the Settings window, which shows its badge on the Agents entry. */
 export function AgentsSection({ updates }: { updates: AgentUpdates }) {
   const [generation, setGeneration] = useState(0)
-  const { plan, settings, setSettings, commands, loading, error } = useAgents(generation)
+  const { plan, settings, setSettings, commands, builtins, loading, error } = useAgents(generation)
   const [saveError, setSaveError] = useState<unknown>(null)
 
   const save = useCallback(
@@ -224,7 +233,7 @@ export function AgentsSection({ updates }: { updates: AgentUpdates }) {
   )
 
   const current = settings ?? defaultAgentSettings
-  const rows = agentRows(plan, current, commands)
+  const rows = agentRows(plan, current, commands, builtins)
   const detected = plan?.filter((entry) => entry.installed).length ?? null
 
   return (
@@ -270,7 +279,7 @@ export function AgentsSection({ updates }: { updates: AgentUpdates }) {
             onDefault={() => void save(withDefault(current, row.agent))}
             onMode={(mode) => void save(withMode(current, row.agent, mode))}
             onCommand={async (command) => {
-              const saved = await save(withCommand(current, row.agent, command))
+              const saved = await save(withCommand(current, row.agent, command, row.builtin ?? null))
               // The CLI builds the command shown, so read it again.
               if (saved) setGeneration((value) => value + 1)
               return saved

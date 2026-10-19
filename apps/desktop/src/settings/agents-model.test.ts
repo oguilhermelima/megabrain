@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { agentMode, agentRows, builtInCommands, commandLine, defaultAgentSettings, startCommandError, withCommand, parseAgentSettings, serialiseAgentSettings, withDefault, withEnabled, withMode, type AgentSettings } from '@/settings/agents-model'
+import { agentMode, agentRows, commandLine, defaultAgentSettings, startCommandError, withCommand, parseAgentSettings, serialiseAgentSettings, withDefault, withEnabled, withMode, type AgentSettings } from '@/settings/agents-model'
 
 const plan = [
   { agent: 'claude', label: 'Claude Code', installed: true },
@@ -116,7 +116,7 @@ describe('start commands', () => {
     const typed = withCommand(defaultAgentSettings, 'grok', '  grok   --y ')
     expect(typed.commands).toEqual({ grok: 'grok --y' })
     expect(withCommand(typed, 'grok', null)).toEqual(defaultAgentSettings)
-    expect(withCommand(typed, 'grok', builtInCommands.grok ?? '')).toEqual(defaultAgentSettings)
+    expect(withCommand(typed, 'grok', 'grok --always-approve', 'grok --always-approve')).toEqual(defaultAgentSettings)
     expect(JSON.parse(serialiseAgentSettings(withCommand(typed, 'grok', null)))).not.toHaveProperty('commands')
   })
 
@@ -124,5 +124,12 @@ describe('start commands', () => {
     const rows = agentRows(plan, { ...defaultAgentSettings, commands: { codex: 'codex --x' } }, {})
     expect(rows.find((row) => row.agent === 'codex')?.custom).toBe('codex --x')
     expect(rows.find((row) => row.agent === 'claude')?.custom).toBeUndefined()
+  })
+
+  test('rows carry the built-in command the CLI reported', () => {
+    const rows = agentRows(plan, defaultAgentSettings, {}, { codex: ['codex', '-c', 'a=b c'], grok: null })
+    expect(rows.find((row) => row.agent === 'codex')?.builtin).toBe("codex -c 'a=b c'")
+    expect(rows.find((row) => row.agent === 'grok')?.builtin).toBeNull()
+    expect(rows.find((row) => row.agent === 'claude')?.builtin).toBeUndefined()
   })
 })

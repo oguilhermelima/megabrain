@@ -547,6 +547,10 @@ export function createMockApi(): DesktopApi {
       const resume = options.resume === undefined ? [] : agent === 'codex' ? ['resume', options.resume] : ['--resume', options.resume]
       return [agent, ...resume, ...(options.model === undefined ? [] : ['--model', options.model]), ...(options.effort === undefined ? [] : ['--effort', options.effort])]
     },
+    agentStartCommand: async (agent) => {
+      if (!mockInstallPlan.agents.some((entry) => entry.agent === agent && entry.installed)) throw new CliError(`${agent} is not installed`, 1)
+      return { argv: [agent], builtin: [agent] }
+    },
     sessionHistory: async (_cwd, agent) => {
       await wait(500)
       return mockSessionHistory.filter((session) => agent === undefined || session.agent === agent)

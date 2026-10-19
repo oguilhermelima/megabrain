@@ -70,9 +70,9 @@ describe("agent command honours the override", () => {
   test("agent command reads the override from the state directory", async () => {
     const state = stateWith({ grok: "grok --y" });
     const result = await executeAgent(["command", "grok", "--model", "m1", "--json"], { MEGABRAIN_STATE_DIR: state }, found);
-    expect(JSON.parse(result.kind === "ok" ? result.value : "null")).toEqual({ agent: "grok", argv: ["grok", "--y", "-m", "m1"] });
+    expect(JSON.parse(result.kind === "ok" ? result.value : "null")).toEqual({ agent: "grok", argv: ["grok", "--y", "-m", "m1"], builtin: ["grok", "--always-approve"] });
     const plain = await executeAgent(["command", "claude", "--json"], { MEGABRAIN_STATE_DIR: state }, found);
-    expect(JSON.parse(plain.kind === "ok" ? plain.value : "null")).toEqual({ agent: "claude", argv: ["claude", "--dangerously-skip-permissions"] });
+    expect(JSON.parse(plain.kind === "ok" ? plain.value : "null")).toEqual({ agent: "claude", argv: ["claude", "--dangerously-skip-permissions"], builtin: ["claude", "--dangerously-skip-permissions"] });
   });
 });
 

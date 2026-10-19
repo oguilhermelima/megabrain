@@ -41,14 +41,6 @@ export function serialiseAgentSettings(settings: AgentSettings): string {
   return JSON.stringify({ version: 1, default: settings.default, disabled: settings.disabled, modes: settings.modes, ...(Object.keys(commands).length === 0 ? {} : { commands }) })
 }
 
-/** What each agent starts with when the person has not replaced it; the CLI builds the same words. */
-export const builtInCommands: Record<string, string> = {
-  claude: 'claude --dangerously-skip-permissions',
-  codex: 'codex --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false',
-  grok: 'grok --always-approve',
-  agy: 'agy --dangerously-skip-permissions',
-}
-
 /** Why a typed start command cannot be saved, or null when it can; the CLI checks the same rules. */
 export function startCommandError(agent: string, command: string): string | null {
   const [first] = command.trim().split(/\s+/)
@@ -58,11 +50,11 @@ export function startCommandError(agent: string, command: string): string | null
   return null
 }
 
-/** Saves a typed start command; null, or the built-in one, resets to the built-in command. */
-export function withCommand(settings: AgentSettings, agent: string, command: string | null): AgentSettings {
+/** Saves a typed start command; null, or the built-in one the CLI reported, resets to the built-in command. */
+export function withCommand(settings: AgentSettings, agent: string, command: string | null, builtin: string | null = null): AgentSettings {
   const rest = Object.fromEntries(Object.entries(settings.commands ?? {}).filter(([key]) => key !== agent))
   const typed = command?.trim().split(/\s+/).join(' ') ?? null
-  const commands = typed === null || typed === builtInCommands[agent] ? rest : { ...rest, [agent]: typed }
+  const commands = typed === null || typed === builtin ? rest : { ...rest, [agent]: typed }
   const base: AgentSettings = { version: 1, default: settings.default, disabled: settings.disabled, modes: settings.modes }
   return Object.keys(commands).length === 0 ? base : { ...base, commands }
 }
@@ -102,13 +94,16 @@ export interface AgentRow {
   command: string | null | undefined
   /** The start command the person typed; absent for the built-in one. */
   custom?: string
+  /** The built-in command a typed one replaces, as the CLI reports it; undefined while it loads, null when unknown. */
+  builtin?: string | null
 }
 
 /** One row per agent in a fixed order; without the install report every agent is listed, none installed. */
-export function agentRows(plan: readonly { agent: string; label: string; installed: boolean }[] | null, settings: AgentSettings, commands: Readonly<Record<string, string[] | null | undefined>>): AgentRow[] {
+export function agentRows(plan: readonly { agent: string; label: string; installed: boolean }[] | null, settings: AgentSettings, commands: Readonly<Record<string, string[] | null | undefined>>, builtins: Readonly<Record<string, string[] | null | undefined>> = {}): AgentRow[] {
   return AGENT_IDS.map((agent) => {
     const entry = plan?.find((item) => item.agent === agent)
     const argv = commands[agent]
+    const builtin = builtins[agent]
     return {
       agent,
       label: entry?.label ?? agentNames[agent] ?? agent,
@@ -118,6 +113,7 @@ export function agentRows(plan: readonly { agent: string; label: string; install
       mode: agentMode(settings, agent),
       command: argv === undefined ? undefined : argv === null ? null : commandLine(argv),
       custom: settings.commands?.[agent],
+      builtin: builtin === undefined ? undefined : builtin === null ? null : commandLine(builtin),
     }
   })
 }
