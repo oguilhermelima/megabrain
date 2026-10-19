@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { idleWalk, moveTarget, queueSummary, reconcileWalk, walkKey, type WalkContext } from '@/chat/queue-walk'
+import { idleWalk, moveTarget, queueRows, queueSummary, reconcileWalk, walkKey, type WalkContext } from '@/chat/queue-walk'
 
 // The composer's walk through a native chat's queue: ArrowUp in an empty composer takes the last
 // queued message for editing, the arrows move between messages, Esc gives up and Enter saves.
@@ -80,5 +80,32 @@ describe('queueSummary', () => {
 
   test('a message of images alone says so', () => {
     expect(queueSummary([{ type: 'image', path: '/tmp/shot.png' }])).toEqual({ line: '', images: ['shot.png'] })
+  })
+})
+
+describe('queueRows', () => {
+  const item = (id: string, parts: Parameters<typeof queueSummary>[0]) => ({ id, parts, createdAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z' })
+
+  test('keeps send order, marks the first as next and numbers the rest', () => {
+    const rows = queueRows([item('a', [{ type: 'text', text: 'one' }]), item('b', [{ type: 'text', text: 'two' }]), item('c', [{ type: 'text', text: 'three' }])])
+    expect(rows.map((row) => [row.id, row.position, row.next])).toEqual([
+      ['a', 1, true],
+      ['b', 2, false],
+      ['c', 3, false],
+    ])
+  })
+
+  test('shows the whole text with its line breaks, trimmed, and the images', () => {
+    const [row] = queueRows([item('a', [{ type: 'text', text: '\n  fix the build\nthen ship  \n' }, { type: 'image', path: '/tmp/a.png' }])])
+    expect(row?.text).toBe('fix the build\nthen ship')
+    expect(row?.images).toEqual(['a.png'])
+  })
+
+  test('a message of images alone has no text', () => {
+    expect(queueRows([item('a', [{ type: 'image', path: '/tmp/shot.png' }])])[0]?.text).toBe('')
+  })
+
+  test('an empty queue has no rows', () => {
+    expect(queueRows([])).toEqual([])
   })
 })
