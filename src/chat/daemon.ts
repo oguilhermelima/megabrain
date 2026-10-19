@@ -187,6 +187,7 @@ export class ChatDaemon {
   terminalTimer: ReturnType<typeof setInterval> | undefined;
   terminalRefresh: Promise<void> | undefined;
   terminalRefreshTask: Promise<void> | undefined;
+  terminalRefreshError: string | null = null;
   /** Each terminal-mode chat's log as last read (size and mtime), so an unchanged idle log is not parsed again. */
   readonly terminalLogs = new Map<string, string>();
   readonly terminalHandoffs = new Set<string>();
@@ -233,7 +234,7 @@ async busy(): Promise<boolean> { return await busyImpl(this); }
 
 async liveChats(): Promise<number> { return await liveChatsImpl(this); }
 
-async daemonStatus(): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[] }> { return await daemonStatusImpl(this); }
+async daemonStatus(): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[]; terminalRefreshError?: string }> { return await daemonStatusImpl(this); }
 
   /**
    * Gets out of the way of a newer chatd without stopping anyone's turn: every running turn finishes (however long

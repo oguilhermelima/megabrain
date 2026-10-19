@@ -134,11 +134,11 @@ export async function liveChats(daemon: ChatDaemon): Promise<number> {
     return live;
   }
 
-export async function daemonStatus(daemon: ChatDaemon): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[] }> {
+export async function daemonStatus(daemon: ChatDaemon): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[]; terminalRefreshError?: string }> {
     const working = (await daemon.store.list()).filter((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval")).map((chat) => chat.id);
     let liveChats = 0;
     for (const chat of await daemon.store.list()) if (chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval" || (await daemon.loadQueue(chat.id)).length > 0)) liveChats += 1;
-    return { pid: process.pid, protocol: { version: daemon.protocol, min: CHAT_PROTOCOL_MIN_VERSION, max: daemon.protocol }, daemonVersion: daemon.version, superseded: daemon.superseded, liveChats, build: daemon.build, draining: daemon.draining, working };
+    return { pid: process.pid, protocol: { version: daemon.protocol, min: CHAT_PROTOCOL_MIN_VERSION, max: daemon.protocol }, daemonVersion: daemon.version, superseded: daemon.superseded, liveChats, build: daemon.build, draining: daemon.draining, working, ...(daemon.terminalRefreshError === null ? {} : { terminalRefreshError: daemon.terminalRefreshError }) };
   }
 
 export async function drainDaemon(daemon: ChatDaemon): Promise<{ drained: true; waitedMs: number; resumes: string[] }> {
@@ -267,7 +267,11 @@ export async function listen(daemon: ChatDaemon): Promise<void> {
         if (daemon.closed) return;
         if (refreshing) { refreshPending = true; return; }
         refreshing = true;
-        const task = daemon.refreshTerminalChats().catch(() => undefined).finally(() => {
+        const task = daemon.refreshTerminalChats().catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          if (daemon.terminalRefreshError !== message) process.stderr.write(`chat terminal refresh failed: ${message}\n`);
+          daemon.terminalRefreshError = message;
+        }).finally(() => {
           refreshing = false;
           if (refreshPending && !daemon.closed) { refreshPending = false; refresh(); }
         });
