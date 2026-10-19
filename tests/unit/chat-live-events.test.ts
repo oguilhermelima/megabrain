@@ -97,7 +97,7 @@ describe("live chat events", () => {
       const stored = (await h.daemon.store.events(chat.id)).flatMap((line) => line.event ? [line.event] : []);
       expect(stored.filter((e) => e.kind === "state").map((e) => e.text)).toEqual(expect.arrayContaining(["working", "idle"]));
       const late = follow(h.state, chat.id, Number(stored.length + 100));
-      await until(() => late.events().length > 0, "state on late follow");
+      await until(() => late.events().some((e) => e.kind === "state" && e.text === "idle"), "idle state on late follow");
       expect(late.events()).toEqual([expect.objectContaining({ kind: "state", text: "idle" })]);
       late.close();
     } finally { watcher.close(); await h.daemon.close(); }
