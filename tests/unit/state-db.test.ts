@@ -25,6 +25,7 @@ import {
   listOutboxForDispatch,
   getQueuedDispatchId,
   listOutboxPage,
+  listPendingOutboxPeerVerifications,
   mutateDispatch,
   stateDatabase,
 } from "../../src/adapters/state-db.js";
@@ -48,6 +49,29 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 }
 
 describe("state database facade", () => {
+  test("discovers only pending peer verifications through a bounded cursor", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "peer-scan", state: "running" }));
+    const record = (state: string) => `peer-verification:${JSON.stringify({ state, messageId: state, agentVersion: "v1", acceptedAt: 1 })}`;
+    for (const [id, state] of [["peer-pending", "pending"], ["peer-done", "delivered"]]) {
+      db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, detail, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'sent', 0, ?, ?, ?)", [id, "peer-scan", "parent-pointer", "parent", "{}", record(state), id, id]);
+    }
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    const page = requireOk(listPendingOutboxPeerVerifications(handle, { limit: 1 }));
+    expect(page.rows.map((row) => row.id)).toEqual(["peer-pending"]);
+    expect(query).toContain("LIMIT ?");
+    expect(query).not.toContain("OFFSET");
+  });
+
   test("provides bounded outbox pages with a stable cursor", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "page-dispatch", state: "running" }));
