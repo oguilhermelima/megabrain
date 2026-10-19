@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerSocket, stopStateOwner, type StateOwnerRequest } from "../../src/db/state-owner.js";
+import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerPid, stateOwnerSocket, stopStateOwner, type StateOwnerRequest } from "../../src/db/state-owner.js";
 import { inspectDatabase, openDatabase, openDatabaseReadOnly } from "../../src/db/db.js";
 import { createDispatch } from "../../src/adapters/state/dispatches.js";
 import { getTmuxSession, putTmuxSession } from "../../src/adapters/state/machine.js";
@@ -36,6 +36,44 @@ afterEach(async () => {
 });
 
 describe("single state owner", () => {
+  test("a live unrelated process in the pid file does not block a new owner", async () => {
+    const unrelated = spawn("sleep", ["60"], { stdio: "ignore" });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        unrelated.once("spawn", resolve);
+        unrelated.once("error", reject);
+      });
+      mkdirSync(join(root, "state-owner"), { recursive: true });
+      writeFileSync(stateOwnerPid(root), `${unrelated.pid}\n`);
+      owner = await startStateOwner(root);
+      expect(await inspectStateOwner(root)).toMatchObject({ running: true, pid: process.pid });
+    } finally {
+      unrelated.kill("SIGTERM");
+    }
+  });
+
+  test("a previous owner that lost its lock receives SIGTERM", async () => {
+    const signalPath = join(root, "owner-signal");
+    const script = `process.on("SIGTERM", () => { require("node:fs").writeFileSync(${JSON.stringify(signalPath)}, "SIGTERM"); process.exit(0); }); setInterval(() => {}, 1000);`;
+    const previous = spawn(process.execPath, ["-e", script, "__state-owner"], {
+      env: { ...process.env, MEGABRAIN_STATE_OWNER_DIR: root },
+      stdio: "ignore",
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        previous.once("spawn", resolve);
+        previous.once("error", reject);
+      });
+      mkdirSync(join(root, "state-owner"), { recursive: true });
+      writeFileSync(stateOwnerPid(root), `${previous.pid}\n`);
+      owner = await startStateOwner(root);
+      expect(readFileSync(signalPath, "utf8")).toBe("SIGTERM");
+      expect(await inspectStateOwner(root)).toMatchObject({ running: true, pid: process.pid });
+    } finally {
+      if (previous.exitCode === null && previous.signalCode === null) previous.kill("SIGKILL");
+    }
+  });
+
   test("status reports a stopped owner without starting it", async () => {
     const stopped = await inspectStateOwner(root);
     expect(stopped).toMatchObject({ running: false });
