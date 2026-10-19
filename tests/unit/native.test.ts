@@ -127,6 +127,11 @@ describe("native simulator lifecycle commands", () => {
           if (!options.neverBoots) booted = true;
           return ok({ stdout: "", stderr: "", exitCode: 0 });
         }
+        if (command === "xcrun" && args[0] === "simctl" && args[1] === "bootstatus") {
+          if (options.neverBoots) return failed("simulator did not boot");
+          booted = true;
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        }
         return failed(`${command} unavailable`);
       },
       async startDetached() { return failed("not used"); },
