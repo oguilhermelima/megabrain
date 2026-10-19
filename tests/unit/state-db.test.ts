@@ -24,6 +24,7 @@ import {
   listOutbox,
   listOutboxForDispatch,
   getQueuedDispatchId,
+  listOutboxPage,
   mutateDispatch,
   stateDatabase,
 } from "../../src/adapters/state-db.js";
@@ -47,6 +48,31 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 }
 
 describe("state database facade", () => {
+  test("provides bounded outbox pages with a stable cursor", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    for (const [id, createdAt] of [["page-a", "2026-01-01"], ["page-b", "2026-01-02"]]) {
+      db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", [id, "page-dispatch", "parent-pointer", "parent", "{}", createdAt, createdAt]);
+    }
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    const first = requireOk(listOutboxPage(handle, { dispatchId: "page-dispatch", limit: 1 }));
+    expect(first.rows.map((row) => row.id)).toEqual(["page-a"]);
+    expect(first.nextCursor).toEqual({ createdAt: "2026-01-01", id: "page-a" });
+    expect(query).toContain("LIMIT ?");
+    expect(query).not.toContain("OFFSET");
+    const second = requireOk(listOutboxPage(handle, { dispatchId: "page-dispatch", limit: 1, after: first.nextCursor }));
+    expect(second.rows.map((row) => row.id)).toEqual(["page-b"]);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
   test("finds a queued item's dispatch with direct bounded key lookups", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "queued-lookup", state: "running" }));
