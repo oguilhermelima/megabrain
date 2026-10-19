@@ -5,13 +5,14 @@ import type { WidthStorage } from '@/lib/panel-width'
 // The Tasks board's last read, kept so opening it paints at once and reads again behind it: each
 // repository's list of projects and each board's items, in memory for the app's life and per viewer
 // in storage, small (the few boards opened last, each capped). A project's items come a page at a
-// time; a read paints each page as it arrives over what the board showed before.
+// time; a read paints each page as it arrives over what the board showed before. Memory holds the
+// same trimmed cache storage does, so boards opened one after another never grow it past that.
 
 export const boardCacheKey = 'megabrain.tasks.board-cache'
 
 /** How many repositories' project lists, and how many boards' items, storage keeps: the latest opened. */
 export const keptEntries = 4
-/** How many items storage keeps of one board; memory keeps them all. */
+/** How many items the cache keeps of one board. */
 export const keptItems = 300
 
 export interface Cached<T> {
@@ -55,12 +56,27 @@ function kept<T>(entries: Readonly<Record<string, Cached<T[]>>>, cap: number): R
   return Object.fromEntries(latest.map(([key, entry]) => [key, { value: entry.value.slice(0, cap), at: entry.at }]))
 }
 
+/** The cache at its kept size: the latest entries, each board's items capped. */
+const trimmed = (cache: BoardCache): BoardCache => ({ projects: kept(cache.projects, Number.POSITIVE_INFINITY), items: kept(cache.items, keptItems) })
+
 /** Stores the cache trimmed to its kept size; storage missing, blocked or full keeps nothing. */
 export function writeBoardCache(storage: () => WidthStorage, cache: BoardCache): void {
   try {
-    storage().setItem(boardCacheKey, JSON.stringify({ projects: kept(cache.projects, Number.POSITIVE_INFINITY), items: kept(cache.items, keptItems) }))
+    storage().setItem(boardCacheKey, JSON.stringify(trimmed(cache)))
   } catch {
     // Not remembering it is fine.
+  }
+}
+
+/** The cache for the app's life, read from storage the first time it is asked for; what it remembers is trimmed and stored. */
+export function createBoardMemory(storage: () => WidthStorage): { get: () => BoardCache; remember: (next: BoardCache) => void } {
+  let cache: BoardCache | null = null
+  return {
+    get: () => (cache ??= readBoardCache(storage)),
+    remember: (next) => {
+      cache = trimmed(next)
+      writeBoardCache(storage, cache)
+    },
   }
 }
 

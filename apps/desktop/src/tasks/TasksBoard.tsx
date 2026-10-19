@@ -12,7 +12,7 @@ import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts
 import { Avatar, LabelChip, OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
 import { pageDivider, pageX } from '@/lib/page'
 import { answeredItems, boardColumns, movesItem, otherRepository, shownItems, withoutMove, type BoardColumn, type PendingMove } from '@/tasks/board-model'
-import { boardKey, distinctItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache, type BoardCache } from '@/tasks/board-cache'
+import { boardKey, createBoardMemory, distinctItems, mergedPages, withItems, withProjects } from '@/tasks/board-cache'
 import { BoardSearch, boardSheetFields } from '@/tasks/BoardFilterBar'
 import { boardFilterOptions, emptyBoardFilters, filterBoardItems, readBoardPrefs, writeBoardPrefs, type BoardFilters } from '@/tasks/board-filters'
 import { shownBoard } from '@/tasks/tasks-model'
@@ -32,13 +32,10 @@ const maxPages = 20
 const dragThreshold = 4
 
 const browserStorage = () => localStorage
-// The board cache for the app's life (board-cache.ts), started from storage; storage keeps a trimmed copy.
-let cache: BoardCache | null = null
-const boardCache = () => (cache ??= readBoardCache(browserStorage))
-const remember = (next: BoardCache) => {
-  cache = next
-  writeBoardCache(browserStorage, next)
-}
+// The board cache for the app's life (board-cache.ts), started from storage and trimmed like it.
+const memory = createBoardMemory(browserStorage)
+const boardCache = memory.get
+const remember = memory.remember
 /** The repositories whose projects this run has read: opening their board again reads none until Refresh. */
 const readProjects = new Set<string>()
 
