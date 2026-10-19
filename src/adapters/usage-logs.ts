@@ -29,7 +29,10 @@ async function listFiles(root: string, keep: (path: string) => boolean): Promise
   try {
     const entries = await readdir(root, { recursive: true });
     return entries.map((entry) => join(root, entry)).filter(keep);
-  } catch { return []; }
+  } catch (cause: unknown) {
+    if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ENOENT") return [];
+    throw new Error(`could not list usage logs in ${root}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+  }
 }
 
 async function logFiles(home: string, selected: UsageProvider | null): Promise<Array<{ path: string; provider: UsageProvider }>> {
@@ -85,12 +88,14 @@ async function grokProject(usagePath: string): Promise<string | null> {
   try { return decodeURIComponent(basename(dirname(dirname(usagePath)))); } catch { return null; }
 }
 
-async function parseFile(file: Listed, timeZone: string): Promise<FileUsage | null> {
+async function parseFile(file: Listed, timeZone: string): Promise<FileUsage> {
   try {
     if (file.provider === "grok") return parseGrokUsage(await readFile(file.path, "utf8"), await grokProject(file.path), timeZone);
     const usage = await feedLines(file.path, file.provider === "claude" ? claudeParser(timeZone) : codexParser(timeZone));
     return usage.session === "" ? { ...usage, session: file.path } : usage;
-  } catch { return null; }
+  } catch (cause: unknown) {
+    throw new Error(`could not read ${file.provider} usage log ${file.path}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+  }
 }
 
 async function readCache(stateDir: string, timeZone: string): Promise<Map<string, CacheEntry>> {
@@ -162,27 +167,28 @@ export async function usageStats(environment: Environment, options: UsageStatsOp
   const home = environment.HOME ?? process.env.HOME ?? "";
   const stateDir = environment.MEGABRAIN_STATE_DIR ?? join(home, ".megabrain");
   const found = await logFiles(home, options.provider);
-  const listed = (await mapLimited(found, async (file): Promise<Listed | null> => {
-    try { const info = await stat(file.path); return { ...file, size: info.size, mtimeMs: info.mtimeMs }; } catch { return null; }
-  })).filter((file): file is Listed => file !== null);
+  const listed = await mapLimited(found, async (file): Promise<Listed> => {
+    try { const info = await stat(file.path); return { ...file, size: info.size, mtimeMs: info.mtimeMs }; }
+    catch (cause: unknown) { throw new Error(`could not inspect usage log ${file.path}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause }); }
+  });
 
   const cache = await readCache(stateDir, options.timeZone);
   const next = new Map<string, CacheEntry>();
   let parsed = 0;
   const usages = await mapLimited(listed, async (file) => {
     const hit = cache.get(file.path);
-    if (hit !== undefined && hit.size === file.size && hit.mtimeMs === file.mtimeMs) {
+    if (hit !== undefined && hit.usage !== null && hit.size === file.size && hit.mtimeMs === file.mtimeMs) {
       next.set(file.path, hit);
-      return hit.usage === null ? null : { ...hit.usage, provider: file.provider };
+      return { ...hit.usage, provider: file.provider };
     }
     parsed += 1;
     const usage = await parseFile(file, options.timeZone);
     next.set(file.path, { size: file.size, mtimeMs: file.mtimeMs, usage });
-    return usage === null ? null : { ...usage, provider: file.provider };
+    return { ...usage, provider: file.provider };
   });
   if (parsed > 0 || next.size !== cache.size) await writeCache(stateDir, options.timeZone, next);
 
-  const report = aggregateUsage(usages.filter((usage) => usage !== null), options);
+  const report = aggregateUsage(usages, options);
   const megabrain = await megabrainUsage(environment, stateDir, options);
   const since = [report.trackingSince, megabrain?.since ?? null].filter((day): day is string => day !== null).sort()[0] ?? null;
   return {
