@@ -346,7 +346,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       if (appended.kind !== "ok") throw new Error(appended.error);
       const claimed = claimOutbox(database.value, "held-outbox", "test-holder", 30);
       if (claimed.kind !== "ok" || claimed.value === undefined) throw new Error("could not claim outbox");
-      const finished = finishNotification(database.value, "held-outbox", "failed", {
+      const finished = finishNotification(database.value, "held-outbox", "test-holder", "failed", {
         dispatchId: "d1", pointer: "megabrain check", outcome: "failed", reason: detail,
       });
       if (finished.kind !== "ok") throw new Error(finished.error);

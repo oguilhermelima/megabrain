@@ -158,7 +158,7 @@ describe("state database facade", () => {
     expect(requireOk(claimOutbox(db, "outbox-claim", "holder-b", 60))).toBeUndefined();
     db.db.run("UPDATE outbox SET lease_until = ? WHERE id = ?", ["2000-01-01T00:00:00.000Z", "outbox-claim"]);
     expect(requireOk(claimOutbox(db, "outbox-claim", "holder-b", 60))?.status).toBe("sending");
-    expect(finishOutbox(db, "outbox-claim", "failed", "retryable").kind).toBe("ok");
+    expect(finishOutbox(db, "outbox-claim", "failed", "retryable", "holder-b").kind).toBe("ok");
     expect(finishOutbox(db, "missing", "sent").kind).toBe("failed");
   });
 

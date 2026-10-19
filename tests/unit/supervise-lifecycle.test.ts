@@ -220,7 +220,7 @@ describe("supervisor queued child answers", () => {
       expect((await inspectStateOwner(directory)).running).toBe(true);
     } finally {
       await callStateOwner(directory, { operation: "claim-outbox", id: "idle-answer-outbox", holder: "test-cleanup", leaseSeconds: 90 });
-      await callStateOwner(directory, { operation: "finish-outbox", id: "idle-answer-outbox", status: "suppressed", detail: "test cleanup" });
+      await callStateOwner(directory, { operation: "finish-outbox", id: "idle-answer-outbox", holder: "test-cleanup", status: "suppressed", detail: "test cleanup" });
       await new Promise((resolve) => setTimeout(resolve, 1_200));
       registerHost(original);
       opened.value.close();

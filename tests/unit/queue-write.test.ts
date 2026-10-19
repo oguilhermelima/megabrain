@@ -318,7 +318,7 @@ describe("queue facade transactions", () => {
       expect(appended.kind).toBe("ok");
       const claimed = claimOutbox(handle, "atomic-outbox", "test-worker", 30);
       expect(claimed.kind).toBe("ok");
-      const result = finishNotification(handle, "atomic-outbox", "sent", {
+      const result = finishNotification(handle, "atomic-outbox", "test-worker", "sent", {
         dispatchId: "missing-dispatch", pointer: "mail", outcome: "delivered", reason: "sent",
       });
       expect(result.kind).toBe("failed");
