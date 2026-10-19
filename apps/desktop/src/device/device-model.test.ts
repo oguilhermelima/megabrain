@@ -524,3 +524,9 @@ describe('stale Device inventory', () => {
     expect(staleDeviceNote(['phones', 'tvs', 'asleep'])).toBe('Could not refresh the phone simulators, the TV simulators and the sleeping simulators; showing the last list.')
   })
 })
+
+describe('the Device project catalog', () => {
+  test('a failed project list read is named with the other stale reads', () => {
+    expect(staleDeviceNote(['projects'])).toBe('Could not refresh the project list; showing the last list.')
+  })
+})
