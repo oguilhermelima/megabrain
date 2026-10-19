@@ -77,6 +77,16 @@ describe("megabrain settings", () => {
     if (result.kind === "ok") expect(Object.keys(JSON.parse(result.value))).toEqual(["models"]);
   });
 
+  test("reading a desktop setting leaves legacy state untouched", async () => {
+    const env = sandbox();
+    const legacy = join(env.state, "state.json");
+    writeFileSync(legacy, "{}");
+    const result = await run(["settings", "get", "sidebar-state"], env);
+    expect(result.kind).toBe("ok");
+    expect(existsSync(legacy)).toBe(true);
+    expect(existsSync(join(env.state, "legacy"))).toBe(false);
+  });
+
   test("returns the desktop schema keys with empty settings", async () => {
     const env = sandbox();
     const value = await settings(env);
