@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
-import { createDispatch, appendParentReply, ackDelivery, claimDelivery, listDeliveries, listMessages, listOutbox, stateDatabase } from "../../src/adapters/state-db.js";
+import { createDispatch, appendParentReply, ackDelivery, cancelQueuedMessage, claimDelivery, listDeliveries, listMessages, listOutbox, stateDatabase } from "../../src/adapters/state-db.js";
 import { executeOrchestrateQueue } from "../../src/cli/commands/orchestrate-queue.js";
 import { executeDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
 import { executeCheck } from "../../src/cli/commands/check.js";
@@ -122,6 +122,20 @@ describe("orchestrate queue", () => {
     await executeDeliveryWorker(["outbox-cancelled", "holder", "lease", String(Date.now() + 1_000)], { MEGABRAIN_STATE_DIR: root }, process);
     expect(workerCalls).toEqual([]);
     expect(requireOk(listOutbox(db)).find((item) => item.id === "outbox-cancelled")).toMatchObject({ status: "cancelled", attempts: 0 });
+  });
+
+  test("refuses cancellation after the outbox confirms transport sent the reply", async () => {
+    const root = await state();
+    dispatch(root, "dispatch-sent", "parent-one");
+    const deliveryId = reply(root, "dispatch-sent", "already delivered", "outbox-sent");
+    const db = requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root }));
+    db.db.run("UPDATE outbox SET status = 'sent', lease_until = NULL, lease_holder = NULL WHERE id = ?", ["outbox-sent"]);
+
+    const cancelled = cancelQueuedMessage(db, "dispatch-sent", deliveryId, "too late", "parent-one");
+
+    expect(cancelled.kind).toBe("failed");
+    expect(requireOk(listDeliveries(db, "dispatch-sent"))[0]).toMatchObject({ status: "outstanding" });
+    expect(requireOk(listMessages(db, "dispatch-sent"))).toHaveLength(1);
   });
 
   test("cancel JSON returns the full cancelled message for editing", async () => {
