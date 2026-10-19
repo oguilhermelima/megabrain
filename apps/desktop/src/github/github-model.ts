@@ -284,3 +284,18 @@ export function otherPeople<T extends { login: string }>(author: string | null, 
     return true
   })
 }
+
+/**
+ * A list's filter options from the labels and assignable people reads: each sorted, each name once, teams left
+ * out; a read that failed offers nothing and says so, so a failure never looks like a repository without any.
+ */
+export function filterOptionsFrom(labels: PromiseSettledResult<{ name: string }[]>, people: PromiseSettledResult<{ login: string; isTeam?: boolean | null }[]>): { labels: string[]; people: string[]; error: string | null } {
+  const sorted = (values: string[]) => [...new Set(values)].sort((left, right) => left.localeCompare(right))
+  const failure = (what: string, reason: unknown) => `Could not read the ${what}: ${reason instanceof Error ? reason.message : String(reason)}`
+  const errors = [...(labels.status === 'rejected' ? [failure('labels', labels.reason)] : []), ...(people.status === 'rejected' ? [failure('people', people.reason)] : [])]
+  return {
+    labels: labels.status === 'fulfilled' ? sorted(labels.value.map((label) => label.name)) : [],
+    people: people.status === 'fulfilled' ? sorted(people.value.filter((person) => person.isTeam !== true).map((person) => person.login)) : [],
+    error: errors.length === 0 ? null : errors.join('. '),
+  }
+}

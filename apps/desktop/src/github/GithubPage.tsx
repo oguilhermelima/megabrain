@@ -6,7 +6,7 @@ import type { SheetField } from '@/components/filter-sheet-model'
 import { FilterButton, FilterChips, FilterPanel } from '@/components/Filters'
 import { useSheet } from '@/components/Sheet'
 import { ErrorNote } from '@/components/ui'
-import { emptyPullRequestFilters, githubRepository, includesAuthor, otherPeople, type IssueFilters, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
+import { emptyPullRequestFilters, filterOptionsFrom, githubRepository, includesAuthor, otherPeople, type IssueFilters, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
 import { firstCursors, withNext } from '@/github/pager'
 import { CloseIcon, CommentIcon, MaximiseIcon, MilestoneIcon, RefreshIcon } from '@/github/icons'
 import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
@@ -90,24 +90,18 @@ export const searchSettleMs = 300
  * What a list's filters offer: every label of the repository and the people who can be assigned (they
  * answer for authors too), not only those on the page shown.
  */
-export function useFilterOptions(root: string): { labels: string[]; people: string[] } {
-  const [options, setOptions] = useState<{ root: string; labels: string[]; people: string[] } | null>(null)
+export function useFilterOptions(root: string): { labels: string[]; people: string[]; error: string | null } {
+  const [options, setOptions] = useState<{ root: string; labels: string[]; people: string[]; error: string | null } | null>(null)
   useEffect(() => {
     let stopped = false
-    const sorted = (values: string[]) => [...new Set(values)].sort((left, right) => left.localeCompare(right))
     void Promise.allSettled([api.githubLabels(root), api.assignableReviewers(root, '')]).then(([labels, people]) => {
-      if (stopped) return
-      setOptions({
-        root,
-        labels: labels.status === 'fulfilled' ? sorted(labels.value.map((label) => label.name)) : [],
-        people: people.status === 'fulfilled' ? sorted(people.value.filter((person) => person.isTeam !== true).map((person) => person.login)) : [],
-      })
+      if (!stopped) setOptions({ root, ...filterOptionsFrom(labels, people) })
     })
     return () => {
       stopped = true
     }
   }, [root])
-  return options?.root === root ? options : { labels: [], people: [] }
+  return options?.root === root ? options : { labels: [], people: [], error: null }
 }
 
 function PullRequestRow({ item, selected, now, onSelect }: { item: GithubPullRequest; selected: boolean; now: number; onSelect: () => void }) {
@@ -443,7 +437,7 @@ function ListPage({ project, focus, onKind, onClose, onMaximise }: PageProps) {
           {selected !== null && <DetailPane key={selected} project={project} kind="prs" number={selected} pullRequest={selectedPr} issue={null} onMaximise={() => onMaximise('pr', selected)} onClose={() => setSelected(null)} />}
         </div>
       </div>
-      <FilterPanel sheet={sheet} fields={sheetFields} />
+      <FilterPanel sheet={sheet} fields={sheetFields} error={options.error} />
     </div>
   )
 }

@@ -127,7 +127,7 @@ export function TasksList({
           {selected !== null && <DetailPane key={selected} project={project} kind="issues" number={selected} pullRequest={null} issue={selectedIssue} onMaximise={() => onMaximise(selected)} onClose={() => onSelect(null)} />}
         </div>
       </div>
-      <FilterPanel sheet={sheet} fields={sheetFields} />
+      <FilterPanel sheet={sheet} fields={sheetFields} error={options.error} />
     </div>
   )
 }
