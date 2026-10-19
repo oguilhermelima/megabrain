@@ -66,9 +66,9 @@ function normalizeFieldValues(value: unknown): ProjectItem['fieldValues'] {
   })
 }
 
-const STATUS_FIELD = `fields(first: 100) { nodes { __typename ... on ProjectV2SingleSelectField { id name options { id name color } } } }`
-export const PROJECT_FIELDS = `id number title url closed owner { ... on User { login } ... on Organization { login } } ${STATUS_FIELD}`
 const FIELD_NODE = `__typename ... on ProjectV2Field { id name dataType } ... on ProjectV2SingleSelectField { id name dataType options { id name color description } } ... on ProjectV2IterationField { id name dataType configuration { iterations { id title startDate duration } } } ... on ProjectV2MultiSelectField { id name dataType options { id name color description } }`
+const STATUS_FIELD = `fields(first: 100) { nodes { ${FIELD_NODE} } }`
+export const PROJECT_FIELDS = `id number title url closed owner { ... on User { login } ... on Organization { login } } ${STATUS_FIELD}`
 const VIEW_FIELDS = `views(first: 50) { nodes { id number name layout filter groupByFields(first: 50) { nodes { ${FIELD_NODE} } } verticalGroupByFields(first: 50) { nodes { ${FIELD_NODE} } } sortByFields(first: 50) { nodes { direction field { ... on ProjectV2Field { id name } ... on ProjectV2SingleSelectField { id name } ... on ProjectV2IterationField { id name } ... on ProjectV2MultiSelectField { id name } } } } configuration { visibleFields(first: 50) { nodes { ${FIELD_NODE} } } } } } fields(first: 100) { nodes { ${FIELD_NODE} } }`
 export const CONTENT_FIELDS = `
   __typename
