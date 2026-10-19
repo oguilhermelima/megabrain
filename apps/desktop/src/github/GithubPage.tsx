@@ -15,6 +15,7 @@ import { BranchFlow, StatPill } from '@/github/ItemHero'
 import { ActionsPage } from '@/github/ActionsPage'
 import { Empty, IconButton, KindSwitch, Meta, OwnerPicture, Pager, SearchBox, Tabs, anyValue, dot, fromAny, people, pillButton, rowClass, splitDetail, splitList, useSettled } from '@/github/page-parts'
 import type { GithubKind, GithubPageKind } from '@/github/useGithubCounts'
+import { readFence } from '@/lib/latest-load'
 import { reuse } from '@/lib/reuse'
 import { pageDivider, pageMx, pageX } from '@/lib/page'
 
@@ -51,22 +52,23 @@ export function usePagedListing(root: string, request: ListRequest) {
   const cursor = place.cursors[index] ?? null
   const asked = useRef(request)
   asked.current = request
-  const current = useRef('')
-  current.current = `${key}\n${index}`
+  // Every read is numbered as it starts: an answer from an older one (another page, list, or the same page read
+  // again meanwhile) never replaces what a newer read shows.
+  const fence = useRef(readFence())
 
   const read = useCallback(async () => {
-    const reading = `${key}\n${index}`
+    const reading = fence.current.start()
     setLoading(true)
     try {
       const listing = await readPage(root, asked.current, cursor)
-      if (current.current !== reading) return
+      if (!fence.current.newest(reading)) return
       setShown((loaded) => reuse(loaded, { key, index, listing }))
       setAt((now) => (now.key === key ? { ...now, cursors: withNext(now.cursors, index, listing.page.nextCursor) } : now))
       setError(null)
     } catch (cause: unknown) {
-      if (current.current === reading) setError(cause)
+      if (fence.current.newest(reading)) setError(cause)
     } finally {
-      if (current.current === reading) setLoading(false)
+      if (fence.current.newest(reading)) setLoading(false)
     }
   }, [root, key, index, cursor])
 
