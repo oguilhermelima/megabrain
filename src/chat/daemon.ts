@@ -203,9 +203,9 @@ export class ChatDaemon {
 
 async start(): Promise<void> { return await startImpl(this); }
 
-  /** Runs terminal refresh polling only while persisted chats select terminal mode. */
+  /** Runs terminal refresh polling while a terminal-mode chat or TUI owner needs refresh. */
   async syncTerminalPolling(): Promise<void> {
-    const needsPolling = (await this.store.list()).some((chat) => chat.mode === "terminal");
+    const needsPolling = (await this.store.list()).some((chat) => chat.mode === "terminal" || chat.owner === "terminal");
     if (needsPolling && this.terminalTimer === undefined && !this.closed) {
       const poll = timeoutMs(this.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
       let refreshing = false;

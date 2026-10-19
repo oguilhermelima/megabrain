@@ -58,6 +58,7 @@ export async function send(daemon: ChatDaemon, id: string, inputParts: Part[], f
         chat.state = "working";
         chat.owner = "terminal";
         await daemon.save(chat);
+        await daemon.syncTerminalPolling();
         return { queued };
       }
     }
