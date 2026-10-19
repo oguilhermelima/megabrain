@@ -262,12 +262,18 @@ export async function listen(daemon: ChatDaemon): Promise<void> {
       daemon.server.listen(socketPath, () => { void chmod(socketPath, 0o600).then(resolve, reject); });
       const poll = timeoutMs(daemon.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
       let refreshing = false;
-      daemon.terminalTimer = setInterval(() => {
-        if (refreshing || daemon.closed) return;
+      let refreshPending = false;
+      const refresh = () => {
+        if (daemon.closed) return;
+        if (refreshing) { refreshPending = true; return; }
         refreshing = true;
-        const task = daemon.refreshTerminalChats().catch(() => undefined).finally(() => { refreshing = false; });
+        const task = daemon.refreshTerminalChats().catch(() => undefined).finally(() => {
+          refreshing = false;
+          if (refreshPending && !daemon.closed) { refreshPending = false; refresh(); }
+        });
         daemon.terminalRefresh = task;
-      }, poll);
+      };
+      daemon.terminalTimer = setInterval(refresh, poll);
       daemon.terminalTimer.unref?.();
     });
   }
