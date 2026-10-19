@@ -77,6 +77,15 @@ describe("megabrain settings", () => {
     if (result.kind === "ok") expect(Object.keys(JSON.parse(result.value))).toEqual(["models"]);
   });
 
+  test("--only terminalEngine does not load the model registry or database", async () => {
+    const env = sandbox();
+    rmSync(join(env.root, ".megabrain", "models.json"));
+    const result = await run(["settings", "--json", "--only", "terminalEngine"], env);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(JSON.parse(result.value)).toEqual({ terminalEngine: "native" });
+    expect(existsSync(join(env.state, "megabrain.sqlite"))).toBe(false);
+  });
+
   test("reading a desktop setting leaves legacy state untouched", async () => {
     const env = sandbox();
     const legacy = join(env.state, "state.json");
