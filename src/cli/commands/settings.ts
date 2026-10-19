@@ -275,6 +275,7 @@ type SettingsValue = {
 
 const SETTINGS_KEYS = ["terminalEngine", "supervisor", "resources", "limits", "chains", "models", "terminal", "agents"] as const;
 type SettingsKey = typeof SETTINGS_KEYS[number];
+const emptyChainConfig: ChainConfig = { chains: {}, defaultSteps: [] };
 
 /** `only` limits the read to those top-level keys, so one page of the desktop window never pays for another's (limits go to the network). */
 async function readSettings(environment: Environment, processAdapter: ProcessAdapter, only: ReadonlySet<SettingsKey> | null = null): Promise<Result<Partial<SettingsValue>>> {
@@ -284,15 +285,16 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
   const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
 
-  const chainConfig = readConfig(environment);
+  const needsChainConfig = want("chains") || want("limits");
+  const chainConfig = needsChainConfig ? readConfig(environment) : ok(emptyChainConfig);
   if (chainConfig.kind !== "ok") return chainConfig;
   const registry = modelRegistry(environment);
   if (registry.kind !== "ok") return registry;
   // A step naming a model the registry dropped must not fail the whole read: it is flagged below and validation skips it.
-  const stale = staleChainSteps(chainConfig.value, registry.value);
+  const stale = needsChainConfig ? staleChainSteps(chainConfig.value, registry.value) : [];
   const staleKeys = new Set(stale.map((entry) => `${entry.chain}/${entry.step}`));
   const lenient: ChainConfig = { ...chainConfig.value, chains: Object.fromEntries(Object.entries(chainConfig.value.chains).map(([name, chain]) => [name, { ...chain, steps: chain.steps.map((step, index) => staleKeys.has(`${name}/${index + 1}`) ? { ...step, unvalidated: true } : step) }])) };
-  const validated = validateConfig(lenient, environment);
+  const validated = needsChainConfig ? validateConfig(lenient, environment) : ok(emptyChainConfig);
   if (validated.kind !== "ok") return validated;
 
   const [historyEnabled, storedPolicy, configuredDefault, readings, terminalEngine, modelSettings, updates] = await Promise.all([
