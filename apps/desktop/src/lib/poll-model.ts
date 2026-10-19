@@ -14,6 +14,8 @@ export const statusPolicy: PollPolicy = { visibleMs: 5_000, hiddenMs: 30_000, re
 export const projectsPolicy: PollPolicy = { visibleMs: 30_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 // The Device tab's simulators: a device shut down anywhere (simctl, another app) leaves within 5 s.
 export const devicesPolicy: PollPolicy = { visibleMs: 5_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
+// The simulators that can be booted: the catalog changes only when a runtime or device type is added.
+export const deviceCatalogPolicy: PollPolicy = { visibleMs: 120_000, hiddenMs: null, refreshOn: { action: false, focus: false } }
 // The action bar's Diff badge: git status and a merge-base diff, both native and cheap.
 export const changesPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, refreshOn: { action: true, focus: true } }
 export const quickViewPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, refreshOn: { action: false, focus: true } }

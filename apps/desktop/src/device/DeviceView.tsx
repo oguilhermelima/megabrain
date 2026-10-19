@@ -10,7 +10,7 @@ import { inputPaused } from '@/device/screen-model'
 import { DevicesSidebar, type DeviceBusy } from '@/device/DevicesSidebar'
 import { FlowsRunPanel, type Load } from '@/device/FlowsRunPanel'
 import { startRun, stopRun, useDeviceRun } from '@/device/run-store'
-import { changesPolicy, devicesPolicy } from '@/lib/poll-model'
+import { changesPolicy, deviceCatalogPolicy, devicesPolicy } from '@/lib/poll-model'
 import { native } from '@/lib/surface'
 import { usePoll } from '@/lib/usePoll'
 import { devServerUrl, webDeviceName } from '@/device/web-device-model'
@@ -128,7 +128,7 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const refreshDevices = usePoll(
     devicesPolicy,
     async (current) => {
-      const [listed, phones, tvs, browsers] = await Promise.all([api.simListBooted().catch((error: unknown) => ({ error })), api.simulators('phone').catch(() => null), api.simulators('tv').catch(() => null), api.webDeviceList().catch((error: unknown) => ({ error }))])
+      const [listed, browsers] = await Promise.all([api.simListBooted().catch((error: unknown) => ({ error })), api.webDeviceList().catch((error: unknown) => ({ error }))])
       if (!current()) return
       if ('error' in browsers) setWebError(message(browsers.error))
       else {
@@ -136,10 +136,20 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
         setWebError(null)
       }
       setBooted('error' in listed ? { kind: 'error', error: listed.error } : { kind: 'ready', value: listed })
-      if (phones !== null || tvs !== null) setAvailable([...(phones ?? []).map((device) => ({ ...device, kind: 'phone' as const })), ...(tvs ?? []).map((device) => ({ ...device, kind: 'tv' as const }))])
       // The tab showing is what keeps a simulator megabrain booted awake; this also lists the ones it put to sleep.
       const sleeping = await api.simulatorsAsleep().catch(() => null)
       if (current() && sleeping !== null) setAsleep(sleeping)
+    },
+    [],
+  )
+
+  // What can be booted barely changes, so it is read on its own, slower schedule.
+  usePoll(
+    deviceCatalogPolicy,
+    async (current) => {
+      const [phones, tvs] = await Promise.all([api.simulators('phone').catch(() => null), api.simulators('tv').catch(() => null)])
+      if (!current()) return
+      if (phones !== null || tvs !== null) setAvailable([...(phones ?? []).map((device) => ({ ...device, kind: 'phone' as const })), ...(tvs ?? []).map((device) => ({ ...device, kind: 'tv' as const }))])
     },
     [],
   )
