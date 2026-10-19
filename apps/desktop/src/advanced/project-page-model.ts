@@ -1,4 +1,4 @@
-import type { BranchChanges, CodeChange, NativeChat, Project, ProjectScripts, ProjectSession } from '@/api/schema'
+import type { BranchChanges, CodeChange, GithubCheck, GithubDetail, NativeChat, Project, ProjectScripts, ProjectSession } from '@/api/schema'
 import { rowToOpen, worktreeItems, type KeyedItem } from '@/advanced/row-model'
 import { worktreePullRequestState, type PullRequestVisualState } from '@/github/github-model'
 import { rowStatus } from '@/native-chat/chat-model'
@@ -170,3 +170,29 @@ export function scriptState(panel: WorktreePanel | null, action: ScriptAction): 
   if (tab.status.kind !== 'exited') return { kind: tab.status.kind }
   return tab.status.code !== null && tab.status.code !== 0 ? { kind: 'failed', code: tab.status.code } : { kind: 'stopped' }
 }
+
+/** A summary section's read: under way, answered, or failed. */
+export type SummaryLoad<T> = { state: 'loading' } | { state: 'ready'; value: T } | { state: 'failed'; error: unknown }
+
+/** What a pull request row shows beside its title: its review decision and checks. */
+export interface PullDetail {
+  checks: GithubCheck[]
+  review: GithubDetail['reviewDecision'] | null
+}
+
+/** A pull request's detail as its row shows it; one that could not be read is unavailable, never one without checks. */
+export function pullDetail(detail: Pick<GithubDetail, 'checks' | 'reviewDecision'> | null): PullDetail | 'unavailable' {
+  if (detail === null) return 'unavailable'
+  return { checks: detail.checks ?? [], review: detail.reviewDecision ?? null }
+}
+
+/** The Issues section's one line: how many are open once the count is known, or that it could not be read. */
+export function issuesNote(load: SummaryLoad<{ counts: Record<string, number>; totalCount: number }>): string {
+  if (load.state === 'failed') return 'Could not read the open issues.'
+  if (load.state === 'loading') return 'Issues are listed on the Tasks page.'
+  const open = load.value.counts.open ?? load.value.totalCount
+  return open === 0 ? 'No open issues.' : `${open} open ${open === 1 ? 'issue' : 'issues'}, listed on the Tasks page.`
+}
+
+/** A worktree row's changes when they could not be read, so a failure never looks clean or blank. */
+export const changesUnavailable = 'Changes unavailable'
