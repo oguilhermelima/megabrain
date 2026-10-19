@@ -45,9 +45,9 @@ async function createFixture(): Promise<Fixture> {
   return { root, state, shared, repo, linked };
 }
 
-function processFor(routes: (command: string, args: readonly string[]) => Result<ProcessOutput>): ProcessAdapter {
+function processFor(routes: (command: string, args: readonly string[], options?: Parameters<ProcessAdapter["run"]>[2]) => Result<ProcessOutput>): ProcessAdapter {
   return {
-    run: async (command, args) => routes(command, args),
+    run: async (command, args, options) => routes(command, args, options),
     startDetached: async () => failed("not used"),
     invocationCount: () => 0,
   };
@@ -239,6 +239,31 @@ describe("executeWorktreeList", () => {
 
     expect(result.kind).toBe("failed");
     if (result.kind === "failed") expect(result.error).toContain("git worktree list failed");
+  });
+
+  test("bounds the fallback GitHub pull request query", async () => {
+    const fixture = await createFixture();
+    const repo = join(fixture.shared, "repo");
+    await mkdir(join(repo, ".git"), { recursive: true });
+    await writeFile(join(fixture.state, "megabrain.db"), "not a SQLite database");
+    const ghOptions: Array<Parameters<ProcessAdapter["run"]>[2]> = [];
+    const process = processFor((command, args, options) => {
+      if (command === "gh") {
+        ghOptions.push(options);
+        return output("[]");
+      }
+      if (command !== "git") return failed(`${command} unavailable`);
+      const gitArgs = args.slice(2);
+      if (gitArgs[0] === "worktree") return output(gitWorktrees(repo, fixture.linked));
+      if (gitArgs[0] === "config") return failed("no parent config", 1);
+      return failed(`unexpected git call: ${args.join(" ")}`);
+    });
+
+    const result = await executeWorktreeList(["--json"], { MEGABRAIN_STATE_DIR: fixture.state, PATH: "/opt/homebrew/bin" }, process);
+
+    expect(result.kind).toBe("ok");
+    expect(ghOptions).toHaveLength(1);
+    expect(ghOptions[0]?.timeoutMs).toBe(2_000);
   });
 
   test("keeps the shared-root scan when no repository is named", async () => {
