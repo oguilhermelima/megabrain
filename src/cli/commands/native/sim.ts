@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../../adapters/proc.js";
 import { buildXcodebuildArgs, candidatesForRuntimeFromSimctl, candidatesFromSimctl, DEFAULT_NATIVE_STABLE_WINDOW_MS, evaluateNativeHealth, nativeBuildStepFailure, nativeUsage, renderNativeUrl, runtimesFromSimctl, selectDevice, validateKind, validateMetroPort, validateStableWindow, validateTimeout, type NativeBuildStep, type NativeCandidate, type NativeHealth, type NativeKind, type NativePlatform, type NativeRuntime } from "../../../core/native.js";
-import { sleep, systemClock, type Clock } from "../../../core/clock.js";
+import { systemClock, type Clock } from "../../../core/clock.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { parseCrashReport, selectCrashReports, validateCrashLast, type CrashInput } from "../../../core/crash.js";
 import { nativeSessionFor, removeNativeSession, replaceNativeSession, type NativeSessionKey } from "../../../core/native-session.js";
@@ -149,14 +149,11 @@ export async function nativeRestart(args: readonly string[], environment: Enviro
 
 export const SIMULATOR_UDID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 
-async function waitUntilBooted(kind: NativeKind, udid: string, timeoutSeconds: number, processAdapter: ProcessAdapter, clock: Clock): Promise<Result<number>> {
+async function waitUntilBooted(_kind: NativeKind, udid: string, timeoutSeconds: number, processAdapter: ProcessAdapter, clock: Clock): Promise<Result<number>> {
   const startedAt = clock.now();
-  for (let attempt = 0; attempt < timeoutSeconds * 5; attempt += 1) {
-    const current = await simCandidates(processAdapter, kind); if (current.kind !== "ok") return current;
-    if (current.value.find((candidate) => candidate.udid === udid)?.state === "Booted") return ok(Math.max(0, clock.now() - startedAt));
-    await sleep(clock, 200);
-  }
-  return error(`timed out waiting for simulator ${udid} to become booted`);
+  const waited = await processAdapter.run("xcrun", ["simctl", "bootstatus", udid, "-b"], { timeoutMs: timeoutSeconds * 1000 });
+  if (waited.kind !== "ok") return error(`timed out waiting for simulator ${udid} to become booted`);
+  return ok(Math.max(0, clock.now() - startedAt));
 }
 
 /** A headless screenshot of a booted simulator (simctl io, no window), kept as one file per device. */
