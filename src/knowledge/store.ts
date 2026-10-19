@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { projectId } from "./project-id.js";
 import type { ChatRecord, Topic, TranscriptLine } from "./types.js";
@@ -26,6 +26,30 @@ function lines<T>(path: string): T[] {
   let content: string;
   try { content = readFileSync(path, "utf8"); } catch { return []; }
   return content.split("\n").filter(Boolean).flatMap((line) => { try { return [JSON.parse(line) as T]; } catch { return []; } });
+}
+
+const TRANSCRIPT_CACHE_LIMIT = 128;
+type TranscriptCacheEntry = { size: number; mtimeMs: number; ctimeMs: number; ino: number; lines: TranscriptLine[] };
+const transcriptCache = new Map<string, TranscriptCacheEntry>();
+
+function cachedTranscript(path: string): TranscriptLine[] {
+  let info: ReturnType<typeof statSync>;
+  try { info = statSync(path); } catch { transcriptCache.delete(path); return []; }
+  const cached = transcriptCache.get(path);
+  if (cached !== undefined && cached.size === info.size && cached.mtimeMs === info.mtimeMs && cached.ctimeMs === info.ctimeMs && cached.ino === info.ino) {
+    transcriptCache.delete(path);
+    transcriptCache.set(path, cached);
+    return [...cached.lines];
+  }
+  const parsed = lines<TranscriptLine>(path);
+  transcriptCache.delete(path);
+  transcriptCache.set(path, { size: info.size, mtimeMs: info.mtimeMs, ctimeMs: info.ctimeMs, ino: info.ino, lines: parsed });
+  while (transcriptCache.size > TRANSCRIPT_CACHE_LIMIT) {
+    const oldest = transcriptCache.keys().next().value;
+    if (oldest === undefined) break;
+    transcriptCache.delete(oldest);
+  }
+  return [...parsed];
 }
 
 export type KnowledgeProject = ReturnType<typeof openProject>;
@@ -72,7 +96,7 @@ export function openProject(stateDir: string, repo: string) {
       mkdirSync(join(dir, "chats"), { recursive: true, mode: 0o700 });
       writeAtomic(chatFile(chat.id), `${JSON.stringify(chat, null, 2)}\n`);
     },
-    transcript(id: string): TranscriptLine[] { return lines<TranscriptLine>(transcriptFile(id)); },
+    transcript(id: string): TranscriptLine[] { return cachedTranscript(transcriptFile(id)); },
     writeTranscript(id: string, transcript: readonly TranscriptLine[]): void {
       mkdirSync(join(dir, "chats", safe(id)), { recursive: true, mode: 0o700 });
       writeAtomic(transcriptFile(id), transcript.map((line) => JSON.stringify(line)).join("\n") + (transcript.length > 0 ? "\n" : ""));
