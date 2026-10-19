@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
-import { executeHookTurnEnd, type HookEnvironment } from "../../src/cli/commands/hook-turn-end.js";
+import { executeHookTurnEnd, tailTranscriptFromFile, type HookEnvironment } from "../../src/cli/commands/hook-turn-end.js";
 import { executeCheck } from "../../src/cli/commands/check.js";
 import { appendMessage, waiterIsActive } from "../../src/cli/commands/queue-write.js";
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
@@ -40,6 +40,18 @@ function environment(root: string, extra: Record<string, string | undefined> = {
   // No fake here starts an agent, so a spawned brief can only arrive through the paste fallback.
   return { MEGABRAIN_STATE_DIR: root, HOME: root, MEGABRAIN_ROOT: root, MEGABRAIN_PROMPT_ARGV_GRACE_MS: "0", ...extra };
 }
+
+test("transcript tail reads only the bounded suffix", async () => {
+  const content = Buffer.from(Array.from({ length: 50 }, (_, index) => `line-${index.toString().padStart(3, "0")}-${"x".repeat(200)}\n`).join(""));
+  const reads: Array<Readonly<{ position: number; length: number }>> = [];
+  const result = await tailTranscriptFromFile(content.length, async (position, length) => {
+    reads.push({ position, length });
+    return content.subarray(position, position + length);
+  });
+
+  expect(reads).toEqual([{ position: Math.max(0, content.length - 8_000), length: Math.min(content.length, 8_000) }]);
+  expect(result).toBe(content.subarray(Math.max(0, content.length - 8_000)).toString("utf8"));
+});
 
 async function writeMeta(root: string, dispatchId: string, meta: Record<string, unknown>): Promise<void> {
   const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
