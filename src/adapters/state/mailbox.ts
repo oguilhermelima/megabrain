@@ -303,8 +303,10 @@ export function putWaiter(handle: DatabaseHandle, waiter: WaiterRecord): Result<
   });
 }
 
-export function deleteWaiter(handle: DatabaseHandle, dispatchId: string): Result<boolean> {
-  return write(handle, ({ db }) => db.run("DELETE FROM waiters WHERE dispatch_id = ?", [dispatchId]).changes > 0);
+export function deleteWaiter(handle: DatabaseHandle, dispatchId: string, pid?: number, createdAt?: string): Result<boolean> {
+  return write(handle, ({ db }) => pid === undefined
+    ? db.run("DELETE FROM waiters WHERE dispatch_id = ?", [dispatchId]).changes > 0
+    : db.run("DELETE FROM waiters WHERE dispatch_id = ? AND pid = ? AND created_at = ?", [dispatchId, pid, createdAt ?? ""]).changes > 0);
 }
 
 export type NudgeRecord = Readonly<{ id: number; dispatchId: string; pointer: string; outcome: string; reason: string; createdAt: string }>;

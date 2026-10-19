@@ -71,7 +71,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "append-parent-reply"; dispatchId: string; message: Readonly<Record<string, unknown>>; options: Readonly<{ supersede: boolean; outbox?: Readonly<{ id: string; dispatchId?: string | null; targetKind: string; target: string; payload: unknown }> }> }
   | { operation: "cancel-queued-message"; dispatchId: string; itemId: string; reason: string; actor: string }
   | { operation: "put-waiter"; waiter: Readonly<{ dispatchId: string; pid: number; parentSessionId: string | null; parentHost: string | null; createdAt: string }> }
-  | { operation: "delete-waiter"; dispatchId: string }
+  | { operation: "delete-waiter"; dispatchId: string; pid?: number; createdAt?: string }
   | { operation: "claim-outbox"; id: string; holder: string; leaseSeconds: number }
   | { operation: "renew-outbox"; id: string; holder: string; leaseSeconds: number }
   | { operation: "acquire-lease"; key: string; holder: string; seconds: number }

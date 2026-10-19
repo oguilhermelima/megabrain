@@ -268,7 +268,7 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
     return result.value;
   }
   if (request.operation === "delete-waiter") {
-    const result = deleteMailWaiter(owner.handle, request.dispatchId);
+    const result = deleteMailWaiter(owner.handle, request.dispatchId, request.pid, request.createdAt);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }

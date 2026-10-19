@@ -24,6 +24,13 @@ export function processStartIdentity(pid: number): string | undefined {
   return result.status === 0 ? String(result.stdout).trim() || undefined : undefined;
 }
 
+export function processStartTime(pid: number): number | undefined {
+  const identity = processStartIdentity(pid);
+  if (identity === undefined) return undefined;
+  const timestamp = Date.parse(identity);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
 function ownerIsAlive(stateDir: string): boolean {
   if (!existsSync(stateOwnerSocket(stateDir))) return false;
   try {
