@@ -407,8 +407,13 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const reason = receiverGone ? "receiver-gone: receiver is no longer the terminal's foreground agent process" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
   await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && !["failed", "deferred"].includes(transport) ? "full-direction" : undefined });
   const finished = targetKind === "parent-pointer"
-    ? await callStateOwner(root, { operation: "finish-notification", id: outboxId, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", event: { dispatchId: dispatch, pointer, outcome, reason } })
-    : await callStateOwner(root, { operation: "finish-outbox", id: outboxId, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", detail: reason });
+    ? await callStateOwner(root, { operation: "finish-notification", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", event: { dispatchId: dispatch, pointer, outcome, reason } })
+    : await callStateOwner(root, { operation: "finish-outbox", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", detail: reason });
+  if (finished !== true) {
+    clearInterval(leaseHeartbeat);
+    console.error(`delivery outbox lease lost before finish: ${outboxId}`);
+    return ok("delivery lease lost\n");
+  }
   if (!nested) {
     const quietDeadline = Math.min(deadline, Date.now() + 1000);
     while (Date.now() < quietDeadline) {

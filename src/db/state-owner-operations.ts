@@ -298,12 +298,12 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
     return result.value;
   }
   if (request.operation === "finish-outbox") {
-    const result = finishMailOutbox(owner.handle, request.id, request.status, request.detail);
+    const result = finishMailOutbox(owner.handle, request.id, request.status, request.detail, request.holder);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }
   if (request.operation === "finish-notification") {
-    const result = finishMailNotification(owner.handle, request.id, request.status, request.event as Parameters<typeof finishMailNotification>[3]);
+    const result = finishMailNotification(owner.handle, request.id, request.holder, request.status, request.event as Parameters<typeof finishMailNotification>[4]);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }

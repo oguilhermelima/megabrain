@@ -386,8 +386,8 @@ export function renewOutboxLease(handle: DatabaseHandle, id: string, holder: str
   if (!Number.isFinite(leaseSeconds)) return failed("outbox lease seconds must be finite");
   const now = new Date();
   return write(handle, ({ db }) => db.run(
-    "UPDATE outbox SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ?",
-    [new Date(now.getTime() + leaseSeconds * 1000).toISOString(), now.toISOString(), id, holder],
+    "UPDATE outbox SET lease_until = ?, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ? AND lease_until > ?",
+    [new Date(now.getTime() + leaseSeconds * 1000).toISOString(), now.toISOString(), id, holder, now.toISOString()],
   ).changes > 0);
 }
 
@@ -476,39 +476,37 @@ export function requeueOutboxPeerFallback(handle: DatabaseHandle, id: string): R
   });
 }
 
-export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null): Result<void> {
+export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null, holder?: string): Result<boolean> {
+  if (holder === "") return failed("outbox holder must be non-empty");
   const now = new Date().toISOString();
-  const result = write(handle, ({ db }) => {
+  return write(handle, ({ db }) => {
     const current = outboxRow(db, id);
-    if (current === undefined) return { kind: "missing" as const };
-    if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
+    if (current === undefined) throw new Error(`outbox item not found: ${id}`);
+    if (holder === undefined || current.status !== "sending" || current.leaseHolder !== holder || current.leaseUntil === null || current.leaseUntil <= now) return false;
     const keepPeerState = peerState(current.detail) !== undefined && status === "sent";
-    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, keepPeerState ? current.detail : detail, now, id]);
-    return { kind: "finished" as const };
+    return db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ? AND lease_until > ?", [status, keepPeerState ? current.detail : detail, now, id, holder, now]).changes > 0;
   });
-  if (result.kind !== "ok") return result;
-  if (result.value.kind === "missing") return failed(`outbox item not found: ${id}`);
-  if (result.value.kind === "invalid_state") return failed(`outbox item ${id} cannot finish from status ${result.value.current}`);
-  return ok(undefined);
 }
 
-export function finishNotification(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", event: NudgeInput): Result<void> {
+export function finishNotification(handle: DatabaseHandle, id: string, holder: string, status: "sent" | "failed" | "suppressed", event: NudgeInput): Result<boolean> {
+  if (holder === "") return failed("outbox holder must be non-empty");
   const now = new Date().toISOString();
   const result = write(handle, ({ db }) => {
     const current = outboxRow(db, id);
     if (current === undefined) return { kind: "missing" as const };
-    if (current.status !== "sending") return { kind: "invalid_state" as const, current: current.status };
+    if (current.status !== "sending" || current.leaseHolder !== holder || current.leaseUntil === null || current.leaseUntil <= now) return { kind: "stale" as const };
     if (current.dispatchId !== event.dispatchId) throw new Error("notification event dispatch does not match outbox item");
     const keepPeerState = peerState(current.detail) !== undefined && status === "sent";
-    db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending'", [status, keepPeerState ? current.detail : event.reason, now, id]);
+    const updated = db.run("UPDATE outbox SET status = ?, detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'sending' AND lease_holder = ? AND lease_until > ?", [status, keepPeerState ? current.detail : event.reason, now, id, holder, now]);
+    if (updated.changes === 0) return { kind: "stale" as const };
     const appended = appendNudge(db, event.dispatchId, event.pointer, event.outcome, event.reason, event.createdAt ?? now);
     if (appended.kind !== "ok") throw new Error(appended.error);
     return { kind: "finished" as const };
   });
   if (result.kind !== "ok") return result;
+  if (result.value.kind === "stale") return ok(false);
   if (result.value.kind === "missing") return failed("outbox item not found: " + id);
-  if (result.value.kind === "invalid_state") return failed("outbox item " + id + " cannot finish from status " + result.value.current);
-  return ok(undefined);
+  return ok(true);
 }
 
 export type LeaseRecord = Readonly<{ key: string; holder: string; expiresAt: string }>;

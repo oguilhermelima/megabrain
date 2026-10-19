@@ -77,8 +77,8 @@ export type StateOwnerRequest = Readonly<
   | { operation: "acquire-lease"; key: string; holder: string; seconds: number }
   | { operation: "release-lease"; key: string; holder: string }
   | { operation: "transfer-lease"; key: string; from: string; to: string }
-  | { operation: "finish-outbox"; id: string; status: "sent" | "failed" | "suppressed"; detail?: string | null }
-  | { operation: "finish-notification"; id: string; status: "sent" | "failed" | "suppressed"; event: Readonly<Record<string, unknown>> }
+  | { operation: "finish-outbox"; id: string; holder?: string; status: "sent" | "failed" | "suppressed"; detail?: string | null }
+  | { operation: "finish-notification"; id: string; holder: string; status: "sent" | "failed" | "suppressed"; event: Readonly<Record<string, unknown>> }
   | { operation: "resume-outbox"; id: string }
   | { operation: "dispatch-patch"; dispatchId: string; patch: Readonly<Record<string, unknown>>; expectedState?: string | readonly string[] }
   | { operation: "dispatch-prune"; action: "archive" | "delete"; dispatchId: string; archivedAt?: string }
