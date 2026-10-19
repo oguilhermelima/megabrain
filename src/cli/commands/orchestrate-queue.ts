@@ -2,7 +2,7 @@ import { failed, ok, type Result } from "../../core/result.js";
 import { openDispatchStates } from "../../core/dispatch-states.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { ownsDispatch } from "../../core/context.js";
-import { listDeliveries, listDispatches, listMessages, listOutbox, listOutboxForDispatch, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, getQueuedDispatchId, listDeliveries, listDispatches, listMessages, listOutboxForDispatch, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { callStateOwner } from "../../db/state-owner.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { resolveCaller } from "./queue-write.js";
@@ -113,9 +113,9 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     }
     const db = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
     if (db.kind !== "ok") return db;
-    const all = listDispatches(db.value, { includeArchived: true });
-    if (all.kind !== "ok") return all;
-    const queuedSpawn = all.value.find((entry) => entry.dispatchId === itemId && entry.state === "queued");
+    const candidate = getDispatch(db.value, itemId);
+    if (candidate.kind !== "ok") return candidate;
+    const queuedSpawn = candidate.value?.state === "queued" ? candidate.value : undefined;
     if (queuedSpawn !== undefined) {
       const owner = resolveParentDispatchId(db.value, queuedSpawn.dispatchId, caller);
       if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
@@ -130,15 +130,10 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
       if (typeof cancelled === "object" && cancelled !== null && "updated" in cancelled && cancelled.updated === false) return failed(`queued spawn ${itemId} started before cancellation`);
       return ok(json ? `${JSON.stringify({ id: itemId, dispatch: owner.value, kind: "spawn", type: "spawn", createdAt: String(queuedSpawn.queuedAt ?? queuedSpawn.createdAt ?? ""), state: "cancelled", text: firstLine(queuedSpawn.admissionReason), reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
     }
-    const requested = all.value.flatMap((entry) => {
-      const deliveries = listDeliveries(db.value, entry.dispatchId);
-      const outbox = listOutbox(db.value);
-      if (deliveries.kind !== "ok" || outbox.kind !== "ok") return [];
-      const found = deliveries.value.some((item) => item.id === itemId) || outbox.value.some((item) => item.dispatchId === entry.dispatchId && item.id === itemId);
-      return found ? [entry.dispatchId] : [];
-    })[0];
-    if (requested === undefined) return failed(`queued item ${itemId} not found`);
-    const owner = resolveParentDispatchId(db.value, requested, caller);
+    const requested = getQueuedDispatchId(db.value, itemId);
+    if (requested.kind !== "ok") return requested;
+    if (requested.value === undefined) return failed(`queued item ${itemId} not found`);
+    const owner = resolveParentDispatchId(db.value, requested.value, caller);
     if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
     const original = listMessages(db.value, owner.value);
     if (original.kind !== "ok") return original;

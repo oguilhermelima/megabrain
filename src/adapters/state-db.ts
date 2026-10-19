@@ -46,6 +46,7 @@ export {
   listNudges,
   listOutbox,
   listOutboxForDispatch,
+  getQueuedDispatchId,
   nudgeCursor,
   putWaiter,
   releaseLease,

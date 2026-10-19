@@ -381,6 +381,13 @@ export function listOutboxForDispatch(handle: DatabaseHandle, dispatchId: string
   });
 }
 
+export function getQueuedDispatchId(handle: DatabaseHandle, itemId: string): Result<string | undefined> {
+  return read(handle, ({ db }) => {
+    const row = db.query<{ dispatch_id: string | null }>("SELECT dispatch_id FROM deliveries WHERE id = ? UNION ALL SELECT dispatch_id FROM outbox WHERE id = ? LIMIT 1").get(itemId, itemId);
+    return row?.dispatch_id ?? undefined;
+  });
+}
+
 export function listLeases(handle: DatabaseHandle): Result<QueryLeaseRecord[]> {
   return read(handle, ({ db }) => queryLeases(db));
 }
