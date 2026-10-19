@@ -378,6 +378,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
     db.run("CREATE INDEX IF NOT EXISTS state_dispatches_owner_active_created_id ON dispatches(owner_session_id, archived_at, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_created_id ON outbox(created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_dispatch_created_id ON outbox(dispatch_id, created_at, id)");
+    db.run("CREATE INDEX IF NOT EXISTS state_outbox_peer_state_created_id ON outbox(CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END, created_at, id) WHERE detail LIKE 'peer-verification:%'");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_dispatch_kind_status ON outbox(dispatch_id, target_kind, status)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_detail_nocase ON outbox(detail COLLATE NOCASE)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_dispatch_kind_detail_status ON outbox(dispatch_id, target_kind, detail COLLATE NOCASE, status)");

@@ -389,6 +389,33 @@ export function listOutboxPage(handle: DatabaseHandle, options: Readonly<{ dispa
   });
 }
 
+export type PendingPeerVerification = Readonly<{ id: string; dispatchId: string | null; status: string; record: PeerVerificationRecord }>;
+export type PendingPeerVerificationPage = Readonly<{ rows: readonly PendingPeerVerification[]; nextCursor?: OutboxCursor }>;
+
+export function listPendingOutboxPeerVerifications(handle: DatabaseHandle, options: Readonly<{ after?: OutboxCursor; limit?: number }> = {}): Result<PendingPeerVerificationPage> {
+  const requestedLimit = options.limit ?? 100;
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(1000, Math.trunc(requestedLimit))) : 100;
+  return read(handle, ({ db }) => {
+    const cursor = options.after;
+    const query = cursor === undefined
+      ? db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' ORDER BY created_at, id LIMIT ?")
+      : db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?");
+    const rows = cursor === undefined
+      ? query.all(`${peerStatePrefix}%`, limit + 1)
+      : query.all(`${peerStatePrefix}%`, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
+    const pageRows = rows.slice(0, limit);
+    const records = pageRows.flatMap((row) => {
+      const record = peerState(row.detail);
+      return record?.state === "pending" ? [{ id: row.id, dispatchId: row.dispatch_id, status: row.status, record }] : [];
+    });
+    const last = pageRows.at(-1);
+    return {
+      rows: records,
+      ...(rows.length > limit && last !== undefined ? { nextCursor: { createdAt: last.created_at, id: last.id } } : {}),
+    };
+  });
+}
+
 export function listOutboxForDispatch(handle: DatabaseHandle, dispatchId: string): Result<OutboxDetails[]> {
   return read(handle, ({ db }) => {
     const records: OutboxDetails[] = [];

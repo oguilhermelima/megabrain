@@ -5,7 +5,7 @@ import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js";
-import { getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, listOutboxPeerVerifications, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, listPendingOutboxPeerVerifications, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
@@ -344,14 +344,18 @@ async function settleImplicitChildReads(root: string, database: Parameters<typeo
 export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
   try { await callStateOwner(root, { operation: "settle-closed-parent-backlog" }); }
   catch { return { open: true, findings: 0 }; }
-  const peerVerifications = listOutboxPeerVerifications(database);
-  const pendingPeerVerifications = peerVerifications.kind === "ok" && peerVerifications.value.some((item) => item.record.state === "pending");
-  if (peerVerifications.kind === "ok") {
-    for (const item of peerVerifications.value) {
-      if (item.record.state !== "pending" || now - item.record.acceptedAt < 5 * 60 * 1000) continue;
+  let pendingPeerVerifications = false;
+  let verificationCursor: { createdAt: string; id: string } | undefined;
+  do {
+    const page = listPendingOutboxPeerVerifications(database, { after: verificationCursor, limit: 100 });
+    if (page.kind !== "ok") break;
+    pendingPeerVerifications ||= page.value.rows.length > 0;
+    for (const item of page.value.rows) {
+      if (now - item.record.acceptedAt < 5 * 60 * 1000) continue;
       await callStateOwner(root, { operation: "resume-verification", id: item.id }).catch(() => undefined);
     }
-  }
+    verificationCursor = page.value.nextCursor;
+  } while (verificationCursor !== undefined);
   const listed = listDispatches(database);
   if (listed.kind !== "ok") return { open: false, findings: 0 };
   await sweepGrokLeaders(root, ownedGrokLeaders(listed.value), process);
@@ -424,8 +428,8 @@ export async function startSupervisorWorker(root: string, environment: Environme
   if (database.kind !== "ok") return "failed";
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return "failed";
-  const peerVerifications = listOutboxPeerVerifications(database.value);
-  const hasPendingPeerVerification = peerVerifications.kind === "ok" && peerVerifications.value.some((item) => item.record.state === "pending");
+  const peerVerifications = listPendingOutboxPeerVerifications(database.value, { limit: 1 });
+  const hasPendingPeerVerification = peerVerifications.kind === "ok" && peerVerifications.value.rows.length > 0;
   if (!hasOpenDispatches(listed.value.map((record) => String(record.state))) && !hasPendingPeerVerification) return "no-open-dispatches";
   const holder = `${globalThis.process.pid}-${randomUUID()}`;
   const lease = await callStateOwner(root, { operation: "acquire-lease", key: LEASE_KEY, holder, seconds: leaseSeconds(intervalSeconds(environment)) }).catch(() => false) as boolean;
