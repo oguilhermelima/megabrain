@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentCommand } from "../../src/adapters/agent-command.js";
@@ -55,6 +56,21 @@ function agyHistory(home: string, rows: readonly object[]): void {
 }
 
 describe("session history", () => {
+  test("shares the global Antigravity history read across workspace queries", async () => {
+    const { home, stateDir } = machine();
+    agyHistory(home, [
+      { display: "first", timestamp: Date.parse("2026-10-04T07:01:00Z"), workspace: CWD, conversationId: "agy-1" },
+      { display: "other", timestamp: Date.parse("2026-10-04T07:02:00Z"), workspace: OTHER, conversationId: "agy-2" },
+    ]);
+    const path = join(home, ".gemini", "antigravity-cli", "history.jsonl");
+    const spy = spyOn(fsPromises, "readFile");
+    try {
+      expect((await sessionHistory(CWD, "agy", { home, stateDir })).map((session) => session.id)).toEqual(["agy-1"]);
+      expect((await sessionHistory(OTHER, "agy", { home, stateDir })).map((session) => session.id)).toEqual(["agy-2"]);
+      expect(spy.mock.calls.filter(([file]) => file === path)).toHaveLength(1);
+    } finally { spy.mockRestore(); }
+  });
+
   test("lists every agent's past sessions for the folder, newest first, and no other folder's", async () => {
     const { home, stateDir } = machine();
     claudeLog(home, CWD, "claude-old", "first claude prompt", "2026-10-01T10:05:00Z");
