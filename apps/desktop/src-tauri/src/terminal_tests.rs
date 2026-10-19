@@ -81,20 +81,27 @@ fn chat_tmux_sessions_keep_the_exited_pane_and_its_output() {
     assert!(created.success());
 
     let deadline = Instant::now() + Duration::from_secs(2);
-    let status = loop {
+    let pane = loop {
         let listed = Command::new("tmux")
-            .args(["-L", &server, "list-panes", "-t", &format!("={session}"), "-F", "#{pane_dead}\t#{pane_dead_status}"])
+            .args(["-L", &server, "list-panes", "-t", session, "-F", "#{pane_id}"])
             .output()
             .unwrap();
         assert!(listed.status.success(), "the chat pane should survive its command: {}", String::from_utf8_lossy(&listed.stderr));
         let value = String::from_utf8_lossy(&listed.stdout).trim().to_string();
-        if value.starts_with("1\t") { break value; }
-        assert!(Instant::now() < deadline, "the pane did not exit: {value:?}");
+        assert!(!value.is_empty(), "tmux returned no pane id");
+        let status = Command::new("tmux")
+            .args(["-L", &server, "list-panes", "-t", &value, "-F", "#{pane_dead}\t#{pane_dead_status}"])
+            .output()
+            .unwrap();
+        assert!(status.status.success());
+        let status = String::from_utf8_lossy(&status.stdout).trim().to_string();
+        if status.starts_with("1\t") { break (value, status); }
+        assert!(Instant::now() < deadline, "the pane did not exit: {status:?}");
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert_eq!(status, "1\t7");
+    assert_eq!(pane.1, "1\t7");
     let captured = Command::new("tmux")
-        .args(["-L", &server, "capture-pane", "-p", "-t", &format!("={session}")])
+        .args(["-L", &server, "capture-pane", "-p", "-t", &pane.0])
         .output()
         .unwrap();
     assert!(captured.status.success());
