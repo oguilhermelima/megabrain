@@ -1,4 +1,4 @@
-import type { MessagePart } from '@/api/schema'
+import type { ChatQueueItem, MessagePart } from '@/api/schema'
 
 // Pure logic for a native chat's queue above the composer: what each queued message shows and where
 // a keyboard reorder moves it.
@@ -9,6 +9,26 @@ export function queueSummary(parts: readonly MessagePart[]): { line: string; ima
   const line = text.split('\n').map((value) => value.trim()).find((value) => value !== '') ?? ''
   const images = parts.flatMap((part) => (part.type === 'image' ? [part.path.split('/').at(-1) ?? part.path] : []))
   return { line, images }
+}
+
+/** One message in the queue block: its place in the send order, whether it goes out next, its whole text and its images. */
+export interface QueueRow {
+  id: string
+  position: number
+  next: boolean
+  text: string
+  images: string[]
+}
+
+/** The queue block's rows in send order; the first is the next to go out. */
+export function queueRows(items: readonly ChatQueueItem[]): QueueRow[] {
+  return items.map((item, index) => ({
+    id: item.id,
+    position: index + 1,
+    next: index === 0,
+    text: item.parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n').trim(),
+    images: queueSummary(item.parts).images,
+  }))
 }
 
 /** The index Alt+ArrowUp or Alt+ArrowDown moves a message to; null at either end or for a message no longer queued. */

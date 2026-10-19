@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { ChatQueueItem } from '@/api/schema'
 import { idleWalk, moveTarget, queueRows, queueSummary, reconcileWalk, walkKey, type WalkContext } from '@/chat/queue-walk'
 
 // The composer's walk through a native chat's queue: ArrowUp in an empty composer takes the last
@@ -84,7 +85,7 @@ describe('queueSummary', () => {
 })
 
 describe('queueRows', () => {
-  const item = (id: string, parts: Parameters<typeof queueSummary>[0]) => ({ id, parts, createdAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z' })
+  const item = (id: string, parts: ChatQueueItem['parts']): ChatQueueItem => ({ id, parts, createdAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z' })
 
   test('keeps send order, marks the first as next and numbers the rest', () => {
     const rows = queueRows([item('a', [{ type: 'text', text: 'one' }]), item('b', [{ type: 'text', text: 'two' }]), item('c', [{ type: 'text', text: 'three' }])])

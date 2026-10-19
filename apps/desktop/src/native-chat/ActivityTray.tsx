@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { ToolIcon } from '@/chat/ToolIcon'
 import { useClock } from '@/lib/clock'
 import { formatElapsed } from '@/native-chat/chat-model'
@@ -6,7 +6,7 @@ import { entryElapsed, trayPills, type TrayEntry, type TrayKind, type TrayPill }
 
 // Right above a native chat's composer: the work running outside the transcript, one collapsed pill
 // per kind ("1 shell command — 1m 20s"). Opened, a pill lists each item with its time and state and
-// the one action the app has for it; the queue's pill opens the queue strip with all its controls.
+// the one action the app has for it. The queue is not here: it has its own open block by the composer.
 
 /** What a tray item offers: showing where it started, opening its chat. */
 export interface TrayAction {
@@ -16,22 +16,21 @@ export interface TrayAction {
 
 const kindIcon: Record<TrayKind, string> = { shell: 'Bash', monitor: 'Monitor', task: '', subagent: 'Task', lane: 'Task', queue: '' }
 
-export function ActivityTray({ entries, action, queue }: { entries: readonly TrayEntry[]; action: (entry: TrayEntry) => TrayAction | null; queue?: { body: ReactNode; open: boolean } }) {
+export function ActivityTray({ entries, action}: { entries: readonly TrayEntry[]; action: (entry: TrayEntry) => TrayAction | null }) {
   const now = useClock(1000)
   const pills = trayPills(entries, now)
   if (pills.length === 0) return null
   return (
     <div className="mb-1.5 space-y-1">
       {pills.map((pill) => (
-        <TrayPillRow key={pill.kind} pill={pill} entries={entries.filter((entry) => entry.kind === pill.kind)} now={now} action={action} {...(pill.kind === 'queue' && queue !== undefined ? { body: queue.body, forceOpen: queue.open } : {})} />
+        <TrayPillRow key={pill.kind} pill={pill} entries={entries.filter((entry) => entry.kind === pill.kind)} now={now} action={action} />
       ))}
     </div>
   )
 }
 
-function TrayPillRow({ pill, entries, now, action, body, forceOpen = false }: { pill: TrayPill; entries: readonly TrayEntry[]; now: number; action: (entry: TrayEntry) => TrayAction | null; body?: ReactNode; forceOpen?: boolean }) {
-  const [chosen, setChosen] = useState(false)
-  const open = chosen || forceOpen
+function TrayPillRow({ pill, entries, now, action }: { pill: TrayPill; entries: readonly TrayEntry[]; now: number; action: (entry: TrayEntry) => TrayAction | null }) {
+  const [open, setOpen] = useState(false)
   return (
     <div className="rounded-[12px] bg-white/[0.04]">
       <button
@@ -39,7 +38,7 @@ function TrayPillRow({ pill, entries, now, action, body, forceOpen = false }: { 
         aria-expanded={open}
         // The composer keeps the focus.
         onPointerDown={(event) => event.preventDefault()}
-        onClick={() => setChosen((value) => !value)}
+        onClick={() => setOpen((value) => !value)}
         className="flex h-7 w-full items-center gap-1.5 rounded-[12px] px-2.5 text-left text-chat-small font-medium text-ink-300 transition-colors duration-100 hover:bg-white/[0.06] hover:text-ink-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/25 motion-reduce:transition-none"
       >
         <span aria-hidden="true" className="contents text-ink-400">
@@ -53,13 +52,11 @@ function TrayPillRow({ pill, entries, now, action, body, forceOpen = false }: { 
       </button>
       {open && (
         <div className="px-1 pb-1">
-          {body ?? (
-            <ul>
-              {entries.map((entry) => (
-                <TrayEntryRow key={entry.id} entry={entry} now={now} action={action(entry)} />
-              ))}
-            </ul>
-          )}
+          <ul>
+            {entries.map((entry) => (
+              <TrayEntryRow key={entry.id} entry={entry} now={now} action={action(entry)} />
+            ))}
+          </ul>
         </div>
       )}
     </div>

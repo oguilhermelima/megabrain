@@ -7,9 +7,9 @@ import type { Banner } from '@/chat/composer-look'
 import { NoticeBanner, QueuePills } from '@/chat/ComposerSupport'
 import { QueueStrip, type QueueControls } from '@/chat/QueueStrip'
 import { ActivityTray, type TrayAction } from '@/native-chat/ActivityTray'
-import { trayEntries, type TrayEntry } from '@/native-chat/activity-tray'
+import type { TrayEntry } from '@/native-chat/activity-tray'
 
-/** A native chat's work outside its transcript, shown as the tray with the queue folded in. */
+/** A native chat's work outside its transcript, shown as the tray; the queue has its own block below it. */
 export interface ComposerActivity {
   entries: TrayEntry[]
   action: (entry: TrayEntry) => TrayAction | null
@@ -67,21 +67,9 @@ export function ComposerSurface({ dispatchId, dispatchQueue, sendable, above, ac
           {/* What waits to go out and the chat's chips; gone, with its hairline, when none of them shows. */}
           <div className="border-b border-white/[0.06] px-3 pt-2.5 pb-1 empty:hidden">
             {dispatchId !== undefined && <QueuePills state={dispatchQueue} empty={!sendable} />}
-            {activity === undefined ? (
-              <>
-                {above}
-                {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => onEdit(item.id)} />}
-              </>
-            ) : (
-              <>
-                <ActivityTray
-                  entries={queue === undefined ? activity.entries : activity.entries.concat(trayEntries({ tasks: [], events: [], lanes: [], queue: queue.items }))}
-                  action={activity.action}
-                  {...(queue === undefined ? {} : { queue: { body: <QueueStrip queue={queue} editing={editing} onEdit={(item) => onEdit(item.id)} />, open: editing !== null } })}
-                />
-                {above}
-              </>
-            )}
+            {activity !== undefined && <ActivityTray entries={activity.entries} action={activity.action} />}
+            {above}
+            {queue !== undefined && <QueueStrip queue={queue} editing={editing} onEdit={(item) => onEdit(item.id)} />}
           </div>
           {banner !== null ? <NoticeBanner banner={banner} onRetry={send} onDismiss={onDismiss} /> : edge}
           <div ref={frame} className="relative min-w-0 px-4 pt-3">
