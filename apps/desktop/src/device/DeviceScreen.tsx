@@ -8,7 +8,7 @@ import type { WebDevice, WebInputAction } from '@/api/schema'
 import { PanelIcon } from '@/advanced/WikiShell'
 import { glyphs } from '@/device/glyphs'
 import { elapsedLabel, failureDetail, preparingNote, type InputView } from '@/device/input-session'
-import { deviceFrame, fitZoom, frameScale, gestureOf, keyAction, pausedNote, pointSize, pointsPerPixel, screenPoint, zoomedSize, zoomIn, zoomLabel, zoomOut, type Point, type Zoom } from '@/device/screen-model'
+import { deviceFrame, fitZoom, frameScale, gatherWheel, gestureOf, keyAction, pausedNote, pointSize, pointsPerPixel, screenPoint, wheelScroll, zoomedSize, zoomIn, zoomLabel, zoomOut, type Point, type WheelGather, type Zoom } from '@/device/screen-model'
 import { sidePanelButton } from '@/lib/side-panel'
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -72,10 +72,18 @@ export function DeviceScreen({ device, browser, booted, paused, session, keyboar
   const image = useRef<HTMLImageElement>(null)
   const surface = useRef<HTMLDivElement>(null)
   const down = useRef<{ x: number; y: number; at: number; id: number } | null>(null)
-  const wheel = useRef<{ x: number; y: number; dx: number; dy: number; timer: ReturnType<typeof setTimeout> } | null>(null)
+  const wheel = useRef<{ gather: WheelGather; timer: ReturnType<typeof setTimeout> } | null>(null)
   // One action at a time, in the order the person made them.
   const queue = useRef<Promise<unknown>>(Promise.resolve())
   useEffect(() => setActionError(null), [udid])
+  // A scroll still gathering when another device is chosen belongs to the one left: it is dropped.
+  useEffect(
+    () => () => {
+      if (wheel.current !== null) clearTimeout(wheel.current.timer)
+      wheel.current = null
+    },
+    [udid],
+  )
 
   // While a run drives the device its latest screenshot beats the last live frame, which no longer moves.
   const current = simulator.fallback ? fallback : live
@@ -136,6 +144,11 @@ export function DeviceScreen({ device, browser, booted, paused, session, keyboar
       (error: unknown) => setActionError(message(error)),
     )
   }
+  // The wheel's delayed send reads the device shown and the input state at the moment it fires.
+  const shownTarget = useRef(udid)
+  shownTarget.current = udid
+  const sendLatest = useRef(send)
+  sendLatest.current = send
   const pointAt = (clientX: number, clientY: number, clamp = false): Point | null => {
     const element = image.current
     if (element === null || frame === null) return null
@@ -184,12 +197,14 @@ export function DeviceScreen({ device, browser, booted, paused, session, keyboar
     const ratio = pointsPerPixel(element.getBoundingClientRect(), frame, frame.scale)
     const pending = wheel.current
     if (pending !== null) clearTimeout(pending.timer)
-    const next = { x: pending?.x ?? at.x, y: pending?.y ?? at.y, dx: (pending?.dx ?? 0) + event.deltaX * ratio, dy: (pending?.dy ?? 0) + event.deltaY * ratio }
+    const gather = gatherWheel(pending?.gather ?? null, { target: udid ?? '', x: at.x, y: at.y, dx: event.deltaX * ratio, dy: event.deltaY * ratio })
     wheel.current = {
-      ...next,
+      gather,
       timer: setTimeout(() => {
         wheel.current = null
-        send((target) => api.inputScroll(target, next.x, next.y, Math.round(next.dx), Math.round(next.dy)), { type: 'scroll', x: next.x, y: next.y, dx: Math.round(next.dx), dy: Math.round(next.dy) })
+        const scroll = wheelScroll(gather, shownTarget.current)
+        if (scroll === null) return
+        sendLatest.current((target) => api.inputScroll(target, scroll.x, scroll.y, scroll.dx, scroll.dy), { type: 'scroll', x: scroll.x, y: scroll.y, dx: scroll.dx, dy: scroll.dy })
       }, 80),
     }
   }
