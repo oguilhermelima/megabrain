@@ -11,6 +11,8 @@ import { read, write } from "./shared.js";
 
 export type OutboxInput = Readonly<{ id: string; dispatchId?: string | null; targetKind: string; target: string; payload: unknown }>;
 export type OutboxDetails = OutboxRecord & Readonly<{ leaseHolder: string | null; detail: string | null }>;
+export type OutboxCursor = Readonly<{ createdAt: string; id: string }>;
+export type OutboxDetailsPage = Readonly<{ rows: OutboxDetails[]; nextCursor?: OutboxCursor }>;
 export type DeliveryInput = Readonly<Record<string, unknown>>;
 export type NudgeInput = Readonly<{ dispatchId: string; pointer: string; outcome: string; reason: string; createdAt?: string }>;
 export type AppendMessageEffects = Readonly<{ delivery?: DeliveryInput; outbox?: OutboxInput }>;
@@ -362,6 +364,28 @@ export function listOutbox(handle: DatabaseHandle): Result<OutboxDetails[]> {
       if (rows.length < 100 || last === undefined) return records;
       cursor = { createdAt: last.created_at, id: last.id };
     }
+  });
+}
+
+export function listOutboxPage(handle: DatabaseHandle, options: Readonly<{ dispatchId?: string; after?: OutboxCursor; limit?: number }> = {}): Result<OutboxDetailsPage> {
+  const requestedLimit = options.limit ?? 100;
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(1000, Math.trunc(requestedLimit))) : 100;
+  return read(handle, ({ db }) => {
+    const cursor = options.after;
+    const rows = options.dispatchId === undefined
+      ? cursor === undefined
+        ? db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox ORDER BY created_at, id LIMIT ?").all(limit + 1)
+        : db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE created_at > ? OR (created_at = ? AND id > ?) ORDER BY created_at, id LIMIT ?").all(cursor.createdAt, cursor.createdAt, cursor.id, limit + 1)
+      : cursor === undefined
+        ? db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE dispatch_id = ? ORDER BY created_at, id LIMIT ?").all(options.dispatchId, limit + 1)
+        : db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE dispatch_id = ? AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?").all(options.dispatchId, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
+    const pageRows = rows.slice(0, limit);
+    const records = pageRows.map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail }));
+    const last = pageRows.at(-1);
+    return {
+      rows: records,
+      ...(rows.length > limit && last !== undefined ? { nextCursor: { createdAt: last.created_at, id: last.id } } : {}),
+    };
   });
 }
 
