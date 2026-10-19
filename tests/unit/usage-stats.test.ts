@@ -142,6 +142,13 @@ describe("usage stats across providers", () => {
     expect(claude.providers.map((entry) => entry.provider)).toEqual(["claude"]);
   });
 
+  test("a provider filter inventories only that provider's logs", async () => {
+    const { environment } = sandbox();
+    const report = await usageStats(environment, { days: 2, provider: "codex", now, timeZone });
+    expect(report.scan.files).toBe(1);
+    expect(report.scan.parsed).toBe(1);
+  });
+
   test("no logs at all is an empty report, not an error", async () => {
     const stateDir = temporary("megabrain-usage-state-");
     const report = await usageStats({ HOME: temporary("megabrain-usage-empty-"), MEGABRAIN_STATE_DIR: stateDir }, { days: 30, provider: null, now, timeZone });
