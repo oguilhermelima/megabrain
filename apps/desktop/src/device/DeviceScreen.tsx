@@ -1,157 +1,17 @@
-import { convertFileSrc } from '@tauri-apps/api/core'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MutableRefObject, type PointerEvent, type WheelEvent } from 'react'
 import { api } from '@/api'
 import type { OpenDevice } from '@/device/device-model'
-import { FloatingRemote } from '@/device/FloatingRemote'
+import { useFrameStream } from '@/device/frame-stream-standin'
+import { useSimulatorStream } from '@/device/input-hooks'
+import { viewportLabel, webDeviceName } from '@/device/web-device-model'
+import { webDevices, type WebDevice, type WebInputAction } from '@/device/web-device-standin'
 import { PanelIcon } from '@/advanced/WikiShell'
-import { createInputSessions, elapsedLabel, failureDetail, preparingNote, type InputView } from '@/device/input-session'
-import { deviceFrame, fitZoom, frameDelay, gestureOf, keyAction, pausedNote, phoneButtons, pointSize, pointsPerPixel, screenPoint, zoomedSize, zoomIn, zoomLabel, zoomOut, type Point, type Zoom } from '@/device/screen-model'
-import { onVisibility, windowShows } from '@/lib/app-events'
+import { glyphs } from '@/device/glyphs'
+import { elapsedLabel, failureDetail, preparingNote, type InputView } from '@/device/input-session'
+import { deviceFrame, fitZoom, frameScale, gestureOf, keyAction, pausedNote, pointSize, pointsPerPixel, screenPoint, zoomedSize, zoomIn, zoomLabel, zoomOut, type Point, type Zoom } from '@/device/screen-model'
 import { sidePanelButton } from '@/lib/side-panel'
-import { native } from '@/lib/surface'
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
-
-interface Frame {
-  src: string
-  width: number
-  height: number
-  scale: number
-}
-
-/** A frame's image as an img src: a data URL as is, a file through the asset protocol, else base64 PNG. */
-function frameSrc(image: string, version: number): string {
-  if (image.startsWith('data:')) return image
-  if (image.startsWith('/')) return native ? `${convertFileSrc(image)}?v=${version}` : image
-  return `data:image/png;base64,${image}`
-}
-
-/** The window's focus, with when it was lost, so a short glance elsewhere keeps the screen live. */
-function useWindowFocus() {
-  const [focus, setFocus] = useState(() => ({ focused: typeof document === 'undefined' || document.hasFocus(), blurredAt: null as number | null }))
-  useEffect(() => {
-    const onFocus = () => setFocus({ focused: true, blurredAt: null })
-    const onBlur = () => setFocus({ focused: false, blurredAt: Date.now() })
-    window.addEventListener('focus', onFocus)
-    window.addEventListener('blur', onBlur)
-    return () => {
-      window.removeEventListener('focus', onFocus)
-      window.removeEventListener('blur', onBlur)
-    }
-  }, [])
-  return focus
-}
-
-// The last frame each device showed, so one shown again (or still preparing) starts from it.
-const lastFrames = new Map<string, Frame>()
-
-/**
- * The simulator's live screen: a frame about every 250 ms while the tab shows, the window has
- * focus (see screen-model's frameDelay) and the input session is ready, each one swapped in only
- * once it decoded so nothing flickers. `refresh` asks for one now. A failed frame pauses the loop
- * until Retry.
- */
-function useLiveFrames(udid: string | null, booted: boolean) {
-  const [frame, setFrame] = useState<Frame | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [visible, setVisible] = useState(windowShows)
-  const { focused, blurredAt } = useWindowFocus()
-  const [attempt, setAttempt] = useState(0)
-  const now = useRef<() => void>(() => {})
-  useEffect(() => onVisibility(() => setVisible(windowShows())), [])
-
-  useEffect(() => {
-    setFrame(udid === null ? null : (lastFrames.get(udid) ?? null))
-    setError(null)
-  }, [udid])
-
-  useEffect(() => {
-    if (udid === null) return
-    let stopped = false
-    let running = false
-    let pending = false
-    let version = 0
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const due = () => frameDelay({ visible, focused, blurredAt, now: Date.now(), booted })
-    const schedule = () => {
-      clearTimeout(timer)
-      const delay = due()
-      if (delay !== null) timer = setTimeout(read, delay)
-    }
-    const read = () => {
-      if (stopped) return
-      if (running) {
-        pending = true
-        return
-      }
-      running = true
-      clearTimeout(timer)
-      api
-        .inputFrame(udid)
-        .then(async (next) => {
-          const src = frameSrc(next.image, (version += 1))
-          const image = new Image()
-          image.src = src
-          await image.decode()
-          if (stopped) return
-          const shown = { src, width: next.width || image.naturalWidth, height: next.height || image.naturalHeight, scale: next.scale }
-          lastFrames.set(udid, shown)
-          setFrame(shown)
-          setError(null)
-          running = false
-          if (pending) {
-            pending = false
-            read()
-          } else schedule()
-        })
-        .catch((failure: unknown) => {
-          running = false
-          if (!stopped) setError(message(failure))
-        })
-    }
-    now.current = () => {
-      if (booted && visible) read()
-    }
-    if (due() !== null) read()
-    else if (booted && visible && !focused) schedule()
-    return () => {
-      stopped = true
-      clearTimeout(timer)
-      now.current = () => {}
-    }
-  }, [udid, booted, visible, focused, blurredAt, attempt])
-
-  return { frame, error, refresh: useCallback(() => now.current(), []), retry: () => setAttempt((count) => count + 1) }
-}
-
-const inputSessions = createInputSessions({
-  start: (udid) => api.inputStart(udid),
-  status: (udid) => api.inputStatus(udid),
-  stop: (udid) => api.inputStop(udid),
-  now: Date.now,
-  later: (run, ms) => {
-    const timer = setTimeout(run, ms)
-    return () => clearTimeout(timer)
-  },
-})
-
-/** The shown device's input session (see input-session), watched while it is booted and free to take input. */
-function useInputSession(udid: string | null, wanted: boolean) {
-  const [view, setView] = useState<InputView>({ kind: 'idle' })
-  useEffect(() => {
-    if (udid === null || !wanted) {
-      setView({ kind: 'idle' })
-      return
-    }
-    return inputSessions.watch(udid, setView)
-  }, [udid, wanted])
-  return {
-    view,
-    retry: () => {
-      if (udid !== null) inputSessions.retry(udid)
-    },
-  }
-}
 
 type Ripple = { id: number; x: number; y: number }
 
@@ -185,18 +45,23 @@ function useBoxSize() {
 }
 
 /**
- * The middle of the Device tab: the device centred and scaled to fit, the hidden panels' toggles in
- * its top corners. It shows the chosen step's screenshot when one is pinned, else the live screen,
+ * The middle of the Device tab: the selected device alone, centred and as big as fits (an Apple TV
+ * 16:9, a phone or tablet in its handset frame, a browser as a viewport of its CSS size), the hidden
+ * panels' toggles in its top corners. It shows the chosen step's screenshot when one is pinned, else the live screen,
  * else `still` (the run's latest screenshot). The live screen takes input: a tap or a drag (a swipe
  * with the drag's duration), the wheel, and keys once it has focus (Esc or a click outside lets go),
- * with the hardware buttons under it. Input waits while `paused` (a Maestro run on this device).
+ * the hardware controls being the Devices panel's (DeviceControls). Input waits while `paused` (a
+ * Maestro run on this device).
  */
-export function DeviceScreen({ device, booted, paused, pinned, still, note, showDevices, showFlows }: { device: OpenDevice | null; booted: boolean; paused: boolean; pinned: { src: string; step: number } | null; still: { src: string; step: number | null } | null; note: string | null; showDevices: (() => void) | null; showFlows: (() => void) | null }) {
-  const udid = device?.udid ?? null
-  // A Maestro run drives the device itself, so the session waits for it to end.
-  const session = useInputSession(udid, booted && !paused)
-  const ready = booted && session.view.kind === 'ready'
-  const live = useLiveFrames(udid, ready)
+export function DeviceScreen({ device, browser, booted, paused, session, keyboard, pinned, still, note, showDevices, showFlows }: { device: OpenDevice | null; browser: WebDevice | null; booted: boolean; paused: boolean; session: { view: InputView; retry: () => void }; keyboard: MutableRefObject<(() => void) | null>; pinned: { src: string; step: number } | null; still: { src: string; step: number | null } | null; note: string | null; showDevices: (() => void) | null; showFlows: (() => void) | null }) {
+  const udid = browser?.id ?? device?.udid ?? null
+  // A browser is up while it is listed; a simulator once its input session is ready.
+  const ready = browser !== null || (booted && session.view.kind === 'ready')
+  const simulator = useSimulatorStream(browser === null ? (device?.udid ?? null) : null, ready)
+  const streamUrl = browser?.streamUrl ?? simulator.stream?.streamUrl ?? null
+  // While a run drives the device or a step is pinned, its screenshots are shown and the stream rests.
+  const resting = pinned !== null || (paused && still !== null)
+  const live = useFrameStream(streamUrl, { paused: !ready || resting })
   const [aspect, setAspect] = useState(1206 / 2622)
   const [zoom, setZoom] = useDeviceZoom(udid)
   const [full, setFull] = useState(false)
@@ -212,16 +77,15 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
   useEffect(() => setActionError(null), [udid])
 
   // While a run drives the device its latest screenshot beats the last live frame, which no longer moves.
-  const liveFrame = pinned !== null || (paused && still !== null) ? null : live.frame
-  const shown = pinned ?? (liveFrame === null ? still : { src: liveFrame.src, step: null })
+  const scale = frameScale(live.width, browser, simulator.stream?.scale ?? 1)
+  const frame = resting || live.src === null || live.width <= 0 || live.height <= 0 ? null : { src: live.src, width: live.width, height: live.height, scale }
+  const shown = pinned ?? (frame === null ? still : { src: frame.src, step: null })
   const step = shown?.step ?? null
-  const frameAspect = liveFrame === null ? null : liveFrame.width / liveFrame.height
-  const { shape, ratio } = deviceFrame(device?.kind ?? null, frameAspect ?? aspect)
+  const { shape, ratio } = deviceFrame(browser !== null ? 'web' : (device?.kind ?? null), browser !== null ? browser.width / browser.height : frame === null ? aspect : frame.width / frame.height)
   const look = frameLooks[shape]
-  const frame = liveFrame
   const chrome = look.chrome
-  // Zoom needs the device's points, known once a live frame came; until then the screen fits.
-  const points = live.frame === null ? null : pointSize(live.frame)
+  // Zoom needs the device's points (a browser's CSS px), known once a frame came; until then the screen fits.
+  const points = browser !== null ? { width: browser.width, height: browser.height } : frame === null ? null : pointSize(frame)
   const fit = points === null ? 0 : fitZoom({ width: stageSize.width - chrome, height: stageSize.height - chrome }, points)
   const zoomed = points !== null && zoom !== 'fit' ? zoomedSize(points, zoom) : null
   const takesInput = ready && !paused && frame !== null && udid !== null
@@ -229,17 +93,25 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
   useEffect(() => {
     if (!takesInput && surface.current !== null && surface.current === document.activeElement) surface.current.blur()
   }, [takesInput])
+  // The controls' keyboard button hands the keys to the screen.
+  useEffect(() => {
+    keyboard.current = takesInput ? () => surface.current?.focus({ preventScroll: true }) : null
+    return () => {
+      keyboard.current = null
+    }
+  }, [keyboard, takesInput])
   // Before the session is ready the screen itself says why; after, a frame or an action that fails says so under it.
-  const preparing = booted && pinned === null ? session.view : null
+  const preparing = browser === null && booted && pinned === null ? session.view : null
   const covered = preparing?.kind === 'starting' || preparing?.kind === 'failed'
-  const problemText = !ready || pinned !== null ? null : (live.error ?? actionError)
+  // The stream reconnects on its own, so a failing one is said under the screen until it does.
+  const problemText = !ready || pinned !== null ? null : (simulator.error ?? live.error ?? actionError ?? (live.stalled ? 'The screen stopped updating' : null))
   const problem = problemText === null ? null : failureDetail(problemText).line
   const retry = () => {
     setActionError(null)
-    if (live.error !== null) {
-      // A frame that fails may mean the session ended; starting it again is a no-op when it did not.
+    // A stream that fails may mean the session ended; starting it again is a no-op when it did not.
+    if (browser === null && (live.error !== null || simulator.error !== null)) {
       session.retry()
-      live.retry()
+      simulator.retry()
     }
   }
 
@@ -252,17 +124,15 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
     return () => window.removeEventListener('keydown', onKey)
   }, [full])
 
-  const send = (action: (target: string) => Promise<unknown>) => {
+  // A simulator takes `native input`, a browser `web device input`, in the same points.
+  const send = (simulatorAction: (target: string) => Promise<unknown>, webAction: WebInputAction | null) => {
     if (!takesInput || udid === null) return
-    queue.current = queue.current
-      .then(() => action(udid))
-      .then(
-        () => {
-          setActionError(null)
-          live.refresh()
-        },
-        (error: unknown) => setActionError(message(error)),
-      )
+    const run = browser !== null ? (webAction === null ? null : () => webDevices.input(browser.id, webAction)) : () => simulatorAction(udid)
+    if (run === null) return
+    queue.current = queue.current.then(run).then(
+      () => setActionError(null),
+      (error: unknown) => setActionError(message(error)),
+    )
   }
   const pointAt = (clientX: number, clientY: number, clamp = false): Point | null => {
     const element = image.current
@@ -297,11 +167,11 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
     const gesture = gestureOf(start, { x: event.clientX, y: event.clientY, at: event.timeStamp })
     if (gesture.kind === 'tap') {
       ripple(start.x, start.y)
-      send((target) => api.inputTap(target, from.x, from.y))
+      send((target) => api.inputTap(target, from.x, from.y), { type: 'tap', x: from.x, y: from.y })
       return
     }
     const to = pointAt(event.clientX, event.clientY, true)
-    if (to !== null) send((target) => api.inputSwipe(target, from.x, from.y, to.x, to.y, gesture.durationMs))
+    if (to !== null) send((target) => api.inputSwipe(target, from.x, from.y, to.x, to.y, gesture.durationMs), { type: 'swipe', x1: from.x, y1: from.y, x2: to.x, y2: to.y, ms: gesture.durationMs })
   }
   // Wheel deltas gather for a moment, so a trackpad's stream of small ones is one scroll.
   const onWheel = (event: WheelEvent<HTMLDivElement>) => {
@@ -317,7 +187,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
       ...next,
       timer: setTimeout(() => {
         wheel.current = null
-        send((target) => api.inputScroll(target, next.x, next.y, Math.round(next.dx), Math.round(next.dy)))
+        send((target) => api.inputScroll(target, next.x, next.y, Math.round(next.dx), Math.round(next.dy)), { type: 'scroll', x: next.x, y: next.y, dx: Math.round(next.dx), dy: Math.round(next.dy) })
       }, 80),
     }
   }
@@ -332,13 +202,12 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
     // The TV has no keyboard: its arrows and Enter are the remote's.
     if (device?.kind === 'tv') {
       const remote = action.type === 'key' ? ({ up: 'up', down: 'down', left: 'left', right: 'right', return: 'select' } as Record<string, string>)[action.name] : undefined
-      if (remote !== undefined) send((target) => api.inputButton(target, remote))
+      if (remote !== undefined) send((target) => api.inputButton(target, remote), null)
       return
     }
-    if (action.type === 'text') send((target) => api.inputType(target, action.text))
-    else send((target) => api.inputKey(target, action.name))
+    if (action.type === 'text') send((target) => api.inputType(target, action.text), { type: 'type', text: action.text })
+    else send((target) => api.inputKey(target, action.name), { type: 'key', name: action.name })
   }
-  const press = (name: string) => send((target) => api.inputButton(target, name))
 
   const status = paused && booted && pinned === null ? pausedNote : null
 
@@ -354,9 +223,14 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
           <PanelIcon />
         </button>
       )}
-      {step !== null && <span className="absolute top-4 left-1/2 z-10 -translate-x-1/2 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11.5px] text-ink-300 tabular-nums">Step {step}</span>}
+      {/* Above the screen: the pinned step, else a browser's CSS size, which its frame is drawn at. */}
+      {(step !== null || browser !== null) && (
+        <span title={step === null && browser !== null ? browser.url : undefined} className="absolute top-4 left-1/2 z-10 max-w-[60%] -translate-x-1/2 truncate rounded-full bg-white/[0.06] px-2 py-0.5 text-[11.5px] text-ink-300 tabular-nums">
+          {step !== null ? `Step ${step}` : browser !== null ? `${webDeviceName(browser)} · ${viewportLabel(browser)}` : null}
+        </span>
+      )}
       {/* A size container, so at fit the frame takes the largest box of the screen's aspect that fits; zoomed, it scrolls. */}
-      <div ref={stage} style={{ containerType: 'size' }} className={`mx-12 mt-12 mb-4 flex min-h-0 flex-1 ${zoomed === null ? 'items-center justify-center' : 'overflow-auto'}`}>
+      <div ref={stage} style={{ containerType: 'size' }} className={`mx-6 mt-12 mb-2 flex min-h-0 flex-1 ${zoomed === null ? 'items-center justify-center' : 'overflow-auto'}`}>
         <div
           data-device-frame=""
           style={zoomed === null ? { aspectRatio: String(ratio), width: `min(100cqw, calc(100cqh * ${ratio}))` } : { width: zoomed.width + chrome, height: zoomed.height + chrome }}
@@ -367,7 +241,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
             data-device-screen=""
             tabIndex={takesInput ? 0 : -1}
             role={takesInput ? 'application' : undefined}
-            aria-label={takesInput ? `${device?.name ?? 'Device'} screen: click to use, Esc to let go` : undefined}
+            aria-label={takesInput ? `${browser === null ? (device?.name ?? 'Device') : webDeviceName(browser)} screen: click to use, Esc to let go` : undefined}
             onPointerDown={onPointerDown}
             onMouseDown={(event) => !takesInput && event.preventDefault()}
             onPointerUp={onPointerUp}
@@ -381,7 +255,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
               <img
                 ref={image}
                 src={shown.src}
-                alt={step === null ? 'The simulator’s screen' : `The screen at step ${step}`}
+                alt={step === null ? (browser === null ? 'The simulator’s screen' : 'The browser’s viewport') : `The screen at step ${step}`}
                 draggable={false}
                 onLoad={(event) => {
                   const loaded = event.currentTarget
@@ -390,7 +264,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
                 className={`pointer-events-none h-full w-full object-contain transition-opacity duration-200 select-none motion-reduce:transition-none ${covered ? 'opacity-35' : ''}`}
               />
             ) : (
-              !covered && <p className="px-6 text-center text-[12px] leading-5 text-ink-500">{note ?? (device === null ? 'Open a device with + to see its screen' : 'Waiting for the screen…')}</p>
+              !covered && <p className="px-6 text-center text-[12px] leading-5 text-ink-500">{note ?? (device === null && browser === null ? 'Open a device with + to see its screen' : 'Waiting for the screen…')}</p>
             )}
             {preparing?.kind === 'starting' && <Preparing phase={preparing.phase} elapsedMs={preparing.elapsedMs} />}
             {preparing?.kind === 'failed' && <Failed error={preparing.error} onRetry={session.retry} />}
@@ -408,8 +282,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
           </div>
         </div>
       </div>
-      <div className="mb-4 flex flex-col items-center gap-1.5 px-4">
-        {device !== null && device.kind !== 'tv' && booted && pinned === null && <HardwareButtons kind={device.kind} disabled={!takesInput} onPress={press} />}
+      <div className="mb-3 flex flex-col items-center gap-1.5 px-4">
         {/* Always one line tall, so a note coming and going never resizes the device. */}
         <p role="status" className="flex min-h-6 items-center gap-2 text-center text-[12px] leading-5 text-ink-400">
           <span className={problem !== null ? 'text-bad-soft' : ''}>{problem ?? status ?? (shown !== null ? note : null)}</span>
@@ -420,12 +293,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
           )}
         </p>
       </div>
-      {device?.kind === 'tv' && booted && pinned === null && (
-        <FloatingRemote>
-          <HardwareButtons kind="tv" disabled={!takesInput} onPress={press} />
-        </FloatingRemote>
-      )}
-      {device !== null && <ViewControls zoom={zoom} fit={fit} canZoom={points !== null && fit > 0} full={full} onZoom={setZoom} onFull={setFull} />}
+      {(device !== null || browser !== null) && <ViewControls zoom={zoom} fit={fit} canZoom={points !== null && fit > 0} full={full} onZoom={setZoom} onFull={setFull} />}
     </div>
   )
 }
@@ -433,6 +301,7 @@ export function DeviceScreen({ device, booted, paused, pinned, still, note, show
 // Each frame shape's bezel and the screen's corners; chrome is the bezel's border and padding on each axis.
 const frameLooks = {
   tv: { frame: 'rounded-[14px] p-[6px]', screen: 'rounded-[8px]', chrome: 14 },
+  browser: { frame: 'rounded-[10px] p-[4px]', screen: 'rounded-[6px]', chrome: 10 },
   landscape: { frame: 'rounded-[20px] p-[8px]', screen: 'rounded-[12px]', chrome: 18 },
   portrait: { frame: 'rounded-[44px] p-[10px]', screen: 'rounded-[34px]', chrome: 22 },
 } as const
@@ -504,62 +373,3 @@ function Failed({ error, onRetry }: { error: string; onRetry: () => void }) {
 }
 
 const toolButton = 'grid h-7 min-w-7 place-items-center rounded-full px-1.5 text-ink-300 transition-colors duration-100 hover:bg-white/[0.1] hover:text-ink-100 focus-visible:ring-1 focus-visible:ring-white/25 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none'
-
-const glyph = (path: string) => (
-  <svg viewBox="0 0 16 16" className="size-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d={path} />
-  </svg>
-)
-const glyphs: Record<string, ReturnType<typeof glyph>> = {
-  home: glyph('M3 7.5 8 3l5 4.5V13H3z'),
-  lock: glyph('M4.5 7.5h7v5.5h-7zM6 7.5V5.5a2 2 0 0 1 4 0v2'),
-  'volume-down': glyph('M3 6.5h2l3-2.5v8l-3-2.5H3zM11 8h3'),
-  'volume-up': glyph('M3 6.5h2l3-2.5v8l-3-2.5H3zM11 8h3M12.5 6.5v3'),
-  up: glyph('M4 10l4-4 4 4'),
-  down: glyph('M4 6l4 4 4-4'),
-  left: glyph('M10 4 6 8l4 4'),
-  right: glyph('M6 4l4 4-4 4'),
-  menu: glyph('M3 5h10M3 8h10M3 11h10'),
-  'play-pause': glyph('M3.5 4v8l5-4zM10.5 4v8M13 4v8'),
-  'zoom-out': glyph('M4 8h8'),
-  'zoom-in': glyph('M4 8h8M8 4v8'),
-  full: glyph('M3 6V3h3M10 3h3v3M13 10v3h-3M6 13H3v-3'),
-  'exit-full': glyph('M6 3v3H3M13 6h-3V3M10 13v-3h3M3 10h3v3'),
-}
-
-/** The device's hardware: a phone's side buttons, or an Apple TV remote's pad and keys (inside FloatingRemote). */
-function HardwareButtons({ kind, disabled, onPress }: { kind: OpenDevice['kind']; disabled: boolean; onPress: (name: string) => void }) {
-  const button = (name: string, label: string, extra = '') => (
-    <button key={name} type="button" aria-label={label} title={label} disabled={disabled} onClick={() => onPress(name)} className={`${toolButton} ${extra}`}>
-      {glyphs[name] ?? <span className="text-[11px]">{label}</span>}
-    </button>
-  )
-  if (kind === 'tv')
-    return (
-      <div role="toolbar" aria-label="Remote" className="flex items-center gap-2 px-2 pb-2">
-        <div className="grid grid-cols-3 grid-rows-3 place-items-center">
-          <span />
-          {button('up', 'Up')}
-          <span />
-          {button('left', 'Left')}
-          <button type="button" aria-label="Select" title="Select" disabled={disabled} onClick={() => onPress('select')} className={`${toolButton} border border-white/[0.14]`}>
-            <span className="size-2 rounded-full bg-current" />
-          </button>
-          {button('right', 'Right')}
-          <span />
-          {button('down', 'Down')}
-          <span />
-        </div>
-        <div className="flex flex-col gap-1">
-          {button('menu', 'Menu')}
-          {button('play-pause', 'Play/Pause')}
-          {button('home', 'Home')}
-        </div>
-      </div>
-    )
-  return (
-    <div role="toolbar" aria-label="Device buttons" className="flex items-center gap-0.5 rounded-full border border-white/[0.08] bg-white/[0.03] px-1 py-0.5">
-      {phoneButtons.map((entry) => button(entry.name, entry.label))}
-    </div>
-  )
-}

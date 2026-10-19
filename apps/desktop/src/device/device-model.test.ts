@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { maestroEventSchema, maestroFlowSchema, maestroRunSchema, simulatorListSchema, type MaestroEvent } from '@/api/schema'
-import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, elsewhereLabel, panelPlaces, renameCommit, sleepNote, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
+import { groupDevices, groupOf, afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, elsewhereLabel, panelPlaces, renameCommit, sleepNote, durationLabel, groupFlows, historyRows, idleRun, isActive, needsInstall, newFlowName, openDevices, pickerChoices, reduceRun, screenSource, selectDevice, stepRows, timeLabel, type DeviceChoice, type OpenDevice, type RunState } from '@/device/device-model'
 import { changesPolicy, devicesPolicy, planPoll, pollInterval, projectsPolicy, screenPolicy } from '@/lib/poll-model'
 
 const captured = (name: string) => readFileSync(join(import.meta.dir, '..', 'api', 'fixtures', 'captured', name), 'utf8')
@@ -481,5 +481,35 @@ describe('a shut down device leaves the list', () => {
       ['tv', 'Booted'],
     ])
     expect(deviceSections(after, '/w/here', []).elsewhere.flatMap((group) => group.devices.map((entry) => entry.device.udid))).toEqual(['p2', 'tv'])
+  })
+})
+
+describe('device groups', () => {
+  const sim = (name: string, kind: 'phone' | 'tv') => ({ name, kind })
+  test('an iPad from the phone list is a tablet; TVs and browsers keep their kind', () => {
+    expect(groupOf(sim('iPhone 17 Pro', 'phone'))).toBe('phone')
+    expect(groupOf(sim('iPad Pro 13-inch (M5)', 'phone'))).toBe('tablet')
+    expect(groupOf(sim('iPad mini (A17 Pro)', 'phone'))).toBe('tablet')
+    expect(groupOf(sim('Apple TV 4K (3rd generation)', 'tv'))).toBe('tv')
+    expect(groupOf({ name: 'localhost:3000', kind: 'web' })).toBe('web')
+  })
+
+  test('a name merely containing ipad is not a tablet', () => {
+    expect(groupOf(sim('Notipad test phone', 'phone'))).toBe('phone')
+  })
+
+  test('groups come Phones, Tablets, TVs, Web, each keeping its order, empty ones left out', () => {
+    const devices = [{ name: 'Apple TV', kind: 'tv' as const }, { name: 'iPad Air', kind: 'phone' as const }, { name: 'iPhone 17', kind: 'phone' as const }, { name: 'iPhone 16e', kind: 'phone' as const }]
+    expect(groupDevices(devices).map(({ group, devices: list }) => [group, list.map((device) => device.name)])).toEqual([
+      ['phone', ['iPhone 17', 'iPhone 16e']],
+      ['tablet', ['iPad Air']],
+      ['tv', ['Apple TV']],
+    ])
+    expect(groupDevices([])).toEqual([])
+  })
+
+  test('selection reaches a web device by its id', () => {
+    expect(selectDevice([{ udid: 'sim-1' }, { udid: 'web-1' }], 'web-1')).toBe('web-1')
+    expect(selectDevice([{ udid: 'sim-1' }], 'web-gone')).toBe('sim-1')
   })
 })

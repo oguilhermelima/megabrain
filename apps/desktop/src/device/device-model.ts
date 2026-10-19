@@ -171,9 +171,26 @@ export function openDevices(booted: readonly (BootedSimulator & { project?: stri
 }
 
 /** The selected device: the chosen one while it is open, else the first open, else none. */
-export function selectDevice(open: readonly OpenDevice[], chosen: string | null): string | null {
+export function selectDevice(open: readonly { udid: string }[], chosen: string | null): string | null {
   if (chosen !== null && open.some((device) => device.udid === chosen)) return chosen
   return open[0]?.udid ?? null
+}
+
+/** The sidebar's groups, in the order they show: a tablet is a phone-list simulator named iPad. */
+export type DeviceGroup = 'phone' | 'tablet' | 'tv' | 'web'
+
+export const deviceGroups: readonly DeviceGroup[] = ['phone', 'tablet', 'tv', 'web']
+
+export const groupTitles: Record<DeviceGroup, string> = { phone: 'Phones', tablet: 'Tablets', tv: 'TVs', web: 'Web' }
+
+export function groupOf(device: { kind: SimulatorKind | 'web'; name: string }): DeviceGroup {
+  if (device.kind === 'tv' || device.kind === 'web') return device.kind
+  return /\bipad\b/i.test(device.name) ? 'tablet' : 'phone'
+}
+
+/** Devices by group, in group order, keeping each group's own order; a group with none is left out. */
+export function groupDevices<T extends { kind: SimulatorKind | 'web'; name: string }>(devices: readonly T[]): { group: DeviceGroup; devices: T[] }[] {
+  return deviceGroups.map((group) => ({ group, devices: devices.filter((device) => groupOf(device) === group) })).filter((entry) => entry.devices.length > 0)
 }
 
 /** What the + picker offers: every available device not already open, phones first, then by name. */

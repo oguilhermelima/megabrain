@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { idleRun, reduceRun } from '@/device/device-model'
-import { blurGraceMs, deviceFrame, fitZoom, frameDelay, frameMs, gestureOf, inputPaused, keyAction, pausedNote, pointSize, screenPoint, tapSlop, tvAspect, zoomedSize, zoomIn, zoomLabel, zoomOut, zoomPercent, zoomSteps } from '@/device/screen-model'
+import { blurGraceMs, deviceFrame, fitZoom, frameScale, frameDelay, frameMs, gestureOf, inputPaused, keyAction, pausedNote, pointSize, screenPoint, tapSlop, tvAspect, zoomedSize, zoomIn, zoomLabel, zoomOut, zoomPercent, zoomSteps } from '@/device/screen-model'
 
 const UDID = '401F3DA8-E4C1-48B7-9BB9-2C8416115E1A'
 const OTHER = '110E1BF2-99F9-4475-916E-32FBA7CED248'
@@ -233,5 +233,33 @@ describe('the zoom bar says Fit once', () => {
   test('before the size is known it is a dash, never a second Fit', () => {
     expect(zoomLabel('fit', 0)).toBe('–')
     expect(zoomLabel(1, 0)).not.toBe('Fit')
+  })
+})
+
+describe('web viewport sizing', () => {
+  test('a browser is drawn at its CSS size’s aspect, whatever its stream sends', () => {
+    expect(deviceFrame('web', 402 / 874)).toEqual({ shape: 'browser', ratio: 402 / 874 })
+    expect(deviceFrame('web', 1920 / 1080)).toEqual({ shape: 'browser', ratio: 1920 / 1080 })
+    expect(deviceFrame('web', Number.NaN).shape).toBe('browser')
+    expect(deviceFrame('web', 0).ratio).toBeGreaterThan(0)
+  })
+
+  test('a browser frame maps to CSS px: its width over the CSS width, else the device scale', () => {
+    expect(frameScale(1206, { width: 402, scale: 3 }, 1)).toBe(3)
+    // A stream sent downscaled still maps a click to the right CSS px.
+    expect(frameScale(603, { width: 402, scale: 3 }, 1)).toBe(1.5)
+    expect(frameScale(0, { width: 402, scale: 3 }, 1)).toBe(3)
+    expect(frameScale(0, { width: 402, scale: 0 }, 1)).toBe(1)
+  })
+
+  test('a simulator frame keeps the simulator’s scale', () => {
+    expect(frameScale(1206, null, 3)).toBe(3)
+    expect(frameScale(1206, null, 0)).toBe(1)
+  })
+
+  test('a tap on a downscaled browser frame lands in CSS px', () => {
+    const scale = frameScale(603, { width: 402, scale: 3 }, 1)
+    expect(screenPoint({ x: 201, y: 437 }, { left: 0, top: 0, width: 402, height: 874 }, { width: 603, height: 1311 }, scale)).toEqual({ x: 201, y: 437 })
+    expect(pointSize({ width: 603, height: 1311, scale })).toEqual({ width: 402, height: 874 })
   })
 })

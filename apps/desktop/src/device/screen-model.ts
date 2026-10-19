@@ -76,15 +76,6 @@ export function keyAction(event: { key: string; metaKey: boolean; ctrlKey: boole
   return [...event.key].length === 1 ? { type: 'text', text: event.key } : null
 }
 
-export const phoneButtons = [
-  { name: 'home', label: 'Home' },
-  { name: 'lock', label: 'Lock' },
-  { name: 'volume-down', label: 'Volume down' },
-  { name: 'volume-up', label: 'Volume up' },
-] as const
-
-export const remoteButtons = ['up', 'down', 'left', 'right', 'select', 'menu', 'play-pause', 'home'] as const
-
 // Zoom: 'fit' takes the largest box that fits; a number is CSS pixels per device point, so 1 is
 // 100 percent. Input needs nothing more, as screenPoint reads the drawn image's own box.
 export type Zoom = 'fit' | number
@@ -132,10 +123,24 @@ export const zoomLabel = (zoom: Zoom, fit: number) => (fit > 0 ? `${zoomPercent(
 
 export const tvAspect = 16 / 9
 
-export type FrameShape = 'tv' | 'landscape' | 'portrait'
+export type FrameShape = 'tv' | 'browser' | 'landscape' | 'portrait'
 
-/** The frame for a device of `kind` whose screen is `aspect` wide per unit of height, and the screen's ratio to draw. */
-export function deviceFrame(kind: SimulatorKind | null, aspect: number): { shape: FrameShape; ratio: number } {
+/**
+ * The frame for a device of `kind` whose screen is `aspect` wide per unit of height, and the screen's
+ * ratio to draw. A browser is a plain viewport of its CSS size's aspect.
+ */
+export function deviceFrame(kind: SimulatorKind | 'web' | null, aspect: number): { shape: FrameShape; ratio: number } {
   if (kind === 'tv') return { shape: 'tv', ratio: tvAspect }
+  if (kind === 'web') return { shape: 'browser', ratio: aspect > 0 && Number.isFinite(aspect) ? aspect : 16 / 10 }
   return { shape: aspect > 1 ? 'landscape' : 'portrait', ratio: aspect }
+}
+
+/**
+ * A stream frame's pixels per point: a simulator's own scale; a browser's frame width over its CSS
+ * width, as the stream may send it downscaled, else its device scale before a frame came.
+ */
+export function frameScale(frameWidth: number, browser: { width: number; scale: number } | null, simulatorScale: number): number {
+  if (browser === null) return simulatorScale > 0 ? simulatorScale : 1
+  if (frameWidth > 0 && browser.width > 0) return frameWidth / browser.width
+  return browser.scale > 0 ? browser.scale : 1
 }

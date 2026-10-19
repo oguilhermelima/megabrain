@@ -6,7 +6,9 @@ import { Collapse } from '@/components/Collapse'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { Popover } from '@/components/Popover'
 import { Spinner } from '@/components/ui'
-import { elsewhereLabel, renameCommit, runtimeLabel, type DeviceChoice, type ElsewhereDevice, type ElsewhereGroup, type OpenDevice, type RenameDraft } from '@/device/device-model'
+import { elsewhereLabel, groupDevices, groupOf, groupTitles, renameCommit, runtimeLabel, type DeviceChoice, type DeviceGroup, type ElsewhereDevice, type ElsewhereGroup, type OpenDevice, type RenameDraft } from '@/device/device-model'
+import type { WebDevice } from '@/device/web-device-standin'
+import { WebDevices } from '@/device/WebDevices'
 import { sidePanelBar, sidePanelButton, sidePanelGroup, sidePanelHeaderRow, sidePanelList, sidePanelNote, sidePanelRow, sidePanelSlot, sidePanelTitle, sidePanelTrailing } from '@/lib/side-panel'
 import { usePresence } from '@/lib/usePresence'
 
@@ -17,7 +19,8 @@ const busyLabel: Record<DeviceBusy, string> = { booting: 'Booting…', restartin
 
 /**
  * The Device tab's left panel, laid out as every support panel is (lib/side-panel): the open
- * simulators grouped as phones and TVs, each row a state dot, the name and the runtime; rename,
+ * simulators grouped as phones, tablets and TVs, each row a state dot, the name and the runtime, then
+ * the Web group's headless browsers (WebDevices); rename,
  * restart and shut down on hover or focus (a double-click on the name renames too: Enter saves, Escape
  * cancels); and a + that lists the simulators not open yet, to boot one. It lists the devices of this
  * worktree's project, from any of its worktrees; under the list, the rest fold out by project, the ones
@@ -41,6 +44,8 @@ export function DevicesSidebar({
   onClaim,
   onRename,
   onHide,
+  web,
+  controls,
 }: {
   /** The devices of this worktree's project. */
   open: OpenDevice[]
@@ -62,6 +67,9 @@ export function DevicesSidebar({
   onClaim: (device: OpenDevice) => Promise<void>
   onRename: (device: OpenDevice, name: string) => void
   onHide: () => void
+  /** The selected device's controls, at the bottom. */
+  controls: ReactNode
+  web: { devices: WebDevice[]; error: string | null; defaultUrl: string; onStart: (url: string, preset: string | null) => Promise<void>; onStop: (device: WebDevice) => Promise<void> }
 }) {
   const [picker, setPicker] = useState<AnchorRect | null>(null)
   const menu = usePresence(picker)
@@ -118,20 +126,13 @@ export function DevicesSidebar({
       <div style={{ scrollbarGutter: 'stable' }} className={sidePanelList}>
         {error !== null && <p className={`${sidePanelNote} text-bad select-text`}>{error}</p>}
         {loading && open.length === 0 && <p className={sidePanelNote}>Reading simulators…</p>}
-        {!loading && error === null && open.length === 0 && booting.length === 0 && <p className={sidePanelNote}>No device is open. Boot an iPhone or Apple TV simulator with +.</p>}
-        {(['phone', 'tv'] as const).map((kind) => {
-          const rows = open.filter((device) => device.kind === kind)
-          const pending = booting.filter((device) => device.kind === kind && !open.some((entry) => entry.udid === device.udid))
-          if (rows.length === 0 && pending.length === 0) return null
+        {!loading && error === null && open.length === 0 && booting.length === 0 && web.devices.length === 0 && <p className={sidePanelNote}>No device is open. Boot a simulator with +, or start a browser from Web.</p>}
+        {groupDevices([...open, ...booting.filter((device) => !open.some((entry) => entry.udid === device.udid))]).map(({ group, devices }) => {
+          const rows = open.filter((device) => devices.includes(device))
+          const pending = booting.filter((device) => devices.includes(device))
           return (
-            <section key={kind} aria-label={kindTitle[kind]}>
-              <div className={`${sidePanelGroup} pointer-events-none`}>
-                <span aria-hidden="true" className={sidePanelSlot}>
-                  {kind === 'tv' ? <TvIcon /> : <PhoneIcon />}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{kindTitle[kind]}</span>
-                <span className="shrink-0 text-[11px] font-medium tabular-nums">{rows.length + pending.length}</span>
-              </div>
+            <section key={group} aria-label={groupTitles[group]}>
+              <GroupHeader group={group} count={devices.length} />
               <div className="space-y-0.5 pt-0.5 pb-2">
                 {rows.map((device) => (
                   <DeviceRow key={device.udid} device={device} selected={device.udid === selected} locked={locked} busy={busy[device.udid] ?? null} onSelect={() => onSelect(device.udid)} onRestart={() => onRestart(device)} onShutdown={() => askShutdown(device)}
@@ -158,6 +159,7 @@ export function DevicesSidebar({
             </section>
           )
         })}
+        <WebDevices devices={web.devices} selected={selected} locked={locked} error={web.error} defaultUrl={web.defaultUrl} icon={groupIcons.web} onSelect={onSelect} onStart={web.onStart} onStop={web.onStop} />
       </div>
       {othersText !== null && (
         <div className="shrink-0 border-t border-white/[0.06] px-2.5 py-1.5">
@@ -176,7 +178,7 @@ export function DevicesSidebar({
                     <button key={entry.device.udid} type="button" onClick={() => askClaim(entry, group)} title={`Use ${entry.device.name} in this worktree${entry.branch === null ? '' : `\nOn ${entry.branch}`}${entry.device.state === 'Asleep' ? '\nAsleep' : ''}\n${entry.device.udid}`} className={sidePanelRow(false)}>
                       <span aria-hidden="true" className={sidePanelSlot} />
                       <span aria-hidden="true" className={sidePanelSlot}>
-                        {entry.device.kind === 'tv' ? <TvIcon /> : <PhoneIcon />}
+                        {groupIcons[groupOf(entry.device)]}
                       </span>
                       <span className="min-w-0 flex-1 truncate">{entry.device.name}</span>
                       <span className={sidePanelTrailing}>Use here</span>
@@ -188,6 +190,7 @@ export function DevicesSidebar({
           </Collapse>
         </div>
       )}
+      {controls}
       {menu.shown !== null && (
         <Popover role="menu" focus='[role="menuitem"]' className="max-h-[min(420px,calc(100vh-16px))] w-[240px] overflow-y-auto p-1.5 select-none" anchor={menu.shown} label="Open a device" leaving={menu.leaving} onClose={close} trigger={trigger.current}>
           <DevicePicker
@@ -308,7 +311,18 @@ function RowAction({ label, onClick, disabled = false, children }: { label: stri
   )
 }
 
-const kindTitle = { phone: 'Phones', tv: 'TVs' } as const
+/** A group's mark, name and count, as the panel's group rows are drawn. */
+function GroupHeader({ group, count }: { group: DeviceGroup; count: number }) {
+  return (
+    <div className={`${sidePanelGroup} pointer-events-none`}>
+      <span aria-hidden="true" className={sidePanelSlot}>
+        {groupIcons[group]}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{groupTitles[group]}</span>
+      <span className="shrink-0 text-[11px] font-medium tabular-nums">{count}</span>
+    </div>
+  )
+}
 
 function DevicePicker({ choices, onPick }: { choices: DeviceChoice[] | null; onPick: (device: DeviceChoice) => void }) {
   if (choices === null)
@@ -318,28 +332,25 @@ function DevicePicker({ choices, onPick }: { choices: DeviceChoice[] | null; onP
       </p>
     )
   if (choices.length === 0) return <p className="px-2.5 py-1.5 text-[13px] text-ink-400">Every simulator is already open.</p>
-  const kinds = (['phone', 'tv'] as const).filter((kind) => choices.some((device) => device.kind === kind))
   return (
     <>
-      {kinds.map((kind, index) => (
-        <div key={kind} role="group" aria-label={kindTitle[kind]} className={index === 0 ? undefined : 'mt-1.5 border-t border-white/[0.08] pt-1.5'}>
-          <p className="px-2.5 pt-1 pb-1 text-[11px] font-medium text-ink-500">{kindTitle[kind]}</p>
-          {choices
-            .filter((device) => device.kind === kind)
-            .map((device) => (
-              <button
-                key={device.udid}
-                type="button"
-                role="menuitem"
-                title={device.udid}
-                onMouseEnter={(event) => event.currentTarget.focus({ preventScroll: true })}
-                onClick={() => onPick(device)}
-                className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] text-ink-200 hover:bg-white/[0.08] focus:bg-white/[0.08] focus-visible:outline-none"
-              >
-                <span className="text-ink-400">{kind === 'tv' ? <TvIcon /> : <PhoneIcon />}</span>
-                <span className="min-w-0 flex-1 truncate">{device.name}</span>
-              </button>
-            ))}
+      {groupDevices(choices).map(({ group, devices }, index) => (
+        <div key={group} role="group" aria-label={groupTitles[group]} className={index === 0 ? undefined : 'mt-1.5 border-t border-white/[0.08] pt-1.5'}>
+          <p className="px-2.5 pt-1 pb-1 text-[11px] font-medium text-ink-500">{groupTitles[group]}</p>
+          {devices.map((device) => (
+            <button
+              key={device.udid}
+              type="button"
+              role="menuitem"
+              title={device.udid}
+              onMouseEnter={(event) => event.currentTarget.focus({ preventScroll: true })}
+              onClick={() => onPick(device)}
+              className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-1.5 text-left text-[13px] text-ink-200 hover:bg-white/[0.08] focus:bg-white/[0.08] focus-visible:outline-none"
+            >
+              <span className="text-ink-400">{groupIcons[group]}</span>
+              <span className="min-w-0 flex-1 truncate">{device.name}</span>
+            </button>
+          ))}
         </div>
       ))}
     </>
@@ -388,3 +399,23 @@ function TvIcon() {
     </svg>
   )
 }
+
+function TabletIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.75" y="1.75" width="10.5" height="12.5" rx="1.75" />
+      <path d="M7 12h2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function GlobeIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+      <circle cx="8" cy="8" r="6" />
+      <path d="M2 8h12M8 2c1.7 1.6 2.5 3.6 2.5 6S9.7 12.4 8 14C6.3 12.4 5.5 10.4 5.5 8S6.3 3.6 8 2z" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+const groupIcons: Record<DeviceGroup, ReactNode> = { phone: <PhoneIcon />, tablet: <TabletIcon />, tv: <TvIcon />, web: <GlobeIcon /> }

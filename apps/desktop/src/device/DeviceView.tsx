@@ -2,7 +2,7 @@ import { convertFileSrc } from '@tauri-apps/api/core'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/api'
 import type { BootedSimulator, MaestroFlow, MaestroRun } from '@/api/schema'
-import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, isActive, panelPlaces, openDevices, pickerChoices, screenSource, selectDevice, stepRows, type DeviceChoice, type DevicePanel, type OpenDevice, type ProjectRef } from '@/device/device-model'
+import { afterRename, afterRestart, afterShutdown, bootThenRun, devicePanels, deviceSections, deviceWidths, groupOf, isActive, panelPlaces, openDevices, pickerChoices, screenSource, selectDevice, stepRows, type DeviceChoice, type DevicePanel, type OpenDevice, type ProjectRef } from '@/device/device-model'
 import { readPanelOpen, writePanelOpen } from '@/advanced/wiki-shell-model'
 import { SlidePanel } from '@/components/SlidePanel'
 import { DeviceScreen } from '@/device/DeviceScreen'
@@ -13,6 +13,12 @@ import { startRun, stopRun, useDeviceRun } from '@/device/run-store'
 import { changesPolicy, devicesPolicy } from '@/lib/poll-model'
 import { native } from '@/lib/surface'
 import { usePoll } from '@/lib/usePoll'
+import { devServerUrl, webDeviceName } from '@/device/web-device-model'
+import { webDevices, type ViewportPreset, type WebDevice } from '@/device/web-device-standin'
+import { nextOrientation, webRotation } from '@/device/controls-model'
+import { DeviceControls } from '@/device/DeviceControls'
+import { useInputSession } from '@/device/input-hooks'
+import { rotateSimulator, type Orientation } from '@/device/native-input-standin'
 
 const toAsset = native ? convertFileSrc : null
 
@@ -30,8 +36,9 @@ const panelEdge = { left: 'bg-ink-950 border-r border-white/[0.06]', right: 'bg-
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /**
- * A worktree's Device tab: the open simulators at the left (DevicesSidebar: boot, restart, shut down),
- * the selected one's screen framed like a device in the middle, and its Maestro flows and the run at
+ * A worktree's Device tab: the open simulators and browsers at the left (DevicesSidebar: boot,
+ * restart, shut down, start a browser), the selected one's controls at its bottom (DeviceControls),
+ * its screen framed like the device in the middle, and its Maestro flows and the run at
  * the right (FlowsRunPanel), the steps filling in as the CLI prints them. The panels never merge: when
  * the pane is narrow they fold to their toggles, and one reopened overlays the screen (device-model's
  * panelPlaces). The run itself lives in run-store, so leaving the tab keeps it going. The screen
@@ -106,11 +113,29 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
     // A run that ends lists itself in the history.
     [root, run.phase],
   )
+  const [web, setWeb] = useState<WebDevice[]>([])
+  const [webError, setWebError] = useState<string | null>(null)
+  const [defaultUrl, setDefaultUrl] = useState('')
+  useEffect(() => {
+    let current = true
+    api.projectScripts(root).then(
+      (scripts) => current && setDefaultUrl(devServerUrl(scripts)),
+      () => undefined,
+    )
+    return () => {
+      current = false
+    }
+  }, [root])
   const refreshDevices = usePoll(
     devicesPolicy,
     async (current) => {
-      const [listed, phones, tvs] = await Promise.all([api.simListBooted().catch((error: unknown) => ({ error })), api.simulators('phone').catch(() => null), api.simulators('tv').catch(() => null)])
+      const [listed, phones, tvs, browsers] = await Promise.all([api.simListBooted().catch((error: unknown) => ({ error })), api.simulators('phone').catch(() => null), api.simulators('tv').catch(() => null), webDevices.list().catch((error: unknown) => ({ error }))])
       if (!current()) return
+      if ('error' in browsers) setWebError(message(browsers.error))
+      else {
+        setWeb(browsers)
+        setWebError(null)
+      }
       setBooted('error' in listed ? { kind: 'error', error: listed.error } : { kind: 'ready', value: listed })
       if (phones !== null || tvs !== null) setAvailable([...(phones ?? []).map((device) => ({ ...device, kind: 'phone' as const })), ...(tvs ?? []).map((device) => ({ ...device, kind: 'tv' as const }))])
       // The tab showing is what keeps a simulator megabrain booted awake; this also lists the ones it put to sleep.
@@ -125,8 +150,9 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   // A name being saved shows at once.
   const [renaming, setRenaming] = useState<Record<string, string>>({})
   const open = Object.entries(renaming).reduce<OpenDevice[]>((list, [target, name]) => afterRename(list, target, name), sections.mine)
-  const udid = active && run.device !== null ? run.device : selectDevice(open, chosenDevice)
+  const udid = active && run.device !== null ? run.device : selectDevice([...open, ...web.map((entry) => ({ udid: entry.id }))], chosenDevice)
   const device = open.find((entry) => entry.udid === udid) ?? null
+  const browser = web.find((entry) => entry.id === udid) ?? null
   const isBooted = device?.state === 'Booted' && busy[device.udid] === undefined
   const markBusy = (target: string, state: DeviceBusy | null) =>
     setBusy((current) => {
@@ -207,6 +233,22 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
         }),
       )
   }
+  const startWeb = async (url: string, preset: string | null) => {
+    setWebError(null)
+    const started = await webDevices.start(url, preset, root)
+    setWeb((current) => [...current.filter((entry) => entry.id !== started.id), started])
+    if (preset !== null) setPresetOf((current) => ({ ...current, [started.id]: preset }))
+    setChosenDevice(started.id)
+    refreshDevices()
+  }
+  // The confirmation shows a refusal itself, so this one throws it on.
+  const stopWeb = async (target: WebDevice) => {
+    setWebError(null)
+    if (active && run.device === target.id) await stopRun(root)
+    await webDevices.stop(target.id)
+    setWeb((current) => current.filter((entry) => entry.id !== target.id))
+    refreshDevices()
+  }
   const select = (next: string) => {
     setChosenDevice(next)
     setSelectedStep(null)
@@ -223,13 +265,76 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const play = () => {
     if (flow === null || udid === null || waking) return
     setSelectedStep(null)
-    // A simulator that went to sleep (or was never booted) boots first, through the same call as the Boot button.
+    // A simulator that went to sleep (or was never booted) boots first, through the same call as the Boot button; a browser is up while listed.
     setWaking(true)
     setPlayError(null)
-    bootThenRun(!isBooted, () => api.bootSimulator(udid, device?.kind, root).then(refreshDevices), () => startRun(root, flow, udid))
+    bootThenRun(browser === null && !isBooted, () => api.bootSimulator(udid, device?.kind, root).then(refreshDevices), () => startRun(root, flow, udid))
       .catch((error: unknown) => setPlayError(message(error)))
       .finally(() => setWaking(false))
   }
+
+  const paused = inputPaused(run, udid)
+  // A Maestro run drives the device itself, so the input session waits for it to end.
+  const session = useInputSession(device?.udid ?? null, isBooted && !paused)
+  const keyboard = useRef<(() => void) | null>(null)
+  const [orientations, setOrientations] = useState<Record<string, Orientation>>({})
+  const [presetOf, setPresetOf] = useState<Record<string, string>>({})
+  const [presets, setPresets] = useState<ViewportPreset[] | null>(null)
+  const [controlError, setControlError] = useState<string | null>(null)
+  // One control at a time, in the order the person pressed them.
+  const controlQueue = useRef<Promise<unknown>>(Promise.resolve())
+  useEffect(() => setControlError(null), [udid])
+  const browserShown = browser !== null
+  useEffect(() => {
+    if (!browserShown || presets !== null) return
+    webDevices.presets().then(setPresets, () => setPresets([]))
+  }, [browserShown, presets])
+  const act = (work: () => Promise<unknown>) => {
+    controlQueue.current = controlQueue.current.then(work).then(
+      () => setControlError(null),
+      (error: unknown) => setControlError(message(error)),
+    )
+  }
+  const resized = (id: string, size: { width: number; height: number }) => setWeb((current) => current.map((entry) => (entry.id === id ? { ...entry, width: size.width, height: size.height } : entry)))
+  const pressBrowser = (target: WebDevice, control: string) => {
+    if (control === 'rotate') {
+      const rotation = webRotation(presetOf[target.id] ?? null, target)
+      if (rotation === null) return setControlError('Choose a viewport preset to rotate it.')
+      return act(() => webDevices.viewport(target.id, rotation.preset, rotation.landscape).then((size) => resized(target.id, size)))
+    }
+    if (control === 'back' || control === 'forward' || control === 'reload') act(() => webDevices.input(target.id, { type: control }).then(refreshDevices))
+  }
+  const pressSimulator = (target: OpenDevice, control: string) => {
+    if (control === 'keyboard') return keyboard.current?.()
+    if (control === 'screenshot') return act(() => api.simulatorScreenshot(target.udid).then((path) => api.revealPath(path)))
+    if (control === 'rotate') {
+      const next = nextOrientation(orientations[target.udid])
+      return act(() => rotateSimulator(target.udid, next).then(() => setOrientations((current) => ({ ...current, [target.udid]: next }))))
+    }
+    act(() => api.inputButton(target.udid, control))
+  }
+  const controls =
+    browser !== null ? (
+      <DeviceControls
+        group="web"
+        name={webDeviceName(browser)}
+        disabled={paused}
+        error={controlError}
+        onPress={(control) => pressBrowser(browser, control)}
+        address={{
+          url: browser.url,
+          onNavigate: (url) => act(() => webDevices.input(browser.id, { type: 'navigate', url }).then(refreshDevices)),
+          presets,
+          preset: presetOf[browser.id] ?? null,
+          onPreset: (slug) => {
+            setPresetOf((current) => ({ ...current, [browser.id]: slug }))
+            act(() => webDevices.viewport(browser.id, slug, false).then((size) => resized(browser.id, size)))
+          },
+        }}
+      />
+    ) : device !== null && isBooted ? (
+      <DeviceControls group={groupOf(device)} name={device.name} disabled={paused || session.view.kind !== 'ready'} error={controlError} onPress={(control) => pressSimulator(device, control)} address={null} />
+    ) : null
 
   const devicesPanel = (
     <DevicesSidebar
@@ -249,6 +354,8 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
       onShutdown={shutdown}
       onRename={rename}
       onHide={() => hidePanel('devices')}
+      controls={controls}
+      web={{ devices: web, error: webError, defaultUrl, onStart: startWeb, onStop: stopWeb }}
       onClaim={async (target) => {
         await claim(target)
         select(target.udid)
@@ -258,11 +365,14 @@ export function DeviceView({ root, onOpenFile }: { root: string; onOpenFile?: (p
   const screenPanel = (
     <DeviceScreen
       device={device}
+      browser={browser}
       booted={isBooted}
-      paused={inputPaused(run, udid)}
+      paused={paused}
+      session={session}
+      keyboard={keyboard}
       pinned={pinned}
       still={still}
-      note={waking ? `Booting ${device?.name ?? 'the simulator'}…` : device !== null && busy[device.udid] !== undefined ? `${device.name} is ${busy[device.udid] === 'restarting' ? 'restarting' : 'shutting down'}…` : isBooted ? playError : device?.state === 'Asleep' ? 'Asleep: boots when you run a flow' : null}
+      note={browser !== null ? playError : waking ? `Booting ${device?.name ?? 'the simulator'}…` : device !== null && busy[device.udid] !== undefined ? `${device.name} is ${busy[device.udid] === 'restarting' ? 'restarting' : 'shutting down'}…` : isBooted ? playError : device?.state === 'Asleep' ? 'Asleep: boots when you run a flow' : null}
       showDevices={places.devices === 'hidden' ? () => showPanel('devices') : null}
       showFlows={places.flows === 'hidden' ? () => showPanel('flows') : null}
     />
