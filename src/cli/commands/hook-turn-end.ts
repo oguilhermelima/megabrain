@@ -1,4 +1,5 @@
 import { open, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { checkDispatchTransition, openDispatchStates } from "../../core/dispatch-states.js";
 import { unhandledParentMail, type CheckDelivery } from "../../core/check.js";
@@ -619,6 +620,7 @@ export async function executeHookTurnEnd(
     }
 
     const root = resolveChildStateDirectory(environment);
+    if (!existsSync(root)) return finish(defaultText);
     const session = await computeSessionId(environment, processAdapter);
     if (session === undefined) return finish(defaultText);
 
