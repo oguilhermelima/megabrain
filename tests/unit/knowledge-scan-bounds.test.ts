@@ -50,6 +50,11 @@ function claudeLog(h: Harness, id: string, last: Date, texts: string[] = ["make 
 }
 
 describe("scan horizon", () => {
+  test("a failed git worktree enumeration fails the scan instead of appearing empty", async () => {
+    const h = harness();
+    await expect(h.scan({ dryRun: true })).rejects.toThrow("git worktree list failed");
+  });
+
   test("the first scan of a project sets its horizon to now minus seven days and takes only newer sessions", async () => {
     const h = harness();
     claudeLog(h, "OLD", ago(30));
