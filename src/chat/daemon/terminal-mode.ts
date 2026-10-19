@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { createConnection, createServer, type Socket } from "node:net";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { chatKey, promoteConversation, readConversations, removeConversation, sessionKey, setConversationAlias, upsertConversation, type Conversation } from "../../core/conversations.js";
+import { promoteConversation, readConversations, removeConversation, sessionKey, setConversationAlias, type Conversation } from "../../core/conversations.js";
 import { OWNED_TMUX_SERVER, ownedTmuxProcess, readOwnedSessions, writeOwnedSessions } from "../../core/session-ownership.js";
 import { liveSessionHolders, type SessionHolder } from "../../core/session-holders.js";
 import { APP_SESSION_PREFIX, forgetAppTerminal } from "../../core/app-terminals.js";
@@ -24,6 +24,7 @@ import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardSta
 import type { ChatDaemon } from "../daemon.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, ChatHandoffError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
+import { startAgyTerminal } from "./agy-terminal.js";
 
 export async function rename(daemon: ChatDaemon, id: string, title: string): Promise<Chat> {
     const chat = await daemon.requireChat(id);
@@ -85,6 +86,18 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
         }
         await daemon.save(chat);
       }
+    } else if (chat.mode !== "chat" && chat.agent === "agy") {
+      const holders = await daemon.foreignHolders(chat);
+      const appOwner = holders.some((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
+      const foreignOwner = holders.filter((holder) => !holder.tmuxSession?.startsWith(APP_SESSION_PREFIX));
+      if (foreignOwner.length > 0) throw new ChatHandoffError("chat-busy", heldMessage(chat, foreignOwner));
+      if (!appOwner) {
+        await startAgyTerminal(daemon, chat);
+      }
+      chat.mode = "chat";
+      chat.owner = "terminal";
+      chat.state = "idle";
+      await daemon.save(chat);
     } else if (chat.mode !== "chat") {
       if (chat.agentSessionId === null) chat.agentSessionId = await daemon.sessionOfTerminal(chat);
       const holders = await daemon.foreignHolders(chat);
@@ -329,7 +342,7 @@ export async function endAppTerminals(daemon: ChatDaemon, chat: Chat): Promise<R
 export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
     for (const listed of await daemon.store.list()) {
       if (daemon.closed) return;
-      if (listed.agentSessionId === null && listed.mode === "terminal") {
+      if (listed.agentSessionId === null && (listed.mode === "terminal" || listed.owner === "terminal")) {
         const found = await daemon.sessionOfTerminal(listed);
         if (found !== null) { listed.agentSessionId = found; await daemon.save(listed); }
       }
@@ -376,7 +389,7 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
       const chat = await daemon.store.get(listed.id);
       if (daemon.closed) return;
       if (!chat || chat.terminalSince !== listed.terminalSince || chat.mode !== listed.mode || chat.owner !== listed.owner) continue;
-      if (!working && owner === "terminal" && (await daemon.loadQueue(chat.id)).length > 0) {
+      if (!working && owner === "terminal" && chat.agent !== "agy" && (await daemon.loadQueue(chat.id)).length > 0) {
         if (daemon.terminalHandoffs.has(chat.id)) continue;
         daemon.terminalHandoffs.add(chat.id);
         try { await daemon.takeOver(chat.id); }

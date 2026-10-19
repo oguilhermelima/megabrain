@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 // Antigravity CLI runs its language server in process (measured on 1.3.4) and hands every tool
@@ -32,6 +32,7 @@ export async function recordAgyLanguageServer(stateRoot: string, dispatchId: str
   const file = agyLanguageServerFile(stateRoot, dispatchId);
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   await writeFile(file, JSON.stringify({ address, csrfToken, conversationId, version: environment.ANTIGRAVITY_LS_VERSION ?? "unknown" }), { mode: 0o600 });
+  await chmod(file, 0o600);
 }
 
 export async function readAgyLanguageServer(stateRoot: string, dispatchId: string): Promise<AgyEndpoint | undefined> {

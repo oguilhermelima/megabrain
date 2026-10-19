@@ -123,7 +123,7 @@ const agyUnavailable: ChatProtocolAdapter = {
   async send() { throw new Error("agy messages must be sent through the agy terminal"); },
   async steer() { throw new Error("agy does not support steering"); },
   async interrupt() { throw new Error("agy does not support interruption"); },
-  terminalCommand(chat, prompt) { return ["agy", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(chat.model ? ["--model", chat.model] : []), ...(prompt ? ["-i", prompt] : [])]; },
+  terminalCommand(chat, prompt) { return ["agy", ...(chat.agentSessionId ? ["--conversation", chat.agentSessionId] : []), ...(chat.model ? ["--model", chat.model] : []), ...(prompt ? ["-i", prompt] : [])]; },
 };
 
 function codexInput(parts: MessagePart[]): unknown[] {

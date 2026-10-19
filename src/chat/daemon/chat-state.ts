@@ -14,7 +14,8 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from ".././store.js";
 import { chatProtocolAdapters, type MessagePart } from ".././protocol.js";
-import { discoverSessionId, readSessionTurns, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
+import { discoverAgyEnvironment, discoverSessionId, readSessionTurns, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
+import { forgetAgyLanguageServer, recordAgyLanguageServer } from "../../agents/agy-ls.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from ".././subagents.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { KnowledgePipeline } from "../../knowledge/pipeline.js";
@@ -91,6 +92,11 @@ export async function sessionOfTerminal(daemon: ChatDaemon, chat: Chat): Promise
     const panes = await ownedTmuxProcess(processes).run("tmux", ["list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_pid}"]);
     const panePids = panes.kind === "ok" ? panes.value.stdout.split("\n").map(Number).filter((pid) => Number.isSafeInteger(pid) && pid > 1) : [];
     const found = await discoverSessionId(chat, daemon.environment.HOME ?? homedir(), panePids, processes);
+    if (chat.agent === "agy") {
+      const endpoint = await discoverAgyEnvironment(panePids, processes);
+      if (endpoint !== undefined && found !== null && endpoint.ANTIGRAVITY_CONVERSATION_ID === found) await recordAgyLanguageServer(daemon.stateDir, chat.id, endpoint).catch(() => undefined);
+      else if (found !== null) await forgetAgyLanguageServer(daemon.stateDir, chat.id).catch(() => undefined);
+    }
     if (found !== null) try { promoteConversation(daemon.stateDir, daemon.entryOf(chat.id)?.[0] ?? chatKey(chat.id), sessionKey(chat.agent, found)); } catch { /* listing aid */ }
     return found;
   }

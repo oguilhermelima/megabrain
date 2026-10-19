@@ -4,16 +4,16 @@ import { randomUUID } from "node:crypto";
 import { createConnection, createServer, type Socket } from "node:net";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { chatKey, promoteConversation, readConversations, removeConversation, sessionKey, setConversationAlias, upsertConversation, type Conversation } from "../../core/conversations.js";
-import { OWNED_TMUX_SERVER, ownedTmuxProcess, readOwnedSessions, writeOwnedSessions } from "../../core/session-ownership.js";
+import { promoteConversation, readConversations, removeConversation, type Conversation } from "../../core/conversations.js";
+import { readOwnedSessions, writeOwnedSessions } from "../../core/session-ownership.js";
 import { liveSessionHolders, type SessionHolder } from "../../core/session-holders.js";
-import { APP_SESSION_PREFIX, forgetAppTerminal } from "../../core/app-terminals.js";
+import { forgetAppTerminal } from "../../core/app-terminals.js";
 import { chmod, mkdir, open, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from ".././store.js";
-import { chatProtocolAdapters, type MessagePart } from ".././protocol.js";
+import { type MessagePart } from ".././protocol.js";
 import { discoverSessionId, readSessionTurns, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from ".././subagents.js";
 import { selfInvocation } from "../../core/self-invocation.js";
@@ -22,6 +22,8 @@ import { ChatSummarizer } from ".././summaries.js";
 import { chatArtifactFileFingerprint, chatArtifactSignature, chatArtifactStoreFingerprint, listChatArtifacts, listClaudeChatArtifacts, listMegabrainChatArtifacts, type ChatArtifact } from ".././artifacts.js";
 import { chatChildRecord, chatLock, chatPid, chatResumes, chatSocket, discardStaleState, filePid, pidAlive, socketAccepts, stopChild } from "./process-state.js";
 import { dispatchRequest } from "./dispatch.js";
+import { startAgyTerminal } from "./agy-terminal.js";
+import { readAgyLanguageServer } from "../../agents/agy-ls.js";
 import { CHAT_PROTOCOL_MIN_VERSION, type ChatDaemon } from "../daemon.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
@@ -69,11 +71,13 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
     if (!cwd || !cwd.startsWith("/")) throw new Error("--cwd must be an absolute path");
     const parts = request.parts === undefined ? [] : await daemon.normalizeParts(cwd, validateParts(request.parts));
     const now = new Date().toISOString();
-    // agy has only its terminal; another agent opens in one when its default mode says so.
-    const terminal = agent === "agy" || request.mode === "terminal";
+    const requestedMode = request.mode === "chat" || request.mode === "terminal" ? request.mode : undefined;
+    // Without a mode agy opens in its terminal and the others as a chat.
+    const mode = requestedMode ?? (agent === "agy" ? "terminal" : "chat");
+    const terminal = mode === "terminal";
     const chat: Chat = {
       id: randomUUID(), agent, capabilities: agent === "agy" ? { approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true } : { approvals: true, interrupt: true, liveModelSwitch: agent === "grok", steer: agent === "codex", structuredTools: true }, cwd, model: text(request.model) || null, ...(text(request.effort) ? { effort: text(request.effort) } : {}), ...(request.approvals === true && agent !== "agy" ? { approvals: true } : {}),
-      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: terminal ? "idle" : "starting", mode: terminal ? "terminal" : "chat", owner: agent === "agy" ? "terminal" : "none",
+      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: terminal || agent === "agy" ? "idle" : "starting", mode, owner: agent === "agy" ? "terminal" : "none",
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
       ...(terminal && agent !== "agy" ? { terminalSince: now } : {}), ...(terminal && firstText(parts) !== "" ? { pendingPrompt: firstText(parts) } : {}),
     };
@@ -87,16 +91,30 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
       if (images > 0) await daemon.publish(chat, event("system", `${images} image${images === 1 ? "" : "s"} not sent: the terminal takes the message text only`));
       return chat;
     }
+    if (agent === "agy") {
+      try { await startAgyTerminal(daemon, chat); }
+      catch (error) { await daemon.fail(chat.id, error); throw error; }
+    }
     const queue = daemon.queues.get(chat.id) ?? [];
-    if (parts.length > 0) { queue.push(parts); daemon.queues.set(chat.id, queue); await daemon.publish(chat, event("user", firstText(parts), undefined, withImages(parts))); }
-    daemon.trackCallback(daemon.runAgent(chat).catch((error: unknown) => daemon.fail(chat.id, error)));
+    if (parts.length > 0 && agent === "agy") {
+      daemon.trackCallback((async () => {
+        for (let attempt = 0; attempt < 100 && await readAgyLanguageServer(daemon.stateDir, chat.id) === undefined; attempt += 1) {
+          const current = await daemon.requireChat(chat.id);
+          const found = await daemon.sessionOfTerminal(current);
+          if (found !== null && current.agentSessionId !== found) { current.agentSessionId = found; await daemon.save(current); }
+          if (await readAgyLanguageServer(daemon.stateDir, chat.id) === undefined) await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        await daemon.send(chat.id, parts);
+      })().catch(() => undefined));
+    } else if (parts.length > 0) { queue.push(parts); daemon.queues.set(chat.id, queue); await daemon.publish(chat, event("user", firstText(parts), undefined, withImages(parts))); }
+    if (agent !== "agy") daemon.trackCallback(daemon.runAgent(chat).catch((error: unknown) => daemon.fail(chat.id, error)));
     return chat;
   }
 
 export async function suspendActive(daemon: ChatDaemon): Promise<string[]> {
     const interrupted: string[] = [];
     for (const chat of await daemon.store.list()) {
-      if (chat.state === "error" || chat.mode === "terminal") continue;
+      if (chat.state === "error" || chat.mode === "terminal" || (chat.agent === "agy" && chat.owner === "terminal")) continue;
       const child = daemon.children.get(chat.id);
       if (child) {
         daemon.children.delete(chat.id);
