@@ -111,13 +111,14 @@ describe("managed process lifecycle", () => {
     expect(start.kind === "failed" ? start.error : "").toContain(`pid ${process.pid}`);
   }, 20000);
 
-  test("does not signal the caller or its ancestors when a process record names them", async () => {
+  test("does not signal the caller, ancestors, or its process group from a process record", async () => {
     const env = await sandbox();
     env.MEGABRAIN_SESSION_HOST = "local";
     env.MEGABRAIN_SESSION_ID = "proc-owner";
     const calls: Array<{ command: string; args: readonly string[] }> = [];
-    const pids = [process.pid, process.ppid];
-    const ps = `${process.pid} ${process.ppid} ${process.pid}\n${process.ppid} 1 ${process.ppid}\n`;
+    const pids = [process.pid, process.ppid, 4242];
+    const names = ["caller", "ancestor", "same-group"];
+    const ps = `${process.pid} ${process.ppid} ${process.pid}\n${process.ppid} 1 ${process.ppid}\n4242 1 ${process.pid}\n`;
     let panePid = process.pid;
     const fake: ProcessAdapter = {
       run: async (command, args) => {
@@ -134,7 +135,7 @@ describe("managed process lifecycle", () => {
     };
 
     for (const [index, pid] of pids.entries()) {
-      const name = index === 0 ? "caller" : "ancestor";
+      const name = names[index] ?? "same-group";
       panePid = pid;
       const started = await executeProc(["start", "--name", name, "--", "sleep", "300"], env, fake);
       expect(started.kind).toBe("ok");
