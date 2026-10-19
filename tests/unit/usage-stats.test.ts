@@ -160,6 +160,13 @@ describe("usage stats across providers", () => {
     expect(report.providers.every((entry) => entry.total === 0)).toBe(true);
   });
 
+  test("reports unreadable provider logs instead of omitting them", async () => {
+    const { home, environment } = sandbox();
+    const unreadable = join(home, ".claude", "projects", "-work-api", "broken.jsonl");
+    mkdirSync(unreadable);
+    await expect(usageStats(environment, { days: null, provider: "claude", now, timeZone })).rejects.toThrow("broken.jsonl");
+  });
+
   test("dispatches, the time their agents worked and native chats come from megabrain's own state", async () => {
     const { environment, stateDir } = sandbox();
     const opened = stateDatabase(environment);
