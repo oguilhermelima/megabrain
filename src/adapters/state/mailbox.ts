@@ -316,21 +316,27 @@ export function deleteWaiter(handle: DatabaseHandle, dispatchId: string, pid?: n
 export type NudgeRecord = Readonly<{ id: number; dispatchId: string; pointer: string; outcome: string; reason: string; createdAt: string }>;
 type NudgeRow = Readonly<{ id: number; dispatch_id: string; pointer: string; outcome: string; reason: string; created_at: string }>;
 const nudgeRecord = (row: NudgeRow): NudgeRecord => ({ id: row.id, dispatchId: row.dispatch_id, pointer: row.pointer, outcome: row.outcome, reason: row.reason, createdAt: row.created_at });
+const NUDGE_RETENTION_PER_DISPATCH = 1_000;
 
 export function appendNudge(db: DatabaseAdapter, dispatchId: string, pointer: string, outcome: string, reason: string, createdAt = new Date().toISOString()): Result<void> {
   try {
     const cleanReason = reason.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "unspecified";
     db.run("INSERT INTO nudge_events (dispatch_id, pointer, outcome, reason, created_at) VALUES (?, ?, ?, ?, ?)", [dispatchId, pointer, outcome, cleanReason, createdAt]);
+    const retained = db.query<{ id: number }>("SELECT id FROM nudge_events WHERE dispatch_id = ? ORDER BY id DESC LIMIT 1000").all(dispatchId);
+    const oldestRetained = retained.at(-1);
+    if (oldestRetained !== undefined && retained.length === NUDGE_RETENTION_PER_DISPATCH) {
+      db.run("DELETE FROM nudge_events WHERE dispatch_id = ? AND id < ?", [dispatchId, oldestRetained.id]);
+    }
     return ok(undefined);
   } catch (cause: unknown) { return failed(cause instanceof Error ? cause.message : String(cause)); }
 }
 
 export function listNudges(handle: DatabaseHandle, dispatchId: string): Result<NudgeRecord[]> {
-  return read(handle, ({ db }) => db.query<NudgeRow>("SELECT * FROM nudge_events WHERE dispatch_id = ? ORDER BY id").all(dispatchId).map(nudgeRecord));
+  return read(handle, ({ db }) => db.query<NudgeRow>("SELECT * FROM nudge_events WHERE dispatch_id = ? ORDER BY id LIMIT 1000").all(dispatchId).map(nudgeRecord));
 }
 
 export function nudgeCursor(handle: DatabaseHandle, dispatchId: string): Result<number> {
-  return read(handle, ({ db }) => db.query<{ cursor: number | null }>("SELECT max(id) AS cursor FROM nudge_events WHERE dispatch_id = ?").get(dispatchId)?.cursor ?? 0);
+  return read(handle, ({ db }) => db.query<{ cursor: number | null }>("SELECT id AS cursor FROM nudge_events WHERE dispatch_id = ? ORDER BY id DESC LIMIT 1").get(dispatchId)?.cursor ?? 0);
 }
 
 function outboxRow(db: DatabaseAdapter, id: string): OutboxDetails | undefined {
