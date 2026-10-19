@@ -46,5 +46,6 @@ describe('settings page loads', () => {
     expect(sectionKeys.usage).toEqual(['limits'])
     expect(sectionKeys.shortcuts).toEqual([])
     expect(sectionKeys.supervisor).not.toContain('limits')
+    expect(sectionKeys.supervisor).toContain('resources')
   })
 })
