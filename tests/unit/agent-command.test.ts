@@ -61,6 +61,7 @@ describe("agent command line", () => {
     expect(JSON.parse(result.kind === "ok" ? result.value : "null")).toEqual({
       agent: "codex",
       argv: ["codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "-c", "model=m1", "-c", "model_reasoning_effort=low"],
+      builtin: ["codex", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false"],
     });
   });
 

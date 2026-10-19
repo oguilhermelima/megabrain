@@ -6,6 +6,19 @@ import { selfInvocation } from "../core/self-invocation.js";
 import { knowledgeContext } from "../knowledge/library.js";
 import { togglesFor } from "../knowledge/settings.js";
 import { resolveLocation, summariesContext } from "./summary-library.js";
+import { agyFlags } from "../agents/agy.js";
+import { claudeFlags } from "../agents/claude.js";
+import { codexFlags } from "../agents/codex.js";
+import { grokFlags } from "../agents/grok.js";
+import type { AgentFlags } from "../agents/types.js";
+
+// The words a terminal starts with: the person's own command, minus the agent's permission flags when
+// the chat asks for approvals, else the built-in ones. The first word is the executable.
+function terminalBase(chat: Chat, flags: AgentFlags, base: readonly string[] | null | undefined, builtIn: readonly string[]): [string, string[]] {
+  const words = base === null || base === undefined ? builtIn : chat.approvals === true ? base.filter((word, index) => index === 0 || !flags.permission.includes(word)) : base;
+  const [executable, ...rest] = words;
+  return [executable ?? flags.executable, rest];
+}
 
 export type MessagePart = { type: "text"; text: string } | { type: "image"; path: string };
 export type RpcRequest = (method: string, params: Record<string, unknown>) => Promise<unknown>;
@@ -17,8 +30,8 @@ export interface ChatProtocolAdapter {
   send(chat: Chat, child: ChildProcessWithoutNullStreams, parts: MessagePart[], request: RpcRequest): Promise<string | undefined>;
   steer(chat: Chat, child: ChildProcessWithoutNullStreams, turnId: string, parts: MessagePart[], request: RpcRequest): Promise<void>;
   interrupt(chat: Chat, child: ChildProcessWithoutNullStreams | undefined, turnId: string | undefined, request: RpcRequest): Promise<void>;
-  /** The TUI on this conversation; a prompt is the initial message of a fresh session. */
-  terminalCommand(chat: Chat, prompt?: string): string[];
+  /** The TUI on this conversation; a prompt is the initial message of a fresh session. `base` is the person's own start command. */
+  terminalCommand(chat: Chat, prompt?: string, base?: readonly string[] | null): string[];
 }
 
 async function claudeContent(parts: MessagePart[]): Promise<unknown[]> {
@@ -66,8 +79,9 @@ const claude: ChatProtocolAdapter = {
   },
   async steer() { throw new Error("Claude does not support steering a running turn"); },
   async interrupt(_chat, child) { child?.kill("SIGINT"); },
-  terminalCommand(chat, prompt) {
-    return ["claude", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-skip-permissions"]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
+  terminalCommand(chat, prompt, base) {
+    const [executable, fixed] = terminalBase(chat, claudeFlags, base, ["claude", ...(chat.approvals === true ? [] : ["--dangerously-skip-permissions"])]);
+    return [executable, ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...fixed, ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
   },
 };
 
@@ -91,8 +105,9 @@ const codex: ChatProtocolAdapter = {
   async interrupt(chat, child, turnId, request) {
     if (turnId) await request("turn/interrupt", { threadId: chat.agentSessionId, turnId });
   },
-  terminalCommand(chat, prompt) {
-    return ["codex", ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), "-c", "check_for_update_on_startup=false", ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
+  terminalCommand(chat, prompt, base) {
+    const [executable, fixed] = terminalBase(chat, codexFlags, base, ["codex", ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), "-c", "check_for_update_on_startup=false"]);
+    return [executable, ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...fixed, ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
   },
 };
 
@@ -115,7 +130,10 @@ const grok: ChatProtocolAdapter = {
   async interrupt(chat, _child, _turnId, request) {
     if (chat.agentSessionId) await request("session/cancel", { sessionId: chat.agentSessionId });
   },
-  terminalCommand(chat, prompt) { return ["grok", ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...(prompt ? [prompt] : [])]; },
+  terminalCommand(chat, prompt, base) {
+    const [executable, fixed] = terminalBase(chat, grokFlags, base, ["grok"]);
+    return [executable, ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...fixed, ...(prompt ? [prompt] : [])];
+  },
 };
 
 const agyUnavailable: ChatProtocolAdapter = {
@@ -123,7 +141,10 @@ const agyUnavailable: ChatProtocolAdapter = {
   async send() { throw new Error("agy messages must be sent through the agy terminal"); },
   async steer() { throw new Error("agy does not support steering"); },
   async interrupt() { throw new Error("agy does not support interruption"); },
-  terminalCommand(chat, prompt) { return ["agy", ...(chat.agentSessionId ? ["--conversation", chat.agentSessionId] : []), ...(chat.model ? ["--model", chat.model] : []), ...(prompt ? ["-i", prompt] : [])]; },
+  terminalCommand(chat, prompt, base) {
+    const [executable, fixed] = terminalBase(chat, agyFlags, base, ["agy"]);
+    return [executable, ...(chat.agentSessionId ? ["--conversation", chat.agentSessionId] : []), ...fixed, ...(chat.model ? ["--model", chat.model] : []), ...(prompt ? ["-i", prompt] : [])];
+  },
 };
 
 function codexInput(parts: MessagePart[]): unknown[] {

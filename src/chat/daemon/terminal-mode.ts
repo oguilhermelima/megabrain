@@ -25,6 +25,7 @@ import type { ChatDaemon } from "../daemon.js";
 import { DRAINING, DEFAULT_TERMINAL_POLL_MS, DEFAULT_HANDOVER_TIMEOUT_MS, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS, timeoutsFor, heldMessage, SessionHeldError, ChatHandoffError, unsentTerminalText, object, text, validateParts, firstText, event, withImages, withMessage, flattenContent, codexReasoning, count, instances, timeoutMs } from "../daemon.js";
 import type { Part, Request, Response, Environment, Timeouts, ArtifactWatch } from "../daemon.js";
 import { startAgyTerminal } from "./agy-terminal.js";
+import { readAgentSettings, startCommand } from "../../core/agent-settings.js";
 
 export async function rename(daemon: ChatDaemon, id: string, title: string): Promise<Chat> {
     const chat = await daemon.requireChat(id);
@@ -133,7 +134,7 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
     }
     await daemon.syncTerminalPolling();
     // The terminal's command rides along, so opening it costs no second round trip.
-    return { chat, terminal: null, command: chat.mode === "terminal" ? chatProtocolAdapters[chat.agent].terminalCommand(chat) : null };
+    return { chat, terminal: null, command: chat.mode === "terminal" ? chatProtocolAdapters[chat.agent].terminalCommand(chat, undefined, startCommand(await readAgentSettings(daemon.stateDir), chat.agent)) : null };
   }
 
 export async function takeOver(daemon: ChatDaemon, id: string): Promise<Chat> {
@@ -412,5 +413,5 @@ export async function terminalCommand(daemon: ChatDaemon, id: string): Promise<s
       delete chat.pendingPrompt;
       await daemon.save(chat);
     }
-    return chatProtocolAdapters[chat.agent].terminalCommand(chat, prompt);
+    return chatProtocolAdapters[chat.agent].terminalCommand(chat, prompt, startCommand(await readAgentSettings(daemon.stateDir), chat.agent));
   }

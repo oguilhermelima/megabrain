@@ -70,13 +70,14 @@ export function unavailableLiveness(agent: string): Result<LivenessResult> {
   return unknown(`${LIVENESS_UNAVAILABLE}: ${agent} has no liveness markers`);
 }
 
-export function launchArgv(flags: AgentFlags, model: string | null, effort: string | null, quote: Quote, resume: string | null = null): string[] {
+// `base` is the person's own start command, which replaces the executable, permission and startup words.
+export function launchArgv(flags: AgentFlags, model: string | null, effort: string | null, quote: Quote, resume: string | null = null, base: readonly string[] | null = null): string[] {
   const resumed = resume === null ? null : flags.resume(resume, quote);
+  const [executable, ...fixed] = base ?? [flags.executable, ...flags.permission, ...flags.startup];
   return [
-    flags.executable,
+    executable ?? flags.executable,
     ...(resumed?.lead ?? []),
-    ...flags.permission,
-    ...flags.startup,
+    ...fixed,
     ...(model === null ? [] : flags.model(flags.modelWithEffort?.(model, effort) ?? model, quote)),
     ...(effort === null || flags.effort === null ? [] : flags.effort(effort, quote)),
     ...(resumed?.trail ?? []),

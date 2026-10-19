@@ -361,7 +361,7 @@ export const agentDefaultsSchema = z.looseObject({
 })
 export type AgentDefaults = z.infer<typeof agentDefaultsSchema>
 // `agent command --json`: the command line that starts an agent's own TUI.
-export const agentCommandSchema = z.looseObject({ agent: z.string(), argv: z.array(z.string()).min(1) })
+export const agentCommandSchema = z.looseObject({ agent: z.string(), argv: z.array(z.string()).min(1), builtin: z.array(z.string()).min(1) })
 // The agent update check: each agent CLI's installed and latest version (null when unknown), how it
 // was installed, when it was last checked, and the last update attempt. status is up-to-date,
 // update-available, updated, latest-unknown or updating; installKind standalone, npm, brew, native
