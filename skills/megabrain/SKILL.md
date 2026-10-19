@@ -77,7 +77,7 @@ megabrain port who <port> [--json] — recommended when you need to see which pr
 megabrain port free [--from <port>] [--json] — recommended when you need the next port nothing listens on.
 megabrain port kill <port> [--json] — recommended when you need to stop your own process tree that holds a port; another user's process is refused.
 megabrain projects [--json] — recommended when you need to view projects, their worktrees, and agent sessions.
-megabrain github projects|project|project-move|prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions (through authenticated gh).
+megabrain github projects|project|project-move|project-field|project-clear|project-add|project-draft|project-archive|project-unarchive|prs|issues|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ... — recommended when you need to read and manage GitHub Projects, pull requests, issues and Actions (through authenticated gh).
 megabrain github runs <repo name|path> [--branch <b>] [--workflow <name|id>] [--status <s>] [--limit <n>] [--after <cursor>] [--json] — recommended when you need one page of workflow runs, workflows, dispatch support and declared inputs.
 megabrain github run <repo name|path> <run id> [--json] — recommended when you need one workflow run with its jobs and steps.
 megabrain github run-log <repo name|path> <run id> --job <job id> [--json] — recommended when you need a job's log.
@@ -620,3 +620,10 @@ Direct-parent ownership is required for `reply` and `close`.
 
 Before any megabrain call in tests, export `MEGABRAIN_STATE_DIR` to an isolated temporary
 directory so tests never touch `~/.megabrain`.
+
+megabrain github project-field <repo> <project number> <item id> --field <name> --type <single-select|number|date|text|iteration> --value <value> [--owner <login>] [--json] — sets a validated Project v2 field value.
+megabrain github project-clear <repo> <project number> <item id> --field <name> [--owner <login>] [--json] — clears a Project v2 field value.
+megabrain github project-add <repo> <project number> <issue-or-pr-url|repo#number> [--owner <login>] [--json] — adds an existing issue or pull request.
+megabrain github project-draft <repo> <project number> --title <title> [--body <text>] [--owner <login>] [--json] — creates a draft project item.
+megabrain github project-archive <repo> <project number> <item id> [--owner <login>] [--json] — archives a project item.
+megabrain github project-unarchive <repo> <project number> <item id> [--owner <login>] [--json] — unarchives a project item.
