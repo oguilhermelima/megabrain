@@ -12,6 +12,7 @@ import {
   ackDelivery,
   acquireLease,
   appendMessage,
+  appendNudge,
   archiveDispatch,
   claimOutbox,
   createDelivery,
@@ -27,6 +28,8 @@ import {
   listOutboxPage,
   listPendingOutboxPeerVerifications,
   mutateDispatch,
+  listNudges,
+  nudgeCursor,
   stateDatabase,
 } from "../../src/adapters/state-db.js";
 
@@ -49,6 +52,21 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 }
 
 describe("state database facade", () => {
+  test("bounds nudge retention without resetting the active cursor", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "nudge-retention", state: "running" }));
+    requireOk(appendNudge(db.db, "nudge-retention", "check", "sent", "initial"));
+    const oldCursor = requireOk(nudgeCursor(db, "nudge-retention"));
+    for (let index = 0; index < 1_001; index += 1) {
+      requireOk(appendNudge(db.db, "nudge-retention", "check", "sent", `event ${index}`));
+    }
+
+    const retained = requireOk(listNudges(db, "nudge-retention"));
+    expect(retained).toHaveLength(1_000);
+    expect(retained[0]?.id).toBeGreaterThan(oldCursor);
+    expect(requireOk(nudgeCursor(db, "nudge-retention"))).toBeGreaterThan(oldCursor);
+  });
+
   test("discovers only pending peer verifications through a bounded cursor", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "peer-scan", state: "running" }));
