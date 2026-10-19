@@ -489,6 +489,23 @@ describe("settings agents", () => {
   });
 });
 
+describe("settings agents modes", () => {
+  test("stores each agent's default mode beside the default agent and reads it back", async () => {
+    const env = sandbox();
+    const saved = { version: 1, default: null, disabled: [], modes: { claude: "terminal", codex: "chat" } };
+    expect((await run(["settings", "set", "agents", JSON.stringify(saved)], env)).kind).toBe("ok");
+    const result = await run(["settings", "get", "agents"], env);
+    expect(result.kind === "ok" ? JSON.parse(result.value) as unknown : result).toEqual(saved);
+  });
+
+  test("refuses a mode other than chat or terminal and a mode for an unknown agent", async () => {
+    const env = sandbox();
+    for (const modes of [{ claude: "tui" }, { gemini: "chat" }, "terminal"]) {
+      expect((await run(["settings", "set", "agents", JSON.stringify({ version: 1, default: null, disabled: [], modes })], env)).kind).toBe("failed");
+    }
+  });
+});
+
 describe("settings agents-update", () => {
   test("defaults to disabled and stores global and per-agent policy privately", async () => {
     const env = sandbox();

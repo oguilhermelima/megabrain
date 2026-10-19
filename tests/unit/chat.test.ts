@@ -105,6 +105,58 @@ async function socketDaemon(env: ReturnType<typeof sandbox>) {
   return daemon;
 }
 
+describe("agent default mode", () => {
+  test("a new chat opens in the terminal when its agent's default is Terminal, and hands the first message to the TUI once", async () => {
+    const env = sandbox();
+    // A chat child would record that it ran; a terminal chat must not start one.
+    fakeAgent(env.bin, "claude", `require("node:fs").appendFileSync(process.env.CHAT_CAPTURE, "spawned\\n");`);
+    writeFileSync(join(env.state, "agent-settings.json"), JSON.stringify({ version: 1, default: null, disabled: [], modes: { claude: "terminal" } }));
+    const started = await call(["chat", "start", "--agent", "claude", "--cwd", env.cwd, "--parts", JSON.stringify([{ type: "text", text: "first" }, { type: "image", path: join(env.root, "image.png") }]), "--json"], env);
+    expect(started.kind).toBe("ok");
+    if (started.kind !== "ok") return;
+    const chat = JSON.parse(started.value) as { id: string; mode: string; state: string };
+    try {
+    expect(chat).toMatchObject({ mode: "terminal", state: "idle" });
+    const first = await call(["chat", "terminal-command", chat.id, "--json"], env);
+    expect(first.kind === "ok" ? JSON.parse(first.value) as unknown : first).toEqual(["claude", "--dangerously-skip-permissions", "first"]);
+    const again = await call(["chat", "terminal-command", chat.id, "--json"], env);
+    expect(again.kind === "ok" ? JSON.parse(again.value) as unknown : again).toEqual(["claude", "--dangerously-skip-permissions"]);
+    const events = await call(["chat", "events", chat.id, "--json"], env);
+    expect(events.kind).toBe("ok");
+    if (events.kind === "ok") expect(events.value).toContain("not sent");
+    expect(existsSync(env.capture)).toBe(false);
+    } finally {
+      await call(["chat", "stop", chat.id], env);
+    }
+  });
+
+  test("an agent with no saved mode still opens in chat", async () => {
+    const env = sandbox();
+    fakeAgent(env.bin, "claude", `process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "mode-session" }) + "\\n"); setInterval(() => {}, 1000);`);
+    writeFileSync(join(env.state, "agent-settings.json"), JSON.stringify({ version: 1, default: null, disabled: [], modes: { codex: "terminal" } }));
+    const started = await call(["chat", "start", "--agent", "claude", "--cwd", env.cwd, "--json"], env);
+    if (started.kind !== "ok") throw new Error("start failed");
+    const chat = JSON.parse(started.value) as { id: string; mode: string };
+    expect(chat.mode).toBe("chat");
+    await waitForChat(chat.id, "idle", env);
+    await call(["chat", "stop", chat.id], env);
+  });
+
+  test("switching one chat's mode never rewrites the agent defaults", async () => {
+    const env = sandbox();
+    fakeAgent(env.bin, "claude", `process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "mode-session" }) + "\\n"); setInterval(() => {}, 1000);`);
+    const saved = JSON.stringify({ version: 1, default: null, disabled: [], modes: { claude: "chat" } });
+    writeFileSync(join(env.state, "agent-settings.json"), saved);
+    const started = await call(["chat", "start", "--agent", "claude", "--cwd", env.cwd, "--json"], env);
+    if (started.kind !== "ok") throw new Error("start failed");
+    const chat = JSON.parse(started.value) as { id: string };
+    await waitForChat(chat.id, "idle", env);
+    expect((await call(["chat", "mode", chat.id, "terminal", "--json"], env)).kind).toBe("ok");
+    expect(readFileSync(join(env.state, "agent-settings.json"), "utf8")).toBe(saved);
+    await call(["chat", "stop", chat.id], env);
+  });
+});
+
 describe("native chat commands with protocol fakes", () => {
   test("starts, sends in order, persists events, and reloads an interrupted Claude chat", async () => {
     const env = sandbox();
