@@ -22,6 +22,7 @@ import {
   listDeliveries,
   listMessages,
   listOutbox,
+  listOutboxForDispatch,
   mutateDispatch,
   stateDatabase,
 } from "../../src/adapters/state-db.js";
@@ -45,6 +46,29 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 }
 
 describe("state database facade", () => {
+  test("lists outbox rows through an indexed dispatch scoped page", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "outbox-scope-a", state: "running" }));
+    requireOk(createDispatch(db, { dispatchId: "outbox-scope-b", state: "running" }));
+    db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", ["a", "outbox-scope-a", "parent-pointer", "parent", "{}", "2026-01-01", "2026-01-01"]);
+    db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)", ["b", "outbox-scope-b", "parent-pointer", "parent", "{}", "2026-01-01", "2026-01-01"]);
+    let query = "";
+    const tracked = new Proxy(db.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => { query = sql; return target.query<T>(sql); };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: db.path, db: tracked, close: () => db.close() };
+
+    const rows = requireOk(listOutboxForDispatch(handle, "outbox-scope-a"));
+
+    expect(rows.map((row) => row.id)).toEqual(["a"]);
+    expect(query).toContain("dispatch_id = ?");
+    expect(query).toContain("LIMIT");
+  });
+
   test("append without derivation does not load the dispatch history", () => {
     const database = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(database, { dispatchId: "append-bounded", state: "running" }));
