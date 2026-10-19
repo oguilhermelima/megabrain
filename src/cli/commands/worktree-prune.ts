@@ -151,8 +151,9 @@ export async function executeWorktreePrune(args: readonly string[], environment:
   const discovered = await discoverCandidates(process, environment, parsed.value.repo);
   if (discovered.kind !== "ok") return discovered;
   const now = Date.now();
-  const candidates: Candidate[] = [];
-  for (const candidate of discovered.value) candidates.push(await assess(process, candidate, records.get(candidate.path), dispatches, parsed.value.olderThan, now));
+  const candidates = await Promise.all(discovered.value.map((candidate) =>
+    assess(process, candidate, records.get(candidate.path), dispatches, parsed.value.olderThan, now),
+  ));
   const removed: Array<{ path: string; branch: string; verified: boolean; branchDeleted: boolean }> = [];
   if (parsed.value.yes && !parsed.value.dryRun) {
     for (const candidate of candidates.filter((item) => item.eligible)) {
