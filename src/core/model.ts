@@ -171,6 +171,11 @@ export function agyModelId(model: string, effort: string | null): string {
   return effort === null || effort === "none" || agyLevel.test(model) ? model : `${model}-${effort}`;
 }
 
+/** The live `grok models` listing names the model Grok will choose when no model is supplied. */
+export function grokDefaultModel(listing: string): string | undefined {
+  return /^Default model:\s*(grok-[A-Za-z0-9_.-]+)\s*$/m.exec(listing)?.[1];
+}
+
 export function refreshAgyModels(listing: string, obtainedAt: string, template: readonly Model[] = []): readonly Model[] {
   const folded = new Map<string, { name: string | undefined; levels: string[] }>();
   for (const [, id = "", listedName] of listing.matchAll(/^((?:gemini|claude|gpt-oss)-[A-Za-z0-9_.-]+)(?:\t(.*))?$/gm)) {

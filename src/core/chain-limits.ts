@@ -465,6 +465,7 @@ export async function readLimit(agent: LimitAgent, window: LimitWindowName, conf
   }
   const liveProviders = config.usageLimits?.liveProviders ?? [];
   if (!liveProviders.includes(agent)) return unknownReading(agent, window, "live provider is not enabled");
+  if (agent === "grok" && window === "5h") return unknownReading(agent, window, "provider reports a weekly window only");
   const cached = readCache(agent, window, config, environment, stateDir, now, model);
   if (cached !== undefined) return cached;
   let claim = claimLiveCall(agent, stateDir, now);
