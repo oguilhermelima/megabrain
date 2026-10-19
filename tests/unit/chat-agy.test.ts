@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { parseAgyLog, sessionLogPath, sessionTurnOpen } from "../../src/chat/session-log.js";
 import { ChatStore, type Chat, type ChatCapabilities } from "../../src/chat/store.js";
 import { ChatDaemon } from "../../src/chat/daemon.js";
+import { chatProtocolAdapters } from "../../src/chat/protocol.js";
 
 const directories: string[] = [];
 const daemons: ChatDaemon[] = [];
@@ -55,6 +56,10 @@ describe("agy terminal-follow transcript", () => {
     const grokAndAgy: Chat["agent"][] = ["grok", "agy"];
     expect(grokAndAgy).toEqual(["grok", "agy"]);
     expect(agyCapabilities).toEqual({ approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true });
+  });
+
+  test("resumes an agy terminal with its conversation id", () => {
+    expect(chatProtocolAdapters.agy.terminalCommand(agyChat())).toEqual(["agy", "--conversation", sessionId, "--model", "gemini-3.8-flash-low"]);
   });
 
   test("maps captured user, assistant, tool call and denied tool result records", () => {
