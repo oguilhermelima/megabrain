@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { latestSchemaVersion } from "../../src/db/db.js";
+import type { DatabaseHandle } from "../../src/db/db.js";
+import type { DatabaseAdapter } from "../../src/db/queries/types.js";
 import { updateDispatch, type DispatchRow } from "../../src/db/queries/dispatches.js";
 import {
   ackDelivery,
@@ -43,6 +45,28 @@ function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?:
 }
 
 describe("state database facade", () => {
+  test("append without derivation does not load the dispatch history", () => {
+    const database = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(database, { dispatchId: "append-bounded", state: "running" }));
+    let historyReads = 0;
+    const tracked = new Proxy(database.db, {
+      get(target, property, receiver) {
+        if (property === "query") return <T>(sql: string) => {
+          if (sql === "SELECT * FROM messages WHERE dispatch_id = ? ORDER BY seq") historyReads += 1;
+          return target.query<T>(sql);
+        };
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as DatabaseAdapter;
+    const handle: DatabaseHandle = { path: database.path, db: tracked, close: () => database.close() };
+
+    const appended = appendMessage(handle, "append-bounded", { from: "child", type: "ask", text: "question" });
+
+    expect(requireOk(appended)).toMatchObject({ seq: 1, text: "question" });
+    expect(historyReads).toBe(0);
+  });
+
   test("mutateDispatch retries a version conflict and keeps all patches", () => {
     const db = requireOk(guardedStateDatabase(environment));
     requireOk(createDispatch(db, { dispatchId: "retry", state: "running", counter: 0, other: 0 }));
