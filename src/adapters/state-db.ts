@@ -45,6 +45,7 @@ export {
   listMessages,
   listNudges,
   listOutbox,
+  listOutboxForDispatch,
   nudgeCursor,
   putWaiter,
   releaseLease,

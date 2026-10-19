@@ -9,7 +9,7 @@ import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-te
 import { executeCheck, loadMessages } from "./check.js";
 import { appendMessage, findChild, parentContextMatches, sendParentPointer, waiterIsActive, type QueueEnvironment } from "./queue-write.js";
 import { continueRefusedChain } from "./chain-run.js";
-import { getDispatch, listDeliveries, listDispatches, listMessages, listOutbox, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDeliveries, listDispatches, listMessages, listOutboxForDispatch, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { callStateOwner, recordChannelResultThroughOwner } from "../../db/state-owner.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { backgroundTasks } from "../../core/supervise.js";
@@ -427,8 +427,8 @@ async function parentMailLines(root: string, database: DatabaseHandle, dispatchI
   const closed = dispatch.value.state === "closed";
   const deliveries = listDeliveries(database, dispatchId);
   const messages = listMessages(database, dispatchId);
-  const outbox = listOutbox(database);
-  if (deliveries.kind !== "ok" || messages.kind !== "ok") return { failed: [], pending: [] };
+  const outbox = listOutboxForDispatch(database, dispatchId);
+  if (deliveries.kind !== "ok" || messages.kind !== "ok" || outbox.kind !== "ok") return { failed: [], pending: [] };
   const failed: string[] = [];
   const pending: string[] = [];
   const subscriberAlive = supervisorWatcher(database).running;
@@ -441,7 +441,7 @@ async function parentMailLines(root: string, database: DatabaseHandle, dispatchI
     const message = item.messages[0];
     if (message === undefined) continue;
     const line = `${message.type || "mail"} ${parentMailSummary(message.text)} — megabrain orchestrate watch ${dispatchId}`;
-    const matchingOutbox = outbox.kind === "ok" ? outbox.value.filter((entry) => entry.dispatchId === dispatchId && entry.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(entry, sequences, outstandingParentDeliveryCount === 1)) : [];
+    const matchingOutbox = outbox.value.filter((entry) => entry.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(entry, sequences, outstandingParentDeliveryCount === 1));
     if (delivery.transport !== "deferred" && matchingOutbox.some((item) => item.status === "sending" && item.detail?.startsWith("peer-sent:"))) continue;
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");
     if (closed && (message.type !== "done" || !pendingOutbox || subscriberAlive || !parentMailWaitedTooLong(delivery, matchingOutbox))) continue;

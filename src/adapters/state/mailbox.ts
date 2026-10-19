@@ -365,6 +365,22 @@ export function listOutbox(handle: DatabaseHandle): Result<OutboxDetails[]> {
   });
 }
 
+export function listOutboxForDispatch(handle: DatabaseHandle, dispatchId: string): Result<OutboxDetails[]> {
+  return read(handle, ({ db }) => {
+    const records: OutboxDetails[] = [];
+    let cursor: { createdAt: string; id: string } | undefined;
+    for (;;) {
+      const rows = cursor === undefined
+        ? db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE dispatch_id = ? ORDER BY created_at, id LIMIT 100").all(dispatchId)
+        : db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>("SELECT * FROM outbox WHERE dispatch_id = ? AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT 100").all(dispatchId, cursor.createdAt, cursor.createdAt, cursor.id);
+      records.push(...rows.map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail })));
+      const last = rows.at(-1);
+      if (rows.length < 100 || last === undefined) return records;
+      cursor = { createdAt: last.created_at, id: last.id };
+    }
+  });
+}
+
 export function listLeases(handle: DatabaseHandle): Result<QueryLeaseRecord[]> {
   return read(handle, ({ db }) => queryLeases(db));
 }
