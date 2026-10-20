@@ -13,13 +13,15 @@ const directories: string[] = [];
 const helpers: Array<() => Promise<void>> = [];
 const udid = "11111111-1111-4111-8111-111111111111";
 const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 9, 252, 4, 155, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xff, 0xd9]);
-async function fakeHelper() {
+async function fakeHelper(readinessDelayMs = 0) {
   const server = createServer((request, response) => {
     if (request.url !== "/stream.mjpeg") { response.writeHead(404).end(); return; }
+    if (Date.now() < readyAt) { response.writeHead(503).end("starting"); return; }
     response.writeHead(200, { "content-type": "multipart/x-mixed-replace; boundary=frame" });
     const writeFrame = () => response.write(Buffer.concat([Buffer.from("--frame\r\nContent-Type: image/jpeg\r\n\r\n"), jpeg, Buffer.from("\r\n")]));
     writeFrame(); const timer = setInterval(writeFrame, 30); request.on("close", () => clearInterval(timer));
   });
+  const readyAt = Date.now() + readinessDelayMs;
   const ws = new WebSocketServer({ server }); const messages: Buffer[] = [];
   ws.on("connection", (socket) => socket.on("message", (message) => messages.push(Buffer.from(message))));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -59,6 +61,14 @@ describe("native input scenarios", () => {
     expect(JSON.parse((result as { value: string }).value)).toMatchObject({ udid, session: "456", port: fake.helper.port });
     expect(JSON.parse(await readFile(join(state, "native-input-sessions.json"), "utf8")).sessions[0]).toMatchObject({ pid: 456, streamUrl: fake.helper.streamUrl, wsUrl: fake.helper.wsUrl });
     expect(process.calls.some((call) => call.command === "serve-sim" && call.args.includes("--detach"))).toBe(false);
+  });
+
+  test("does not report the helper ready before its framebuffer stream responds", async () => {
+    const fake = await fakeHelper(200); const state = await emptyFixture(); const { process } = fakeProcess(fake.helper);
+    const started = Date.now();
+    const result = await nativeInput(["start", udid, "--worker", "--json"], { MEGABRAIN_STATE_DIR: state }, process);
+    expect(result.kind).toBe("ok");
+    expect(Date.now() - started).toBeGreaterThanOrEqual(200);
   });
 
   test("reuses a live helper and does not start a second process", async () => {
