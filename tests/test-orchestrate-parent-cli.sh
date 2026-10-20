@@ -106,6 +106,11 @@ scenario_watch_generation() {
     "$root/.build/megabrain" orchestrate watch generation-watch --timeout 0 --wait-mode poll --json)"
   assert_json "$output" '.deliveryId == "generation-delivery" and .messages[0].text == "content answer"'
   assert_equal "$(show_dispatch "$state" generation-watch | jq -r '.deliveries[0].consumerGeneration')" 2
+  local ack_output
+  ack_output="$(env -i HOME="$work_dir/home" PATH="$PATH" MEGABRAIN_STATE_DIR="$state" \
+    MEGABRAIN_CONSUMER_GENERATION=2 SUPERSET_TERMINAL_ID=parent-terminal \
+    "$root/.build/megabrain" orchestrate ack generation-watch generation-delivery --json)"
+  assert_json "$ack_output" '.duplicate == false and .acknowledged == true'
   printf 'watch reads and claims the environment consumer generation\n'
 }
 

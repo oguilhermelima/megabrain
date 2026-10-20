@@ -19,14 +19,14 @@ export type AppendMessageEffects = Readonly<{ delivery?: DeliveryInput; outbox?:
 export type AppendMessageOptions = AppendMessageEffects & Readonly<{ derive?: (previous: readonly MessageRecord[]) => AppendMessageEffects }>;
 export type AppendParentReplyOptions = Readonly<{ supersede: boolean; outbox?: OutboxInput }>;
 
-export function acknowledgeImplicitDelivery(handle: DatabaseHandle, dispatchId: string, deliveryId: string, recipient: "child" | "parent", now = new Date().toISOString()): Result<boolean> {
-  return write(handle, ({ db }) => acknowledgeImplicitDeliveryInTransaction(db, dispatchId, deliveryId, recipient, now));
+export function acknowledgeImplicitDelivery(handle: DatabaseHandle, dispatchId: string, deliveryId: string, recipient: "child" | "parent", now = new Date().toISOString(), consumer?: string): Result<boolean> {
+  return write(handle, ({ db }) => acknowledgeImplicitDeliveryInTransaction(db, dispatchId, deliveryId, recipient, now, consumer));
 }
 
-export function acknowledgeImplicitDeliveryInTransaction(db: DatabaseAdapter, dispatchId: string, deliveryId: string, recipient: "child" | "parent", now = new Date().toISOString()): boolean {
+export function acknowledgeImplicitDeliveryInTransaction(db: DatabaseAdapter, dispatchId: string, deliveryId: string, recipient: "child" | "parent", now = new Date().toISOString(), consumer?: string): boolean {
   const delivery = queryDeliveries(db, dispatchId).find((item) => item.id === deliveryId);
   if (delivery === undefined || delivery.recipient !== recipient || !["outstanding", "superseded"].includes(delivery.status)) return false;
-  const changed = db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ? WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, now, deliveryId]).changes > 0;
+  const changed = db.run("UPDATE deliveries SET status = 'acknowledged', acknowledged_at = ?, updated_at = ?, consumer = COALESCE(consumer, ?) WHERE id = ? AND status IN ('outstanding', 'superseded')", [now, now, consumer ?? null, deliveryId]).changes > 0;
   if (changed) finishAcknowledgedOutbox(db, delivery, recipient, now);
   return changed;
 }

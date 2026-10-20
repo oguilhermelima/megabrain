@@ -67,7 +67,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "fence-delivery"; id: string; consumer: string; generation: number }
   | { operation: "ack-delivery"; id: string; consumer: string; generation: number }
   | { operation: "create-delivery"; delivery: Readonly<Record<string, unknown>> }
-  | { operation: "ack-implicit-delivery"; dispatchId: string; deliveryId: string; recipient: "child" | "parent"; now?: string }
+  | { operation: "ack-implicit-delivery"; dispatchId: string; deliveryId: string; recipient: "child" | "parent"; now?: string; consumer?: string }
   | { operation: "set-delivery-transport"; dispatchId: string; sequence: number; transport: string; reason?: string }
   | { operation: "append-parent-reply"; dispatchId: string; message: Readonly<Record<string, unknown>>; options: Readonly<{ supersede: boolean; outbox?: Readonly<{ id: string; dispatchId?: string | null; targetKind: string; target: string; payload: unknown }> }> }
   | { operation: "cancel-queued-message"; dispatchId: string; itemId: string; reason: string; actor: string }
@@ -530,9 +530,9 @@ function requestOnce(stateDir: string, request: StateOwnerRequest, timeoutMs: nu
   });
 }
 
-export async function callStateOwner(stateDir: string, request: StateOwnerRequest, timeoutMs = 5_000): Promise<unknown> {
+export async function callStateOwner(stateDir: string, request: StateOwnerRequest, timeoutMs = 5_000, startupTimeoutMs = Math.max(timeoutMs, 130_000)): Promise<unknown> {
   const requestWithId = { ...request, requestId: request.requestId ?? randomUUID() } as StateOwnerRequest;
-  const retryDeadline = Date.now() + Math.max(timeoutMs, 130_000);
+  const retryDeadline = Date.now() + Math.max(1, startupTimeoutMs);
   const processAdapter = createProcessAdapter();
   const builtEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../.build/megabrain");
   const temporaryState = resolve(stateDir) === resolve(tmpdir()) || resolve(stateDir).startsWith(`${resolve(tmpdir())}/`);

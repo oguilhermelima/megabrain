@@ -223,7 +223,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const delivery = deliveryRows?.kind === "ok" ? deliveryRows.value.find((row) => Array.isArray(row.messageSeqs) && row.messageSeqs.includes(sequence)) : undefined;
   const recipient = delivery?.recipient === "child" ? "child" : delivery === undefined ? undefined : "parent";
   const ackInstruction = delivery === undefined || recipient === undefined ? "" : `\n${formatDeliveryAcknowledgment(dispatch, delivery.id, recipient)}`;
-  const text = `${rawText}${ackInstruction}`;
+  const text = rawText;
+  const typedText = `${rawText}${ackInstruction}`;
   const priorVerification = getOutboxPeerVerification(database.value, outboxId);
   const fallbackOnly = priorVerification.kind === "ok" && priorVerification.value?.state === "fallback-queued";
   const queueVerification = async (channel: string, messageId: string, agentVersion: string, transcript?: string, transcriptOffset?: number): Promise<void> => {
@@ -289,7 +290,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         timeoutMs: Math.max(0, deadline - Date.now()),
         initialDelayMs: 500,
         maxDelayMs: 10_000,
-        ownDraft: meta.childHost === "orca" ? formatOneLine(text) : text,
+        ownDraft: meta.childHost === "orca" ? formatOneLine(typedText) : typedText,
         inspect: async () => {
           const screen = await readDeliveryScreen(meta, process);
           const status = await claudeStatus(meta, environment);
@@ -319,7 +320,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           return screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
         },
         clear: async () => clearOwnComposer(root, meta, process),
-        send: async () => sendTyped(meta, text, process, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; }),
+        send: async () => sendTyped(meta, typedText, process, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; }),
         sendError: () => sendError,
         isRead: async () => readWasPulled(root, dispatch, sequence),
         attempt: async (details) => {
@@ -508,7 +509,10 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
     return ok("peer verification lease lost\n");
   }
   if (result === "delivered") {
-    if (delivery.recipient === "child" || delivery.recipient === "parent") await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: delivery.recipient });
+    if (delivery.recipient === "child" || delivery.recipient === "parent") await callStateOwner(root, {
+      operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: delivery.recipient,
+      consumer: saved.value.channel === "peer-socket" ? "channel:claude-peer" : `channel:${saved.value.channel}`,
+    });
     await recordChannelResultThroughOwner(root, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });
     finishOutboxPeerVerification(database.value, outboxId, "delivered");
     await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: "acknowledged" });

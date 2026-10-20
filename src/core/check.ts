@@ -91,7 +91,17 @@ export function selectDelivery(
     .filter((delivery) => full || delivery.superseded !== true)
     .filter((delivery) => delivery.consumer === null || delivery.consumer === consumer)
     .filter((delivery) => matchesMailbox(mailbox, full, delivery, messages))
-    .sort((left, right) => (left.messageSeqs[0] ?? Number.MAX_SAFE_INTEGER) - (right.messageSeqs[0] ?? Number.MAX_SAFE_INTEGER));
+    .sort((left, right) => {
+      const priority = (delivery: CheckDelivery): number => {
+        if (mailbox !== "parent" || !full) return 0;
+        const messagesForDelivery = messageFor(delivery, messages);
+        return messagesForDelivery.some((message) => {
+          const classification = classifyMail(message.from, message.type, false);
+          return message.from === "child" && classification === "actionable";
+        }) ? 0 : 1;
+      };
+      return priority(left) - priority(right) || (left.messageSeqs[0] ?? Number.MAX_SAFE_INTEGER) - (right.messageSeqs[0] ?? Number.MAX_SAFE_INTEGER);
+    });
   if (candidates.length === 0) return deliveries.some((delivery) => delivery.messageSeqs.length === 0) ? { kind: "unknown" } : { kind: "none" };
   const selected = candidates[0];
   return { kind: "selected", delivery: selected, replayed: selected.consumer === consumer && selected.consumerGeneration === generation && selected.consumer !== null };
