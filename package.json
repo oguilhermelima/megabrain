@@ -34,6 +34,7 @@
     "@clack/prompts": "1.8.1"
   },
   "dependencies": {
+    "serve-sim": "0.1.48",
     "yaml": "^2.9.1"
   }
 }
