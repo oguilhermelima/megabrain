@@ -1,5 +1,6 @@
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { resolvePackageRoot } from "../../../core/package-root.js";
 import type { ProcessAdapter } from "../../../adapters/proc.js";
 import { resolveStateDirectory } from "../../../core/state.js";
 import { selfInvocation } from "../../../core/self-invocation.js";
@@ -8,8 +9,8 @@ import { usageText } from "../../../core/usage.js";
 import { SIMULATOR_UDID, simCandidates } from "./index.js";
 import type { Environment } from "./index.js";
 
-type RecordEntry = { udid: string; session: string; platform: "iOS" | "tvOS"; pid: number; port: number; streamUrl: string; wsUrl: string; pointWidth?: number; pointHeight?: number };
-type InputStatus = { udid: string; state: "none" | "starting" | "ready" | "failed"; phase: string; startedAt?: string; error?: string; session?: string; port?: number };
+type RecordEntry = { udid: string; session: string; platform: "iOS" | "tvOS"; pid: number; ownerPid?: number; watchdogPid?: number; port: number; streamUrl: string; wsUrl: string; pointWidth?: number; pointHeight?: number };
+type InputStatus = { udid: string; state: "none" | "starting" | "ready" | "failed"; phase: string; startedAt?: string; error?: string; session?: string; port?: number; ownerPid?: number; watchdogPid?: number };
 const stateFile = (env: Environment) => join(resolveStateDirectory(env), "native-input-sessions.json");
 const statusFile = (env: Environment, udid: string) => join(resolveStateDirectory(env), "native-input", `${udid}.json`);
 const lockFile = (env: Environment, udid: string) => join(resolveStateDirectory(env), "native-input", `${udid}.lock`);
@@ -18,7 +19,9 @@ function readStatus(env: Environment, udid: string): InputStatus | undefined {
 }
 function writeStatus(env: Environment, value: InputStatus): void {
   const file = statusFile(env, value.udid); mkdirSync(join(resolveStateDirectory(env), "native-input"), { recursive: true });
-  const tmp = `${file}.${globalThis.process.pid}.tmp`; writeFileSync(tmp, `${JSON.stringify(value)}\n`, { mode: 0o600 }); renameSync(tmp, file);
+  const prior = readStatus(env, value.udid);
+  const merged = { ...prior, ...value, ownerPid: value.ownerPid ?? prior?.ownerPid, watchdogPid: value.watchdogPid ?? prior?.watchdogPid };
+  const tmp = `${file}.${globalThis.process.pid}.tmp`; writeFileSync(tmp, `${JSON.stringify(merged)}\n`, { mode: 0o600 }); renameSync(tmp, file);
 }
 function records(env: Environment): RecordEntry[] {
   try { const parsed = JSON.parse(readFileSync(stateFile(env), "utf8")) as { version?: number; sessions?: RecordEntry[] }; return parsed.version === 1 && Array.isArray(parsed.sessions) ? parsed.sessions : []; } catch { return []; }
@@ -37,11 +40,19 @@ function parseHelper(stdout: string, udid: string): Omit<RecordEntry, "platform"
 }
 
 export async function endNativeInputSession(_env: Environment, process: ProcessAdapter, udid: string): Promise<Result<void>> {
-  const stopped = await process.run("serve-sim", ["--kill", udid]);
+  const stopped = await runServeSim(process, _env, ["--kill", udid]);
   return stopped.kind === "ok" ? ok(undefined) : failed(stopped.error);
 }
-async function helperState(process: ProcessAdapter, udid: string) {
-  const result = await process.run("serve-sim", ["--list", udid]);
+async function runServeSim(process: ProcessAdapter, env: Environment, args: readonly string[], options?: { readonly env?: Readonly<Record<string, string>> }) {
+  const onPath = await process.run("serve-sim", args, options);
+  if (onPath.kind === "ok" || !onPath.error.includes("executable not found")) return onPath;
+  const roots = [globalThis.process.cwd()];
+  try { roots.push(resolvePackageRoot(import.meta.url, env.MEGABRAIN_ROOT)); } catch { /* use cwd */ }
+  const script = roots.map((root) => join(root, "node_modules", "serve-sim", "dist", "serve-sim.js")).find(existsSync);
+  return script ? process.run("node", [script, ...args], options) : onPath;
+}
+async function helperState(process: ProcessAdapter, env: Environment, udid: string) {
+  const result = await runServeSim(process, env, ["--list", udid]);
   return result.kind === "ok" ? parseHelper(result.value.stdout, udid) : undefined;
 }
 async function waitForInput(env: Environment, udid: string, timeoutSeconds: number): Promise<Result<string>> {
@@ -53,6 +64,29 @@ async function waitForInput(env: Environment, udid: string, timeoutSeconds: numb
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   return failed(`timed out waiting for native input session ${udid}`);
+}
+async function watchInputOwner(env: Environment, process: ProcessAdapter, entry: RecordEntry): Promise<Result<string>> {
+  const ownerPid = entry.ownerPid;
+  if (!ownerPid || !Number.isInteger(ownerPid)) return failed("native input watchdog has no valid owner PID");
+  while (true) {
+    const owner = await process.run("kill", ["-0", String(ownerPid)]);
+    if (owner.kind !== "ok") {
+      const stopped = await runServeSim(process, env, ["--kill", entry.udid]);
+      if (stopped.kind !== "ok") { await new Promise((resolve) => setTimeout(resolve, 500)); continue; }
+      save(env, records(env).filter((candidate) => candidate.udid !== entry.udid));
+      writeStatus(env, { udid: entry.udid, state: "none", phase: "owner exited", startedAt: startedAt(env, entry.udid), ownerPid });
+      return ok(`${JSON.stringify({ udid: entry.udid, stopped: true, reason: "owner exited" })}\n`);
+    }
+    const checked = await runServeSim(process, env, ["--list", entry.udid]);
+    if (checked.kind !== "ok") { await new Promise((resolve) => setTimeout(resolve, 500)); continue; }
+    const helper = parseHelper(checked.value.stdout, entry.udid);
+    if (!helper) {
+      save(env, records(env).filter((candidate) => candidate.udid !== entry.udid));
+      writeStatus(env, { udid: entry.udid, state: "none", phase: "simulator stopped", startedAt: startedAt(env, entry.udid), ownerPid });
+      return ok(`${JSON.stringify({ udid: entry.udid, stopped: true, reason: "simulator stopped" })}\n`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
 }
 async function frame(url: string): Promise<Buffer> {
   const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
@@ -79,13 +113,19 @@ function jpegSize(jpeg: Buffer): { width: number; height: number } | undefined {
   return undefined;
 }
 async function sendWs(url: string, type: number, value?: unknown): Promise<void> {
+  return sendWsSequence(url, [{ type, value }]);
+}
+async function sendWsSequence(url: string, events: readonly { type: number; value?: unknown }[], gapMs = 0): Promise<void> {
   const socket = new WebSocket(url); socket.binaryType = "arraybuffer";
   await new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => { socket.close(); reject(new Error("timed out connecting to serve-sim helper")); }, 2_000);
-    socket.addEventListener("open", () => {
+    socket.addEventListener("open", async () => {
       clearTimeout(timeout);
-      const body = value === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(value));
-      const message = new Uint8Array(body.length + 1); message[0] = type; message.set(body, 1); socket.send(message);
+      for (const event of events) {
+        const body = event.value === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(event.value));
+        const message = new Uint8Array(body.length + 1); message[0] = event.type; message.set(body, 1); socket.send(message);
+        if (gapMs > 0) await new Promise((pause) => setTimeout(pause, gapMs));
+      }
       setTimeout(() => { socket.close(); resolve(); }, 60);
     }, { once: true });
     socket.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("could not connect to serve-sim control socket")); }, { once: true });
@@ -97,20 +137,22 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) return ok(`${usageText("native-input")}\n${usageText("native-input-stream")}\n${usageText("native-input-rotate")}\nCoordinates use device points; frames report image pixels and pixels per point.\n`);
   const [verb, udid, ...rawRest] = args.filter((arg) => arg !== "--json");
   const worker = rawRest.includes("--worker");
+  const watchOwner = rawRest.includes("--watch");
   const durationIndex = rawRest.indexOf("--duration");
   const duration = durationIndex >= 0 ? Number(rawRest[durationIndex + 1]) : 500;
   const rest = durationIndex >= 0 ? rawRest.filter((_, index) => index !== durationIndex && index !== durationIndex + 1) : rawRest;
   if (!verb || !udid || !SIMULATOR_UDID.test(udid)) return failed("native input requires start|status|stop|tap|swipe|scroll|type|key|button|frame|stream|rotate and a simulator UDID", 2);
   const all = records(env); let old = all.find((entry) => entry.udid === udid);
   if (verb === "status") {
-    const helper = old ? await helperState(process, udid) : undefined;
+    const helper = old ? await helperState(process, env, udid) : undefined;
     if (old && !helper) { save(env, all.filter((entry) => entry.udid !== udid)); old = undefined; }
     const status = readStatus(env, udid) ?? (old ? { udid, state: "ready" as const, phase: "ready", startedAt: "", session: old.session, port: old.port } : { udid, state: "none" as const, phase: "idle" });
     return ok(`${JSON.stringify(status)}\n`);
   }
   if (verb !== "stop" && verb !== "stream") { const { activeRunForDevice } = await import("../maestro.js"); const activeRun = activeRunForDevice(env, udid); if (activeRun) return failed(`simulator ${udid} is being driven by Maestro run ${activeRun}`); }
   if (verb === "stop") {
-    await process.run("serve-sim", ["--kill", udid]);
+    const stopped = await runServeSim(process, env, ["--kill", udid]);
+    if (stopped.kind !== "ok") return failed(`failed to stop serve-sim helper: ${stopped.error}`);
     save(env, all.filter((entry) => entry.udid !== udid));
     writeStatus(env, { udid, state: "none", phase: "idle", startedAt: startedAt(env, udid) });
     return ok(`${JSON.stringify({ udid, stopped: true })}\n`);
@@ -123,9 +165,11 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
       mkdirSync(join(resolveStateDirectory(env), "native-input"), { recursive: true });
       try { closeSync(openSync(lockFile(env, udid), "wx", 0o600)); } catch { return failed(`input start for ${udid} is already being claimed`); }
       writeStatus(env, { udid, state: "starting", phase: "launching serve-sim helper", startedAt: new Date().toISOString() });
-      const child = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["native", "input", "start", udid, "--worker"]);
-      const launched = await process.startDetached(child.command, child.args, { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env) } });
+      const ownerPid = globalThis.process.ppid;
+      const child = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["native", "input", "start", udid, "--worker", "--watch"]);
+      const launched = await process.startDetached(child.command, child.args, { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env), MEGABRAIN_NATIVE_INPUT_OWNER_PID: String(ownerPid) } });
       if (launched.kind !== "ok") { writeStatus(env, { udid, state: "failed", phase: "launching", startedAt: startedAt(env, udid), error: launched.error }); try { unlinkSync(lockFile(env, udid)); } catch {} return launched; }
+      writeStatus(env, { udid, state: "starting", phase: "launching serve-sim helper", startedAt: startedAt(env, udid), ownerPid, watchdogPid: launched.value.pid });
       return rest.includes("--wait") ? waitForInput(env, udid, Number(rest[rest.indexOf("--timeout") + 1] ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);
     }
     const lock = lockFile(env, udid); const update = (phase: string) => writeStatus(env, { udid, state: "starting", phase, startedAt: startedAt(env, udid) });
@@ -136,18 +180,20 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
       if (!candidate) throw new Error(`unknown simulator: ${udid}`);
       if (candidate.state !== "Booted") throw new Error(`simulator ${udid} is not booted (state: ${candidate.state})`);
       const platform = phones.kind === "ok" && phones.value.some((device) => device.udid === udid) ? "iOS" : "tvOS";
-      const existing = await helperState(process, udid);
+      const existing = await helperState(process, env, udid);
       let helper = existing;
       if (!helper) {
         update("starting serve-sim helper");
-        const launch = await process.run("serve-sim", ["--detach", "--exit-on-simulator-shutdown", "--quiet", udid], { env: { SERVE_SIM_DISABLE_DEVICE_HUB_KEYBOARD: "1" } });
+        const launch = await runServeSim(process, env, ["--detach", "--exit-on-simulator-shutdown", "--quiet", udid], { env: { SERVE_SIM_DISABLE_DEVICE_HUB_KEYBOARD: "1" } });
         if (launch.kind !== "ok") throw new Error(`failed to start serve-sim helper: ${launch.error}`);
-        helper = parseHelper(launch.value.stdout, udid) ?? await helperState(process, udid);
+        helper = parseHelper(launch.value.stdout, udid) ?? await helperState(process, env, udid);
       }
       if (!helper) throw new Error(`serve-sim did not report a live helper for ${udid}`);
-      const entry: RecordEntry = { ...helper, platform };
+      const ownerPid = Number(env.MEGABRAIN_NATIVE_INPUT_OWNER_PID);
+      const entry: RecordEntry = { ...helper, platform, ...(worker && Number.isInteger(ownerPid) && ownerPid > 0 ? { ownerPid } : {}), watchdogPid: readStatus(env, udid)?.watchdogPid };
       save(env, [...all.filter((item) => item.udid !== udid), entry]);
       writeStatus(env, { udid, state: "ready", phase: "ready", startedAt: startedAt(env, udid), session: entry.session, port: entry.port });
+      if (watchOwner) return watchInputOwner(env, process, entry);
       return ok(`${JSON.stringify({ udid, session: entry.session, port: entry.port })}\n`);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
@@ -155,9 +201,9 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
       return failed(message);
     } finally { try { unlinkSync(lock); } catch {} }
   }
-  if (!old) return failed(`no input session for ${udid}; run native input start ${udid} first`);
   const pending = readStatus(env, udid);
   if (pending?.state === "starting") return failed(`input session for ${udid} state starting (phase: ${pending.phase})`);
+  if (!old) return failed(`no input session for ${udid}; run native input start ${udid} first`);
   const started = Date.now();
   if (verb === "stream" || verb === "frame") {
     try {
@@ -174,17 +220,15 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
     if (verb === "tap" && nums.length === 2) {
       const size = old.pointWidth && old.pointHeight ? { width: old.pointWidth, height: old.pointHeight } : { width: 0, height: 0 };
       if (!size.width) return failed("read a frame before sending point-coordinate input");
-      await sendWs(old.wsUrl, 3, { type: "begin", x: nums[0]! / size.width, y: nums[1]! / size.height });
-      await sendWs(old.wsUrl, 3, { type: "end", x: nums[0]! / size.width, y: nums[1]! / size.height });
+      const point = { x: nums[0]! / size.width, y: nums[1]! / size.height };
+      await sendWsSequence(old.wsUrl, [{ type: 3, value: { type: "begin", ...point } }, { type: 3, value: { type: "end", ...point } }], 40);
     } else if ((verb === "swipe" || verb === "scroll") && nums.length === 4 && (verb === "scroll" || (Number.isFinite(duration) && duration > 0))) {
       const size = old.pointWidth && old.pointHeight ? { width: old.pointWidth, height: old.pointHeight } : { width: 0, height: 0 };
       if (!size.width) return failed("read a frame before sending point-coordinate input");
       const [x1, y1, x2, y2] = verb === "scroll" ? [nums[0]!, nums[1]!, nums[0]! + nums[2]!, nums[1]! + nums[3]!] : nums;
-      await sendWs(old.wsUrl, 3, { type: "begin", x: x1 / size.width, y: y1 / size.height });
-      await new Promise((resolve) => setTimeout(resolve, verb === "scroll" ? 400 : duration));
-      await sendWs(old.wsUrl, 3, { type: "end", x: x2 / size.width, y: y2 / size.height });
+      await sendWsSequence(old.wsUrl, [{ type: 3, value: { type: "begin", x: x1 / size.width, y: y1 / size.height } }, { type: 3, value: { type: "end", x: x2 / size.width, y: y2 / size.height } }], verb === "scroll" ? 400 : duration);
     } else if (verb === "type" && rest.length) {
-      const result = await process.run("serve-sim", ["type", rest.join(" "), "--device", udid]); if (result.kind !== "ok") return failed(result.error);
+      const result = await runServeSim(process, env, ["type", rest.join(" "), "--device", udid]); if (result.kind !== "ok") return failed(result.error);
     } else if (verb === "key" && rest.length === 1) {
       const keyUsage: Record<string, number> = { return: 40, delete: 42, tab: 43, escape: 41, space: 44, up: 82, down: 81, left: 80, right: 79 };
       const usage = keyUsage[rest[0]!.toLowerCase()]; if (!usage) return failed(`unknown input key: ${rest[0]}`, 2);
