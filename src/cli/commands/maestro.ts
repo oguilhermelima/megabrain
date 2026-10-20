@@ -10,7 +10,6 @@ import { findJavaHome, maestroBinary, maestroEnvironment, readMaestroRecord } fr
 import { usageText } from "../../core/usage.js";
 import { recordSimulatorOwner } from "../../core/native-sim-owner.js";
 import { systemClock } from "../../core/clock.js";
-import { endNativeInputSession } from "./native/input.js";
 import { readWebDevices } from "../../core/web-device.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -209,10 +208,7 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const admitted = await awaitProcAdmission({ name: "maestro-run", worktree, mode: admission ?? "wait" }, environment, process);
   if (admitted.kind !== "ok") return admitted;
 
-  if (!webFlow) {
-    const inputStopped = await endNativeInputSession(environment, process, device.value);
-    if (inputStopped.kind !== "ok") return failed(`could not end native input session for ${device.value} before Maestro: ${inputStopped.error}`);
-  } else if (values["--device"]) {
+  if (webFlow && values["--device"]) {
     console.error(`Maestro web runs in its own headless Chromium; it cannot attach to ${values["--device"]}.`);
   }
 
