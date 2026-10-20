@@ -201,6 +201,14 @@ export function ownsDispatch(caller: CallerIdentity, record: DispatchOwnerRecord
   return false;
 }
 
+// `send --operator` is a sender mode, not a dispatch ownership bypass. Keep agent sessions and
+// dispatch children from accidentally selecting the human sender identity.
+export function sendOperatorRefusal(dispatchId: string | undefined, caller: CallerIdentity): string | undefined {
+  if (dispatchId !== undefined && dispatchId !== "") return `a child (dispatch ${dispatchId}) cannot act as the operator; --operator is for a person's own program, such as the desktop app`;
+  if (isAgentSessionId(caller.id)) return `${caller.id} is an agent session and cannot act as the operator; --operator is for a person's own program, such as the desktop app`;
+  return undefined;
+}
+
 export function resolveContext(
   environment: ContextEnvironment,
   probes: ContextProbes,

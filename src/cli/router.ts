@@ -9,7 +9,8 @@ import { executeModel } from "./commands/model.js";
 import { executeWeb } from "./commands/web.js";
 import { executeNative } from "./commands/native.js";
 import { executeTv } from "./commands/tv.js";
-import { executeQueueWrite } from "./commands/queue-write.js";
+import { executeQueueWrite, resolveSessionCaller } from "./commands/queue-write.js";
+import { sendOperatorRefusal } from "../core/context.js";
 import { executeOrchestrateList } from "./commands/orchestrate-list.js";
 import { executeOrchestrateAdopt } from "./commands/orchestrate-adopt.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
@@ -92,6 +93,8 @@ export async function route(
   if (!args.includes("--operator")) return safeRouteCommand(args, { ...dependencies, environment });
   const [command, verb] = args;
   if (command === "send") {
+    const refusal = sendOperatorRefusal(environment.MEGABRAIN_DISPATCH_ID, await resolveSessionCaller(environment, dependencies.processAdapter));
+    if (refusal !== undefined) return failed(refusal, 2);
     return safeRouteCommand(args.filter((arg) => arg !== "--operator"), { ...dependencies, environment: { ...environment, MEGABRAIN_OPERATOR: "1" } });
   }
   if (command !== "orchestrate" || verb === undefined || !operatorVerbs.has(verb)) {
