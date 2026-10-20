@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { ChatStore, type Chat } from "../../src/chat/store.js";
 import { appendMessage, createDispatch, stateDatabase } from "../../src/adapters/state-db.js";
 import { buildOrchestrationGraph, followOrchestrationGraph } from "../../src/cli/commands/orchestrate-graph.js";
@@ -105,5 +106,35 @@ describe("orchestrate graph", () => {
     await iterator.return(undefined);
     expect(first.value?.nodes[1]?.last?.text).not.toBe("new message");
     expect(second.value?.nodes[1]?.last?.text).toBe("new message");
+  });
+
+  test("follow exits when its calling process disappears", async () => {
+    const { root } = await setup();
+    const pidFile = join(root, "graph.pid");
+    const launcher = [
+      'const { spawn } = require("node:child_process");',
+      'const { writeFileSync } = require("node:fs");',
+      'const child = spawn(process.env.MB_GRAPH_BINARY, ["orchestrate", "graph", "--session", "claude:root-session", "--follow", "--json"], { stdio: "ignore", env: process.env });',
+      'writeFileSync(process.env.MB_GRAPH_PID_FILE, String(child.pid));',
+      'child.unref();',
+    ].join(" ");
+    const parent = spawn(process.execPath, ["-e", launcher], {
+      stdio: "ignore",
+      env: { ...process.env, MEGABRAIN_STATE_DIR: root, HOME: root, MB_GRAPH_BINARY: join(process.cwd(), ".build", "megabrain"), MB_GRAPH_PID_FILE: pidFile },
+    });
+    await new Promise<void>((resolve, reject) => {
+      parent.once("error", reject);
+      parent.once("close", (code) => code === 0 ? resolve() : reject(new Error(`graph launcher exited with ${code}`)));
+    });
+    const pid = Number(await readFile(pidFile, "utf8"));
+    const deadline = Date.now() + 2_500;
+    let exited = false;
+    while (!exited && Date.now() < deadline) {
+      try { process.kill(pid, 0); }
+      catch (cause: unknown) { exited = cause instanceof Error && "code" in cause && cause.code === "ESRCH"; }
+      if (!exited) await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (!exited) { try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ } }
+    expect(exited).toBe(true);
   });
 });

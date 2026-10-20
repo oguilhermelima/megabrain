@@ -6,6 +6,7 @@ import { readContextMeter } from "../../core/context-meter.js";
 import { listDispatches, listMessages, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { processStartIdentity } from "../../db/state-owner-runtime.js";
 import { usageText } from "../../core/usage.js";
 
 type Agent = "claude" | "codex" | "grok" | "agy";
@@ -240,10 +241,27 @@ export async function executeOrchestrateGraph(args: readonly string[], environme
   }
   const controller = new AbortController();
   const stop = () => controller.abort();
+  const parentPid = process.ppid;
+  const parentStart = processStartIdentity(parentPid);
+  const parentWatcher = setInterval(() => {
+    try { process.kill(parentPid, 0); }
+    catch { stop(); return; }
+    if (parentStart !== undefined && processStartIdentity(parentPid) !== parentStart) stop();
+  }, 1_000);
+  parentWatcher.unref();
   process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  process.stdout.once("close", stop);
+  process.stdout.once("error", stop);
   try {
     for await (const graph of followOrchestrationGraph(options.value.target, environment, { signal: controller.signal })) process.stdout.write(JSON.stringify(graph) + "\n");
     return ok("");
   } catch (cause) { return failed(cause instanceof Error ? cause.message : String(cause)); }
-  finally { process.removeListener("SIGINT", stop); }
+  finally {
+    clearInterval(parentWatcher);
+    process.removeListener("SIGINT", stop);
+    process.removeListener("SIGTERM", stop);
+    process.stdout.removeListener("close", stop);
+    process.stdout.removeListener("error", stop);
+  }
 }
