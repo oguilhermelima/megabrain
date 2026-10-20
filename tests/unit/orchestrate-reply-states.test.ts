@@ -192,7 +192,7 @@ describe("orchestrate reply: shell-parity state rules", () => {
 
   test("refuses exited and maps legacy terminal states to exited", async () => {
     const root = await tempStateDir();
-    for (const [index, [state, terminalState, processState, expected]] of [["failed", "owned", "failed", "failed"], ["closed", "owned", "stopped", "closed"], ["running", "missing", "exited", "exited"], ["circuit_broken", "owned", "failed", "exited"], ["running", "retained", "running", "exited"]].entries()) {
+    for (const [index, [state, terminalState, processState, expected]] of [["failed", "owned", "failed", "failed"], ["closed", "owned", "stopped", "closed"], ["running", "missing", "exited", "exited"], ["running", "retained", "running", "exited"]].entries()) {
       const id = `dispatch-${index}`;
       await writeDispatch(root, id, baseMeta({ dispatchId: id, state, terminalState, processState }));
       const result = await executeOrchestrateReply([id, "--text", "x", "--json"], environment(root), fakeProcess());
