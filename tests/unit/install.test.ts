@@ -177,13 +177,30 @@ describe("executeInstall", () => {
     expect(driverInstalled).toBe(true);
   });
 
+  test("simulator-native fails when serve-sim remains unrunnable after installation", async () => {
+    const home = tmpHome("simulator-native-serve-sim-fail");
+    const process = fakeProcess({
+      "uname -s": "Darwin",
+      "npm install -g serve-sim@0.1.48": "",
+      "serve-sim --version": "0.1.48",
+      "npm root -g": "/usr/local/lib/node_modules",
+      "node -e require(process.argv[1]) /usr/local/lib/node_modules/serve-sim/dist/native/serve-sim-native.node": () => failed("native addon unavailable"),
+    }, ["appium"]);
+    const result = await executeInstall(["simulator-native", "--yes"], { HOME: home, MEGABRAIN_STATE_DIR: home }, process);
+    expect(result.kind).toBe("failed");
+    if (result.kind !== "failed") throw new Error("expected failure");
+    expect(result.error).toBe("simulator-native: serve-sim 0.1.48 or its native addon is not runnable");
+  });
+
   test("simulator-native fails the whole install when npm install -g appium fails, never reporting success", async () => {
     const home = tmpHome("simulator-native-fail");
     const process = fakeProcess({
       "uname -s": "Darwin",
       "serve-sim --version": "0.1.48",
+      [`node ${resolve("node_modules/serve-sim/dist/serve-sim.js")} --version`]: "0.1.48",
       "npm root -g": "/usr/local/lib/node_modules",
       "node -e require(process.argv[1]) /usr/local/lib/node_modules/serve-sim/dist/native/serve-sim-native.node": "",
+      [`node -e require(process.argv[1]) ${resolve("node_modules/serve-sim/dist/native/serve-sim-native.node")}`]: "",
       "npm install -g appium": () => failed("npm install -g appium failed: network error"),
     }, ["appium"]);
     const result = await executeInstall(["simulator-native", "--yes"], { HOME: home, MEGABRAIN_STATE_DIR: home }, process);
