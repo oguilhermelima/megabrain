@@ -173,7 +173,7 @@ describe("agent command --resume", () => {
 
   test("--resume prints through the command line and needs a value", async () => {
     const result = await executeAgent(["command", "grok", "--resume", "s1", "--json"], {}, installed());
-    expect(JSON.parse(result.kind === "ok" ? result.value : "null")).toEqual({ agent: "grok", argv: ["grok", "--always-approve", "--resume", "s1"] });
+    expect(JSON.parse(result.kind === "ok" ? result.value : "null")).toEqual({ agent: "grok", argv: ["grok", "--always-approve", "--resume", "s1"], builtin: ["grok", "--always-approve"] });
     expect((await executeAgent(["command", "grok", "--resume"], {}, installed())).kind).toBe("failed");
   });
 });
