@@ -96,6 +96,7 @@ async function daemonFor(env: Env): Promise<ChatDaemon> {
     await daemon.store.put(stored);
     const entry = daemon.entryOf(ID);
     if (entry !== undefined) setConversationAlias(env.state, entry[0], { tmux: "megabrain-app:mb-app-test" });
+    await daemon.syncTerminalPolling();
   }
   return daemon;
 }
@@ -385,8 +386,8 @@ describe("switching back to chat imports what the terminal did", () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", FAKE_CLAUDE);
     writeClaudeLog(env);
-    const daemon = await daemonFor(env);
     await new ChatStore(env.state).put(record(env));
+    const daemon = await daemonFor(env);
     await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
     await waitState(daemon, "idle");
     await daemon.handle({ operation: "mode", id: ID, mode: "terminal" });
