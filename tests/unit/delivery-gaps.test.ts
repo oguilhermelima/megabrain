@@ -110,16 +110,16 @@ describe("Codex idle child delivery", () => {
         if (command === "ps" && args[0] === "-ax") return ok<ProcessOutput>({ stdout: "991 /usr/local/bin/codex --thread-id thread-123\n", stderr: "", exitCode: 0 });
         if (command === "ps" && args[0] === "-ww") return ok<ProcessOutput>({ stdout: "991 991 991 /usr/local/bin/codex\n", stderr: "", exitCode: 0 });
         if (command === "lsof") return ok<ProcessOutput>({ stdout: "n/rollouts/rollout-thread-123.jsonl\n", stderr: "", exitCode: 0 });
-        if (command === "tmux" && args[0] === "list-panes") return ok<ProcessOutput>({ stdout: "%11|$1\n", stderr: "", exitCode: 0 });
-        if (command === "tmux" && args[0] === "capture-pane") return ok<ProcessOutput>({ stdout: JSON.parse(screen).result.terminal.tail.join("\n"), stderr: "", exitCode: 0 });
-        if (command === "tmux" && args[0] === "send-keys") return ok<ProcessOutput>({ stdout: "", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args.includes("list-panes")) return ok<ProcessOutput>({ stdout: "%11|$1\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args.includes("capture-pane")) return ok<ProcessOutput>({ stdout: JSON.parse(screen).result.terminal.tail.join("\n"), stderr: "", exitCode: 0 });
+        if (command === "tmux" && args.includes("send-keys")) return ok<ProcessOutput>({ stdout: "", stderr: "", exitCode: 0 });
         return failed(`unexpected ${command} ${args.join(" ")}`);
       },
       async startDetached() { return failed("not used"); },
       invocationCount() { return calls.length; },
     };
     await deliverWithOwner(root, process, { HOME: root }, "ob-codex-idle", 4000);
-    expect(calls.some((call) => call.startsWith("tmux send-keys"))).toBe(true);
+    expect(calls.some((call) => call.includes("send-keys"))).toBe(true);
     expect(calls.some((call) => call.startsWith("codex"))).toBe(false);
     expect(listDeliveries(db.value, "d-codex-idle")).toMatchObject({ value: [{ transport: "typed" }] });
   });
