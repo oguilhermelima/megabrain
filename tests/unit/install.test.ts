@@ -145,6 +145,9 @@ describe("executeInstall", () => {
     let driverInstalled = false;
     const process = fakeProcess({
       "uname -s": "Darwin",
+      "serve-sim --version": "0.1.48",
+      "npm root -g": "/usr/local/lib/node_modules",
+      "node -e require(process.argv[1]) /usr/local/lib/node_modules/serve-sim/dist/native/serve-sim-native.node": "",
       "npm install -g appium": () => {
         appiumOnPath = true;
         return ok({ stdout: "", stderr: "", exitCode: 0 });
@@ -178,6 +181,9 @@ describe("executeInstall", () => {
     const home = tmpHome("simulator-native-fail");
     const process = fakeProcess({
       "uname -s": "Darwin",
+      "serve-sim --version": "0.1.48",
+      "npm root -g": "/usr/local/lib/node_modules",
+      "node -e require(process.argv[1]) /usr/local/lib/node_modules/serve-sim/dist/native/serve-sim-native.node": "",
       "npm install -g appium": () => failed("npm install -g appium failed: network error"),
     }, ["appium"]);
     const result = await executeInstall(["simulator-native", "--yes"], { HOME: home, MEGABRAIN_STATE_DIR: home }, process);

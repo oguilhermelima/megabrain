@@ -48,11 +48,12 @@ export async function resumeDrained(daemon: ChatDaemon): Promise<void> {
 
 export async function send(daemon: ChatDaemon, id: string, inputParts: Part[], fresh = false): Promise<{ queued: QueuedChatMessage | null }> {
     let chat = await daemon.requireChat(id);
-    if (chat.mode !== "chat") throw new Error("chat is in terminal mode");
     const parts = await daemon.normalizeParts(chat.cwd, inputParts);
     if (daemon.draining) { daemon.resumeOnStart.add(id); return { queued: await daemon.enqueue(chat, parts) }; }
     const holders = await daemon.foreignHolders(chat);
     const terminalOwns = holders.some((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
+    const terminalTurnOpen = terminalOwns && await daemon.logTurnOpen(chat);
+    if (chat.mode !== "chat" && (!terminalOwns || !terminalTurnOpen)) throw new Error("chat is in terminal mode");
     if (chat.agent === "agy" && terminalOwns) {
       if (parts.some((part) => part.type !== "text")) throw new Error("agy chat messages currently support text only");
       const found = await daemon.sessionOfTerminal(chat);

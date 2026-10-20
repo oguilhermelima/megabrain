@@ -68,9 +68,9 @@ describe("web device records and input scenarios", () => {
 });
 
 describe("native simulator stream reporting", () => {
-  test("returns the existing WDA MJPEG endpoint and display geometry", async () => {
+  test("returns the existing serve-sim MJPEG endpoint and display geometry", async () => {
     const state = await fixture();
-    await writeFile(join(state, "native-input-sessions.json"), JSON.stringify({ version: 1, sessions: [{ udid: "11111111-1111-4111-8111-111111111111", session: "sess-1", platform: "iOS", pointWidth: 393, pointHeight: 852 }] }));
+    await writeFile(join(state, "native-input-sessions.json"), JSON.stringify({ version: 1, sessions: [{ udid: "11111111-1111-4111-8111-111111111111", session: "sess-1", platform: "iOS", pid: 123, port: 9876, streamUrl: "http://127.0.0.1:9876/stream.mjpeg", wsUrl: "ws://127.0.0.1:9876", pointWidth: 393, pointHeight: 852 }] }));
     const process: ProcessAdapter = { async run() { return ok({ stdout: "", stderr: "", exitCode: 0 }); }, async startDetached() { throw new Error("unexpected process"); }, invocationCount() { return 0; } };
     const originalFetch = globalThis.fetch;
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x09, 0xfc, 0x04, 0x9b, 0x03, 0x01, 0x11, 0x00, 0xff, 0xd9]);
@@ -79,7 +79,7 @@ describe("native simulator stream reporting", () => {
     try { result = await nativeInput(["stream", "11111111-1111-4111-8111-111111111111", "--json"], { MEGABRAIN_STATE_DIR: state }, process); }
     finally { globalThis.fetch = originalFetch; }
     expect(result.kind).toBe("ok");
-    expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toEqual({ streamUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/), width: 1179, height: 2556, scale: 3 });
+    expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toEqual({ streamUrl: "http://127.0.0.1:9876/stream.mjpeg", width: 1179, height: 2556, scale: 3 });
   });
 });
 
