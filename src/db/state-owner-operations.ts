@@ -242,7 +242,7 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
     return result.value;
   }
   if (request.operation === "ack-implicit-delivery") {
-    const result = acknowledgeMail(owner.handle, request.dispatchId, request.deliveryId, request.recipient, request.now);
+    const result = acknowledgeMail(owner.handle, request.dispatchId, request.deliveryId, request.recipient, request.now, request.consumer);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }

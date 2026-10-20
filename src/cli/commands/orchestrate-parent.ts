@@ -177,12 +177,12 @@ export async function executeOrchestrateAck(args: readonly string[], environment
     duplicate: ack.duplicate,
     status: "acknowledged",
     messageSeqs,
-    ...(ack.duplicate && typeof delivery.acknowledgedAt === "string" ? { firstAcknowledgedAt: delivery.acknowledgedAt } : {}),
-    ...(ack.duplicate && typeof delivery.consumer === "string" ? { firstAcknowledgedBy: delivery.consumer } : {}),
+    ...(ack.duplicate && typeof delivery.acknowledgedAt === "string" ? { acknowledgedAt: delivery.acknowledgedAt } : {}),
+    ...(ack.duplicate && typeof delivery.consumer === "string" ? { acknowledgedBy: delivery.consumer } : {}),
   };
   if (parsed.value.close !== true) {
     if (parsed.value.json) return ok(`${JSON.stringify(acknowledgment, null, 2)}\n`);
-    return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.duplicate}\n${ack.duplicate && typeof delivery.acknowledgedAt === "string" ? `first acknowledged at: ${delivery.acknowledgedAt}\n` : ""}${ack.duplicate && typeof delivery.consumer === "string" ? `first acknowledged by: ${delivery.consumer}\n` : ""}`);
+    return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.duplicate}\n${ack.duplicate && typeof delivery.acknowledgedAt === "string" ? `acknowledged at: ${delivery.acknowledgedAt}\n` : ""}${ack.duplicate && typeof delivery.consumer === "string" ? `acknowledged by: ${delivery.consumer}\n` : ""}`);
   }
   const closed = await executeOrchestrateClose([dispatchId, ...(parsed.value.json ? ["--json"] : [])], environment, process);
   if (closed.kind !== "ok") return failed(`delivery ${parsed.value.deliveryId} acknowledged; ${closed.error}`, closed.exitCode);
