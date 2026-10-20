@@ -441,7 +441,8 @@ async function parentMailLines(root: string, database: DatabaseHandle, dispatchI
     const sequences = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : [];
     const message = item.messages[0];
     if (message === undefined) continue;
-    const line = `${message.type || "mail"} ${parentMailSummary(message.text)} — megabrain orchestrate watch ${dispatchId}`;
+    const fullTextCommand = message.text.trim() === parentMailSummary(message.text) ? "" : " --full";
+    const line = `${message.type || "mail"} ${parentMailSummary(message.text)} — megabrain orchestrate watch ${dispatchId}${fullTextCommand}`;
     const matchingOutbox = outbox.value.filter((entry) => entry.targetKind === "parent-pointer" && parentOutboxMatchesDelivery(entry, sequences, outstandingParentDeliveryCount === 1));
     if (delivery.transport !== "deferred" && matchingOutbox.some((item) => item.status === "sending" && item.detail?.startsWith("peer-sent:"))) continue;
     const pendingOutbox = matchingOutbox.some((item) => item.status === "pending" || item.status === "sending");

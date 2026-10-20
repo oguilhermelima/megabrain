@@ -53,7 +53,7 @@ function summary(text: string): string {
 export function formatDispatchMessage(input: DispatchMessageInput): string {
   const pointer = input.direction === "child-bound"
     ? "→ full text: megabrain check"
-    : `→ details: megabrain orchestrate watch ${input.dispatchId.slice(-8)}`;
+    : `→ details: megabrain orchestrate watch ${input.dispatchId.slice(-8)}${input.text.trim() === summary(input.text) ? "" : " --full"}`;
   return [dispatchMessageHeader(input), summary(input.text), pointer].join("\n");
 }
 
