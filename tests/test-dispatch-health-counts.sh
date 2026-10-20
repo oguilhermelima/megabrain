@@ -83,6 +83,8 @@ write_meta uncertain-abandoned abandoned owned closed host '' '' '' 2020-01-01T0
 write_meta uncertain-exited exited owned closed host '' '' '' 2020-01-01T00:00:00Z
 write_meta uncertain-start start-unproven owned closed host '' '' '' 2020-01-01T00:00:00Z
 write_meta uncertain-stop stop-unproven owned closed host '' '' '' 2020-01-01T00:00:00Z
+write_meta retained-default running retained failed host '' '' __missing__ 2020-01-01T00:00:00Z
+write_meta retained-custom running retained closed host '' '' 'identity check pending' 2020-01-01T00:00:00Z
 write_meta leaked-one running owned closed tmux leaked-session other-session '' 2020-01-01T00:00:00Z
 write_meta leaked-duplicate running owned done tmux leaked-session other-session '' 2020-01-01T00:00:00Z
 write_meta not-leaked-shared running owned closed tmux leaked-session leaked-session '' 2020-01-01T00:00:00Z
