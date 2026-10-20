@@ -450,7 +450,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   return ok(`delivery ${transport}\n`);
 }
 
-export async function executeDeliveryVerificationWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter, ownerHandle?: DatabaseHandle): Promise<Result<string>> {
+export async function executeDeliveryVerificationWorker(args: readonly string[], environment: WorkerEnvironment, process: ProcessAdapter, ownerHandle?: DatabaseHandle, stopping?: AbortSignal): Promise<Result<string>> {
   const [outboxId] = args;
   if (!outboxId) return failed("delivery verification worker requires an outbox id", 2);
   const root = resolveStateDirectory(environment);
@@ -483,7 +483,7 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
   if (!verifierLease) return ok("peer verification is already running\n");
   try {
   const result = await verifyClaudePeerConsumption({
-    heartbeat: async () => await callStateOwner(root, { operation: "acquire-lease", key: verifierLeaseKey, holder: verifierHolder, seconds: 90 }).catch(() => false) as boolean,
+    heartbeat: async () => stopping?.aborted === true ? false : await callStateOwner(root, { operation: "acquire-lease", key: verifierLeaseKey, holder: verifierHolder, seconds: 90 }).catch(() => false) as boolean,
     acknowledged: async () => {
       const current = listDeliveries(database.value, dispatch);
       return current.kind === "ok" && current.value.some((item) => item.id === delivery.id && item.status === "acknowledged");

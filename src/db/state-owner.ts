@@ -93,7 +93,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "settle-closed-parent-backlog" }
   )
 >;
-export type StateOwner = { readonly stateDir: string; readonly executablePath: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; socketIdentity?: { dev: number; ino: number }; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
+export type StateOwner = { readonly stateDir: string; readonly executablePath: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; readonly abortController: AbortController; readonly sockets: Set<Socket>; socketIdentity?: { dev: number; ino: number }; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
 type Response = { ok: true; value: unknown } | { ok: false; error: string };
 
 function ownerLogPath(stateDir: string): string { return join(stateDir, "logs", "state-owner.log"); }
@@ -194,7 +194,7 @@ function ownerRequest(owner: StateOwner, request: StateOwnerRequest): Promise<Re
     const timer = setTimeout(() => {
       owner.verificationTimers.delete(request.id);
       const task = import("../cli/commands/delivery-worker.js").then(async ({ executeDeliveryVerificationWorker }) => {
-        const result = await executeDeliveryVerificationWorker([request.id], { ...owner.environment, MEGABRAIN_STATE_DIR: owner.stateDir }, owner.processAdapter, owner.handle);
+        const result = await executeDeliveryVerificationWorker([request.id], { ...owner.environment, MEGABRAIN_STATE_DIR: owner.stateDir }, owner.processAdapter, owner.handle, owner.abortController.signal);
         if (result.kind !== "ok") throw new Error(result.error);
       }).catch((cause: unknown) => {
         logOwner(owner.stateDir, "peer-verification-failed", { id: request.id, error: cause instanceof Error ? cause.message : String(cause) });
@@ -263,7 +263,8 @@ function ownerRequest(owner: StateOwner, request: StateOwnerRequest): Promise<Re
 
 function accept(owner: StateOwner, socket: Socket): void {
   owner.clients += 1;
-  socket.once("close", () => { owner.clients -= 1; scheduleOwnerExit(owner); });
+  owner.sockets.add(socket);
+  socket.once("close", () => { owner.sockets.delete(socket); owner.clients -= 1; scheduleOwnerExit(owner); });
   let buffer = "";
   socket.setEncoding("utf8");
   socket.on("data", (chunk: string) => {
@@ -431,7 +432,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
   });
   if (initializedRequests.kind !== "ok") { logOwner(stateDir, "startup-failed", { error: initializedRequests.error }); handle.close(); await unlink(lockPath).catch(() => undefined); throw new Error("state owner could not initialize request results: " + initializedRequests.error); }
   const server = createServer();
-    const owner: StateOwner = { stateDir, executablePath, handle, server, lockPath, processAdapter, environment, pendingDeliveries: new Set(), pendingVerifications: new Set(), deliveryChains: new Map(), scheduledOutbox: new Set(), scheduledVerifications: new Set(), verificationTimers: new Map(), requests: new Map(), clients: 0, stopped: false };
+    const owner: StateOwner = { stateDir, executablePath, handle, server, lockPath, abortController: new AbortController(), sockets: new Set(), processAdapter, environment, pendingDeliveries: new Set(), pendingVerifications: new Set(), deliveryChains: new Map(), scheduledOutbox: new Set(), scheduledVerifications: new Set(), verificationTimers: new Map(), requests: new Map(), clients: 0, stopped: false };
   // Load the subscriber's transport code before accepting writes, so the first published row
   // does not pay a module-load delay after its transaction commits.
   await import("../cli/commands/delivery-worker.js");
@@ -483,13 +484,20 @@ async function writeFilePid(stateDir: string): Promise<void> {
 export async function stopStateOwner(owner: StateOwner): Promise<void> {
   if (owner.stopped) return;
   owner.stopped = true;
+  owner.abortController.abort();
   if (owner.idleTimer !== undefined) clearTimeout(owner.idleTimer);
   if (owner.sweepTimer !== undefined) clearTimeout(owner.sweepTimer);
   if (owner.lifecycleTimer !== undefined) clearInterval(owner.lifecycleTimer);
   for (const timer of owner.verificationTimers.values()) clearTimeout(timer);
   owner.verificationTimers.clear();
   owner.scheduledVerifications.clear();
-  await Promise.all([...owner.pendingDeliveries, ...owner.pendingVerifications]);
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    Promise.all([...owner.pendingDeliveries, ...owner.pendingVerifications]),
+    new Promise<void>((resolve) => { drainTimer = setTimeout(resolve, 1_000); }),
+  ]);
+  if (drainTimer !== undefined) clearTimeout(drainTimer);
+  for (const socket of owner.sockets) socket.destroy();
   await new Promise<void>((resolve) => owner.server.close(() => resolve()));
   owner.handle.close();
   logOwner(owner.stateDir, "stopped");
