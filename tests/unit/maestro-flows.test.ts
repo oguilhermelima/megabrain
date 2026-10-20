@@ -24,6 +24,7 @@ function sandbox() {
   chmodSync(join(home, ".maestro", "bin", "maestro"), 0o755);
   cpSync(join(fixtures, "run-passed.txt"), join(home, ".maestro", "bin", "run-passed.txt"));
   cpSync(join(fixtures, "run-failed.txt"), join(home, ".maestro", "bin", "run-failed.txt"));
+  cpSync(join(fixtures, "privacy-failed.txt"), join(home, ".maestro", "bin", "privacy-failed.txt"));
   cpSync(join(fixtures, "artifacts"), join(home, ".maestro", "bin", "artifacts"), { recursive: true });
   const jdk = join(root, "jdk");
   mkdirSync(join(jdk, "bin"), { recursive: true });
