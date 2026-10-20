@@ -24,7 +24,7 @@ const UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 const STEP = /^(.*)\.\.\. (COMPLETED|FAILED|SKIPPED|WARNED)$/;
 const DEBUG_MARKER = /^==== Debug output/;
 const DRIVER_START_FAILURE = /Failed to connect to \/127\.0\.0\.1:|XCUITest.{0,80}(?:driver|start)|(?:driver|status check).{0,80}(?:timed out|timeout)/i;
-const PRIVACY_GRANT_FAILURE = /privacy|simctl.{0,80}grant|CommandFailed:\s*null/i;
+const PRIVACY_GRANT_FAILURE = /simctl\s+privacy\b[^\r\n]*\bgrant\b|CommandFailed:\s*null\b/i;
 const PERCENT_POINT = /^\s*(?:\d+%\s*,\s*\d+%|\d+\s*,\s*\d+)\s*$/;
 
 const keyFor = (worktree: string): string => createHash("sha256").update(worktree).digest("hex").slice(0, 16);
@@ -340,7 +340,9 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const driverFailed = DRIVER_START_FAILURE.test(completeOutput);
   const privacyFailed = exitCode !== 0 && PRIVACY_GRANT_FAILURE.test(completeOutput);
   const reasonCode = driverFailed ? "xcuitest_driver_start_failed" : privacyFailed ? "privacy_grant_failed" : undefined;
-  const privacyMessage = completeOutput.split(/\r?\n/).find((line) => PRIVACY_GRANT_FAILURE.test(line))?.trim();
+  const outputLines = completeOutput.split(/\r?\n/);
+  const privacyMessage = outputLines.find((line) => /CommandFailed:\s*null\b/i.test(line))?.trim()
+    ?? outputLines.find((line) => PRIVACY_GRANT_FAILURE.test(line))?.trim();
   const reason = driverFailed ? "Maestro could not start the XCUITest driver." : privacyFailed ? `privacy grant failed: ${privacyMessage ?? "Maestro returned CommandFailed: null."}` : undefined;
   const debugLog = [join(debugOutput, "maestro.log"), ...findFiles(debugOutput, /maestro\.log$/)].find((path) => existsSync(path));
   const maestroLog = debugLog ? join(artifacts, "maestro.log") : undefined;
