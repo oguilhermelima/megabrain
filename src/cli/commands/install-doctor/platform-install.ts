@@ -1,9 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";import { join, resolve } from "node:path";import { failed, ok, type Result } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { executeTmux } from "../tmux.js";import { resolvePackageRoot } from "../../../core/package-root.js";
-import { available, appiumReady } from "./diagnostics.js";import type { Environment } from "./diagnostics.js";import { report } from "./doctor.js";import { writeInstalledState } from "./install-state.js";import type { InstallOptions } from "./install-state.js";
+import { available, appiumReady, serveSimReady } from "./diagnostics.js";import type { Environment } from "./diagnostics.js";import { report } from "./doctor.js";import { writeInstalledState } from "./install-state.js";import type { InstallOptions } from "./install-state.js";
 const PACKAGE_INSTALL_TIMEOUT_MS = 20 * 60_000;
 // --- simulator-native / simulator-tv -------------------------------------------------------
 
 export async function installSimulatorNative(processAdapter: ProcessAdapter): Promise<Result<void>> {
+  if (!(await available(processAdapter, "serve-sim"))) {
+    const install = await processAdapter.run("npm", ["install", "-g", "serve-sim@0.1.48"], { timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS });
+    if (install.kind !== "ok") return failed("npm install -g serve-sim@0.1.48 failed");
+  }
+  if (!(await serveSimReady(processAdapter))) return failed("serve-sim 0.1.48 or its native addon is not runnable");
   if (!(await available(processAdapter, "appium"))) {
     const install = await processAdapter.run("npm", ["install", "-g", "appium"], { timeoutMs: PACKAGE_INSTALL_TIMEOUT_MS });
     if (install.kind !== "ok") return failed("npm install -g appium failed");
@@ -14,6 +19,7 @@ export async function installSimulatorNative(processAdapter: ProcessAdapter): Pr
   }
   return ok(undefined);
 }
+
 
 // --- tv-adb ---------------------------------------------------------------------------------
 
