@@ -219,7 +219,7 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
       let helper = existing;
       if (!helper) {
         update("starting serve-sim helper");
-        const launch = await runServeSim(process, env, ["--detach", "--exit-on-simulator-shutdown", "--quiet", udid], { env: { SERVE_SIM_DISABLE_DEVICE_HUB_KEYBOARD: "1" } });
+        const launch = await runServeSim(process, env, ["--detach", "--exit-on-simulator-shutdown", "--quiet", udid]);
         if (launch.kind !== "ok") throw new Error(`failed to start serve-sim helper: ${launch.error}`);
         helper = parseHelper(launch.value.stdout, udid) ?? await helperState(process, env, udid);
       }
