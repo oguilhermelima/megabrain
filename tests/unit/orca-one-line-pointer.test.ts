@@ -16,11 +16,11 @@ describe("orca one-line message", () => {
     const sent = orca.send({ workspaceId: null, terminalId: "t1", text: formatDispatchMessage(message) });
     if (sent.kind !== "ok") throw new Error("send unavailable");
     const text = sent.value.args[sent.value.args.indexOf("--text") + 1];
-    expect(text).toBe("✅ codex · fix-x finished — The sentence. — details: megabrain orchestrate watch d32d916a");
+    expect(text).toBe("✅ codex · fix-x finished — The sentence. — details: megabrain orchestrate watch d32d916a --full");
   });
 
   test("keeps the arrow in the three-line form", () => {
-    expect(formatDispatchMessage(message).split("\n")[2]).toBe("→ details: megabrain orchestrate watch d32d916a");
+    expect(formatDispatchMessage(message).split("\n")[2]).toBe("→ details: megabrain orchestrate watch d32d916a --full");
     expect(formatDispatchMessage({ ...message, direction: "child-bound" }).split("\n")[2]).toBe("→ full text: megabrain check");
   });
 

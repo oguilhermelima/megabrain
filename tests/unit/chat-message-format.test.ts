@@ -25,7 +25,7 @@ describe("dispatch message formatting", () => {
 
   test("uses the first sentence and removes leading bullet markers", () => {
     expect(formatDispatchMessage({ ...base, text: "- Chat names now show the branch. - Merged report has details.\nMore technical details." }))
-      .toBe("✅ codex · fix/chat-name-source finished\nChat names now show the branch.\n→ details: megabrain orchestrate watch 12345678");
+      .toBe("✅ codex · fix/chat-name-source finished\nChat names now show the branch.\n→ details: megabrain orchestrate watch 12345678 --full");
   });
 
   test("uses the shorter first line when it ends before the first sentence", () => {
@@ -41,7 +41,7 @@ describe("dispatch message formatting", () => {
   });
 
   test("points parent-bound messages to the short dispatch id", () => {
-    expect(formatDispatchMessage(base).split("\n")[2]).toBe("→ details: megabrain orchestrate watch 12345678");
+    expect(formatDispatchMessage(base).split("\n")[2]).toBe("→ details: megabrain orchestrate watch 12345678 --full");
   });
 
   test("points child-bound messages to the full text in check", () => {
