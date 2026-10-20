@@ -30,6 +30,14 @@ export async function requireChat(daemon: ChatDaemon, id: string): Promise<Chat>
     if (!/^[a-f\d-]{36}$/i.test(id)) throw new Error("invalid chat id");
     const chat = await daemon.store.get(id);
     if (!chat) throw new Error(`chat not found: ${id}`);
+    const alias = daemon.entryOf(id)?.[1].aliases.tmux ?? null;
+    const [server, session] = (alias ?? "").split(":");
+    if (server === OWNED_TMUX_SERVER && session?.startsWith(APP_SESSION_PREFIX)) {
+      const tmux = ownedTmuxProcess(daemon.processes());
+      const result = await tmux.run("tmux", ["list-panes", "-s", "-t", `=${session}`, "-F", "#{pane_dead}"]);
+      const live = result.kind === "ok" && result.value.stdout.trim().split("\n").some((dead) => dead !== "1");
+      chat.mode = live ? "terminal" : "chat";
+    }
     return chat;
   }
 
@@ -76,7 +84,8 @@ export async function dropConversation(daemon: ChatDaemon, chatId: string): Prom
   }
 
 export async function pruneUnused(daemon: ChatDaemon): Promise<void> {
-    for (const chat of await daemon.store.list()) {
+    for (const stored of await daemon.store.list()) {
+      const chat = await daemon.requireChat(stored.id);
       if (chat.mode !== "chat" || chat.agentSessionId !== null || chat.title !== null) continue;
       if ((await daemon.store.events(chat.id)).some((line) => line.event?.kind === "user")) continue;
       await rm(daemon.store.dir(chat.id), { recursive: true, force: true });

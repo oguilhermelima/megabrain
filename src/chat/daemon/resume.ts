@@ -34,15 +34,15 @@ export async function resumeDrained(daemon: ChatDaemon): Promise<void> {
     try { ids = JSON.parse(await readFile(chatResumes(daemon.stateDir), "utf8")); } catch { return; }
     try { await unlink(chatResumes(daemon.stateDir)); } catch { /* already taken */ }
     for (const id of Array.isArray(ids) ? ids.filter((value): value is string => typeof value === "string") : []) {
-      const chat = await daemon.store.get(id);
+      const stored = await daemon.store.get(id);
+      if (!stored) continue;
+      const chat = await daemon.requireChat(id);
       if (!chat || chat.mode !== "chat") continue;
       const items = await daemon.loadQueue(id);
       const item = items.shift();
       if (item === undefined) continue;
       await daemon.persistQueue(id);
-      if (chat.agent === "agy" && chat.owner === "terminal") {
-        try { await daemon.send(id, item.parts); } catch { /* the send path keeps unavailable messages queued and visible */ }
-      } else await daemon.deliver(chat, item.parts);
+      await daemon.deliver(chat, item.parts);
     }
   }
 
@@ -53,7 +53,7 @@ export async function send(daemon: ChatDaemon, id: string, inputParts: Part[], f
     if (daemon.draining) { daemon.resumeOnStart.add(id); return { queued: await daemon.enqueue(chat, parts) }; }
     const holders = await daemon.foreignHolders(chat);
     const terminalOwns = holders.some((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
-    if (chat.agent === "agy" && terminalOwns && chat.owner === "terminal") {
+    if (chat.agent === "agy" && terminalOwns) {
       if (parts.some((part) => part.type !== "text")) throw new Error("agy chat messages currently support text only");
       const found = await daemon.sessionOfTerminal(chat);
       if (found !== null && chat.agentSessionId !== found) { chat.agentSessionId = found; await daemon.save(chat); }
@@ -101,7 +101,6 @@ export async function send(daemon: ChatDaemon, id: string, inputParts: Part[], f
       if (!toolIsRunning) {
         const queued = await daemon.enqueue(chat, parts);
         chat.state = "working";
-        chat.owner = "terminal";
         await daemon.save(chat);
         await daemon.syncTerminalPolling();
         return { queued };

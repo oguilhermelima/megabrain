@@ -63,7 +63,7 @@ describe("terminal mode from every chat state", () => {
         expect(result.chat.state).toBe("idle");
         expect(result.chat.error ?? null).toBeNull();
         expect(result.command).toContain("sess-1");
-        expect((await daemon.store.get(ID))?.mode).toBe("terminal");
+        expect(((await daemon.handle({ operation: "list" }) as Chat[]).find((chat) => chat.id === ID))?.mode).toBe("chat");
       });
     }
   }
@@ -75,6 +75,29 @@ describe("terminal mode from every chat state", () => {
     const texts = (await daemon.store.events(ID)).flatMap((line) => line.event === undefined ? [] : [line.event.text]);
     expect(texts).toContain("Interrupted");
   });
+
+  test("a failed terminal open can return to chat without leaving a terminal marker", async () => {
+    const env = sandbox();
+    const daemon = await daemonWith(env, { state: "idle" });
+    await toTerminal(daemon);
+    await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
+    expect((await daemon.store.get(ID))?.terminalSince).toBeUndefined();
+    expect(((await daemon.handle({ operation: "list" }) as Chat[]).find((chat) => chat.id === ID))?.mode).toBe("chat");
+  });
+});
+
+test("chat mode follows the linked tmux pane through the chat list API", async () => {
+  const env = sandbox();
+  const live = join(env.state, "pane-live");
+  writeFileSync(live, "live");
+  writeFileSync(join(env.bin, "tmux"), `#!${process.execPath}\nconst fs = require("node:fs");\nif (process.argv.includes("list-panes")) process.stdout.write(fs.existsSync(${JSON.stringify(live)}) ? "0\\n" : "1\\n");\n`);
+  chmodSync(join(env.bin, "tmux"), 0o700);
+  upsertConversation(env.state, chatKey(ID), { owner: "app-chat", cwd: env.cwd, aliases: { chatId: ID, tmux: "megabrain-app:mb-app-test", pid: null, dispatchId: null }, createdAt: "2026-10-16T09:00:00.000Z", hidden: false });
+  const daemon = await daemonWith(env, { state: "idle" });
+  const list = () => daemon.handle({ operation: "list" }) as Promise<Chat[]>;
+  expect((await list()).find((chat) => chat.id === ID)?.mode).toBe("terminal");
+  rmSync(live);
+  expect((await list()).find((chat) => chat.id === ID)?.mode).toBe("chat");
 });
 
 describe("a chat with no session id yet", () => {

@@ -203,9 +203,9 @@ export class ChatDaemon {
 
 async start(): Promise<void> { return await startImpl(this); }
 
-  /** Runs terminal refresh polling while a terminal-mode chat or TUI owner needs refresh. */
+  /** Polls chats with an active or opening terminal link. */
   async syncTerminalPolling(): Promise<void> {
-    const needsPolling = (await this.store.list()).some((chat) => chat.mode === "terminal" || chat.owner === "terminal");
+    const needsPolling = (await this.store.list()).some((chat) => chat.terminalSince !== undefined || this.entryOf(chat.id)?.[1].aliases.tmux != null);
     if (needsPolling && this.terminalTimer === undefined && !this.closed) {
       const poll = timeoutMs(this.environment.MEGABRAIN_CHAT_TERMINAL_POLL_MS, DEFAULT_TERMINAL_POLL_MS);
       let refreshing = false;
