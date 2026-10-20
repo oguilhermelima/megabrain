@@ -111,7 +111,6 @@ describe("executeInstall", () => {
     const process = fakeProcess({}, ["codex", "agy", "cursor", "cursor-agent"]);
     const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: entrypoint.root };
     const result = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
-    expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
     const backups = readdirSync(join(home, ".claude")).filter((name) => name.startsWith("settings.json.megabrain-backup-"));
     expect(backups.length).toBeGreaterThan(0);
@@ -146,8 +145,10 @@ describe("executeInstall", () => {
     const process = fakeProcess({
       "uname -s": "Darwin",
       "serve-sim --version": "0.1.48",
+      [`node ${resolve("node_modules/serve-sim/dist/serve-sim.js")} --version`]: "0.1.48",
       "npm root -g": "/usr/local/lib/node_modules",
       "node -e require(process.argv[1]) /usr/local/lib/node_modules/serve-sim/dist/native/serve-sim-native.node": "",
+      [`node -e require(process.argv[1]) ${resolve("node_modules/serve-sim/dist/native/serve-sim-native.node")}`]: "",
       "npm install -g appium": () => {
         appiumOnPath = true;
         return ok({ stdout: "", stderr: "", exitCode: 0 });
@@ -170,7 +171,6 @@ describe("executeInstall", () => {
       },
     };
     const result = await executeInstall(["simulator-native", "--yes"], { HOME: home, MEGABRAIN_STATE_DIR: home }, wrapped);
-    expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
     expect(result.value).toContain("simulator-native: ok");
     expect(appiumOnPath).toBe(true);

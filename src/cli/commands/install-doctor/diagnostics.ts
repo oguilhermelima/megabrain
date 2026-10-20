@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";import { basename, join, resolve } from "node:path";import { ok } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { resolveStateDirectory } from "../../../core/state.js";import { pruneDecision, pruneStates } from "../../../core/orchestrate-prune.js";import { getTmux } from "../../../hosts/tmux.js";import { tmuxCallerPaneSession } from "../queue-write.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { discoverAgentDirectories } from "../../../core/agent-directories.js";import { getInstallState, listDispatches, readOnlyStateDatabase } from "../../../adapters/state-db.js";
+import { existsSync, readFileSync } from "node:fs";import { basename, dirname, join, resolve } from "node:path";import { ok } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { resolveStateDirectory } from "../../../core/state.js";import { pruneDecision, pruneStates } from "../../../core/orchestrate-prune.js";import { getTmux } from "../../../hosts/tmux.js";import { tmuxCallerPaneSession } from "../queue-write.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { discoverAgentDirectories } from "../../../core/agent-directories.js";import { getInstallState, listDispatches, readOnlyStateDatabase } from "../../../adapters/state-db.js";
 import type { HookAgent } from "./hook-config.js";
+import { resolveServeSim } from "../native/serve-sim.js";
 export type Environment = Readonly<Record<string, string | undefined>>;
 export type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
 export type State = Record<string, Record<string, unknown>>;
@@ -270,9 +271,18 @@ export async function appiumReady(process: ProcessAdapter): Promise<boolean> {
   return await available(process, "appium") && await succeeds(process, "appium", ["driver", "list", "--installed"]);
 }
 
-export async function serveSimReady(process: ProcessAdapter): Promise<boolean> {
-  const version = await process.run("serve-sim", ["--version"]);
+export async function serveSimReady(process: ProcessAdapter, environment: Environment = {}): Promise<boolean> {
+  const resolved = resolveServeSim(environment);
+  const version = await process.run(resolved.command, [...resolved.args, "--version"], resolved.env ? { env: resolved.env } : undefined);
   if (version.kind !== "ok" || version.value.stdout.trim() !== "0.1.48") return false;
+  if (resolved.command !== "serve-sim") {
+    const script = resolved.args[0];
+    if (!script) return false;
+    const addon = join(dirname(script), "native/serve-sim-native.node");
+    const bundled = resolved.env?.BUN_BE_BUN === "1";
+    const checked = await process.run(bundled ? resolved.command : "node", bundled ? ["-e", "require(process.argv[1])", addon] : ["-e", "require(process.argv[1])", addon], bundled ? { env: resolved.env } : undefined);
+    return checked.kind === "ok";
+  }
   const root = await process.run("npm", ["root", "-g"]);
   if (root.kind !== "ok") return false;
   const addon = join(root.value.stdout.trim(), "serve-sim", "dist", "native", "serve-sim-native.node");

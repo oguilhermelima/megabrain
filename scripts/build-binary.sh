@@ -54,3 +54,16 @@ while IFS= read -r entry; do
   mkdir -p "$assets/$(dirname "$entry")"
   cp -R "$root/$entry" "$assets/$entry"
 done <<< "$files"
+
+# serve-sim is a Node 20+ CLI with a native addon and signed macOS helper binaries. Keep the
+# package tree byte-for-byte intact so Bun can run its JavaScript entry point and load the addon.
+mkdir -p "$assets/node_modules"
+cp -R "$root/node_modules/serve-sim" "$assets/node_modules/serve-sim"
+cp -R "$root/node_modules/ws" "$assets/node_modules/ws"
+cp -R "$root/node_modules/inspect-webkit" "$assets/node_modules/inspect-webkit"
+
+for helper in serve-sim/dist/native/serve-sim-native.node serve-sim/dist/simcam/serve-sim-camera-helper serve-sim/dist/simax/serve-sim-ax-settings serve-sim/dist/simduo/serve-sim-duo-hid serve-sim/dist/simduo/serve-sim-duo-render; do
+  original="$root/node_modules/$helper"
+  staged="$assets/node_modules/$helper"
+  if codesign -v "$original" >/dev/null 2>&1; then codesign -v "$staged"; fi
+done

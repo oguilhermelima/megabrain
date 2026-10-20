@@ -8,8 +8,7 @@ export async function report(module: string, environment: Environment, process: 
     const platform = await process.run("uname", ["-s"]);
     const darwin = platform.kind === "ok" && platform.value.stdout.trim() === "Darwin";
     if (!darwin) { status = "unsupported"; reason = "macOS only"; }
-    else if (!await available(process, "serve-sim")) reason = "serve-sim is not on PATH";
-    else if (!await serveSimReady(process)) { status = "misconfigured"; reason = "serve-sim 0.1.48 native addon is not runnable"; }
+    else if (!await serveSimReady(process, environment)) { status = "misconfigured"; reason = "serve-sim 0.1.48 native addon is not runnable"; }
     else if (!await appiumReady(process)) { status = "misconfigured"; reason = "appium-xcuitest-driver is not installed"; }
     else { status = "ok"; reason = "serve-sim native addon and Appium xcuitest driver are installed"; }
     if (module === "simulator-tv" && status === "ok") reason = "Apple TV simulator uses the shared serve-sim and Appium toolchain";

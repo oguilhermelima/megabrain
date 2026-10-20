@@ -37,13 +37,16 @@ function fakeProcess(helper?: Awaited<ReturnType<typeof fakeHelper>>["helper"]) 
   const process: ProcessAdapter = {
     calls,
     async run(command, args) {
-      calls.push({ command, args: [...args] });
+      const entry = args.findIndex((arg) => arg.endsWith("/serve-sim.js"));
+      const effectiveCommand = entry >= 0 ? "serve-sim" : command;
+      const effectiveArgs = entry >= 0 ? args.slice(entry + 1) : args;
+      calls.push({ command: effectiveCommand, args: [...effectiveArgs] });
       if (command === "kill" && args[0] === "-0") return ok({ stdout: "", stderr: "", exitCode: 0 });
       if (command === "xcrun") return ok({ stdout: JSON.stringify({ devices: { "iOS 18": [{ udid, state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
-      if (command === "serve-sim" && args[0] === "--list") return helper ? ok({ stdout: JSON.stringify({ running: true, ...helper }), stderr: "", exitCode: 0 }) : ok({ stdout: JSON.stringify({ running: false, device: udid }), stderr: "", exitCode: 0 });
-      if (command === "serve-sim" && args[0] === "--detach") return helper ? ok({ stdout: JSON.stringify(helper), stderr: "", exitCode: 0 }) : failed("fake helper missing");
-      if (command === "serve-sim" && args[0] === "--kill") return ok({ stdout: JSON.stringify({ disconnected: true, device: udid }), stderr: "", exitCode: 0 });
-      if (command === "serve-sim" && args[0] === "type") return ok({ stdout: "", stderr: "", exitCode: 0 });
+      if (effectiveCommand === "serve-sim" && effectiveArgs[0] === "--list") return helper ? ok({ stdout: JSON.stringify({ running: true, ...helper }), stderr: "", exitCode: 0 }) : ok({ stdout: JSON.stringify({ running: false, device: udid }), stderr: "", exitCode: 0 });
+      if (effectiveCommand === "serve-sim" && effectiveArgs[0] === "--detach") return helper ? ok({ stdout: JSON.stringify(helper), stderr: "", exitCode: 0 }) : failed("fake helper missing");
+      if (effectiveCommand === "serve-sim" && effectiveArgs[0] === "--kill") return ok({ stdout: JSON.stringify({ disconnected: true, device: udid }), stderr: "", exitCode: 0 });
+      if (effectiveCommand === "serve-sim" && effectiveArgs[0] === "type") return ok({ stdout: "", stderr: "", exitCode: 0 });
       return failed("unexpected process");
     },
     async startDetached() { return failed("not expected"); },
