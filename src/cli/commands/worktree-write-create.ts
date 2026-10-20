@@ -212,6 +212,7 @@ export async function executeWorktreeCreate(
       };
   }
   const result = {
+    path,
     worktree: path,
     branch,
     workspace: workspaceId,

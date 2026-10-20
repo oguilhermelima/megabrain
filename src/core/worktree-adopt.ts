@@ -18,6 +18,6 @@ export function parseAdoptOptions(args: readonly string[]): Result<AdoptOptions>
 
 export function formatAdopt(result: AdoptResult, json: boolean): string {
   return json
-    ? `${JSON.stringify(result, null, 2)}\n`
+    ? `${JSON.stringify({ ...result, path: result.worktree }, null, 2)}\n`
     : `worktree: ${result.worktree}\nbranch: ${result.branch}\nworkspace: ${result.workspace}\n`;
 }
