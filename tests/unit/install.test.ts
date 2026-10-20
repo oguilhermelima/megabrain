@@ -146,8 +146,10 @@ describe("executeInstall", () => {
     const process = fakeProcess({
       "uname -s": "Darwin",
       "serve-sim --version": "0.1.48",
+      [`node ${resolve("node_modules/serve-sim/dist/serve-sim.js")} --version`]: "0.1.48",
       "npm root -g": "/usr/local/lib/node_modules",
       "node -e require(process.argv[1]) /usr/local/lib/node_modules/serve-sim/dist/native/serve-sim-native.node": "",
+      [`node -e require(process.argv[1]) ${resolve("node_modules/serve-sim/dist/native/serve-sim-native.node")}`]: "",
       "npm install -g appium": () => {
         appiumOnPath = true;
         return ok({ stdout: "", stderr: "", exitCode: 0 });
