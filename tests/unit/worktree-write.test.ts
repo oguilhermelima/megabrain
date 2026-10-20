@@ -270,7 +270,10 @@ describe("worktree creation shared root", () => {
       );
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") return;
-      expect(JSON.parse(result.value).worktree).toBe(join(shared, "feat-missing-root"));
+      expect(JSON.parse(result.value)).toMatchObject({
+        path: join(shared, "feat-missing-root"),
+        worktree: join(shared, "feat-missing-root"),
+      });
       expect((await stat(shared)).isDirectory()).toBe(true);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -292,7 +295,10 @@ describe("worktree creation shared root", () => {
       );
       expect(result.kind).toBe("ok");
       if (result.kind !== "ok") return;
-      expect(JSON.parse(result.value).worktree).toBe(join(await realpath(sharedLink), "feat-existing-root"));
+      expect(JSON.parse(result.value)).toMatchObject({
+        path: join(await realpath(sharedLink), "feat-existing-root"),
+        worktree: join(await realpath(sharedLink), "feat-existing-root"),
+      });
       expect((await stat(physicalShared)).isDirectory()).toBe(true);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
