@@ -328,7 +328,7 @@ export async function endAppTerminals(daemon: ChatDaemon, chat: Chat): Promise<R
     const ended = holders.filter((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
     const elsewhere = holders.filter((holder) => !ended.includes(holder));
     if (elsewhere.length > 0) throw new ChatHandoffError("terminal-busy", heldMessage(chat, elsewhere));
-    if ((ended.length > 0 || own !== null) && await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
+    if (ended.length > 0 && await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
     const sessions = new Set(ended.flatMap((holder) => holder.tmuxSession === null ? [] : [holder.tmuxSession]));
     if (own !== null) sessions.add(own);
     const tmux = ownedTmuxProcess(daemon.processes());
