@@ -5,13 +5,13 @@ import { checkDispatchTransition, dispatchStates, processStates, terminalStates,
 
 const transitions = {
   dispatch: {
-    spawning: ["spawning", "running", "failed", "closed"],
-    running: ["running", "waiting_for_reply", "done", "failed", "orphaned", "closed"],
-    waiting_for_reply: ["waiting_for_reply", "running", "done", "failed", "orphaned", "closed"],
+    spawning: ["spawning", "running", "exited", "failed", "closed"],
+    running: ["running", "waiting_for_reply", "done", "exited", "failed", "orphaned", "closed"],
+    waiting_for_reply: ["waiting_for_reply", "running", "done", "exited", "failed", "orphaned", "closed"],
     done: ["done", "closed"],
     exited: ["exited", "closed"],
     failed: ["failed", "circuit_broken", "closed"],
-    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "failed", "circuit_broken", "closed"],
+    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "exited", "failed", "circuit_broken", "closed"],
     closed: ["closed"],
     circuit_broken: ["circuit_broken"],
   },
