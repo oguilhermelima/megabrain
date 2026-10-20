@@ -68,7 +68,7 @@ import { executeSummaries } from "./commands/summaries.js";
 import { executeArtifact } from "./commands/artifact.js";
 import { executeHookSessionStart } from "./commands/hook-session-start.js";
 import { runChatd } from "../chat/daemon.js";
-import { startStateOwner, stopStateOwner } from "../db/state-owner.js";
+import { inspectStateOwner, startStateOwner, stopStateOwner } from "../db/state-owner.js";
 import { callStateOwner } from "../db/state-owner.js";
 import { resolveStateDirectory } from "../core/state.js";
 
@@ -145,7 +145,12 @@ async function routeCommand(
   if (command === "__state-owner") {
     const stateDir = dependencies.environment.MEGABRAIN_STATE_OWNER_DIR;
     if (!stateDir) return failed("state owner requires MEGABRAIN_STATE_OWNER_DIR", 2);
-    const owner = await startStateOwner(stateDir);
+    let owner;
+    try { owner = await startStateOwner(stateDir); }
+    catch (cause: unknown) {
+      if (/state owner is already running/.test(cause instanceof Error ? cause.message : String(cause)) && (await inspectStateOwner(stateDir)).running) return ok("");
+      throw cause;
+    }
     let stopping = false;
     const stop = () => {
       if (stopping) return;
