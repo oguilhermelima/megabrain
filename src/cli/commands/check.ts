@@ -47,7 +47,7 @@ export async function childIdentity(environment: CheckEnvironment, processAdapte
 export async function loadMessages(root: string, dispatch: string): Promise<CheckMessage[]> { return checkMessages(root, dispatch); }
 export async function loadDeliveries(root: string, dispatch: string): Promise<CheckDelivery[]> { return checkDeliveries(root, dispatch); }
 
-export async function migrateDeliveries(root: string, dispatch: string, messages: readonly CheckMessage[], deliveries: readonly CheckDelivery[]): Promise<void> {
+export async function migrateDeliveries(root: string, dispatch: string, messages: readonly CheckMessage[], deliveries: readonly CheckDelivery[], timeoutMs?: number): Promise<void> {
   const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") throw new Error(database.error);
   for (const message of messages) {
@@ -61,7 +61,7 @@ export async function migrateDeliveries(root: string, dispatch: string, messages
     await callStateOwner(root, { operation: "create-delivery", delivery: {
       id: `delivery-${Date.now()}-${message.seq}`, dispatchId: dispatch, recipient, consumer: null, consumerGeneration: null,
       messageSeqs: [message.seq], status: "outstanding", createdAt: now, updatedAt: now, acknowledgedAt: null, fencedAt: null,
-    } });
+    } }, timeoutMs, timeoutMs);
   }
 }
 
