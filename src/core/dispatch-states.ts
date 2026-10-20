@@ -15,14 +15,14 @@ export type TerminalStateValue = typeof terminalStates[number];
 
 const transitionTable: Readonly<Record<DispatchAxis, Readonly<Record<string, readonly string[]>>>> = {
   dispatch: {
-    queued: ["queued", "spawning", "failed", "closed"],
-    spawning: ["spawning", "running", "failed", "closed"],
+    queued: ["queued", "spawning", "exited", "failed", "closed"],
+    spawning: ["spawning", "running", "exited", "failed", "closed"],
     running: ["running", "waiting_for_reply", "done", "exited", "failed", "orphaned", "closed"],
     waiting_for_reply: ["waiting_for_reply", "running", "done", "exited", "failed", "orphaned", "closed"],
     done: ["done", "closed"],
     exited: ["exited", "closed"],
     failed: ["failed", "circuit_broken", "closed"],
-    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "failed", "circuit_broken", "closed"],
+    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "exited", "failed", "circuit_broken", "closed"],
     closed: ["closed"],
     circuit_broken: ["circuit_broken"],
   },

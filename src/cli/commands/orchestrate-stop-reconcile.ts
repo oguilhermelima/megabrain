@@ -98,7 +98,7 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   meta = synced.value;
   const state = value(meta.state);
   if (state === "closed" || state === "circuit_broken") return ok({ ...meta, reconcileResult: "unchanged" });
-  const terminal = await terminalStatus(meta, process);
+  const terminal = meta.terminalState === "retained" ? "missing" : await terminalStatus(meta, process);
   const decision = reconcileDecision({ ...meta, childDone: messages.some((message) => message.from === "child" && message.type === "done") }, terminal);
   const next = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
   if (decision.outcome !== "unchanged") {
