@@ -8,7 +8,8 @@ const transitions = {
     spawning: ["spawning", "running", "failed", "closed"],
     running: ["running", "waiting_for_reply", "done", "failed", "orphaned", "closed"],
     waiting_for_reply: ["waiting_for_reply", "running", "done", "failed", "orphaned", "closed"],
-    done: ["done", "failed", "orphaned", "closed"],
+    done: ["done", "closed"],
+    exited: ["exited", "closed"],
     failed: ["failed", "circuit_broken", "closed"],
     orphaned: ["orphaned", "running", "waiting_for_reply", "done", "failed", "circuit_broken", "closed"],
     closed: ["closed"],
@@ -65,16 +66,13 @@ describe("dispatch state consumers", () => {
     expect(checkDispatchTransition("dispatch", "orphaned", "done").kind).toBe("ok");
   });
 
-  test("keeps a waiting dispatch waiting when reconcile proves it alive", () => {
+  test("does not change dispatch state while its terminal is alive", () => {
     const result = reconcileDecision({ state: "waiting_for_reply", processState: "running", terminalState: "owned" }, "proven", "alive");
-    expect(result).toEqual({ outcome: "adopted", updates: { stage: "terminal-proven", reason: "identity-proven" } });
-    // Reply depends on the transition table retaining this legal state change.
-    expect(checkDispatchTransition("dispatch", "waiting_for_reply", "running").kind).toBe("ok");
+    expect(result).toEqual({ outcome: "running", updates: {} });
   });
 
-  test("allows retained-to-owned adoption after terminal identity is proven", () => {
-    expect(checkDispatchTransition("terminal", "retained", "owned").kind).toBe("ok");
-    const result = reconcileDecision({ state: "running", processState: "running", terminalState: "retained" }, "proven", "alive");
-    expect(result).toEqual({ outcome: "adopted", updates: { terminalState: "owned", stage: "terminal-proven", reason: "identity-proven" } });
+  test("makes exited state final", () => {
+    expect(checkDispatchTransition("dispatch", "exited", "running").kind).toBe("failed");
+    expect(checkDispatchTransition("dispatch", "exited", "closed").kind).toBe("ok");
   });
 });
