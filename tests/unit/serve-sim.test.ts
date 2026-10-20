@@ -10,10 +10,10 @@ afterEach(async () => { while (roots.length) await rm(roots.pop()!, { recursive:
 test("prefers the app's bundled serve-sim assets to repository installs and PATH", async () => {
   const root = await mkdtemp(join(tmpdir(), "serve-sim-resolution-")); roots.push(root);
   const executable = join(root, "Contents/MacOS/megabrain-cli");
-  const bundled = join(root, "Contents/Resources/megabrain/serve-sim/dist/serve-sim.js");
+  const bundled = join(root, "Contents/Resources/megabrain/node_modules/serve-sim/dist/serve-sim.js");
   const local = join(root, "repo/node_modules/serve-sim/dist/serve-sim.js");
   await mkdir(join(root, "Contents/MacOS"), { recursive: true });
-  await mkdir(join(root, "Contents/Resources/megabrain/serve-sim/dist"), { recursive: true });
+  await mkdir(join(root, "Contents/Resources/megabrain/node_modules/serve-sim/dist"), { recursive: true });
   await mkdir(join(root, "repo/node_modules/serve-sim/dist"), { recursive: true });
   await writeFile(bundled, ""); await writeFile(local, "");
 
