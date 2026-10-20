@@ -83,14 +83,14 @@ describe("executeOrchestratePolicy", () => {
     expect(readMeta(stateRoot).contextPolicy).toEqual({ contextCeilingTokens: 150000, compactAt: 60 });
   });
 
-  test("requires ownership and refuses to change a completed dispatch", async () => {
+  test("works for another caller and refuses to change a completed dispatch", async () => {
     const stateRoot = await setup();
-    const unauthorized = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90%"], {
+    const otherCaller = await executeOrchestratePolicy(["dispatch-policy-test", "--context-ceiling", "90%"], {
       MEGABRAIN_STATE_DIR: stateRoot,
       MEGABRAIN_SESSION_ID: "someone-else",
       MEGABRAIN_SESSION_HOST: "superset",
     }, process);
-    expect(unauthorized).toMatchObject({ kind: "failed", error: expect.stringContaining("owned by") });
+    expect(otherCaller).toMatchObject({ kind: "ok" });
 
     if (stateDb === undefined) throw new Error("dispatch database is missing");
     const completed = mutateDispatch(stateDb, "dispatch-policy-test", (current) => ({ ...current, state: "done" }));

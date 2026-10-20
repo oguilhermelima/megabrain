@@ -5,10 +5,7 @@ import { join } from "node:path";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { resolveCaller } from "../../src/cli/commands/queue-write.js";
-import { executeOrchestrateAdopt } from "../../src/cli/commands/orchestrate-adopt.js";
 import { isAgentSessionId } from "../../src/core/context.js";
-import { guardedStateDatabase } from "./state-db-guard.js";
-import { createDispatch, getDispatch } from "../../src/adapters/state-db.js";
 
 // Grok and Agy export no session id to the commands they run, but both record which process holds
 // which session, measured 2026-10-12 against Grok 1.0.52 and Antigravity CLI 1.3.3:
@@ -125,46 +122,3 @@ describe("a Grok or Agy caller is owned by its agent session", () => {
   });
 });
 
-describe("adopting a dispatch from a Grok or Agy owner", () => {
-  async function seed(owner: string): Promise<{ root: string; id: string }> {
-    const root = await mkdtemp(`${tmpdir()}/megabrain-agent-owner-`);
-    const handle = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
-    if (handle.kind !== "ok") throw new Error(handle.error);
-    const now = new Date().toISOString();
-    createDispatch(handle.value, {
-      dispatchId: "dispatch-agent-owner-1", parentHost: "local", parentSessionId: owner, parentTerminalId: null, parentTmuxSession: null, parentTmuxPane: null,
-      childHost: "tmux", terminalId: "tmux:s:%9", worktreePath: "/tmp/worktree", branch: "feat/x", agent: "codex", agentId: "codex",
-      runtime: "tmux", tmuxSession: "s", tmuxPane: "%9", state: "running", processState: "running", terminalState: "owned",
-      promptReceipt: "received", promptState: "confirmed", createdAt: now, updatedAt: now,
-    });
-    return { root, id: "dispatch-agent-owner-1" };
-  }
-  const adopter: Table = { [process.ppid]: { ppid: 900001, lstart: started, command: "zsh" }, 900001: { ppid: 1, lstart: started, command: "node /opt/dash.js" } };
-
-  test("a grok owner whose session is still open needs --force", async () => {
-    const { root, id } = await seed(`grok:${grokSession}`);
-    const home = await grokHome([{ session_id: grokSession, pid: 22554 }]);
-    const result = await executeOrchestrateAdopt([id], { MEGABRAIN_STATE_DIR: root, GROK_HOME: home }, fakeProcess({ ...adopter, 22554: { ppid: 1, lstart: started, command: "grok" } }));
-    expect(result.kind === "failed" ? result.error : "").toContain("--force");
-  });
-
-  test("a grok owner whose session closed can be adopted", async () => {
-    const { root, id } = await seed(`grok:${grokSession}`);
-    const home = await grokHome([]);
-    const result = await executeOrchestrateAdopt([id], { MEGABRAIN_STATE_DIR: root, GROK_HOME: home }, fakeProcess(adopter));
-    expect(result.kind).toBe("ok");
-    const handle = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
-    if (handle.kind !== "ok") throw new Error(handle.error);
-    const stored = getDispatch(handle.value, id);
-    expect(stored.kind === "ok" ? stored.value : undefined).toMatchObject({ parentSessionId: `proc:900001:${started}` });
-  });
-
-  test("an agy owner is alive while a process holds its presence lock", async () => {
-    const home = "/Users/u";
-    const held = await seed(`agy:${agyConversation}`);
-    const live = await executeOrchestrateAdopt([held.id], { MEGABRAIN_STATE_DIR: held.root, HOME: home }, fakeProcess(adopter, { 93600: [lock(home, agyConversation)] }));
-    expect(live.kind === "failed" ? live.error : "").toContain("--force");
-    const released = await seed(`agy:${agyConversation}`);
-    expect((await executeOrchestrateAdopt([released.id], { MEGABRAIN_STATE_DIR: released.root, HOME: home }, fakeProcess(adopter))).kind).toBe("ok");
-  });
-});

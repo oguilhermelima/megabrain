@@ -106,7 +106,7 @@ describe("resolveCaller owner precedence", () => {
   });
 });
 
-describe("a dead local owner can be adopted", () => {
+describe("dispatch ownership is not a caller boundary", () => {
   async function seed(owner: string): Promise<{ root: string; id: string }> {
     const root = await mkdtemp(`${tmpdir()}/megabrain-stable-owner-`);
     const handle = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -120,35 +120,19 @@ describe("a dead local owner can be adopted", () => {
     });
     return { root, id: "dispatch-stable-1" };
   }
-  const deadOwner = `proc:777777:${started}`;
-  const alive = (pid: number, lstart: string): Table => ({ ...runtimeTable(process.ppid), [pid]: { ppid: 1, lstart, command: "Dash" } });
-
-  test("adopt succeeds without --force when the owner process is gone", async () => {
-    const { root, id } = await seed(deadOwner);
-    const result = await executeOrchestrateAdopt([id, "--json"], { MEGABRAIN_STATE_DIR: root }, psProcess(runtimeTable(process.ppid)));
-    expect(result.kind).toBe("ok");
-    const handle = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
-    if (handle.kind !== "ok") throw new Error(handle.error);
-    const stored = getDispatch(handle.value, id);
-    expect(stored.kind === "ok" ? stored.value : undefined).toMatchObject({ parentSessionId: `proc:900001:${runtimeTable(1)[900001]?.lstart}` });
+  test("adopt prints its deprecation notice without changing state", async () => {
+    const { root, id } = await seed("original-owner");
+    const before = getDispatch(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }).value, id);
+    const result = await executeOrchestrateAdopt([id], { MEGABRAIN_STATE_DIR: root }, psProcess(runtimeTable(process.ppid)));
+    const after = getDispatch(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }).value, id);
+    expect(result).toMatchObject({ kind: "ok", value: expect.stringContaining("deprecated") });
+    expect(after).toEqual(before);
   });
 
-  test("a recycled pid counts as gone", async () => {
-    const { root, id } = await seed(deadOwner);
-    const result = await executeOrchestrateAdopt([id], { MEGABRAIN_STATE_DIR: root }, psProcess(alive(777777, "Wed Oct 14 00:00:00 2026")));
-    expect(result.kind).toBe("ok");
-  });
-
-  test("a live owner still needs --force", async () => {
-    const { root, id } = await seed(deadOwner);
-    const result = await executeOrchestrateAdopt([id], { MEGABRAIN_STATE_DIR: root }, psProcess(alive(777777, started)));
-    expect(result.kind === "failed" ? result.error : "").toContain("--force");
-  });
-
-  test("the ownership refusal names adopt", async () => {
-    const { root, id } = await seed(deadOwner);
+  test("watch works from a caller other than the recorded owner", async () => {
+    const { root, id } = await seed("proc:777777:Mon Oct 12 01:08:48 2026");
     const result = await executeOrchestrateWatch([id, "--timeout", "0", "--json"], { MEGABRAIN_STATE_DIR: root, MEGABRAIN_SESSION_ID: "someone-else" }, psProcess(runtimeTable(process.ppid)));
-    expect(result.kind === "failed" ? result.error : "").toContain(`megabrain orchestrate adopt ${id}`);
+    expect(result.kind).toBe("ok");
   });
 
   test("watch resolves the stable local owner from a fresh shell", async () => {

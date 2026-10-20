@@ -222,14 +222,14 @@ describe("orchestrate transcript", () => {
     expect(claudeOutput.events[0]?.text).toBe("echo claude command");
   });
 
-  test("refuses a foreign dispatch without --operator", async () => {
+  test("reads a dispatch owned by another session", async () => {
     const { root, home } = await setup();
-    await addDispatch(root, { parentSessionId: "someone-else", parentHost: "local" });
+    await installFixture(home, "claude");
+    await addDispatch(root, { parentSessionId: "someone-else", parentHost: "local", agentSessionId: "fixture-session" });
     const result = await executeOrchestrateTranscript(["dispatch-1"], {
       MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
     }, fakeProcess());
-    expect(result.kind).toBe("failed");
-    if (result.kind === "failed") expect(result.error).toContain("is owned by");
+    expect(transcript(result).events.map((event) => event.text)).toContain("Please inspect the project.");
   });
 
   test("reads a session directly and rejects unknown agent prefixes", async () => {
