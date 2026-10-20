@@ -11,6 +11,7 @@ import { usageText } from "../../core/usage.js";
 import { recordSimulatorOwner } from "../../core/native-sim-owner.js";
 import { systemClock } from "../../core/clock.js";
 import { readWebDevices } from "../../core/web-device.js";
+import { parseAllDocuments } from "yaml";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Emit = (text: string) => void;
@@ -22,6 +23,9 @@ const FLOW_ROOTS = [".maestro", "maestro"];
 const UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 const STEP = /^(.*)\.\.\. (COMPLETED|FAILED|SKIPPED|WARNED)$/;
 const DEBUG_MARKER = /^==== Debug output/;
+const DRIVER_START_FAILURE = /Failed to connect to \/127\.0\.0\.1:|XCUITest.{0,80}(?:driver|start)|(?:driver|status check).{0,80}(?:timed out|timeout)/i;
+const PRIVACY_GRANT_FAILURE = /privacy|simctl.{0,80}grant|CommandFailed:\s*null/i;
+const PERCENT_POINT = /^\s*(?:\d+%\s*,\s*\d+%|\d+\s*,\s*\d+)\s*$/;
 
 const keyFor = (worktree: string): string => createHash("sha256").update(worktree).digest("hex").slice(0, 16);
 const worktreeRoot = (environment: Environment, worktree: string): string => join(resolveStateDirectory(environment), "maestro", keyFor(worktree));
@@ -48,6 +52,22 @@ function headerValue(text: string, key: string): string | null {
   const header = text.split(/^---\s*$/m)[0] ?? "";
   const match = new RegExp(`^${key}:\\s*(.+?)\\s*$`, "m").exec(header);
   return match?.[1]?.replace(/^["']|["']$/g, "") ?? null;
+}
+
+function validatePercentagePoints(text: string, path: string): string | undefined {
+  const documents = parseAllDocuments(text);
+  const syntaxError = documents.flatMap((document) => document.errors)[0];
+  if (syntaxError) {
+    const line = syntaxError.linePos?.[0]?.line ?? 1;
+    return `${path}:${line}: invalid flow YAML: ${syntaxError.message}`;
+  }
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^\s*point:\s*["']?([^"'#\r\n]+?)["']?\s*$/.exec(lines[index] ?? "");
+    if (!match?.[1]?.includes("%")) continue;
+    const value = match[1].trim();
+    if (!PERCENT_POINT.test(value)) return `${path}:${index + 1}: invalid percentage point "${value}"; coordinates must be whole percentages`;
+  }
 }
 
 export function listFlows(worktree: string): Flow[] {
@@ -191,7 +211,10 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const flowPath = resolve(worktree, positional[0] ?? "");
   const flow = relative(worktree, flowPath);
   if (flow.startsWith("..") || isAbsolute(flow) || !existsSync(flowPath) || !statSync(flowPath).isFile()) return failed(`flow not found in ${worktree}: ${positional[0]}`);
-  const webFlow = headerValue(readFileSync(flowPath, "utf8"), "url") !== null;
+  const flowText = readFileSync(flowPath, "utf8");
+  const pointError = validatePercentagePoints(flowText, positional[0] ?? flow);
+  if (pointError) return failed(pointError);
+  const webFlow = headerValue(flowText, "url") !== null;
   let device: Result<string>;
   if (webFlow) {
     const version = await process.run(maestroBinary(environment), ["--version"], { timeoutMs: 10_000, env: maestroEnvironment(environment, javaHome) });
