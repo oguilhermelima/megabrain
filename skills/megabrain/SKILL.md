@@ -182,7 +182,7 @@ through tmux; over the limit is refused before anything is created, never trunca
 ```
 megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json] — recommended when you need to find active, archived, orphaned, or uncertain dispatches.
 megabrain orchestrate graph (--chat <chat id> | --session <agent:id>) [--follow] --json — recommended when you need the coordinator and all lanes in its orchestration tree.
-megabrain orchestrate adopt <dispatch-id-or-suffix> [--force] [--json] — recommended when you need to take ownership of an existing dispatch in this coordinator session.
+megabrain orchestrate adopt <dispatch-id-or-suffix> [--json] — deprecated no-op for one release; dispatches now follow their terminal.
 megabrain orchestrate liveness <dispatch-id-or-suffix> [--operator] [--json] — recommended when you need to check the child terminal execution state without waiting for a message.
 megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json] — recommended when you need to wait for or retrieve a child message delivery that can be replayed until acknowledged.
 megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--operator] [--json] — recommended when you need to mark a child message delivery as handled, optionally closing a finished dispatch.
