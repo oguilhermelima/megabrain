@@ -307,6 +307,22 @@ describe("single state owner", () => {
     await expect(startStateOwner(root)).rejects.toThrow(/already running/);
   });
 
+  test("a detached owner that loses the lock exits successfully and leaves the healthy owner available", async () => {
+    owner = await startStateOwner(root);
+    const incumbent = await inspectStateOwner(root);
+    if (!incumbent.running) throw new Error("incumbent state owner did not start");
+    const binary = join(process.cwd(), ".build", "megabrain");
+    const environment = { ...process.env, MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root };
+    delete environment.MEGABRAIN_DISPATCH_ID;
+    const contender = spawn(binary, ["__state-owner"], { stdio: "ignore", env: environment });
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      contender.once("error", reject);
+      contender.once("exit", (code, signal) => resolve({ code, signal }));
+    });
+    expect(result).toEqual({ code: 0, signal: null });
+    expect(await inspectStateOwner(root)).toEqual(incumbent);
+  });
+
   test("concurrent starts produce exactly one owner before the socket is published", async () => {
     const outcomes = await Promise.allSettled([startStateOwner(root), startStateOwner(root)]);
     const started = outcomes.filter((outcome): outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof startStateOwner>>> => outcome.status === "fulfilled");
