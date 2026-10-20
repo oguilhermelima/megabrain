@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 describe("spawn admission lock contention", () => {
-  test("fails promptly before creating a terminal when another spawn owns admission", async () => {
+  test("fails promptly with JSON when admission is explicitly configured to fail", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "megabrain-spawn-admission-contention-"));
     directories.push(stateDir);
     await writeAdmissionPolicy({ MEGABRAIN_STATE_DIR: stateDir }, { maxAgents: 4 });
@@ -25,12 +25,40 @@ describe("spawn admission lock contention", () => {
     const process = processFor();
     const startedAt = performance.now();
     const result = await executeSpawn(
-      ["--worktree", stateDir, "--agent", "codex", "--prompt", "spawn", "--tmux", "true"],
+      ["--worktree", stateDir, "--agent", "codex", "--prompt", "spawn", "--tmux", "true", "--admission", "fail", "--json"],
       { MEGABRAIN_STATE_DIR: stateDir }, process,
     );
     const elapsedMs = performance.now() - startedAt;
     expect(result.kind === "failed" ? result.error : "").toContain("resource admission is busy");
+    expect(result.kind === "failed" ? JSON.parse(result.stdout ?? "{}") : null).toMatchObject({
+      ok: false,
+      code: "admission-busy",
+      message: "resource admission is busy; retry the spawn",
+    });
     expect(elapsedMs).toBeLessThan(500);
     expect(process.calls.some(({ command, args }) => command === "tmux" && ["new-session", "split-window"].includes(args[0] ?? ""))).toBe(false);
+  });
+
+  test("reclaims a lease held by a dead spawn process across consecutive attempts", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "megabrain-spawn-admission-stale-"));
+    directories.push(stateDir);
+    await writeAdmissionPolicy({ MEGABRAIN_STATE_DIR: stateDir }, { maxAgents: 4 });
+    const owner = await startStateOwner(stateDir);
+    owners.push(owner);
+    expect(await callStateOwner(stateDir, {
+      operation: "acquire-lease", key: "resource-admission", holder: "admission-999999999-stale", seconds: 300,
+    })).toBe(true);
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const result = await executeSpawn(
+        ["--worktree", stateDir, "--agent", "codex", "--prompt", "spawn", "--tmux", "true", "--json"],
+        { MEGABRAIN_STATE_DIR: stateDir }, processFor(),
+      );
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") {
+        expect(result.error).not.toContain("resource admission is busy");
+        expect(() => JSON.parse(result.stdout ?? "")).not.toThrow();
+      }
+    }
   });
 });
