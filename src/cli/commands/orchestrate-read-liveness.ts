@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { classifyLiveness, type LivenessResult } from "../../core/liveness.js";
 import { formatDispatchRead, renderTranscript } from "../../core/dispatch-read.js";
-import { hasCallerIdentity, ownsDispatch } from "../../core/context.js";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
 import { resolveCaller } from "./queue-write.js";
 import { hostReadText, terminalStatus, type RecordValue } from "./orchestrate-terminal.js";
@@ -35,11 +34,6 @@ export async function parentMeta(id: string, environment: Environment, process: 
   if (stored.kind !== "ok") return stored;
   const meta = stored.value;
   if (meta === undefined) return failed(`dispatch not found: ${dispatchId}`);
-  if (!allowSuffix) {
-  if (!hasCallerIdentity(current)) return failed("this command cannot tell who is running it: no agent session and no shell were found; set MEGABRAIN_SESSION_ID to name this caller");
-  const expectedHost = stringValue(meta.parentHost); const expectedId = stringValue(meta.parentSessionId);
-    if (!ownsDispatch(current, { parentHost: expectedHost, parentSessionId: expectedId })) return failed(`dispatch ${dispatchId} is owned by ${expectedHost}/${expectedId}, not ${current.host}/${current.id || current.terminalId || ""}`);
-  }
   return ok({ meta, dispatchId });
 }
 
