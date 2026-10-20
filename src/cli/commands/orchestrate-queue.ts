@@ -97,16 +97,15 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     if (itemId === "") return failed(usageText("orchestrate-queue-cancel"), 2);
     let reason = "cancelled by caller";
     let json = false;
-    let operator = false;
     for (let index = 2; index < args.length; index += 1) {
       if (args[index] === "--reason") reason = args[++index] ?? "";
       else if (args[index] === "--json") json = true;
-      else if (args[index] === "--operator") operator = true;
+      else if (args[index] === "--operator") { /* accepted for compatibility; no ownership bypass remains */ }
       else return failed(`unknown orchestrate queue cancel option: ${args[index]}`, 2);
     }
     if (reason.trim() === "") return failed("--reason must not be empty", 2);
-    const caller = await resolveCaller(operator ? { ...environment, MEGABRAIN_OPERATOR: "1" } : environment, process);
-    const procCancel = await cancelProcQueueEntry(environment, itemId, caller.operator === true ? undefined : await procOwner(environment, process), reason.trim());
+    const caller = await resolveCaller(environment, process);
+    const procCancel = await cancelProcQueueEntry(environment, itemId, reason.trim());
     if (procCancel !== undefined) {
       if (procCancel.kind !== "ok") return procCancel;
       return ok(json ? `${JSON.stringify({ id: itemId, kind: "proc", dispatch: "-", type: procCancel.value.name, createdAt: procCancel.value.createdAt, state: "cancelled", text: procCancel.value.reason, reason: reason.trim() }, null, 2)}\n` : `cancelled: ${itemId}\n`);
@@ -117,13 +116,13 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     if (candidate.kind !== "ok") return candidate;
     const queuedSpawn = candidate.value?.state === "queued" ? candidate.value : undefined;
     if (queuedSpawn !== undefined) {
-      const owner = resolveParentDispatchId(db.value, queuedSpawn.dispatchId, caller);
-      if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
+      const owner = resolveParentDispatchId(db.value, queuedSpawn.dispatchId);
+      if (owner.kind !== "ok") return owner;
       let cancelled: unknown;
       try {
         cancelled = await callStateOwner(resolveStateDirectory(environment), {
           operation: "dispatch-patch", dispatchId: owner.value,
-          patch: { state: "closed", reason: reason.trim(), queuedCancelledAt: new Date().toISOString(), ...(caller.operator === true ? { cancelledBy: "operator" } : {}) },
+          patch: { state: "closed", reason: reason.trim(), queuedCancelledAt: new Date().toISOString(), cancelledBy: caller.id || caller.terminalId || "caller" },
           expectedState: "queued",
         });
       } catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
@@ -133,8 +132,8 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
     const requested = getQueuedDispatchId(db.value, itemId);
     if (requested.kind !== "ok") return requested;
     if (requested.value === undefined) return failed(`queued item ${itemId} not found`);
-    const owner = resolveParentDispatchId(db.value, requested.value, caller);
-    if (owner.kind !== "ok") return failed(`queued item ${itemId} is not owned by this caller`);
+    const owner = resolveParentDispatchId(db.value, requested.value);
+    if (owner.kind !== "ok") return owner;
     const original = listMessages(db.value, owner.value);
     if (original.kind !== "ok") return original;
     const delivery = listDeliveries(db.value, owner.value);
@@ -151,21 +150,20 @@ export async function executeOrchestrateQueue(args: readonly string[], environme
   let dispatch = "";
   let json = false;
   let all = false;
-  let operator = false;
   for (const arg of args) {
     if (arg === "--json") json = true;
     else if (arg === "--all") all = true;
-    else if (arg === "--operator") operator = true;
+    else if (arg === "--operator") { /* accepted for compatibility; no ownership bypass remains */ }
     else if (arg.startsWith("-")) return failed(`unknown orchestrate queue option: ${arg}`, 2);
     else if (dispatch === "") dispatch = arg;
     else return failed(`unexpected argument: ${arg}`, 2);
   }
-  const caller = await resolveCaller(operator ? { ...environment, MEGABRAIN_OPERATOR: "1" } : environment, process);
+  const caller = await resolveCaller(environment, process);
   const db = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: resolveStateDirectory(environment), HOME: environment.HOME });
   if (db.kind !== "ok") return db;
   let dispatchIds: string[];
   if (dispatch !== "") {
-    const resolved = resolveParentDispatchId(db.value, dispatch, caller);
+    const resolved = resolveParentDispatchId(db.value, dispatch);
     if (resolved.kind !== "ok") return resolved;
     dispatchIds = [resolved.value];
   } else {

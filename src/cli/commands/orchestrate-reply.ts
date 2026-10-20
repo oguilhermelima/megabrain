@@ -59,7 +59,7 @@ async function interruptChangeReceiver(meta: JsonRecord, screen: string, process
 
 async function requireParent(database: DatabaseHandle, dispatch: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<JsonRecord & { dispatchId: string }>> {
   const current = await resolveCaller(environment, processAdapter);
-  const resolved = resolveParentDispatchId(database, dispatch, current);
+  const resolved = resolveParentDispatchId(database, dispatch);
   if (resolved.kind !== "ok") return resolved;
   const stored = getDispatch(database, resolved.value);
   if (stored.kind !== "ok") return stored;

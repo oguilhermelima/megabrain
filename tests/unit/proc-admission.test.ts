@@ -87,14 +87,12 @@ describe("process admission", () => {
     await executeProc(["stop", "web"], env, adapter);
   }, 30000);
 
-  test("the owner cancels a waiting start and it never runs", async () => {
+  test("any caller cancels a waiting start and it never runs", async () => {
     const env = await sandbox();
     await writeAdmissionPolicy(env, UNSATISFIABLE);
     const pending = executeProc(["start", "--name", "web", "--", "sleep", "300"], env, adapter);
     const item = await waitFor(async () => (await procItems(env))[0]);
-    const foreign = await executeOrchestrateQueue(["cancel", item.id], { ...env, CLAUDE_CODE_SESSION_ID: "someone-else" }, adapter);
-    expect(foreign.kind).toBe("failed");
-    const cancelled = await executeOrchestrateQueue(["cancel", item.id, "--reason", "not needed"], env, adapter);
+    const cancelled = await executeOrchestrateQueue(["cancel", item.id, "--reason", "not needed"], { ...env, CLAUDE_CODE_SESSION_ID: "someone-else" }, adapter);
     expect(cancelled.kind).toBe("ok");
     const start = await pending;
     expect(start.kind).toBe("failed");

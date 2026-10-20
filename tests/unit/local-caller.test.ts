@@ -171,11 +171,11 @@ describe("parent verbs accept the local caller that spawned the dispatch", () =>
     expect(notOwnership(await executeOrchestrateClose(["dispatch-c1", "--json"], environment(root), plainShellProcess()))).toBe(true);
   });
 
-  test("a different local session is refused", async () => {
+  test("a different local session can watch the dispatch", async () => {
     const root = await tempDir("other");
     createDispatch(database(root), localMeta("dispatch-o1", "claude:someone-else"));
     const result = await executeOrchestrateWatch(["dispatch-o1", "--timeout", "0", "--json"], environment(root), plainShellProcess());
-    expect(result.kind).toBe("failed");
+    expect(result.kind).toBe("ok");
   });
 });
 

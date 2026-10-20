@@ -170,15 +170,15 @@ describe("orchestrate queue", () => {
     expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ text: "full message text", state: "cancelled" });
   });
 
-  test("refuses to cancel a foreign item", async () => {
+  test("cancels an item regardless of dispatch owner", async () => {
     const root = await state();
     dispatch(root, "dispatch-foreign", "parent-two");
     const deliveryId = reply(root, "dispatch-foreign", "foreign reply", "outbox-foreign");
 
     const result = await executeOrchestrateQueue(["cancel", deliveryId], environment(root), adapter());
 
-    expect(result.kind).toBe("failed");
-    expect(result.kind === "failed" ? result.error : "").toContain("not owned by this caller");
+    expect(result.kind).toBe("ok");
+    expect(requireOk(listDeliveries(requireOk(stateDatabase({ MEGABRAIN_STATE_DIR: root })), "dispatch-foreign"))[0]).toMatchObject({ status: "cancelled" });
   });
 
   test("refuses an acknowledged reply as already read", async () => {

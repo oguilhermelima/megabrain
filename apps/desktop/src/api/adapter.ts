@@ -41,13 +41,13 @@ export interface DesktopApi {
   setTraySummary(findings: number, lines: string[]): Promise<void>
   windowVisible(): Promise<boolean>
   worktrees(): Promise<Worktree[]>
-  /** A chat's recent output, as the operator (`orchestrate read --operator`). */
+  /** A chat's recent output (`orchestrate read`); dispatch ownership is not an access boundary. */
   readChat(dispatchId: string, lines: number): Promise<ChatRead>
   /** A coordinator and every lane in its orchestration tree. */
   orchestrationGraph(target: OrchestrationTarget): Promise<OrchestrationGraph>
   /** Calls onGraph with a full snapshot at once and on every change; onEnd gets the CLI's error, if any. The returned function stops the follow. */
   followOrchestration(target: OrchestrationTarget, onGraph: (graph: OrchestrationGraph) => void, onEnd?: (error: string | null) => void): Promise<() => void>
-  /** Sends a message into a chat, as the operator (`orchestrate reply --operator`). */
+  /** Sends a message into a chat (`orchestrate reply`); dispatch ownership is not an access boundary. */
   reply(dispatchId: string, text: string): Promise<ReplyResult>
   /** The last message a chat's child sent, in full (`db show`); null when it sent none. */
   readDispatchMessage(dispatchId: string): Promise<string | null>

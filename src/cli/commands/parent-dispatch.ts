@@ -1,11 +1,9 @@
 import type { DatabaseHandle } from "../../db/db.js";
-import type { CallerIdentity } from "../../core/context.js";
 import { resolveDispatchIdSuffix } from "../../core/dispatch-paths.js";
 import { failed, type Result } from "../../core/result.js";
 import { listDispatches } from "../../adapters/state-db.js";
 
-export function resolveParentDispatchId(database: DatabaseHandle, requested: string, caller: CallerIdentity): Result<string> {
-  void caller;
+export function resolveParentDispatchId(database: DatabaseHandle, requested: string): Result<string> {
   const listed = listDispatches(database, { includeArchived: true });
   if (listed.kind !== "ok") return listed;
   const exact = listed.value.find((record) => record.dispatchId === requested);

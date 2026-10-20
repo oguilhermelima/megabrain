@@ -16,7 +16,7 @@ export type ContextEnvironment = CallerEnvironment & {
 // The environment variable names resolveCallerIdentity reads to identify a caller. A child
 // launched by `orchestrate spawn` must never inherit these from its parent process — tmux copies
 // the spawner's whole environment into a new pane, and a host terminal's shell can too — or the
-// child would resolve as its parent's own identity and pass the parent's ownership checks. Spawn
+// child would resolve as its parent's own identity in dispatch metadata. Spawn
 // clears exactly this list (env -u) on both the tmux and the host launch line. Kept as one
 // constant next to the resolver that reads these same names so the two cannot drift apart.
 export const CALLER_IDENTITY_ENV_VARS = [
@@ -71,7 +71,7 @@ export type CallerProbes = {
 };
 
 // The resolved identity of whoever is running the current megabrain command: a stable id for
-// ownership comparisons, the host it runs under, and the terminal handle when one exists
+// stable identification, the host it runs under, and the terminal handle when one exists
 // (recorded separately so a caller whose agent session changed but whose terminal did not can
 // still be recognised against a dispatch that predates the agent-session identity).
 export type CallerIdentity = {
@@ -80,8 +80,6 @@ export type CallerIdentity = {
   readonly terminalId: string | null;
   readonly tmuxSession: string | null;
   readonly tmuxPane: string | null;
-  /** Set by --operator: a person's own program (the desktop app) acting on any dispatch. */
-  readonly operator?: true;
 };
 
 export type DispatchOwnerRecord = {
@@ -155,7 +153,7 @@ function callerTerminal(
 // (Claude, then Codex, then a Grok or Agy session found from the process tree); then a terminal handle (superset, then orca, then a probed tmux pane);
 // then, host only, a structured Orca session (ORCA_STRUCTURED_SESSION=1) with no stable id. A caller under none of those hosts is "local": no terminal
 // exists to type into, and its id is its agent session or, failing that, the shell probe. The terminal handle is
-// returned separately from id so callers that need it (ownership, notification routing) do not
+// returned separately from id so callers that need it (display, notification routing) do not
 // have to re-derive it, and so a caller whose agent session changes while its terminal does not
 // can still be recognised (see ownsDispatch).
 export function resolveCallerIdentity(environment: CallerEnvironment, probes: CallerProbes = {}): CallerIdentity {
@@ -186,7 +184,7 @@ export function resolveCallerIdentity(environment: CallerEnvironment, probes: Ca
 }
 
 // True once resolveCallerIdentity found anything at all to identify the caller by — a stable id
-// or a terminal handle. A caller with neither is refused before any ownership comparison runs.
+// or a terminal handle. Message attribution requires an identity.
 export function hasCallerIdentity(caller: CallerIdentity): boolean {
   return caller.id !== "" || caller.terminalId !== null;
 }
@@ -195,38 +193,20 @@ export function isAgentSessionId(value: string): boolean {
   return /^(?:claude|codex|grok|agy):.+$/.test(value);
 }
 
-// A local owner that names a process rather than a session: a stable ancestor, or the older
-// transient-shell pid. Its liveness can be checked, so a dead one can be adopted without --force.
-export function isLocalProcessOwner(value: string): boolean {
-  return /^(?:proc:\d+:.+|shell:pid\d+)$/.test(value);
-}
-
-// Ownership: the caller's stable id matches the recorded owner, or — for a record written before
-// agent-session ids existed, whose owner is a terminal handle — the caller's current terminal
-// handle matches. Host must agree either way.
+// Used for caller-scoped display filters, not as an authorization gate.
 export function ownsDispatch(caller: CallerIdentity, record: DispatchOwnerRecord): boolean {
-  if (caller.operator === true) return true;
   if (caller.host !== record.parentHost) return false;
   if (caller.id !== "" && caller.id === record.parentSessionId) return true;
   if (caller.terminalId !== null && caller.terminalId === record.parentSessionId) return true;
   return false;
 }
 
-export const OPERATOR_ID = "operator";
-
-// --operator exists for a person's own program, such as the desktop app, which is no agent session
-// and so owns no dispatch. It guards against an agent stepping around ownership by mistake; it is
-// not a security boundary, since everything runs as the same user.
-export function operatorRefusal(dispatchId: string | undefined, caller: CallerIdentity): string | undefined {
+// `send --operator` is a sender mode, not a dispatch ownership bypass. Keep agent sessions and
+// dispatch children from accidentally selecting the human sender identity.
+export function sendOperatorRefusal(dispatchId: string | undefined, caller: CallerIdentity): string | undefined {
   if (dispatchId !== undefined && dispatchId !== "") return `a child (dispatch ${dispatchId}) cannot act as the operator; --operator is for a person's own program, such as the desktop app`;
   if (isAgentSessionId(caller.id)) return `${caller.id} is an agent session and cannot act as the operator; --operator is for a person's own program, such as the desktop app`;
   return undefined;
-}
-
-// The caller acting as the operator keeps its terminal, so close still refuses its own pane, and is
-// recorded as "operator" wherever a session id is written.
-export function asOperator(caller: CallerIdentity): CallerIdentity {
-  return { ...caller, id: OPERATOR_ID, operator: true };
 }
 
 export function resolveContext(

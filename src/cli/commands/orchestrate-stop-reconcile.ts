@@ -44,7 +44,7 @@ function normalize(meta: RecordValue): RecordValue {
 
 async function parentMeta(database: DatabaseHandle, dispatch: string, env: QueueEnvironment, process: ProcessAdapter): Promise<Result<RecordValue & { dispatchId: string }>> {
   const current = await resolveCaller(env, process);
-  const resolved = resolveParentDispatchId(database, dispatch, current);
+  const resolved = resolveParentDispatchId(database, dispatch);
   if (resolved.kind !== "ok") return resolved;
   const stored = getDispatch(database, resolved.value);
   if (stored.kind !== "ok") return stored;
