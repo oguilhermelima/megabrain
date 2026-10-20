@@ -111,7 +111,6 @@ describe("executeInstall", () => {
     const process = fakeProcess({}, ["codex", "agy", "cursor", "cursor-agent"]);
     const environment = { HOME: home, MEGABRAIN_STATE_DIR: home, MEGABRAIN_ROOT: entrypoint.root };
     const result = await executeInstall(["orchestration-hooks", "--yes"], environment, process);
-    expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
     const backups = readdirSync(join(home, ".claude")).filter((name) => name.startsWith("settings.json.megabrain-backup-"));
     expect(backups.length).toBeGreaterThan(0);
