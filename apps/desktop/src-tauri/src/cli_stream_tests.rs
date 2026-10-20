@@ -16,7 +16,7 @@ fn cli_stream_reports_the_full_bounded_stderr_as_a_contract_error() {
     );
     assert_eq!(
         first_error_line("a quote: \" and a newline\n"),
-        r#"{"cursor":"","error":"a quote: \" and a newline"}"#
+        r#"{"cursor":"","error":"a quote: \" and a newline\n"}"#
     );
 }
 
