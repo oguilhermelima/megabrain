@@ -612,7 +612,9 @@ export function finishNotification(handle: DatabaseHandle, id: string, holder: s
 export type LeaseRecord = Readonly<{ key: string; holder: string; expiresAt: string }>;
 
 function leaseHolderIsAlive(holder: string): boolean | undefined {
-  const match = /^(\d+)-/.exec(holder);
+  // Older resource-admission holders used `admission-<pid>-...`; accept that
+  // persisted format as well as the pid-prefixed format used by new callers.
+  const match = /^(?:admission-)?(\d+)-/.exec(holder);
   if (match === null) return undefined;
   const pid = Number(match[1]);
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;

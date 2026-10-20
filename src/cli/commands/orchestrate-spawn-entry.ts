@@ -41,19 +41,49 @@ import { resultError } from "./orchestrate-spawn-state.js";
 import { runSpawn } from "./orchestrate-spawn-run.js";
 import { forgetTmuxSession, type SpawnTrace } from "./orchestrate-spawn-state.js";
 import { type SpawnEnvironment, type SpawnDependencies } from "./orchestrate-spawn-options.js";
+
+const ADMISSION_WAIT_MS = 120_000;
+const ADMISSION_POLL_MS = 250;
+
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
   const trace: SpawnTrace = {};
+  const jsonRequested = args.includes("--json");
+  const reportFailure = (result: Result<string>, code = "spawn-failed", details?: Record<string, string>): Result<string> => {
+    if (result.kind === "ok" || !(trace.json ?? jsonRequested)) return result;
+    const message = result.kind === "failed" ? result.error : result.reason;
+    return failed(message, result.exitCode, `${JSON.stringify({
+      ok: false,
+      code,
+      message,
+      status: "failed",
+      reason: trace.reason ?? code,
+      error: message,
+      ...(details ?? {}),
+    })}\n`);
+  };
   if (args.includes("-h") || args.includes("--help")) {
     return runSpawn(args, environment, process, dependencies, trace);
   }
   const policy = environment.MEGABRAIN_STATE_DIR === undefined && environment.HOME === undefined
     ? undefined : await readAdmissionPolicy(environment);
-  const holder = `admission-${globalThis.process.pid}-${randomUUID()}`;
+  const holder = `${globalThis.process.pid}-admission-${randomUUID()}`;
   let leased = false;
   if (policy !== undefined) {
-    try { leased = await callStateOwner(resolveStateDirectory(environment), { operation: "acquire-lease", key: "resource-admission", holder, seconds: 300 }) as boolean; }
-    catch (cause: unknown) { return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
-    if (!leased) return failed("resource admission is busy; retry the spawn", 1);
+    const stateDir = resolveStateDirectory(environment);
+    const failImmediately = args.includes("--admission") && args[args.indexOf("--admission") + 1] === "fail";
+    const deadline = Date.now() + ADMISSION_WAIT_MS;
+    try {
+      do {
+        leased = await callStateOwner(stateDir, { operation: "acquire-lease", key: "resource-admission", holder, seconds: 300 }) as boolean;
+        if (leased || failImmediately || Date.now() >= deadline) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, Math.min(ADMISSION_POLL_MS, deadline - Date.now())));
+      } while (true);
+    }
+    catch (cause: unknown) { return reportFailure(failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`)); }
+    if (!leased) return reportFailure(failed("resource admission is busy; retry the spawn", 1), "admission-busy", {
+      slot: "resource-admission",
+      retry: "retry the spawn when the current spawn has finished",
+    });
   }
   let result: Result<string>;
   try { result = await runSpawn(args, environment, process, dependencies, trace); }
@@ -79,16 +109,11 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
     }
   }
   // An argument error leaves trace.json unset: the flag is then read straight from the arguments.
-  if (result.kind === "ok" || !(trace.json ?? args.includes("--json"))) return result;
-  const error = result.kind === "failed" ? result.error : result.reason;
-  const body = {
-    status: "failed",
-    reason: trace.reason ?? "spawn-failed",
-    error,
+  const details = {
     ...(trace.dispatchId === undefined ? {} : { dispatchId: trace.dispatchId }),
     ...(trace.terminalId === undefined ? {} : { terminalId: trace.terminalId }),
     ...(trace.pane === undefined ? {} : { tmuxPane: trace.pane }),
   };
-  return failed(error, result.exitCode, `${JSON.stringify(body)}\n`);
+  return reportFailure(result, trace.reason ?? "spawn-failed", Object.keys(details).length === 0 ? undefined : details);
 }
 
