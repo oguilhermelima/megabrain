@@ -34,9 +34,38 @@ describe("spawn admission lock contention", () => {
       ok: false,
       code: "admission-busy",
       message: "resource admission is busy; retry the spawn",
+      slot: "resource-admission",
     });
+    expect(result.kind === "failed" ? JSON.parse(result.stdout ?? "{}") : null).not.toHaveProperty("details");
     expect(elapsedMs).toBeLessThan(500);
     expect(process.calls.some(({ command, args }) => command === "tmux" && ["new-session", "split-window"].includes(args[0] ?? ""))).toBe(false);
+  });
+
+  test("waits for a held admission lease by default", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "megabrain-spawn-admission-wait-"));
+    directories.push(stateDir);
+    await writeAdmissionPolicy({ MEGABRAIN_STATE_DIR: stateDir }, { maxAgents: 4 });
+    const owner = await startStateOwner(stateDir);
+    owners.push(owner);
+    expect(await callStateOwner(stateDir, { operation: "acquire-lease", key: "resource-admission", holder: "other-spawn", seconds: 300 })).toBe(true);
+
+    const process = processFor();
+    const startedAt = performance.now();
+    const resultPromise = executeSpawn(
+      ["--json"],
+      { MEGABRAIN_STATE_DIR: stateDir }, process,
+    );
+    setTimeout(() => {
+      void callStateOwner(stateDir, { operation: "release-lease", key: "resource-admission", holder: "other-spawn" });
+    }, 50);
+    const result = await resultPromise;
+    const elapsedMs = performance.now() - startedAt;
+    expect(result.kind).toBe("failed");
+    if (result.kind === "failed") {
+      expect(result.error).not.toContain("resource admission is busy");
+      expect(JSON.parse(result.stdout ?? "")).toMatchObject({ ok: false, code: "spawn-failed" });
+    }
+    expect(elapsedMs).toBeLessThan(5000);
   });
 
   test("reclaims a lease held by a dead spawn process across consecutive attempts", async () => {
