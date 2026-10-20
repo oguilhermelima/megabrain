@@ -391,6 +391,9 @@ describe("switching back to chat imports what the terminal did", () => {
     await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
     await waitState(daemon, "idle");
     await daemon.handle({ operation: "mode", id: ID, mode: "terminal" });
+    const entry = daemon.entryOf(ID);
+    if (entry !== undefined) setConversationAlias(env.state, entry[0], { tmux: "megabrain-app:mb-app-test" });
+    await daemon.syncTerminalPolling();
     const later = `${JSON.stringify({ parentUuid: null, isSidechain: false, type: "user", uuid: "u9", timestamp: new Date(Date.now() + 1000).toISOString(), sessionId: env.sessionId, message: { role: "user", content: "third visit" } })}\n`;
     writeClaudeLog(env, CLAUDE_LOG + later);
     await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
