@@ -226,7 +226,7 @@ describe("orchestrate transcript", () => {
     const { root, home } = await setup();
     await installFixture(home, "claude");
     await addDispatch(root, { parentSessionId: "someone-else", parentHost: "local", agentSessionId: "fixture-session" });
-    const result = await executeOrchestrateTranscript(["dispatch-1"], {
+    const result = await executeOrchestrateTranscript(["dispatch-1", "--json"], {
       MEGABRAIN_STATE_DIR: root, HOME: home, MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "caller",
     }, fakeProcess());
     expect(transcript(result).events.map((event) => event.text)).toContain("Please inspect the project.");
