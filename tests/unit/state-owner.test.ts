@@ -338,6 +338,38 @@ describe("single state owner", () => {
     }
   });
 
+  test("a detached owner exits when its database is removed", async () => {
+    const binary = join(process.cwd(), ".build", "megabrain");
+    const environment = { ...process.env, HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root, MEGABRAIN_STATE_OWNER_IDLE_MS: "60000", MEGABRAIN_STATE_OWNER_TEST_MODE: "0" };
+    delete environment.MEGABRAIN_DISPATCH_ID;
+    const child = spawn(binary, ["__state-owner"], { detached: true, stdio: "ignore", env: environment });
+    trackStateOwnerCleanup(root);
+    try {
+      const startDeadline = Date.now() + 5_000;
+      let status = await inspectStateOwner(root);
+      while (!status.running && Date.now() < startDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        status = await inspectStateOwner(root);
+      }
+      expect(status).toMatchObject({ running: true });
+      if (!status.running) throw new Error("detached state owner did not start");
+
+      rmSync(join(root, "megabrain.db"), { force: true });
+      const exitDeadline = Date.now() + 2_500;
+      let exited = false;
+      while (!exited && Date.now() < exitDeadline) {
+        try { process.kill(status.pid, 0); }
+        catch (cause: unknown) { exited = cause instanceof Error && "code" in cause && cause.code === "ESRCH"; }
+        if (!exited) await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(exited).toBe(true);
+    } finally {
+      try { child.kill("SIGTERM"); } catch { /* already exited */ }
+      await cleanupTrackedStateOwners([root]);
+      owner = undefined;
+    }
+  });
+
   test("a detached owner exits promptly after losing its socket and lock", async () => {
     const binary = join(process.cwd(), ".build", "megabrain");
     const environment = { ...process.env, HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root, MEGABRAIN_STATE_OWNER_IDLE_MS: "60000", MEGABRAIN_STATE_OWNER_TEST_MODE: "0" };
