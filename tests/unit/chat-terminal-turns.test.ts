@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as fsPromises from "node:fs/promises";
 import { ChatDaemon } from "../../src/chat/daemon.js";
-import { chatKey, upsertConversation } from "../../src/core/conversations.js";
+import { setConversationAlias } from "../../src/core/conversations.js";
 import { claudeLogPath, parseClaudeLog, parseCodexRollout } from "../../src/chat/session-log.js";
 import { ChatStore, type Chat, type ChatEvent } from "../../src/chat/store.js";
 
@@ -87,12 +87,16 @@ function writeCodexLog(env: Env) {
 
 async function daemonFor(env: Env): Promise<ChatDaemon> {
   const stored = await new ChatStore(env.state).get(ID);
-  if (stored?.terminalSince !== undefined) upsertConversation(env.state, chatKey(ID), { owner: "app-chat", cwd: env.cwd, aliases: { chatId: ID, tmux: "megabrain-app:mb-app-test", pid: null, dispatchId: null }, createdAt: stored.createdAt, hidden: false });
   const environment = { HOME: env.root, PATH: `${env.bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}` };
   const daemon = new ChatDaemon(env.state, environment);
   await daemon.start();
   await daemon.listen();
   daemons.push(daemon);
+  if (stored?.terminalSince !== undefined) {
+    await daemon.store.put(stored);
+    const entry = daemon.entryOf(ID);
+    if (entry !== undefined) setConversationAlias(env.state, entry[0], { tmux: "megabrain-app:mb-app-test" });
+  }
   return daemon;
 }
 
@@ -172,14 +176,18 @@ describe("switching back to chat imports what the terminal did", () => {
     const env = sandbox();
     await new ChatStore(env.state).put(record(env));
     const daemon = await daemonFor(env);
+    expect(daemon.entryOf(ID)?.[1].aliases.tmux).toBe("megabrain-app:mb-app-test");
+    expect((await daemon.requireChat(ID)).mode).toBe("terminal");
+    expect(Bun.spawnSync([join(env.bin, "tmux"), "-L", "megabrain-app", "list-panes", "-s", "-t", "=mb-app-test", "-F", "#{pane_dead}"]).stdout.toString()).toBe("0\n");
     rmSync(env.pane);
+    expect(Bun.spawnSync([join(env.bin, "tmux"), "-L", "megabrain-app", "list-panes", "-s", "-t", "=mb-app-test", "-F", "#{pane_id}\t#{pane_dead}\t#{pane_dead_status}"]).stdout.toString()).toBe("%1\t1\t0\n");
 
     await daemon.refreshTerminalChats();
 
     const listed = await daemon.handle({ operation: "list" }) as Chat[];
     expect(listed.find((chat) => chat.id === ID)?.mode).toBe("chat");
     expect(daemon.entryOf(ID)?.[1].aliases.tmux).toBeNull();
-    expect((await events(daemon)).some((item) => item.text.includes("The terminal process exited with code 0.") && item.text.includes("terminal output"))).toBe(true);
+    expect((await events(daemon)).map((item) => item.text)).toContain("The terminal process exited with code 0.\n\nterminal output");
   });
 
   test("follows appended Claude messages and tool events while the terminal owns the session, once each", async () => {
