@@ -32,7 +32,7 @@ import { nativeSessionFor, removeNativeSession, replaceNativeSession, type Nativ
 import { ensureAutomaticCutoverOnHandle, markExplicitImport, migrateLegacyStateOnHandle } from "./cutover.js";
 import { applyJsonStateImport, type ParsedJsonState } from "./import/json-state.js";
 import { settleClosedParentBacklog } from "../core/closed-deliveries.js";
-import { processStartIdentity, stateOwnerSocket } from "./state-owner-runtime.js";
+import { ensureStateOwnerSocketDirectory, processStartIdentity, stateOwnerSocket } from "./state-owner-runtime.js";
 import { ownerOperation } from "./state-owner-operations.js";
 export { stateOwnerSocket } from "./state-owner-runtime.js";
 
@@ -383,9 +383,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
   await mkdir(directory, { recursive: true, mode: 0o700 });
   await chmod(directory, 0o700);
   logOwner(stateDir, "starting", { socket: stateOwnerSocket(stateDir) });
-  const socketDirectory = dirname(stateOwnerSocket(stateDir));
-  await mkdir(socketDirectory, { recursive: true, mode: 0o700 });
-  await chmod(socketDirectory, 0o700);
+  ensureStateOwnerSocketDirectory();
   const lockPath = stateOwnerLock(stateDir);
   let lock;
   try { lock = await open(lockPath, "wx", 0o600); }

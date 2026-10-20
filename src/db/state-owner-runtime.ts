@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,21 @@ import { selfInvocation } from "../core/self-invocation.js";
 import { scrubAgentEnvironment } from "../core/agent-env.js";
 
 function socketDirectory(): string {
-  return join(tmpdir(), `mb-owner-${typeof process.getuid === "function" ? process.getuid() : "user"}`);
+  // TMPDIR can differ between a command and its detached owner (for example when a
+  // caller starts megabrain with env -i). Keep the hashed socket path discoverable
+  // across those environments, while isolating it by uid under the system temp root.
+  return join("/tmp", `mb-owner-${typeof process.getuid === "function" ? process.getuid() : "user"}`);
+}
+
+export function ensureStateOwnerSocketDirectory(): string {
+  const directory = socketDirectory();
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const metadata = lstatSync(directory);
+  if (!metadata.isDirectory() || (typeof process.getuid === "function" && metadata.uid !== process.getuid())) {
+    throw new Error(`state owner socket directory is not a private directory: ${directory}`);
+  }
+  chmodSync(directory, 0o700);
+  return directory;
 }
 
 export function stateOwnerSocket(stateDir: string): string {
@@ -48,8 +62,7 @@ function wait(milliseconds: number): void {
 /** Starts the owner detached when a first read finds no database, and waits for its socket. */
 export function ensureStateOwnerForRead(stateDir: string, environment: Readonly<Record<string, string | undefined>>): void {
   if (ownerIsAlive(stateDir)) return;
-  const socketDir = socketDirectory();
-  mkdirSync(socketDir, { recursive: true, mode: 0o700 });
+  const socketDir = ensureStateOwnerSocketDirectory();
   const builtEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../.build/megabrain");
   const testRunner = process.argv[1]?.endsWith(".test.ts") === true;
   const invocation = testRunner && existsSync(builtEntry)
