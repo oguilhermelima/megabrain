@@ -266,9 +266,11 @@ describe("parent notice to a Claude parent", () => {
   test("leaves accepted peer messages pending verification without waiting for transcript consumption", async () => {
     const current = await scene("busy");
     const inbox = await startInbox(String(current.session.messagingSocketPath));
+    const startedAt = Date.now();
     const worker = runWorker(current);
     await received(inbox);
     const run = await worker;
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
     expect(inbox.frames).toHaveLength(1);
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
