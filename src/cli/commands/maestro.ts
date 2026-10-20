@@ -333,8 +333,10 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const stopped = readRecord(directory)?.state === "stopped";
   const completeOutput = output.join("\n");
   const driverFailed = DRIVER_START_FAILURE.test(completeOutput);
-  const reasonCode = driverFailed ? "xcuitest_driver_start_failed" : undefined;
-  const reason = driverFailed ? "Maestro could not start the XCUITest driver." : undefined;
+  const privacyFailed = exitCode !== 0 && PRIVACY_GRANT_FAILURE.test(completeOutput);
+  const reasonCode = driverFailed ? "xcuitest_driver_start_failed" : privacyFailed ? "privacy_grant_failed" : undefined;
+  const privacyMessage = completeOutput.split(/\r?\n/).find((line) => PRIVACY_GRANT_FAILURE.test(line))?.trim();
+  const reason = driverFailed ? "Maestro could not start the XCUITest driver." : privacyFailed ? `privacy grant failed: ${privacyMessage ?? "Maestro returned CommandFailed: null."}` : undefined;
   const debugLog = [join(debugOutput, "maestro.log"), ...findFiles(debugOutput, /maestro\.log$/)].find((path) => existsSync(path));
   const maestroLog = debugLog ? join(artifacts, "maestro.log") : undefined;
   if (debugLog && maestroLog && debugLog !== maestroLog) copyFileSync(debugLog, maestroLog);
