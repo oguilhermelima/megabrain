@@ -38,7 +38,7 @@ export function parseDispatchRecord(value: unknown): Result<DispatchRecord> {
   const stored = value as JsonRecord;
   // Legacy uncertainty markers describe a terminal whose process is no longer trusted alive.
   // Present them as exited at read time; persisted metadata remains untouched.
-  const legacyExit = stored.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(String(stored.state)) ||
+  const legacyExit = stored.processState === "exited" || stored.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(String(stored.state)) ||
     stored.stage === "identity-unproven" || stored.stage === "parent-missing";
   const raw = legacyExit ? { ...stored, state: "exited", terminalState: "missing" } : stored;
   return ok({

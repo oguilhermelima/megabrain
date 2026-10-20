@@ -22,7 +22,7 @@ const value = (input: unknown): string => typeof input === "string" ? input : ""
 
 function normalize(meta: RecordValue): RecordValue {
   const storedState = value(meta.state);
-  const legacyExit = meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(storedState) ||
+  const legacyExit = meta.processState === "exited" || meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(storedState) ||
     meta.stage === "identity-unproven" || meta.stage === "parent-missing";
   const state = storedState === "stalled" || storedState === "timeout" ? "running" : storedState === "" ? "running" : storedState;
   return {
@@ -90,7 +90,7 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   if (loaded.kind !== "ok") return loaded;
   if (loaded.value === undefined) return failed(`dispatch not found: ${dispatch}`);
   let meta = normalize(loaded.value as RecordValue);
-  const legacyTerminal = meta.state === "exited" && (["retained", "identity_unproven", "circuit_broken"].includes(value(loaded.value.state)) ||
+  const legacyTerminal = meta.state === "exited" && (loaded.value.processState === "exited" || ["retained", "identity_unproven", "circuit_broken"].includes(value(loaded.value.state)) ||
     loaded.value.terminalState === "retained" || loaded.value.stage === "identity-unproven" || loaded.value.stage === "parent-missing");
   if (!legacyTerminal && JSON.stringify(meta) !== JSON.stringify(loaded.value)) {
     try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: meta }); }
@@ -104,14 +104,17 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   if (state === "closed" || state === "done" || state === "exited" || state === "failed") return ok({ ...meta, reconcileResult: "unchanged" });
   const terminal = await terminalStatus(meta, process);
   const decision = reconcileDecision({ ...meta, childDone: messages.some((message) => message.from === "child" && message.type === "done") }, terminal);
-  const next = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  if (decision.outcome !== "unchanged") {
-    try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: next }); }
+  const persisted = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
+  if (decision.outcome !== "unchanged" && Object.keys(decision.updates).length > 0) {
+    try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: persisted }); }
     catch (cause: unknown) { return failed(`state owner could not reconcile dispatch: ${cause instanceof Error ? cause.message : String(cause)}`); }
-    if (next.state !== meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
-      await setTmuxChatPane(next.tmuxPane, value(next.agent) || "unknown", value(next.chatName) || value(next.branch) || dispatch, value(next.state) || "idle", process);
+    if (decision.outcome === "done" || decision.outcome === "exited") {
+      if (persisted.runtime === "tmux" && typeof persisted.tmuxPane === "string") {
+        await setTmuxChatPane(persisted.tmuxPane, value(persisted.agent) || "unknown", value(persisted.chatName) || value(persisted.branch) || dispatch, decision.outcome, process);
+      }
     }
   }
+  const next = decision.outcome === "exited" ? { ...persisted, state: "exited" } : persisted;
   return ok({ ...next, reconcileResult: decision.outcome });
 }
 

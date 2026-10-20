@@ -82,8 +82,11 @@ export function replyStateError(dispatch: string, state: string, change: boolean
 // in dispatch-states.ts, so a caller that skips this and passes the raw value into
 // replyStateError gets the generic "cannot receive a reply" refusal instead of the shell's
 // accept-and-resume-to-running behaviour.
-export function normalizeDispatchState(state: string): string {
-  return state === "stalled" || state === "timeout" ? "running" : state;
+export function normalizeDispatchState(state: string, meta: Readonly<Record<string, unknown>> = {}): string {
+  if (meta.processState === "exited" || meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(state) ||
+    meta.stage === "identity-unproven" || meta.stage === "parent-missing") return "exited";
+  if (state === "stalled" || state === "timeout") return "running";
+  return state;
 }
 
 export function supersedeDelivery(status: string, consumer: string | null, sequences: readonly number[], alreadySuperseded: boolean): SupersedeSummary {

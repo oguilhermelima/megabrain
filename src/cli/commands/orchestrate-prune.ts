@@ -23,7 +23,7 @@ function text(value: unknown): string { return typeof value === "string" ? value
 
 function normalizeMetadata(meta: RecordValue): RecordValue {
   const state = text(meta.state);
-  if (meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(state) || meta.stage === "identity-unproven" || meta.stage === "parent-missing") {
+  if (meta.processState === "exited" || meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(state) || meta.stage === "identity-unproven" || meta.stage === "parent-missing") {
     return { ...meta, state: "exited", processState: "exited", terminalState: "missing" };
   }
   if (state !== "stalled" && state !== "timeout") return meta;
@@ -52,18 +52,19 @@ async function terminalStatus(meta: RecordValue, process: ProcessAdapter): Promi
 async function reconcileEntry(root: string, entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
   const state = text(entry.meta.state);
   const processState = text(entry.meta.processState);
+  if (processState === "exited") return { ...entry.meta, state: "exited", terminalState: "missing" };
   const needsReconcile = ["spawning", "running", "waiting_for_reply"].includes(state) &&
     ["start-unproven", "stop-unproven", "abandoned", "exited"].includes(processState);
   if (!needsReconcile) return entry.meta;
   const terminal = await terminalStatus(entry.meta, process);
   const decision = reconcileDecision(entry.meta, terminal);
-  if (decision.outcome === "unchanged") return entry.meta;
-  const next: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  await callStateOwner(root, { operation: "dispatch-patch", dispatchId: entry.id, patch: next });
-  if (next.state !== entry.meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
-    await setTmuxChatPane(next.tmuxPane, text(next.agent) || "unknown", text(next.chatName) || text(next.branch) || entry.id, text(next.state) || "idle", process);
+  if (decision.outcome === "unchanged" || Object.keys(decision.updates).length === 0) return entry.meta;
+  const persisted: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
+  await callStateOwner(root, { operation: "dispatch-patch", dispatchId: entry.id, patch: persisted });
+  if ((decision.outcome === "done" || decision.outcome === "exited") && persisted.runtime === "tmux" && typeof persisted.tmuxPane === "string") {
+    await setTmuxChatPane(persisted.tmuxPane, text(persisted.agent) || "unknown", text(persisted.chatName) || text(persisted.branch) || entry.id, decision.outcome, process);
   }
-  return next;
+  return decision.outcome === "exited" ? { ...persisted, state: "exited" } : persisted;
 }
 
 function hostTerminalArgs(meta: RecordValue): { readonly command: string; readonly args: readonly string[]; readonly host: string } | undefined {
@@ -139,7 +140,7 @@ async function entries(root: string, handle: DatabaseHandle): Promise<Entry[]> {
   if (records.kind !== "ok") return [];
   return Promise.all(records.value.map(async (record) => {
     const meta = normalizeMetadata(record as RecordValue);
-    const legacyTerminal = meta.state === "exited" && (["retained", "identity_unproven", "circuit_broken"].includes(text(record.state)) ||
+  const legacyTerminal = meta.state === "exited" && (record.processState === "exited" || ["retained", "identity_unproven", "circuit_broken"].includes(text(record.state)) ||
       record.terminalState === "retained" || record.stage === "identity-unproven" || record.stage === "parent-missing");
     if (meta !== record && !legacyTerminal) {
       await callStateOwner(root, { operation: "dispatch-patch", dispatchId: record.dispatchId, patch: meta });

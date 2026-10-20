@@ -5,11 +5,12 @@ export type ReconcileResult = Readonly<{ outcome: string; updates: ReconcileUpda
 export function reconcileDecision(meta: Readonly<Record<string, unknown>>, terminalStatus: "proven" | "missing" | "unknown", _parentStatus?: "alive" | "gone" | "unknown"): ReconcileResult {
   const state = typeof meta.state === "string" ? meta.state : "running";
   if (["closed", "done", "exited", "failed"].includes(state)) return { outcome: "unchanged", updates: {} };
-  if (terminalStatus !== "missing") return { outcome: "running", updates: {} };
+  if (terminalStatus === "unknown") return { outcome: "unchanged", updates: {} };
+  if (terminalStatus === "proven") return { outcome: "running", updates: {} };
   const done = meta.childDone === true;
   const nextState = done ? "done" : "exited";
   const updates = {
-    state: nextState,
+    ...(done ? { state: "done" } : {}),
     processState: done ? "succeeded" : "exited",
     terminalState: "missing",
     stage: "agent-exit",
