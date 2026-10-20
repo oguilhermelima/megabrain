@@ -28,6 +28,22 @@ async function fakeHelper() {
   helpers.push(() => new Promise<void>((resolve, reject) => ws.close((error) => error ? reject(error) : server.close(() => resolve()))));
   return { helper, messages };
 }
+async function fakeHelperThatDropsGestureAfterBegin() {
+  const fake = await fakeHelper();
+  const ws = new WebSocketServer({ noServer: true });
+  // This fixture is filled in by a dedicated server so the connection is cut
+  // between the gesture's begin and end messages.
+  await Promise.all(helpers.splice(0).map((close) => close()));
+  const server = createServer();
+  server.on("upgrade", (request, socket, head) => ws.handleUpgrade(request, socket, head, (client) => {
+    client.on("message", () => client.close());
+  }));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address(); if (!address || typeof address === "string") throw new Error("fake helper failed to bind");
+  const helper = { ...fake.helper, port: address.port, url: `http://127.0.0.1:${address.port}`, wsUrl: `ws://127.0.0.1:${address.port}` };
+  helpers.push(() => new Promise<void>((resolve, reject) => ws.close((error) => error ? reject(error) : server.close(() => resolve()))));
+  return { helper };
+}
 async function fixture(helper: Awaited<ReturnType<typeof fakeHelper>>["helper"]) { const directory = await mkdtemp(join(tmpdir(), "native-input-")); directories.push(directory); await writeFile(join(directory, "native-input-sessions.json"), JSON.stringify({ version: 1, sessions: [{ ...helper, udid, session: String(helper.pid), platform: "iOS", pointWidth: 393, pointHeight: 852 }] })); return directory; }
 async function emptyFixture() { const directory = await mkdtemp(join(tmpdir(), "native-input-")); directories.push(directory); return directory; }
 function fakeProcess(helper?: Awaited<ReturnType<typeof fakeHelper>>["helper"]) {
@@ -157,7 +173,8 @@ describe("native input scenarios", () => {
     expect(JSON.parse((start as { value: string }).value)).toMatchObject({ session: "456", port: fake.helper.port });
     const tap = await nativeInput(["tap", udid, "21", "42", "--json"], env, process);
     expect(tap.kind).toBe("ok");
-    expect(fake.messages.some((message) => message[0] === 3 && JSON.parse(message.subarray(1).toString()).type === "begin")).toBe(true);
+    const tapEvents = fake.messages.filter((message) => message[0] === 3).slice(0, 2).map((message) => JSON.parse(message.subarray(1).toString()));
+    expect(tapEvents).toEqual([{ type: "begin", x: 21 / 393, y: 42 / 852 }, { type: "end", x: 21 / 393, y: 42 / 852 }]);
     await nativeInput(["swipe", udid, "1", "2", "3", "4", "--duration", "250", "--json"], env, process);
     expect(fake.messages.some((message) => message[0] === 3 && JSON.parse(message.subarray(1).toString()).type === "end")).toBe(true);
     await nativeInput(["scroll", udid, "10", "20", "0", "-30", "--json"], env, process);
@@ -174,6 +191,13 @@ describe("native input scenarios", () => {
     expect(JSON.parse((stream as { value: string }).value)).toMatchObject({ streamUrl: fake.helper.streamUrl, width: 1179, height: 2556 });
     await nativeInput(["stop", udid, "--json"], env, process);
     expect(JSON.parse(await readFile(join(state, "native-input-sessions.json"), "utf8")).sessions).toEqual([]);
+  });
+
+  test("fails a tap when the helper closes before receiving both touch events", async () => {
+    const fake = await fakeHelperThatDropsGestureAfterBegin(); const state = await fixture(fake.helper);
+    const result = await nativeInput(["tap", udid, "21", "42", "--json"], { MEGABRAIN_STATE_DIR: state }, fakeProcess(fake.helper).process);
+    expect(result.kind).toBe("failed");
+    expect((result as { error: string }).error).toMatch(/helper|websocket|send/i);
   });
 
   test("rotates the existing helper and reports point dimensions", async () => {
