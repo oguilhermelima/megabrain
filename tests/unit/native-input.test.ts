@@ -91,7 +91,7 @@ describe("native input scenarios", () => {
     try {
       globalThis.process.argv.splice(0, globalThis.process.argv.length, process.execPath, "/$bunfs/root/megabrain");
       await nativeInput(["start", udid], { MEGABRAIN_STATE_DIR: state }, process);
-      expect(launched).toEqual({ command: globalThis.process.execPath, args: ["native", "input", "start", udid, "--worker"] });
+      expect(launched).toEqual({ command: globalThis.process.execPath, args: ["native", "input", "start", udid, "--worker", "--watch"] });
     } finally { globalThis.process.argv.splice(0, globalThis.process.argv.length, ...original); }
   });
 
@@ -103,7 +103,7 @@ describe("native input scenarios", () => {
     try {
       globalThis.process.argv.splice(0, globalThis.process.argv.length, process.execPath, "/repo/src/cli.ts");
       await nativeInput(["start", udid], { MEGABRAIN_STATE_DIR: state }, process);
-      expect(launched).toEqual({ command: globalThis.process.execPath, args: ["/repo/src/cli.ts", "native", "input", "start", udid, "--worker"] });
+      expect(launched).toEqual({ command: globalThis.process.execPath, args: ["/repo/src/cli.ts", "native", "input", "start", udid, "--worker", "--watch"] });
     } finally { globalThis.process.argv.splice(0, globalThis.process.argv.length, ...original); }
   });
 
