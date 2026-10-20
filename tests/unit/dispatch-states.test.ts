@@ -10,8 +10,8 @@ const transitions = {
     waiting_for_reply: ["waiting_for_reply", "running", "done", "exited", "failed", "orphaned", "closed"],
     done: ["done", "closed"],
     exited: ["exited", "closed"],
-    failed: ["failed", "circuit_broken", "closed"],
-    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "exited", "failed", "circuit_broken", "closed"],
+    failed: ["failed", "closed"],
+    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "exited", "failed", "closed"],
     closed: ["closed"],
     circuit_broken: ["circuit_broken"],
   },
@@ -28,9 +28,8 @@ const transitions = {
     exited: ["exited", "running", "succeeded"],
   },
   terminal: {
-    owned: ["owned", "missing", "retained", "released"],
-    retained: ["retained", "owned", "missing", "released"],
-    missing: ["missing", "retained", "released"],
+    owned: ["owned", "missing", "released"],
+    missing: ["missing", "released"],
     released: ["released"],
   },
 } as const satisfies Record<DispatchAxis, Readonly<Record<string, readonly string[]>>>;
