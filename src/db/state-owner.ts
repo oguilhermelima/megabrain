@@ -454,7 +454,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
       await appendFile(environment.MEGABRAIN_STATE_OWNER_TEST_REGISTRY, `${JSON.stringify({ pid: process.pid, stateDir: resolve(stateDir) })}\n`, { mode: 0o600 });
     }
     owner.lifecycleTimer = setInterval(() => {
-      if (!existsSync(owner.stateDir) || !existsSync(owner.executablePath) || !existsSync(stateOwnerSocket(owner.stateDir)) || !ownsStateOwnerLock(owner)) { stopForLifecycle(owner); return; }
+      if (!existsSync(owner.stateDir) || !existsSync(owner.handle.path) || !existsSync(owner.executablePath) || !existsSync(stateOwnerSocket(owner.stateDir)) || !ownsStateOwnerLock(owner)) { stopForLifecycle(owner); return; }
       const parentPid = owner.environment.MEGABRAIN_STATE_OWNER_TEST_MODE === "1" ? Number(owner.environment.MEGABRAIN_STATE_OWNER_TEST_PARENT_PID) : 0;
       if (!Number.isSafeInteger(parentPid) || parentPid <= 0) return;
       const parentStart = owner.environment.MEGABRAIN_STATE_OWNER_TEST_PARENT_START;
