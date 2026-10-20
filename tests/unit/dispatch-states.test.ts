@@ -60,6 +60,14 @@ describe("dispatch state consumers", () => {
     if (result.kind === "ok") expect(result.value.state).toBe("circuit_broken");
   });
 
+  test("reads legacy retained and identity-unproven rows as exited without changing stored metadata", () => {
+    const raw = { state: "running", terminalState: "retained", stage: "identity-unproven" };
+    const result = parseDispatchRecord(raw);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.value.raw.state).toBe("exited");
+    expect(raw.state).toBe("running");
+  });
+
   test("keeps every orphaned recovery transition legal", () => {
     expect(checkDispatchTransition("dispatch", "orphaned", "running").kind).toBe("ok");
     expect(checkDispatchTransition("dispatch", "orphaned", "waiting_for_reply").kind).toBe("ok");
