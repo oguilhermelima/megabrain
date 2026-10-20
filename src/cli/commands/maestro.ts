@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -247,9 +247,11 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     if (emit === undefined) collected.push(line); else emit(line);
   };
   const startedMs = Date.now();
+  const debugOutput = join(artifacts, "debug");
+  mkdirSync(debugOutput, { recursive: true });
   const commandArgs = webFlow
-    ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, flowPath]
-    : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, flowPath];
+    ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, "--debug-output-dir", debugOutput, flowPath]
+    : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, "--debug-output-dir", debugOutput, flowPath];
   const child = spawn(maestroBinary(environment), commandArgs, {
     cwd: worktree, detached: true, stdio: ["ignore", "pipe", "pipe"],
     env: { ...Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...maestroEnvironment(environment, javaHome) },
@@ -313,9 +315,12 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   flush();
 
   const stopped = readRecord(directory)?.state === "stopped";
-  current = { ...current, state: stopped ? "stopped" : exitCode === 0 ? "passed" : "failed", exitCode, finishedAt: new Date().toISOString() };
+  const debugLog = [join(debugOutput, "maestro.log"), ...findFiles(debugOutput, /maestro\.log$/)].find((path) => existsSync(path));
+  const maestroLog = debugLog ? join(artifacts, "maestro.log") : undefined;
+  if (debugLog && maestroLog && debugLog !== maestroLog) copyFileSync(debugLog, maestroLog);
+  current = { ...current, state: stopped ? "stopped" : exitCode === 0 ? "passed" : "failed", exitCode, finishedAt: new Date().toISOString(), ...(maestroLog ? { maestroLog } : {}) };
   writeRecord(directory, current);
-  send({ type: "run", state: current.state, runId, flow, device: device.value, exitCode, durationMs: Date.now() - startedMs, artifacts: directory });
+  send({ type: "run", state: current.state, runId, flow, device: device.value, exitCode, durationMs: Date.now() - startedMs, artifacts: directory, ...(maestroLog ? { maestroLog } : {}) });
   writeFileSync(join(directory, "events.jsonl"), log.join(""));
   return ok(collected.join(""), exitCode);
 }
