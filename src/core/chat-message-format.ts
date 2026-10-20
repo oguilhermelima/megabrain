@@ -64,7 +64,7 @@ export function formatFullDirection(input: DispatchMessageInput, text: string): 
 
 export function formatDeliveryAcknowledgment(dispatchId: string, deliveryId: string, recipient: "parent" | "child"): string {
   return recipient === "child"
-    ? `After reading, acknowledge with: megabrain ack ${deliveryId}`
+    ? ""
     : `After reading, acknowledge with: megabrain orchestrate ack ${dispatchId} ${deliveryId}`;
 }
 

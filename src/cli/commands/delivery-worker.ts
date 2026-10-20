@@ -222,7 +222,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const deliveryRows = dispatch === "" ? undefined : listDeliveries(database.value, dispatch);
   const delivery = deliveryRows?.kind === "ok" ? deliveryRows.value.find((row) => Array.isArray(row.messageSeqs) && row.messageSeqs.includes(sequence)) : undefined;
   const recipient = delivery?.recipient === "child" ? "child" : delivery === undefined ? undefined : "parent";
-  const ackInstruction = delivery === undefined || recipient === undefined ? "" : `\n${formatDeliveryAcknowledgment(dispatch, delivery.id, recipient)}`;
+  const acknowledgment = delivery === undefined || recipient === undefined ? "" : formatDeliveryAcknowledgment(dispatch, delivery.id, recipient);
+  const ackInstruction = acknowledgment === "" ? "" : `\n${acknowledgment}`;
   const text = rawText;
   const typedText = `${rawText}${ackInstruction}`;
   const priorVerification = getOutboxPeerVerification(database.value, outboxId);

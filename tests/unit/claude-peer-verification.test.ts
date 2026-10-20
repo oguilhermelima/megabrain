@@ -19,8 +19,11 @@ describe("Claude peer verification", () => {
     expect(fallbacks).toBe(0);
   });
 
-  test("formats the receiver's acknowledgment command for each mailbox direction", () => {
-    expect(formatDeliveryAcknowledgment("dispatch-1", "delivery-2", "child")).toBe("After reading, acknowledge with: megabrain ack delivery-2");
+  test("does not ask child receivers to acknowledge mail that check already acknowledges", () => {
+    expect(formatDeliveryAcknowledgment("dispatch-1", "delivery-2", "child")).toBe("");
+  });
+
+  test("formats the parent's manual acknowledgment command", () => {
     expect(formatDeliveryAcknowledgment("dispatch-1", "delivery-2", "parent")).toBe("After reading, acknowledge with: megabrain orchestrate ack dispatch-1 delivery-2");
   });
 
