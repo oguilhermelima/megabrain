@@ -36,7 +36,9 @@ describe("parent reply decisions", () => {
     expect(replyStateError("d", "done", false)).toContain("open a new dispatch for a reply");
     expect(replyStateError("d", "failed", false)).toContain("settled");
     expect(replyStateError("d", "closed", false)).toContain("settled");
-    expect(replyStateError("d", "circuit_broken", false)).toContain("settled");
+    // Legacy states without a transition remain rejected, but circuit breaking no longer has
+    // special settled-state semantics.
+    expect(replyStateError("d", "circuit_broken", false)).toBe("dispatch d cannot receive a reply in state circuit_broken");
     expect(replyStateError("d", "failed", true)).toContain("cannot receive a change");
     // change never gets the "settled" wording, even for done: the shell's megabrain_dispatch_change
     // only ever prints "cannot receive a change in state $state".
