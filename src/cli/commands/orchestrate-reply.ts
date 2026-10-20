@@ -3,7 +3,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { normalizeDispatchState, parseParentChangeArgs, parseParentReplyArgs, replyStateError, type SupersedeSummary } from "../../core/parent-reply.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { resolveCaller, appendMessage, type QueueEnvironment } from "./queue-write.js";
-import { listDeliveries, listOutbox, type OutboxDetails } from "../../adapters/state-db.js";
+import { getOutboxPeerVerification, listDeliveries, listOutbox, type OutboxDetails } from "../../adapters/state-db.js";
 import { deliveryTarget } from "./delivery-worker.js";
 import { randomUUID } from "node:crypto";
 import { type ProcessAdapter } from "../../adapters/proc.js";
@@ -71,9 +71,31 @@ async function requireParent(database: DatabaseHandle, dispatch: string, environ
   return ok({ ...meta, dispatchId: resolved.value });
 }
 
-function outputReply(dispatch: string, json: boolean, nudge: string, summary: SupersedeSummary): string {
-  if (json) return `${JSON.stringify({ dispatchId: dispatch, status: "queued", nudge, supersededQueued: summary.queued, supersededDelivered: summary.delivered, deliveredSequences: summary.deliveredSequences }, null, 2)}\n`;
-  return `queued: ${dispatch}\n${summary.queued > 0 || summary.delivered > 0 ? `superseded queued: ${summary.queued}\nsuperseded delivered: ${summary.delivered}\n` : ""}${nudge === "owner" ? "state owner is delivering the reply; the child can also run megabrain check\n" : "nudge not typed; the child will still find this reply with megabrain check\n"}`;
+type ReplyDeliveryResult = Readonly<{ status: "delivered"; channel: string }> | Readonly<{ status: "queued-for-check" }> | Readonly<{ status: "failed"; reason: string }>;
+
+function replyDeliveryResult(database: DatabaseHandle, dispatchId: string, sequence: number, outbox: OutboxDetails): ReplyDeliveryResult {
+  const deliveries = listDeliveries(database, dispatchId);
+  const delivery = deliveries.kind === "ok" ? deliveries.value.find((item) => Array.isArray(item.messageSeqs) && item.messageSeqs.includes(sequence)) : undefined;
+  if (outbox.status === "failed" && delivery === undefined) return { status: "failed", reason: outbox.detail ?? "delivery worker failed without a reason" };
+  if (outbox.status === "failed" && delivery?.status !== "outstanding") return { status: "failed", reason: outbox.detail ?? "delivery worker failed without a reason" };
+  const transport = String(delivery?.transport ?? "");
+  if (transport === "typed" || transport === "queue") return { status: "delivered", channel: transport };
+  if (transport === "socket") return { status: "delivered", channel: "peer-socket" };
+  if (transport === "pointer") return { status: "delivered", channel: "pointer" };
+  const peer = getOutboxPeerVerification(database, outbox.id);
+  if (peer.kind === "ok" && peer.value !== undefined && ["pending", "delivered"].includes(peer.value.state)) return { status: "delivered", channel: peer.value.channel };
+  return { status: "queued-for-check" };
+}
+
+function outputReply(dispatch: string, json: boolean, summary: SupersedeSummary, delivery: ReplyDeliveryResult): string {
+  const nudge = delivery.status === "delivered" ? delivery.channel : delivery.status === "failed" ? "failed" : "not-typed";
+  if (json) return `${JSON.stringify({ dispatchId: dispatch, status: "queued", nudge, delivery, supersededQueued: summary.queued, supersededDelivered: summary.delivered, deliveredSequences: summary.deliveredSequences }, null, 2)}\n`;
+  const deliveryLine = delivery.status === "delivered"
+    ? `delivery: delivered via ${delivery.channel}\n`
+    : delivery.status === "failed"
+      ? `delivery: failed — ${delivery.reason}\n`
+      : "delivery: queued for the child's next check\n";
+  return `queued: ${dispatch}\n${deliveryLine}${summary.queued > 0 || summary.delivered > 0 ? `superseded queued: ${summary.queued}\nsuperseded delivered: ${summary.delivered}\n` : ""}`;
 }
 
 export async function executeOrchestrateReply(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
@@ -102,12 +124,23 @@ export async function executeOrchestrateReply(args: readonly string[], environme
     } }) as typeof append;
   } catch (cause: unknown) { return failed(`state owner reply write failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   const summary: SupersedeSummary = append.supersedeSummary ?? { queued: 0, delivered: 0, deliveredSequences: [] };
-  const transport = "owner";
   if (state !== "done") {
     await callStateOwner(root, { operation: "dispatch-patch", dispatchId, patch: { state: "running", updatedAt: new Date().toISOString() } });
     if (parent.value.runtime === "tmux" && typeof parent.value.tmuxPane === "string") await setTmuxChatPane(parent.value.tmuxPane, String(parent.value.agent ?? "unknown"), String(parent.value.chatName ?? parent.value.branch ?? dispatchId), "running", processAdapter);
   }
-  return ok(outputReply(dispatchId, parsed.value.json, transport, summary));
+  const deliveryDeadline = Date.now() + 1_000;
+  let delivery: ReplyDeliveryResult = { status: "queued-for-check" };
+  while (true) {
+    const outbox = listOutbox(opened.value);
+    const item = outbox.kind === "ok" ? outbox.value.find((candidate) => candidate.id === outboxId) : undefined;
+    if (item !== undefined && item.status !== "pending" && item.status !== "sending") {
+      delivery = replyDeliveryResult(opened.value, dispatchId, append.seq, item);
+      break;
+    }
+    if (Date.now() >= deliveryDeadline) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(25, deliveryDeadline - Date.now())));
+  }
+  return ok(outputReply(dispatchId, parsed.value.json, summary, delivery));
 }
 
 export async function executeOrchestrateChange(args: readonly string[], environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<Result<string>> {
