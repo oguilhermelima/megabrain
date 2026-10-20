@@ -31,11 +31,9 @@ describe("orchestrate reconcile", () => {
     expect(reconcileDecision(meta(), "missing", "unknown")).toEqual({ outcome: "exited", updates: { state: "exited", processState: "exited", terminalState: "missing", stage: "agent-exit", reason: "terminal process exited" } });
   });
 
-  test("increments missing terminal failures and preserves settled process states", () => {
-    expect(reconcileDecision(meta({ processState: "succeeded" }), "missing", "unknown").updates.processState).toBeUndefined();
-    const first = reconcileDecision(meta({ processState: "stopped", failureCount: 2 }), "missing", "unknown");
-    expect(first.updates.state).toBe("failed");
-    expect(reconcileDecision({ ...meta({ processState: "stopped", terminalState: "missing", failureCount: 3 }), state: first.updates.state }, "missing", "unknown").updates.state).toBe("circuit_broken");
+  test("keeps terminal exit final and honors a child done report", () => {
+    expect(reconcileDecision({ ...meta(), childDone: true }, "missing")).toEqual({ outcome: "done", updates: { state: "done", processState: "succeeded", terminalState: "missing", stage: "agent-exit", reason: "child reported done" } });
+    expect(reconcileDecision({ ...meta(), state: "exited", processState: "exited" }, "missing")).toEqual({ outcome: "unchanged", updates: {} });
   });
 
   test("does not mutate state while the terminal is still alive", () => {
