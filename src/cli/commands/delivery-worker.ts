@@ -399,6 +399,15 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         if (fallbackOnly || typeof threadId !== "string" || threadId === "" || text === "") return false;
         const found = await findCodexProcessByThread(threadId, process);
         if (!("pid" in found)) { peer = { kind: "fallback", reason: found.reason }; return false; }
+        if (targetKind === "child-delivery") {
+          const screen = await readDeliveryScreen(meta, process);
+          if (screen.kind === "ok" && classifyLiveness("codex", screen.value).status === "idle") {
+            // The queue does not wake an idle Codex turn. Route through the terminal composer.
+            meta = { ...meta, agentPid: found.pid };
+            peer = { kind: "fallback", reason: "Codex is idle; typed delivery starts a new turn" };
+            return false;
+          }
+        }
         const queued = await deliverCodexQueue(threadId, found.pid, text, process);
         if (queued.kind !== "queued") { peer = { kind: "fallback", reason: queued.reason }; return false; }
         await queueVerification("codex-queue", outboxId, "unknown");
