@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as fsPromises from "node:fs/promises";
 import { ChatDaemon } from "../../src/chat/daemon.js";
+import { chatKey, upsertConversation } from "../../src/core/conversations.js";
 import { claudeLogPath, parseClaudeLog, parseCodexRollout } from "../../src/chat/session-log.js";
 import { ChatStore, type Chat, type ChatEvent } from "../../src/chat/store.js";
 
@@ -27,10 +28,13 @@ function sandbox() {
   const state = join(root, "state");
   const cwd = join(root, "project");
   const bin = join(root, "bin");
+  const pane = join(root, "pane-live");
   mkdirSync(state, { recursive: true, mode: 0o700 });
   mkdirSync(cwd);
   mkdirSync(bin);
-  return { root, state, cwd, bin, sessionId: `recorded-${randomUUID()}` };
+  writeFileSync(pane, "live");
+  fakeAgent(bin, "tmux", `const fs = require("node:fs");\nconst args = process.argv.slice(2);\nconst format = args[args.indexOf("-F") + 1] || "";\nif (args.includes("capture-pane")) process.stdout.write("terminal output\\n");\nelse if (args.includes("list-panes") && format === "#{pane_dead}") process.stdout.write(fs.existsSync(${JSON.stringify(pane)}) ? "0\\n" : "1\\n");\nelse if (args.includes("list-panes") && format.includes("\\t")) process.stdout.write("%1\\t" + (fs.existsSync(${JSON.stringify(pane)}) ? "0" : "1") + "\\t0\\n");\nelse if (args.includes("list-panes")) process.stdout.write("999999\\n");`);
+  return { root, state, cwd, bin, pane, sessionId: `recorded-${randomUUID()}` };
 }
 type Env = ReturnType<typeof sandbox>;
 
@@ -82,6 +86,8 @@ function writeCodexLog(env: Env) {
 }
 
 async function daemonFor(env: Env): Promise<ChatDaemon> {
+  const stored = await new ChatStore(env.state).get(ID);
+  if (stored?.terminalSince !== undefined) upsertConversation(env.state, chatKey(ID), { owner: "app-chat", cwd: env.cwd, aliases: { chatId: ID, tmux: "megabrain-app:mb-app-test", pid: null, dispatchId: null }, createdAt: stored.createdAt, hidden: false });
   const environment = { HOME: env.root, PATH: `${env.bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}` };
   const daemon = new ChatDaemon(env.state, environment);
   await daemon.start();
@@ -162,6 +168,20 @@ describe("the Codex rollout", () => {
 });
 
 describe("switching back to chat imports what the terminal did", () => {
+  test("a terminal pane exit closes its link and reports the exit and retained output", async () => {
+    const env = sandbox();
+    await new ChatStore(env.state).put(record(env));
+    const daemon = await daemonFor(env);
+    rmSync(env.pane);
+
+    await daemon.refreshTerminalChats();
+
+    const listed = await daemon.handle({ operation: "list" }) as Chat[];
+    expect(listed.find((chat) => chat.id === ID)?.mode).toBe("chat");
+    expect(daemon.entryOf(ID)?.[1].aliases.tmux).toBeNull();
+    expect((await events(daemon)).some((item) => item.text.includes("The terminal process exited with code 0.") && item.text.includes("terminal output"))).toBe(true);
+  });
+
   test("follows appended Claude messages and tool events while the terminal owns the session, once each", async () => {
     const env = sandbox();
     writeClaudeLog(env, "");
