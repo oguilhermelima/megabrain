@@ -13,6 +13,7 @@ import { insertOutbox } from "../../src/db/queries/outbox-leases.js";
 import { insertDelivery } from "../../src/db/queries/deliveries.js";
 import { insertMessage } from "../../src/db/queries/messages.js";
 import { withWrite } from "../../src/db/db.js";
+import { createDelivery, createDispatch, enqueueOutbox } from "../../src/adapters/state-db.js";
 import { readCutoverMarker } from "../../src/db/cutover.js";
 import { cleanupTrackedStateOwners, trackStateOwnerCleanup } from "../helpers/state-owner-cleanup.js";
 
@@ -27,6 +28,18 @@ function processCpuSeconds(pid: number): number {
   const minutes = parts.pop() ?? 0;
   const hours = parts.pop() ?? 0;
   return hours * 3_600 + minutes * 60 + seconds;
+}
+
+function processCpuMilliseconds(pid: number): number {
+  const result = spawnSync("ps", ["-p", String(pid), "-o", "time="], { encoding: "utf8" });
+  if (result.status !== 0) return 0;
+  const value = result.stdout.trim();
+  const [whole, fraction = "0"] = value.split(".");
+  const parts = (whole ?? "0:0").split(":").map(Number);
+  const seconds = parts.pop() ?? 0;
+  const minutes = parts.pop() ?? 0;
+  const hours = parts.pop() ?? 0;
+  return (hours * 3_600 + minutes * 60 + seconds) * 1_000 + Number(`0.${fraction}`) * 1_000;
 }
 
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), "mb-state-owner-")); });
@@ -305,6 +318,70 @@ describe("single state owner", () => {
   test("a second owner cannot bind the same state directory", async () => {
     owner = await startStateOwner(root);
     await expect(startStateOwner(root)).rejects.toThrow(/already running/);
+  });
+
+  test("a detached owner that loses the lock exits successfully and leaves the healthy owner available", async () => {
+    owner = await startStateOwner(root);
+    const incumbent = await inspectStateOwner(root);
+    if (!incumbent.running) throw new Error("incumbent state owner did not start");
+    const binary = join(process.cwd(), ".build", "megabrain");
+    const environment = { ...process.env, MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root };
+    delete environment.MEGABRAIN_DISPATCH_ID;
+    const contender = spawn(binary, ["__state-owner"], { stdio: "ignore", env: environment });
+    const result = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      contender.once("error", reject);
+      contender.once("exit", (code, signal) => resolve({ code, signal }));
+    });
+    expect(result).toEqual({ code: 0, signal: null });
+    expect(await inspectStateOwner(root)).toEqual(incumbent);
+  });
+
+  test("a busy Claude verification does not spin when the owner socket disappears", async () => {
+    const opened = openDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const db = opened.value;
+    const now = new Date().toISOString();
+    createDispatch(db, { dispatchId: "peer-busy", state: "running", agent: "claude", agentPid: 41414, agentSessionId: "busy-session" });
+    createDelivery(db, { id: "peer-busy-delivery", dispatchId: "peer-busy", messageSeqs: [1], status: "outstanding", createdAt: now, updatedAt: now, recipient: "child" });
+    const payload = { dispatchId: "peer-busy", sequence: 1, meta: { agent: "claude", agentPid: 41414, agentSessionId: "busy-session", runtime: "host", childHost: "test", terminalId: "busy-peer" } };
+    const queued = withWrite(db, (adapter) => enqueueOutbox(adapter, { id: "peer-busy-outbox", dispatchId: "peer-busy", targetKind: "child-delivery", target: "test:busy-peer", payload }));
+    if (queued.kind !== "ok") throw new Error(queued.error);
+    db.db.run("UPDATE outbox SET status = ?, detail = ? WHERE id = ?", ["sent", `peer-verification:${JSON.stringify({ state: "pending", messageId: "busy-message", agent: "claude", channel: "peer-socket", agentVersion: "2.1.296", acceptedAt: Date.now() })}`, "peer-busy-outbox"]);
+    db.close();
+
+    mkdirSync(join(root, ".claude", "sessions"), { recursive: true });
+    writeFileSync(join(root, ".claude", "sessions", "41414.json"), JSON.stringify({ pid: 41414, sessionId: "busy-session", status: "busy" }));
+    const peerSocket = join(root, "fake-busy-peer.sock");
+    const peer = createServer(() => undefined);
+    await new Promise<void>((resolve, reject) => { peer.once("error", reject); peer.listen(peerSocket, resolve); });
+
+    const binary = join(process.cwd(), ".build", "megabrain");
+    const environment = { ...process.env, HOME: root, MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root, MEGABRAIN_STATE_OWNER_IDLE_MS: "60000", MEGABRAIN_STATE_OWNER_TEST_MODE: "0" };
+    delete environment.MEGABRAIN_DISPATCH_ID;
+    const child = spawn(binary, ["__state-owner"], { detached: true, stdio: "ignore", env: environment });
+    trackStateOwnerCleanup(root);
+    try {
+      const deadline = Date.now() + 5_000;
+      let status = await inspectStateOwner(root);
+      while (!status.running && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        status = await inspectStateOwner(root);
+      }
+      if (!status.running) throw new Error("detached owner did not start");
+      await callStateOwner(root, { operation: "resume-verification", id: "peer-busy-outbox" });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      rmSync(stateOwnerSocket(root), { force: true });
+      await new Promise((resolve) => setTimeout(resolve, 1_500));
+      const cpuBefore = processCpuMilliseconds(status.pid);
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      const cpuDelta = processCpuMilliseconds(status.pid) - cpuBefore;
+      expect(cpuDelta).toBeLessThan(20);
+    } finally {
+      peer.close();
+      try { process.kill(child.pid as number, "SIGKILL"); } catch { /* already exited */ }
+      await cleanupTrackedStateOwners([root]);
+      owner = undefined;
+    }
   });
 
   test("concurrent starts produce exactly one owner before the socket is published", async () => {
