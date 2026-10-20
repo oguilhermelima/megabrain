@@ -5,7 +5,7 @@ import { classifyLiveness } from "../../core/liveness.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
+import { terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { interruptKey } from "../../agents/index.js";
 import { getTmux } from "../../hosts/tmux.js";
@@ -69,10 +69,6 @@ function childMessages(database: DatabaseHandle, dispatch: string): RecordValue[
   return messages.kind === "ok" ? messages.value as RecordValue[] : [];
 }
 
-function hasChildIdentityProof(messages: readonly RecordValue[]): boolean {
-  return messages.some((message) => message.from === "child" && (message.type === "received" || message.type === "ask" || message.type === "done"));
-}
-
 async function syncPromptReceipt(root: string, dispatch: string, meta: RecordValue, messages: readonly RecordValue[]): Promise<Result<RecordValue>> {
   if (!messages.some((message) => message.from === "child" && message.type === "received")) return ok(meta);
   const delivery = value(meta.promptDelivery) || "pending";
@@ -103,10 +99,7 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   const state = value(meta.state);
   if (state === "closed" || state === "circuit_broken") return ok({ ...meta, reconcileResult: "unchanged" });
   const terminal = await terminalStatus(meta, process);
-  const proven = terminal === "proven" || hasChildIdentityProof(messages);
-  let parent: "alive" | "gone" | "unknown" = "unknown";
-  if (proven) parent = await parentStatus(meta, process);
-  const decision = reconcileDecision(meta, proven ? "proven" : terminal, parent);
+  const decision = reconcileDecision({ ...meta, childDone: messages.some((message) => message.from === "child" && message.type === "done") }, terminal);
   const next = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
   if (decision.outcome !== "unchanged") {
     try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: next }); }

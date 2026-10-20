@@ -1,6 +1,6 @@
 import { failed, ok, unknown, type Result } from "./result.js";
 
-export const dispatchStates = ["queued", "spawning", "running", "waiting_for_reply", "done", "failed", "orphaned", "closed", "circuit_broken"] as const;
+export const dispatchStates = ["queued", "spawning", "running", "waiting_for_reply", "done", "exited", "failed", "orphaned", "closed", "circuit_broken"] as const;
 export const processStates = ["starting", "start-unproven", "running", "succeeded", "failed", "stopping", "stopped", "stop-unproven", "abandoned", "exited"] as const;
 export const terminalStates = ["owned", "retained", "missing", "released"] as const;
 
@@ -17,9 +17,10 @@ const transitionTable: Readonly<Record<DispatchAxis, Readonly<Record<string, rea
   dispatch: {
     queued: ["queued", "spawning", "failed", "closed"],
     spawning: ["spawning", "running", "failed", "closed"],
-    running: ["running", "waiting_for_reply", "done", "failed", "orphaned", "closed"],
-    waiting_for_reply: ["waiting_for_reply", "running", "done", "failed", "orphaned", "closed"],
-    done: ["done", "failed", "orphaned", "closed"],
+    running: ["running", "waiting_for_reply", "done", "exited", "failed", "orphaned", "closed"],
+    waiting_for_reply: ["waiting_for_reply", "running", "done", "exited", "failed", "orphaned", "closed"],
+    done: ["done", "closed"],
+    exited: ["exited", "closed"],
     failed: ["failed", "circuit_broken", "closed"],
     orphaned: ["orphaned", "running", "waiting_for_reply", "done", "failed", "circuit_broken", "closed"],
     closed: ["closed"],
