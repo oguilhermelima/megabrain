@@ -270,6 +270,15 @@ export async function appiumReady(process: ProcessAdapter): Promise<boolean> {
   return await available(process, "appium") && await succeeds(process, "appium", ["driver", "list", "--installed"]);
 }
 
+export async function serveSimReady(process: ProcessAdapter): Promise<boolean> {
+  const version = await process.run("serve-sim", ["--version"]);
+  if (version.kind !== "ok" || version.value.stdout.trim() !== "0.1.48") return false;
+  const root = await process.run("npm", ["root", "-g"]);
+  if (root.kind !== "ok") return false;
+  const addon = join(root.value.stdout.trim(), "serve-sim", "dist", "native", "serve-sim-native.node");
+  return (await process.run("node", ["-e", "require(process.argv[1])", addon])).kind === "ok";
+}
+
 export async function tmuxServerState(process: ProcessAdapter): Promise<{ running: boolean; rgb: boolean; configApplied: boolean }> {
   const sessions = await getTmux().listSessions(process, "#{session_name}");
   if (sessions.kind !== "ok") return { running: false, rgb: false, configApplied: false };

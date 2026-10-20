@@ -1,6 +1,6 @@
 import nodeProcess from "node:process";
 import { existsSync } from "node:fs";import { join, resolve } from "node:path";import { failed, ok, type Result } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { skillSyncDoctor } from "../../../core/skill.js";import { artifactsDiagramReport } from "../artifacts-diagram-install.js";import { probeOpeners, probeSummary } from "../../../core/terminal-openers.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { usageText } from "../../../core/usage.js";import { maestroReport } from "../maestro-install.js";import { inspectDatabase } from "../../../db/db.js";
-import { modules, available, succeeds, readState, hookCommandKind, hookPathIssue, hookConfigCommands, hookEntryStatus, hookConfig, worktreeRoot, tmuxFileState, emptyCounts, dispatchHealth, appiumReady, tmuxServerState } from "./diagnostics.js";import type { Environment, Report } from "./diagnostics.js";import type { HookAgent } from "./hook-config.js";import { resourceEntryHook, summariesEntryHook, entryHooksReport } from "./entry-hooks.js";
+import { modules, available, succeeds, readState, hookCommandKind, hookPathIssue, hookConfigCommands, hookEntryStatus, hookConfig, worktreeRoot, tmuxFileState, emptyCounts, dispatchHealth, appiumReady, serveSimReady, tmuxServerState } from "./diagnostics.js";import type { Environment, Report } from "./diagnostics.js";import type { HookAgent } from "./hook-config.js";import { resourceEntryHook, summariesEntryHook, entryHooksReport } from "./entry-hooks.js";
 export async function report(module: string, environment: Environment, process: ProcessAdapter): Promise<Report> {
   let status = "missing";
   let reason = "module is not installed";
@@ -8,10 +8,11 @@ export async function report(module: string, environment: Environment, process: 
     const platform = await process.run("uname", ["-s"]);
     const darwin = platform.kind === "ok" && platform.value.stdout.trim() === "Darwin";
     if (!darwin) { status = "unsupported"; reason = "macOS only"; }
-    else if (!await available(process, "appium")) reason = "appium is not on PATH";
+    else if (!await available(process, "serve-sim")) reason = "serve-sim is not on PATH";
+    else if (!await serveSimReady(process)) { status = "misconfigured"; reason = "serve-sim 0.1.48 native addon is not runnable"; }
     else if (!await appiumReady(process)) { status = "misconfigured"; reason = "appium-xcuitest-driver is not installed"; }
-    else { status = "ok"; reason = "appium and xcuitest driver are installed"; }
-    if (module === "simulator-tv" && status === "ok") reason = "Apple TV simulator uses the shared Appium xcuitest toolchain";
+    else { status = "ok"; reason = "serve-sim native addon and Appium xcuitest driver are installed"; }
+    if (module === "simulator-tv" && status === "ok") reason = "Apple TV simulator uses the shared serve-sim and Appium toolchain";
   } else if (module === "simulator-maestro") {
     ({ status, reason } = await maestroReport(environment, process));
   } else if (module === "tv-adb") {
