@@ -362,7 +362,13 @@ export function NativeChatView({
     ])
     switchEngine(chat.id, engine)
     switchStep(chat.id, 'terminalOpenCalled', 'terminal')
-    const terminal = await api.openTerminal({ engine, cwd: chat.cwd, command, chatId: chat.id, cols, rows })
+    let terminal: TerminalSession
+    try {
+      terminal = await api.openTerminal({ engine, cwd: chat.cwd, command, chatId: chat.id, cols, rows })
+    } catch (error) {
+      await api.setChatMode(chat.id, 'chat').catch(() => {})
+      throw error
+    }
     switchStep(chat.id, 'terminalOpened', 'terminal')
     handedOver.set(chat.id, terminal)
     return terminal
