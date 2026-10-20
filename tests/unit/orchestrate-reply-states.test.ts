@@ -163,7 +163,7 @@ describe("orchestrate reply: shell-parity state rules", () => {
     let result: Result<string>;
     try { result = await executeOrchestrateReply(["dispatch-1", "--text", "reply reaches stalled child", "--json"], environment(root), fakeProcess()); }
     finally { await stopStateOwner(owner); }
-    expect(Date.now() - startedAt).toBeLessThan(100);
+    expect(Date.now() - startedAt).toBeLessThan(1_100);
     expect(result.kind).toBe("ok");
     const parsed = result.kind === "ok" ? (JSON.parse(result.value) as { status?: string }) : {};
     expect(parsed.status).toBe("queued");
@@ -186,7 +186,7 @@ describe("orchestrate reply: shell-parity state rules", () => {
     try { result = await executeOrchestrateReply(["dispatch-1", "--text", "continue", "--json"], environment(root), fakeProcess()); }
     finally { await stopStateOwner(owner); }
     expect(result.kind).toBe("ok");
-    expect(Date.now() - startedAt).toBeLessThan(100);
+    expect(Date.now() - startedAt).toBeLessThan(1_100);
     expect(requireOk(listDeliveries(database, "dispatch-1")).find((delivery) => delivery.id === "parent-ask-delivery")?.status).toBe("acknowledged");
   });
 

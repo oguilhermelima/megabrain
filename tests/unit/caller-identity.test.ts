@@ -351,7 +351,7 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     const process = orcaHostProcess("child-term-1");
     const result = await executeOrchestrateRead(["dispatch-1", "--json"], structuredClaudeEnvironment(root), process);
     expect(isOwnershipRefusal(result)).toBe(false);
-    expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "acknowledged" }] });
+    expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "outstanding" }] });
   });
 
   test("liveness", async () => {
@@ -423,7 +423,7 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     createDelivery(db.value, { id: "delivery-watch", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding", consumer: null, consumerGeneration: null });
     const result = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--json"], structuredClaudeEnvironment(root));
     expect(isOwnershipRefusal(result)).toBe(false);
-    expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "acknowledged" }] });
+    expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "outstanding" }] });
   });
 
   test("ack", async () => {

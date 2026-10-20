@@ -303,7 +303,7 @@ describe("child mail to a Grok parent", () => {
     const run = await runParentNotice(root, { agent: "codex", parentAgent: "grok", parentGrokLeaderSocket: join(root, "p.sock"), parentGrokSessionId: PARENT_SESSION });
     const prompt = leader.received.find((message) => message.method === "session/prompt") as { params?: { sessionId?: string; prompt?: Array<{ text?: string }> } } | undefined;
     expect(prompt?.params?.sessionId).toBe(PARENT_SESSION);
-    expect(prompt?.params?.prompt?.[0]?.text).toContain("✅ done: finished the migration\nAfter reading, acknowledge with: megabrain orchestrate ack d-grok dl-parent");
+    expect(prompt?.params?.prompt?.[0]?.text).toBe("✅ done: finished the migration");
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
   });
