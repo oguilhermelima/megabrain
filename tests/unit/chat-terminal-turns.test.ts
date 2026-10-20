@@ -62,8 +62,7 @@ const FAKE_CODEX = `
 const readline = require("node:readline");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
-  if (request.method === "initialize") process.stdout.write(JSON.stringify({ id: request.id, result: {} }) + "\\n");
-  if (request.method === "thread/resume") process.stdout.write(JSON.stringify({ id: request.id, result: { thread: { id: request.params.threadId } } }) + "\\n");
+  if (request.id !== undefined) process.stdout.write(JSON.stringify({ id: request.id, result: request.method === "thread/resume" ? { thread: { id: request.params.threadId } } : {} }) + "\\n");
 });
 `;
 
