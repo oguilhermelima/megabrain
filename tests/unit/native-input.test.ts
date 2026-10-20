@@ -35,6 +35,23 @@ function fakeProcess() {
 afterEach(async () => { while (directories.length) { const directory = directories.pop(); if (directory) await rm(directory, { recursive: true, force: true }); } });
 
 describe("native input scenarios", () => {
+  test("starts and records a detached serve-sim helper with headless keyboard enabled", async () => {
+    const state = await emptyFixture(); const { process } = fakeProcess();
+    let launched: { command: string; args: readonly string[]; env?: Readonly<Record<string, string>> } | undefined;
+    process.startDetached = async (command, args, options) => {
+      launched = { command, args, env: options?.env };
+      return ok({ pid: 456 });
+    };
+    const result = await nativeInput(["start", udid, "--worker", "--json"], { MEGABRAIN_STATE_DIR: state, MEGABRAIN_NATIVE_DEFAULT_TIMEOUT: "1" }, process);
+    expect(result.kind).toBe("ok");
+    expect(launched?.command).toBe("serve-sim");
+    expect(launched?.args).toContain("--detach");
+    expect(launched?.args).toContain("--exit-on-simulator-shutdown");
+    expect(launched?.args).toContain(udid);
+    expect(launched?.env?.SERVE_SIM_DISABLE_DEVICE_HUB_KEYBOARD).toBe("1");
+    expect(JSON.parse(await readFile(join(state, "native-input-sessions.json"), "utf8")).sessions[0]).toMatchObject({ udid, pid: 456, streamUrl: expect.stringContaining("127.0.0.1") });
+  });
+
   test("assigns each simulator its own WDA port and allows time for a cold WDA launch", () => {
     const first = appiumInputSessionCapabilities("iOS", udid);
     const second = appiumInputSessionCapabilities("iOS", "22222222-2222-4222-8222-222222222222");
