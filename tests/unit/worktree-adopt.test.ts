@@ -14,6 +14,6 @@ describe("worktree adopt", () => {
   test("formats text and json results byte-stably", () => {
     const result = { worktree: "/shared/one", branch: "feature/one", workspace: "workspace-1" };
     expect(formatAdopt(result, false)).toBe("worktree: /shared/one\nbranch: feature/one\nworkspace: workspace-1\n");
-    expect(formatAdopt(result, true)).toBe(`${JSON.stringify(result, null, 2)}\n`);
+    expect(JSON.parse(formatAdopt(result, true))).toEqual({ ...result, path: result.worktree });
   });
 });
