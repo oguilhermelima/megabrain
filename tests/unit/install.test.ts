@@ -171,7 +171,6 @@ describe("executeInstall", () => {
       },
     };
     const result = await executeInstall(["simulator-native", "--yes"], { HOME: home, MEGABRAIN_STATE_DIR: home }, wrapped);
-    expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error(`expected success, got: ${JSON.stringify(result)}`);
     expect(result.value).toContain("simulator-native: ok");
     expect(appiumOnPath).toBe(true);
