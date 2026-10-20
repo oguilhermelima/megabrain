@@ -103,7 +103,6 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   if (callerSession !== undefined) tmuxSession = callerSession;
   const decision = closeDecision(meta, { host: current.host, id: current.id, tmuxPane: environment.TMUX_PANE, tmuxSession }, parsed.value.forceRelease);
   if (decision.kind !== "ok") return decision;
-  if (decision.value === "retained") return failed(`dispatch ${dispatchId} terminal is retained because identity is unproven; refusing release; verify it manually or rerun with --force-release`);
   if (decision.value === "duplicate") return ok(parsed.value.json ? `${JSON.stringify({ dispatchId, status: "closed", duplicate: true }, null, 2)}\n` : `closed: ${dispatchId}\n`);
 
   const host = text(meta.childHost); const runtime = text(meta.runtime) || "host";
