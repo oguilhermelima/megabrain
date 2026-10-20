@@ -4,15 +4,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createConnection } from "node:net";
 import { PassThrough } from "node:stream";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 import { route } from "../../src/cli/router.js";
 import { failed } from "../../src/core/result.js";
 import { ChatDaemon } from "../../src/chat/daemon.js";
 import { ChatStore, type Chat } from "../../src/chat/store.js";
+import { readConversations, setConversationAlias, upsertConversation } from "../../src/core/conversations.js";
 
 const directories: string[] = [];
-afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+const tmuxServers: string[] = [];
+const REAL_TMUX = spawnSync("sh", ["-c", "command -v tmux"], { encoding: "utf8" }).stdout.trim();
+afterEach(() => { for (const server of tmuxServers.splice(0)) spawnSync(REAL_TMUX, ["-L", server, "kill-server"], { stdio: "ignore" }); for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 function sandbox() {
   const root = mkdtempSync(join(tmpdir(), "megabrain-chat-test-"));
@@ -21,11 +25,24 @@ function sandbox() {
   const cwd = join(root, "project");
   const bin = join(root, "bin");
   const capture = join(root, "agent-capture.jsonl");
+  const server = `mbchat-${randomUUID().slice(0, 8)}`;
+  tmuxServers.push(server);
   mkdirSync(state, { recursive: true, mode: 0o700 });
   mkdirSync(cwd);
   mkdirSync(bin);
+  writeFileSync(join(bin, "tmux"), `#!/bin/sh\nif [ "$1" = "-L" ] && [ "$2" = "megabrain-app" ]; then shift 2; exec ${REAL_TMUX} -L ${server} "$@"; fi\nexec ${REAL_TMUX} "$@"\n`);
+  chmodSync(join(bin, "tmux"), 0o700);
   writeFileSync(join(root, "image.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nZsAAAAASUVORK5CYII=", "base64"));
-  return { root, state, cwd, bin, capture };
+  return { root, state, cwd, bin, capture, server };
+}
+
+function linkTerminal(env: ReturnType<typeof sandbox>, chatId: string) {
+  const session = `mb-app-${chatId.slice(0, 8)}`;
+  const created = spawnSync(REAL_TMUX, ["-L", env.server, "new-session", "-d", "-s", session, "-c", env.cwd, join(env.bin, "claude"), "--resume", "mode-session", "--dangerously-skip-permissions"], { env: { ...process.env, CHAT_CAPTURE: env.capture, PATH: `${env.bin}:${dirname(process.execPath)}:${process.env.PATH ?? ""}` } });
+  if (created.status !== 0) throw new Error(`could not create linked terminal: ${created.stderr.toString()}`);
+  const entry = Object.entries(readConversations(env.state).conversations).find(([, value]) => value.aliases.chatId === chatId);
+  if (entry !== undefined) setConversationAlias(env.state, entry[0], { tmux: `megabrain-app:${session}` });
+  else upsertConversation(env.state, `claude:mode-session`, { owner: "app-chat", cwd: env.cwd, aliases: { chatId, tmux: `megabrain-app:${session}`, pid: null, dispatchId: null }, createdAt: new Date().toISOString(), hidden: false });
 }
 
 function fakeAgent(bin: string, name: "claude" | "codex", body: string) {
@@ -751,7 +768,7 @@ rl.on("line", () => {});
     }
   });
 
-  test("streams new events, resumes the same session, and returns the terminal argv", async () => {
+  test("streams new events, resumes the linked terminal session, and returns its argv", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", `
 const readline = require("node:readline");
@@ -800,6 +817,7 @@ rl.on("line", (line) => {
       const terminal = await call(["chat", "mode", chatId, "terminal", "--json"], env);
       expect(terminal.kind).toBe("ok");
       if (terminal.kind === "ok") expect(JSON.parse(terminal.value)).toMatchObject({ chat: { mode: "terminal" }, terminal: null });
+      linkTerminal(env, chatId);
       const resumed = await call(["chat", "mode", chatId, "chat", "--json"], env);
       expect(resumed.kind).toBe("ok");
       let captured = readFileSync(env.capture, "utf8");

@@ -38,8 +38,7 @@ function agyChat(overrides: Partial<Chat> = {}): Chat {
     cwd: "/tmp/agy-probe",
     title: null,
     state: "idle",
-    mode: "terminal",
-    owner: "terminal",
+    mode: "chat",
     agentSessionId: sessionId,
     createdAt: "2026-10-17T22:00:00.000Z",
     lastActivityAt: null,
@@ -49,14 +48,15 @@ function agyChat(overrides: Partial<Chat> = {}): Chat {
 }
 
 describe("agy terminal-follow transcript", () => {
-  test("starts in the requested native chat mode while the terminal retains ownership", async () => {
+  test("starts in native chat mode without persisting terminal ownership", async () => {
     const root = mkdtempSync(join(tmpdir(), "megabrain-agy-start-"));
     directories.push(root);
     const daemon = new ChatDaemon(join(root, "state"), { HOME: root });
     await daemon.start();
     daemons.push(daemon);
     const chat = await daemon.startChat({ operation: "start", agent: "agy", cwd: join(root, "project"), mode: "chat" });
-    expect(chat).toMatchObject({ agent: "agy", mode: "chat", owner: "terminal", state: "idle" });
+    expect(chat).toMatchObject({ agent: "agy", mode: "chat", state: "idle" });
+    expect(chat).not.toHaveProperty("owner");
   });
 
   test("shares the native chat agent union and capability record shape", () => {
@@ -173,12 +173,12 @@ describe("agy terminal-follow transcript", () => {
     expect(events[5]?.text).toContain("permission check failed");
   });
 
-  test("persists agy and its truthful terminal-follow capabilities", async () => {
+  test("persists agy and its truthful terminal-follow capabilities without a view mode", async () => {
     const root = mkdtempSync(join(tmpdir(), "megabrain-agy-store-"));
     directories.push(root);
     const store = new ChatStore(root);
     const chat = agyChat();
     await store.put(chat);
-    await expect(store.get(chat.id)).resolves.toEqual(chat);
+    await expect(store.get(chat.id)).resolves.toEqual({ ...chat, mode: "chat" });
   });
 });

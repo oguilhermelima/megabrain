@@ -8,7 +8,7 @@ import { createProcessAdapter, type ProcessAdapter } from "../../src/adapters/pr
 import { callChatd, chatdStatus, ChatDaemon, CHAT_PROTOCOL_VERSION, CHAT_PROTOCOL_MIN_VERSION, retireChatd } from "../../src/chat/daemon.js";
 import { claudeLogPath } from "../../src/chat/session-log.js";
 import { ChatStore, type Chat, type ChatEvent } from "../../src/chat/store.js";
-import { upsertConversation } from "../../src/core/conversations.js";
+import { readConversations, setConversationAlias, upsertConversation } from "../../src/core/conversations.js";
 import { liveSessionHolders } from "../../src/core/session-holders.js";
 import { executeChat } from "../../src/cli/commands/chat.js";
 
@@ -89,6 +89,11 @@ function record(env: Env, overrides: Partial<Chat> = {}): Chat {
 function tuiInTmux(env: Env, session: string, sessionId: string): void {
   const created = spawnSync(REAL_TMUX, ["-L", env.server, "new-session", "-d", "-s", session, "-c", env.cwd, join(env.tui, "claude"), "--resume", sessionId, "--dangerously-skip-permissions"]);
   expect(created.status).toBe(0);
+}
+function linkTerminal(env: Env, chat: Chat, session: string): void {
+  const entry = Object.entries(readConversations(env.state).conversations).find(([, value]) => value.aliases.chatId === chat.id);
+  if (entry !== undefined) setConversationAlias(env.state, entry[0], { tmux: `megabrain-app:${session}` });
+  else upsertConversation(env.state, `${chat.agent}:${chat.agentSessionId ?? chat.id}`, { owner: "app-chat", cwd: env.cwd, aliases: { chatId: chat.id, tmux: `megabrain-app:${session}`, pid: null, dispatchId: null }, createdAt: chat.createdAt, hidden: false });
 }
 /** An app TUI that lets SIGTERM finish cleanup instead of exiting immediately. */
 function slowTuiInTmux(env: Env, session: string, sessionId: string): number {
@@ -200,41 +205,42 @@ describe("one live agent process per chat", () => {
     expect(spawned(env).some((entry) => entry.argv.includes(sessionId))).toBe(true);
   });
 
-  test("switching to the chat view leaves all app terminals alive without resuming the session", async () => {
+  test("switching to the chat view ends app terminals before resuming one session", async () => {
     const env = sandbox();
     fakeClaude(env);
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
     await new ChatStore(env.state).put(chat);
-    upsertConversation(env.state, `claude:${chat.agentSessionId}`, { owner: "app-chat", cwd: env.cwd, aliases: { chatId: chat.id, tmux: "megabrain-app:mb-app-aliased", pid: null, dispatchId: null }, createdAt: chat.createdAt, hidden: false });
     tuiInTmux(env, "mb-app-aliased", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-aliased");
     tuiInTmux(env, "mb-app-earlier", chat.agentSessionId ?? "");
     tuiInTmux(env, "mb-app-oldest", chat.agentSessionId ?? "");
     const daemon = await daemonFor(env);
 
     await daemon.handle({ operation: "mode", id: chat.id, mode: "chat" });
-    expect(hasSession(env, "mb-app-aliased")).toBe(true);
-    expect(hasSession(env, "mb-app-earlier")).toBe(true);
-    expect(hasSession(env, "mb-app-oldest")).toBe(true);
-    expect(spawned(env)).toHaveLength(0);
-    expect((await daemon.store.get(chat.id))?.owner).toBe("terminal");
+    await until(() => spawned(env), (children) => children.length === 1, "resumed agent to spawn");
+    expect(hasSession(env, "mb-app-aliased")).toBe(false);
+    expect(hasSession(env, "mb-app-earlier")).toBe(false);
+    expect(hasSession(env, "mb-app-oldest")).toBe(false);
+    expect(spawned(env)).toHaveLength(1);
+    expect(spawned(env)[0]?.argv).toContain(chat.agentSessionId);
   });
 
-  test("switching to the chat view leaves a slowly exiting app TUI alive", async () => {
+  test("switching to the chat view closes a slow app TUI before resuming", async () => {
     const env = sandbox();
     fakeClaude(env);
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
     await new ChatStore(env.state).put(chat);
     const panePid = slowTuiInTmux(env, "mb-app-slow-exit", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-slow-exit");
     const daemon = await daemonFor(env);
 
     const startedAt = Date.now();
     await daemon.handle({ operation: "mode", id: chat.id, mode: "chat" });
-    expect(Date.now() - startedAt).toBeLessThan(1000);
-    expect(() => process.kill(panePid, 0)).not.toThrow();
-    expect(hasSession(env, "mb-app-slow-exit")).toBe(true);
-    expect(spawned(env)).toHaveLength(0);
+    expect(Date.now() - startedAt).toBeLessThan(3000);
+    expect(() => process.kill(panePid, 0)).toThrow();
+    expect(hasSession(env, "mb-app-slow-exit")).toBe(false);
+    await until(() => spawned(env), (children) => children.length === 1, "resumed agent to spawn");
     expect((await daemon.store.get(chat.id))?.mode).toBe("chat");
-    expect((await daemon.store.get(chat.id))?.owner).toBe("terminal");
   });
 
   test("refuses to stop an app TUI during an unfinished turn and keeps terminal mode", async () => {
@@ -244,11 +250,12 @@ describe("one live agent process per chat", () => {
     await new ChatStore(env.state).put(chat);
     claudeLog(env, chat, [prompt("mid-turn-user", new Date(Date.now() + 1000).toISOString(), "still running"), toolUse("mid-turn-tool", new Date(Date.now() + 1001).toISOString())]);
     tuiInTmux(env, "mb-app-mid-turn", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-mid-turn");
     const daemon = await daemonFor(env);
 
     await expect(daemon.handle({ operation: "mode", id: chat.id, mode: "chat" })).rejects.toThrow("terminal is still working");
 
-    expect((await daemon.store.get(chat.id))?.mode).toBe("terminal");
+    expect((await daemon.requireChat(chat.id)).mode).toBe("terminal");
     expect(hasSession(env, "mb-app-mid-turn")).toBe(true);
     expect(spawned(env)).toHaveLength(0);
   });
@@ -259,33 +266,34 @@ describe("one live agent process per chat", () => {
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
     await new ChatStore(env.state).put(chat);
     tuiInTmux(env, "mb-app-foreign-check", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-foreign-check");
     const foreign = tuiOutside(env, chat.agentSessionId ?? "");
     const daemon = await daemonFor(env);
     await until(() => liveSessionHolders("claude", chat.agentSessionId ?? "", { home: env.root, processes: adapterOf(env), cwd: env.cwd }), (found) => found.length === 2, "app and foreign holders");
 
     await expect(daemon.handle({ operation: "mode", id: chat.id, mode: "chat" })).rejects.toThrow(`pid ${foreign.pid}`);
 
-    expect((await daemon.store.get(chat.id))?.mode).toBe("terminal");
+    expect((await daemon.requireChat(chat.id)).mode).toBe("terminal");
     expect(hasSession(env, "mb-app-foreign-check")).toBe(true);
     expect(foreign.exitCode).toBeNull();
     expect(spawned(env)).toHaveLength(0);
   });
 
-  test("switching to the chat view leaves the terminal owner alive and starts no second writer", async () => {
+  test("switching to the chat view ends its linked terminal before starting one writer", async () => {
     const env = sandbox();
     fakeClaude(env);
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
     await new ChatStore(env.state).put(chat);
     tuiInTmux(env, "mb-app-view-switch", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-view-switch");
     const daemon = await daemonFor(env);
 
     const result = await daemon.handle({ operation: "mode", id: chat.id, mode: "chat" }) as { chat: Chat };
 
     expect(result.chat.mode).toBe("chat");
-    expect(result.chat.owner).toBe("terminal");
-    expect((await daemon.store.get(chat.id))?.owner).toBe("terminal");
-    expect(hasSession(env, "mb-app-view-switch")).toBe(true);
-    expect(spawned(env)).toHaveLength(0);
+    expect(hasSession(env, "mb-app-view-switch")).toBe(false);
+    await until(() => spawned(env), (children) => children.length === 1, "resumed agent to spawn");
+    expect(spawned(env)[0]?.argv).toContain(chat.agentSessionId);
   });
 
   test("a chat send during a terminal turn reports terminal-busy and leaves the TUI alone", async () => {
@@ -294,6 +302,7 @@ describe("one live agent process per chat", () => {
     const chat = record(env, { mode: "chat", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
     await new ChatStore(env.state).put(chat);
     tuiInTmux(env, "mb-app-busy-send", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-busy-send");
     claudeLog(env, chat, [prompt("busy-user", new Date().toISOString(), "still working"), toolUse("busy-call", new Date().toISOString())]);
     const daemon = await daemonFor(env);
 
@@ -319,7 +328,7 @@ describe("one live agent process per chat", () => {
     const daemon = await daemonFor(env);
 
     await daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "continue" }] });
-    await stateOf(daemon, chat.id, "idle");
+    await until(() => spawned(env), (children) => children.length === 1, "resumed agent to spawn");
 
     expect(hasSession(env, "mb-app-duplicate-a")).toBe(false);
     expect(hasSession(env, "mb-app-duplicate-b")).toBe(false);
@@ -332,10 +341,11 @@ describe("one live agent process per chat", () => {
     fakeClaude(env);
     const chat = record(env);
     await new ChatStore(env.state).put(chat);
-    tuiInTmux(env, "mb-app-working", chat.agentSessionId ?? "");
     const path = claudeLogPath(env.root, env.cwd, chat.agentSessionId ?? "");
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `${JSON.stringify({ type: "user", uuid: "u1", timestamp: new Date().toISOString(), message: { role: "user", content: "still working" } })}\n`);
+    tuiInTmux(env, "mb-app-working", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-working");
     const daemon = await daemonFor(env);
 
     await daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "continue" }] });
@@ -368,18 +378,20 @@ describe("one live agent process per chat", () => {
     expect(spawned(env)).toHaveLength(0);
   });
 
-  test("switching to the chat view records a non-empty TUI composer line and keeps its terminal", async () => {
+  test("switching to the chat view records a non-empty TUI composer line before resuming", async () => {
     const env = sandbox();
     fakeClaude(env);
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
     await new ChatStore(env.state).put(chat);
     tuiInTmux(env, "mb-app-draft", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-draft");
     const daemon = await daemonFor(env);
 
     await daemon.handle({ operation: "mode", id: chat.id, mode: "chat" });
     await stateOf(daemon, chat.id, "idle");
 
     expect(await eventsOf(daemon, chat.id)).toContainEqual(expect.objectContaining({ kind: "system", text: "Unsent text from the terminal: unsent words" }));
+    expect(hasSession(env, "mb-app-draft")).toBe(false);
   });
 
   test("a resume is refused while a process the app does not own holds the session, and nothing is spawned", async () => {
@@ -405,6 +417,8 @@ describe("one live agent process per chat", () => {
     const env = sandbox();
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
     await new ChatStore(env.state).put(chat);
+    tuiInTmux(env, "mb-app-terminal-noop", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-terminal-noop");
     const daemon = await daemonFor(env);
     const result = await daemon.handle({ operation: "mode", id: chat.id, mode: "terminal" }) as { chat: Chat; command: string[] };
     expect(result.chat.terminalSince).toBe("2026-10-16T09:00:00.000Z");
@@ -592,6 +606,7 @@ describe("turns cut short", () => {
     fakeClaude(env);
     const chat = record(env, { mode: "terminal", state: "idle", terminalSince: "2026-10-16T09:00:00.000Z" });
     await new ChatStore(env.state).put(chat);
+    linkTerminal(env, chat, "mb-app-terminal-exited");
     claudeLog(env, chat, [prompt("u1", "2026-10-16T09:01:00.000Z", "kill the port"), toolUse("a1", "2026-10-16T09:01:01.000Z")]);
     const daemon = await daemonFor(env);
     await daemon.handle({ operation: "mode", id: chat.id, mode: "chat" });
@@ -607,6 +622,8 @@ describe("a chat in terminal mode", () => {
     const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "60", MEGABRAIN_KNOWLEDGE_SCANNER: "off" });
     expect(daemon.terminalTimer).toBeUndefined();
     const chat = await daemon.handle({ operation: "start", agent: "agy", cwd: env.cwd }) as Chat;
+    linkTerminal(env, chat, "mb-app-agy-poll");
+    await daemon.syncTerminalPolling();
     expect(daemon.terminalTimer).toBeDefined();
     await daemon.remove(chat.id);
     expect(daemon.terminalTimer).toBeUndefined();
@@ -616,7 +633,9 @@ describe("a chat in terminal mode", () => {
     const env = sandbox();
     let calls = 0;
     const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "60", MEGABRAIN_KNOWLEDGE_SCANNER: "off" });
-    await daemon.startChat({ operation: "start", agent: "agy", cwd: env.cwd });
+    const chat = await daemon.startChat({ operation: "start", agent: "agy", cwd: env.cwd });
+    linkTerminal(env, chat, "mb-app-agy-refresh-error");
+    await daemon.syncTerminalPolling();
     daemon.refreshTerminalChats = async () => {
       calls += 1;
       if (calls === 1) throw new Error("ownership lookup failed");
@@ -640,7 +659,9 @@ describe("a chat in terminal mode", () => {
     const first = new Promise<void>((resolve) => { markFirst = resolve; });
     const second = new Promise<void>((resolve) => { markSecond = resolve; });
     const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "200", MEGABRAIN_KNOWLEDGE_SCANNER: "off" });
-    await daemon.startChat({ operation: "start", agent: "agy", cwd: env.cwd });
+    const chat = await daemon.startChat({ operation: "start", agent: "agy", cwd: env.cwd });
+    linkTerminal(env, chat, "mb-app-agy-refresh-coalesced");
+    await daemon.syncTerminalPolling();
     daemon.refreshTerminalChats = async () => {
       calls += 1;
       if (calls === 1) { markFirst(); await new Promise<void>((resolve) => { release = resolve; }); }
@@ -662,6 +683,7 @@ describe("a chat in terminal mode", () => {
     await new ChatStore(env.state).put(chat);
     const log = claudeLog(env, chat, [prompt("u1", "2026-10-16T09:01:00.000Z", "kill the port"), toolUse("a1", "2026-10-16T09:01:01.000Z")]);
     tuiInTmux(env, "mb-app-tui", chat.agentSessionId ?? "");
+    linkTerminal(env, chat, "mb-app-tui");
     const daemon = await daemonFor(env, { MEGABRAIN_CHAT_TERMINAL_POLL_MS: "40" });
 
     await stateOf(daemon, chat.id, "working");
