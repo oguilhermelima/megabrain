@@ -294,6 +294,14 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   };
   let exitCode = 1;
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) {
+      output.length = 0;
+      pending = "";
+      held = undefined;
+      errorLines = [];
+      index = 0;
+      lastLine = Date.now();
+    }
     const attemptArgs = attempt === 0 ? commandArgs : [...commandArgs.slice(0, -1), "--reinstall-driver", commandArgs.at(-1) ?? flowPath];
     const child = spawn(maestroBinary(environment), attemptArgs, {
       cwd: worktree, detached: true, stdio: ["ignore", "pipe", "pipe"],
@@ -321,10 +329,6 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     if (pending !== "") onLine(pending);
     pending = "";
     if (attempt === 0 && exitCode !== 0 && DRIVER_START_FAILURE.test(output.join("\n"))) {
-      held = undefined;
-      errorLines = [];
-      index = 0;
-      lastLine = Date.now();
       continue;
     }
     break;
