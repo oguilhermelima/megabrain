@@ -144,6 +144,10 @@ pub fn end_line() -> String {
 }
 
 pub fn first_error_line(stderr: &str) -> String {
-    let first = stderr.lines().next().unwrap_or_default();
-    json!({ "cursor": "", "error": first }).to_string()
+    const MAX_ERROR_BYTES: usize = 64 * 1024;
+    let mut start = stderr.len().saturating_sub(MAX_ERROR_BYTES);
+    while !stderr.is_char_boundary(start) {
+        start += 1;
+    }
+    json!({ "cursor": "", "error": &stderr[start..] }).to_string()
 }
