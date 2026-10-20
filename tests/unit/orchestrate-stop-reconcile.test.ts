@@ -28,7 +28,7 @@ describe("orchestrate reconcile", () => {
   });
 
   test("derives exited state from a dead terminal", () => {
-    expect(reconcileDecision(meta(), "missing", "unknown")).toEqual({ outcome: "exited", updates: { state: "exited", processState: "exited", terminalState: "missing", stage: "agent-exit", reason: "terminal process exited" } });
+    expect(reconcileDecision(meta(), "missing", "unknown")).toEqual({ outcome: "exited", updates: { processState: "exited", terminalState: "missing", stage: "agent-exit", reason: "terminal process exited" } });
   });
 
   test("keeps terminal exit final and honors a child done report", () => {

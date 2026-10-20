@@ -58,8 +58,8 @@ describe("dispatch state consumers", () => {
     if (result.kind === "ok") expect(result.value.state).toBe("exited");
   });
 
-  test("reads legacy retained and identity-unproven rows as exited without changing stored metadata", () => {
-    const raw = { state: "running", terminalState: "retained", stage: "identity-unproven" };
+  test("reads terminal exit as exited without a dispatch-state schema write", () => {
+    const raw = { state: "running", processState: "exited", terminalState: "missing", stage: "agent-exit" };
     const result = parseDispatchRecord(raw);
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") expect(result.value.raw.state).toBe("exited");
