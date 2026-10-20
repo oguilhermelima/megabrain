@@ -1,6 +1,5 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolvePackageRoot } from "../../../core/package-root.js";
 import type { ProcessAdapter } from "../../../adapters/proc.js";
 import { resolveStateDirectory } from "../../../core/state.js";
 import { selfInvocation } from "../../../core/self-invocation.js";
@@ -9,6 +8,7 @@ import { usageText } from "../../../core/usage.js";
 import WebSocket from "ws";
 import { SIMULATOR_UDID, simCandidates } from "./index.js";
 import type { Environment } from "./index.js";
+import { runServeSim } from "./serve-sim.js";
 
 type RecordEntry = { udid: string; session: string; platform: "iOS" | "tvOS"; pid: number; ownerPid?: number; watchdogPid?: number; port: number; streamUrl: string; wsUrl: string; pointWidth?: number; pointHeight?: number };
 type InputStatus = { udid: string; state: "none" | "starting" | "ready" | "failed"; phase: string; startedAt?: string; error?: string; session?: string; port?: number; ownerPid?: number; watchdogPid?: number };
@@ -43,14 +43,6 @@ function parseHelper(stdout: string, udid: string): Omit<RecordEntry, "platform"
 export async function endNativeInputSession(_env: Environment, process: ProcessAdapter, udid: string): Promise<Result<void>> {
   const stopped = await runServeSim(process, _env, ["--kill", udid]);
   return stopped.kind === "ok" ? ok(undefined) : failed(stopped.error);
-}
-async function runServeSim(process: ProcessAdapter, env: Environment, args: readonly string[], options?: { readonly env?: Readonly<Record<string, string>> }) {
-  const onPath = await process.run("serve-sim", args, options);
-  if (onPath.kind === "ok" || !onPath.error.includes("executable not found")) return onPath;
-  const roots = [globalThis.process.cwd()];
-  try { roots.push(resolvePackageRoot(import.meta.url, env.MEGABRAIN_ROOT)); } catch { /* use cwd */ }
-  const script = roots.map((root) => join(root, "node_modules", "serve-sim", "dist", "serve-sim.js")).find(existsSync);
-  return script ? process.run("node", [script, ...args], options) : onPath;
 }
 async function helperState(process: ProcessAdapter, env: Environment, udid: string) {
   const result = await runServeSim(process, env, ["--list", udid]);
