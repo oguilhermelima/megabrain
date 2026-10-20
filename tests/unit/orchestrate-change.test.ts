@@ -186,7 +186,7 @@ describe("orchestrate change delivery", () => {
       const output = result.kind === "ok" ? JSON.parse(result.value) as JsonRecord : {};
       expect(output).toMatchObject({ attempts: 1, idleReached: false, delivered: true, confirmed: true });
       expect(harness.events[0]).toStartWith(`text:${formatted}`);
-      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[0]).toContain("(The same text is available with megabrain check.)");
       expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
@@ -204,7 +204,7 @@ describe("orchestrate change delivery", () => {
       const output = result.kind === "ok" ? JSON.parse(result.value) as JsonRecord : {};
       expect(output).toMatchObject({ attempts: 1, idleReached: false, delivered: true, confirmed: true, supersededQueued: 0, supersededDelivered: 0 });
       expect(harness.events[0]).toStartWith(`text:${formatted}`);
-      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[0]).toContain("(The same text is available with megabrain check.)");
       expect(harness.events[1]).toBe("key:Enter");
       const messages = await readMessages(root);
       expect(messages.map((message) => message.type)).toEqual(["reply", "composer-clear", "delivery-result", "delivery-confirmation"]);
@@ -227,7 +227,7 @@ describe("orchestrate change delivery", () => {
       expect(requireOk(listOutbox(db))).toMatchObject([{ status: "sent" }]);
       expect(requireOk(listDeliveries(db, "change"))[0]).toMatchObject({ transport: "typed" });
       expect(harness.events[0]).toStartWith(`text:${formatted}`);
-      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[0]).toContain("(The same text is available with megabrain check.)");
       expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
@@ -244,7 +244,7 @@ describe("orchestrate change delivery", () => {
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
       expect(harness.events[0]).toStartWith(`text:${formatted}`);
-      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[0]).toContain("(The same text is available with megabrain check.)");
       expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();
@@ -261,7 +261,7 @@ describe("orchestrate change delivery", () => {
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
       expect(harness.events.filter((event) => event === "key:Escape")).toHaveLength(1);
-      expect(harness.events.some((event) => event.startsWith(`text:${formatted}`) && event.includes("acknowledge with: megabrain ack"))).toBe(true);
+      expect(harness.events.some((event) => event.startsWith(`text:${formatted}`) && event.includes("(The same text is available with megabrain check.)"))).toBe(true);
       expect((await readMessages(root)).map((message) => message.type)).toEqual(["reply", "composer-clear", "delivery-result", "delivery-confirmation"]);
       const db = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
       expect(requireOk(listOutbox(db))).toMatchObject([{ status: "sent" }]);
@@ -281,7 +281,7 @@ describe("orchestrate change delivery", () => {
       const result = await executeOrchestrateChange(["change", "--text", large, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: true, oversized: true });
-      expect(harness.events.some((event) => event.startsWith("text:🔀 codex · megabrain/main new direction\nA new direction is queued; run megabrain check to read it.") && event.includes("acknowledge with: megabrain ack"))).toBe(true);
+      expect(harness.events.some((event) => event.startsWith("text:🔀 codex · megabrain/main new direction\nA new direction is queued; run megabrain check to read it."))).toBe(true);
       expect(harness.events.some((event) => event.includes(large))).toBe(false);
     } finally {
       harness.restore();
@@ -359,7 +359,7 @@ describe("orchestrate change delivery", () => {
       expect(result.kind).toBe("ok");
       expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ attempts: 1, idleReached: false, delivered: true });
       expect(harness.events[0]).toStartWith(`text:${formatted}`);
-      expect(harness.events[0]).toContain("acknowledge with: megabrain ack");
+      expect(harness.events[0]).toContain("(The same text is available with megabrain check.)");
       expect(harness.events[1]).toBe("key:Enter");
     } finally {
       harness.restore();

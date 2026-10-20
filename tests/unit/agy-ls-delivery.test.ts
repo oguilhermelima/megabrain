@@ -180,7 +180,7 @@ describe("reply to an agy child", () => {
     const server = await startLanguageServer();
     const run = await runReply(root, server.address);
     expect(server.sent).toHaveLength(1);
-    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: expect.stringContaining("↩ reply: use the second option\nAfter reading, acknowledge with: megabrain orchestrate ack d-agy dl-agy") }], deliveryStrategy: "MESSAGE_DELIVERY_STRATEGY_WHEN_IDLE", cascadeConfig: USER_CONFIG });
+    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: "↩ reply: use the second option" }], deliveryStrategy: "MESSAGE_DELIVERY_STRATEGY_WHEN_IDLE", cascadeConfig: USER_CONFIG });
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
     expect(run.deliveries[0]).toMatchObject({ transport: "ack-verifying" });
@@ -280,7 +280,7 @@ describe("child mail to an agy parent", () => {
     const server = await startLanguageServer();
     const run = await runParentNotice(root, { agent: "codex", parentAgent: "agy" }, { parent: server.address });
     expect(server.sent).toHaveLength(1);
-    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: expect.stringContaining("✅ done: finished the migration\nAfter reading, acknowledge with: megabrain orchestrate ack d-agy dl-parent") }], cascadeConfig: USER_CONFIG });
+    expect(server.sent[0]).toMatchObject({ cascadeId: CONVERSATION, items: [{ text: "✅ done: finished the migration" }], cascadeConfig: USER_CONFIG });
     expect(run.sends).toHaveLength(0);
     expect(run.outbox[0]?.status).toBe("sent");
   });
