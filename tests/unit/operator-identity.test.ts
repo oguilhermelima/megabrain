@@ -31,11 +31,11 @@ const adapter: ProcessAdapter = {
   invocationCount() { return 0; },
 };
 
-async function reply(root: string, operator: boolean) {
+async function reply(root: string, operator: boolean, extra: Record<string, string> = {}) {
   const db = requireOk(guardedStateDatabase({ MEGABRAIN_STATE_DIR: root }));
   const result = await route([
     "orchestrate", "reply", "dispatch-20261015000000000-1-aaaaaaaa", "--text", "hello", ...(operator ? ["--operator"] : []), "--json",
-  ], { environment: { MEGABRAIN_STATE_DIR: root, MEGABRAIN_SESSION_ID: "current-session", MEGABRAIN_SESSION_HOST: "local" }, processAdapter: adapter });
+  ], { environment: { MEGABRAIN_STATE_DIR: root, MEGABRAIN_SESSION_ID: "current-session", MEGABRAIN_SESSION_HOST: "local", ...extra }, processAdapter: adapter });
   const messages = requireOk(listMessages(db, "dispatch-20261015000000000-1-aaaaaaaa"));
   return { result, messages, dispatch: requireOk(getDispatch(db, "dispatch-20261015000000000-1-aaaaaaaa")) };
 }
@@ -60,5 +60,13 @@ describe("--operator compatibility", () => {
     expect(outcome.messages.filter((message) => message.type === "reply")).toMatchObject([
       { from: "parent", text: "hello", sessionId: "current-session" },
     ]);
+  });
+
+  test.each([
+    ["agent", { CLAUDE_CODE_SESSION_ID: "agent-session" }],
+    ["child", { MEGABRAIN_DISPATCH_ID: "child-dispatch" }],
+  ] as const)("does not refuse --operator for %s callers", async (_caller, identity) => {
+    const root = await state();
+    expect((await reply(root, true, identity)).result.kind).toBe("ok");
   });
 });
