@@ -1,1 +1,2 @@
-CommandFailed: Failed to grant privacy access to the application
+Failed to run xcrun simctl privacy booted grant photos com.example.app
+CommandFailed: null

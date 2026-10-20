@@ -157,7 +157,7 @@ describe("maestro run", () => {
     const { worktree, environment } = sandbox();
     const result = await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", worktree, "--device", UDID, "--json"], { ...environment, FAKE_MAESTRO_OUTPUT: "privacy-failed.txt", FAKE_MAESTRO_EXIT: "1" }, adapter);
     expect(result.kind).toBe("ok");
-    expect(lines(result.kind === "ok" ? result.value : "").find((event) => event.type === "run")).toMatchObject({ reasonCode: "privacy_grant_failed", reason: expect.stringContaining("privacy grant") });
+    expect(lines(result.kind === "ok" ? result.value : "").find((event) => event.type === "run")).toMatchObject({ reasonCode: "privacy_grant_failed", reason: expect.stringContaining("CommandFailed: null") });
   });
 
   test("refuses a flow that is not in the worktree", async () => {
