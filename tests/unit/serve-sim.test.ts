@@ -23,3 +23,16 @@ test("prefers the app's bundled serve-sim assets to repository installs and PATH
     env: { BUN_BE_BUN: "1" },
   });
 });
+
+test("falls back to a repository package and then PATH", async () => {
+  const root = await mkdtemp(join(tmpdir(), "serve-sim-resolution-")); roots.push(root);
+  const executable = join(root, "bin/megabrain");
+  const script = join(root, "repo/node_modules/serve-sim/dist/serve-sim.js");
+  await mkdir(join(root, "repo/node_modules/serve-sim/dist"), { recursive: true });
+  await writeFile(script, "");
+
+  expect(resolveServeSim({ MEGABRAIN_ROOT: join(root, "repo") }, executable, join(root, "empty"))).toEqual({
+    command: "node", args: [script],
+  });
+  expect(resolveServeSim({}, executable, join(root, "empty"))).toEqual({ command: "serve-sim", args: [] });
+});
