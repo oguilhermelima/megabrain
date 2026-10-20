@@ -54,10 +54,10 @@ describe("dispatch transition table", () => {
 });
 
 describe("dispatch state consumers", () => {
-  test("recognises circuit_broken as a dispatch state", () => {
+  test("reads legacy circuit-broken rows as exited", () => {
     const result = parseDispatchRecord({ state: "circuit_broken" });
     expect(result.kind).toBe("ok");
-    if (result.kind === "ok") expect(result.value.state).toBe("circuit_broken");
+    if (result.kind === "ok") expect(result.value.state).toBe("exited");
   });
 
   test("reads legacy retained and identity-unproven rows as exited without changing stored metadata", () => {
