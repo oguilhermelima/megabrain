@@ -96,7 +96,7 @@ describe("Codex idle child delivery", () => {
     const root = await tempRoot();
     const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
     if (db.kind !== "ok") throw new Error(db.error);
-    const meta = { agent: "codex", agentPid: 991, agentThreadId: "thread-123", runtime: "tmux", childHost: "local", tmuxPane: "%11", tmuxSession: "s", tmuxSessionId: "$1", parentAgent: "claude", parentHost: "local" };
+    const meta = { agent: "codex", agentPid: 991, agentThreadId: "thread-123", runtime: "tmux", childHost: "local", tmuxPane: "%11", tmuxSession: "$1", tmuxSessionId: "$1", parentAgent: "claude", parentHost: "local" };
     createDispatch(db.value, { dispatchId: "d-codex-idle", state: "running", ...meta });
     appendMessage(db.value, "d-codex-idle", { from: "parent", type: "reply", text: "continue" }, {
       outbox: { id: "ob-codex-idle", targetKind: "child-delivery", target: "codex:thread-123", payload: { dispatchId: "d-codex-idle", sequence: 1, meta, targetKind: "child-delivery", fullMessage: "↩ reply: continue" } },
