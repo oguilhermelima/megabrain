@@ -19,7 +19,7 @@ type JsonRecord = Record<string, unknown>;
 async function requireParent(root: string, dispatch: string, caller: Awaited<ReturnType<typeof resolveCallerIdentity>>): Promise<Result<JsonRecord & { dispatchId: string }>> {
   const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
   if (database.kind !== "ok") return database;
-  const resolved = resolveParentDispatchId(database.value, dispatch, caller);
+  const resolved = resolveParentDispatchId(database.value, dispatch);
   if (resolved.kind !== "ok") return resolved;
   const result = getDispatch(database.value, resolved.value);
   const meta = result.kind === "ok" ? result.value : undefined;

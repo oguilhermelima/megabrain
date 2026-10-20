@@ -71,11 +71,9 @@ export async function listProcQueue(environment: Environment): Promise<ProcQueue
   return entries.sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
 }
 
-// owner undefined is the operator, who may cancel any entry.
-export async function cancelProcQueueEntry(environment: Environment, id: string, owner: string | undefined, reason: string): Promise<Result<ProcQueueEntry> | undefined> {
+export async function cancelProcQueueEntry(environment: Environment, id: string, reason: string): Promise<Result<ProcQueueEntry> | undefined> {
   const entry = (await listProcQueue(environment)).find((item) => item.id === id);
   if (entry === undefined) return undefined;
-  if (owner !== undefined && entry.owner !== owner) return failed(`queued item ${id} is not owned by this caller`);
   // The waiter reads the mark, removes its entry and exits without starting anything.
   await writeEntry(environment, { ...entry, cancelledReason: reason });
   return ok(entry);

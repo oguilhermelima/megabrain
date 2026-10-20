@@ -605,7 +605,7 @@ new direction. Child-bound messages use the coordinator's name and point to `meg
 the full text. Orca receives the same three parts on one line, joined with ` — `.
 
 The dispatch commands that take an ID accept a unique suffix of at least eight characters. They
-resolve against dispatches owned by the current caller; an ambiguous suffix lists its matches.
+resolve across dispatches regardless of caller; an ambiguous suffix lists its matches.
 `db show` accepts the same suffix length and resolves across all dispatches, including archived
 ones.
 
@@ -632,12 +632,9 @@ recommendation), every queued spawn, message and process, managed processes, the
 and admission settings, and delivery channels. It leaves out Docker containers, because
 `docker stats` takes seconds; `resources --json` has them. Without `--json` it prints a short summary.
 
-A program acting for the person, such as the desktop app, owns no dispatch, so it passes
-`--operator` to `orchestrate reply`, `change`, `stop`, `close`, `ack`, `read`, `liveness`, `policy`,
-`reconcile` and `queue` (including `queue cancel`): the verb then acts on any session's dispatch
-without changing its owner, and records `operator` as the session behind the message, the close
-(`closedBy`) or the cancel (`cancelledBy`). An agent session or a child is refused; this guards
-against mistakes and is not a security boundary.
+Dispatch ownership identifies the parent for display and queue scoping; it is not an authorization
+boundary. Legacy `--operator` flags on `orchestrate` commands are accepted as no-ops. `send` keeps
+its separate `--operator` flag to identify the sender and select the delivery channel.
 
 `megabrain resources` reports memory pressure, available and total memory, swap, CPU load and
 open dispatch process trees. `--all` includes dispatches owned by other sessions and `--json`

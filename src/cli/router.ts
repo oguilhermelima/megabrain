@@ -9,8 +9,7 @@ import { executeModel } from "./commands/model.js";
 import { executeWeb } from "./commands/web.js";
 import { executeNative } from "./commands/native.js";
 import { executeTv } from "./commands/tv.js";
-import { executeQueueWrite, resolveSessionCaller } from "./commands/queue-write.js";
-import { operatorRefusal } from "../core/context.js";
+import { executeQueueWrite } from "./commands/queue-write.js";
 import { executeOrchestrateList } from "./commands/orchestrate-list.js";
 import { executeOrchestrateAdopt } from "./commands/orchestrate-adopt.js";
 import { executeWorktreeList } from "./commands/worktree-list.js";
@@ -80,12 +79,11 @@ export type RouterDependencies = {
   readonly readStdin?: () => Promise<string>;
 };
 
-// The orchestrate verbs that check dispatch ownership and accept --operator.
+// The orchestrate verbs that historically accepted --operator.
 const operatorVerbs = new Set(["reply", "change", "stop", "close", "ack", "read", "transcript", "liveness", "policy", "reconcile", "queue"]);
 
-// --operator is taken off the arguments here and handed on as MEGABRAIN_OPERATOR, so every verb
-// resolves its caller through the one resolveCaller; a value inherited from the environment is
-// dropped, so the flag is the only way in.
+// --operator remains accepted on its existing orchestrate verbs for compatibility, but it no
+// longer changes caller identity or grants access. `send` keeps its distinct sender/channel mode.
 export async function route(
   args: readonly string[],
   dependencies: RouterDependencies,
@@ -94,16 +92,12 @@ export async function route(
   if (!args.includes("--operator")) return safeRouteCommand(args, { ...dependencies, environment });
   const [command, verb] = args;
   if (command === "send") {
-    const refusal = operatorRefusal(environment.MEGABRAIN_DISPATCH_ID, await resolveSessionCaller(environment, dependencies.processAdapter));
-    if (refusal !== undefined) return failed(refusal, 2);
     return safeRouteCommand(args.filter((arg) => arg !== "--operator"), { ...dependencies, environment: { ...environment, MEGABRAIN_OPERATOR: "1" } });
   }
   if (command !== "orchestrate" || verb === undefined || !operatorVerbs.has(verb)) {
     return failed(`--operator is not accepted by megabrain ${[command, verb].filter((part) => part !== undefined && !part.startsWith("-")).join(" ")}; it applies to send and orchestrate ${[...operatorVerbs].join(", ")}`, 2);
   }
-  const refusal = operatorRefusal(environment.MEGABRAIN_DISPATCH_ID, await resolveSessionCaller(environment, dependencies.processAdapter));
-  if (refusal !== undefined) return failed(refusal, 2);
-  return safeRouteCommand(args.filter((arg) => arg !== "--operator"), { ...dependencies, environment: { ...environment, MEGABRAIN_OPERATOR: "1" } });
+  return safeRouteCommand(args.filter((arg) => arg !== "--operator"), { ...dependencies, environment });
 }
 
 function oneLine(message: string): string {

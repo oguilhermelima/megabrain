@@ -1,4 +1,3 @@
-import { resolveCaller } from "./queue-write.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -69,8 +68,7 @@ export async function executeOrchestratePolicy(args: readonly string[], environm
   if (parsed.kind !== "ok") return parsed;
   const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
-  const caller = await resolveCaller(environment, process);
-  const resolved = resolveParentDispatchId(database.value, parsed.value.dispatchId, caller);
+  const resolved = resolveParentDispatchId(database.value, parsed.value.dispatchId);
   if (resolved.kind !== "ok") return resolved;
   const stored = getDispatch(database.value, resolved.value);
   if (stored.kind !== "ok") return stored;

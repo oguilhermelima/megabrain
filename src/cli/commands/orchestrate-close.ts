@@ -85,7 +85,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
   const database = readOnlyStateDatabase(environment);
   if (database.kind !== "ok") return failed(database.error, database.exitCode);
   const current = await resolveCaller(environment, process);
-  const resolved = resolveParentDispatchId(database.value, parsed.value.dispatchId, current);
+  const resolved = resolveParentDispatchId(database.value, parsed.value.dispatchId);
   if (resolved.kind !== "ok") return resolved;
   const dispatchId = resolved.value;
   const metaResult = getDispatch(database.value, dispatchId);
@@ -184,7 +184,7 @@ export async function executeOrchestrateClose(args: readonly string[], environme
     updatedAt: now,
     terminalState: "released",
     terminalReason: null,
-    ...(current.operator === true ? { closedBy: "operator" } : {}),
+    closedBy: current.id || current.terminalId || "caller",
   };
   try {
     const updated = await callStateOwner(resolveStateDirectory(environment), {

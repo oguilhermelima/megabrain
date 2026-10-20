@@ -126,7 +126,7 @@ export async function executeOrchestrateTranscript(args: readonly string[], envi
   }
   const dispatchId = options.value.id;
   if (dispatchId === undefined) return failed(usageText("orchestrate-transcript"), 2);
-  const resolved = await parentMeta(dispatchId, environment, process, true);
+  const resolved = await parentMeta(dispatchId, environment, true);
   if (resolved.kind !== "ok") return resolved;
   const { meta, dispatchId: resolvedId } = resolved.value;
   const agent = stringValue(meta.agent) || "unknown";

@@ -124,7 +124,7 @@ export const statusSchema = z.looseObject({
   })).optional(),
 })
 
-// `megabrain orchestrate transcript <dispatch> | --session <agent:id> [--since <cursor>] --operator --json`:
+// `megabrain orchestrate transcript <dispatch> | --session <agent:id> [--since <cursor>] --json` (legacy `--operator` is a no-op):
 // the agent's own session log as ordered events. `cursor` is opaque; passing it back as --since
 // returns only newer events. `source` "terminal" means no session log was readable and the events
 // are the pane scrollback as one system event.
@@ -236,7 +236,7 @@ export const slashCommandSchema = z.looseObject({
   argumentHint: z.string().nullable().optional(),
 })
 
-// `megabrain orchestrate queue <dispatch> --operator --json`: messages waiting to reach a chat.
+// `megabrain orchestrate queue <dispatch> --json`: messages waiting to reach a chat. Legacy `--operator` is accepted as a no-op.
 export const queuedMessageSchema = z.looseObject({
   id: z.string(),
   dispatch: z.string(),
