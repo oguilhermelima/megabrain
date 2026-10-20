@@ -75,6 +75,15 @@ describe("terminal mode from every chat state", () => {
     const texts = (await daemon.store.events(ID)).flatMap((line) => line.event === undefined ? [] : [line.event.text]);
     expect(texts).toContain("Interrupted");
   });
+
+  test("a failed terminal open can return to chat without leaving a terminal marker", async () => {
+    const env = sandbox();
+    const daemon = await daemonWith(env, { state: "idle" });
+    await toTerminal(daemon);
+    await daemon.handle({ operation: "mode", id: ID, mode: "chat" });
+    expect((await daemon.store.get(ID))?.terminalSince).toBeUndefined();
+    expect(((await daemon.handle({ operation: "list" }) as Chat[]).find((chat) => chat.id === ID))?.mode).toBe("chat");
+  });
 });
 
 test("chat mode follows the linked tmux pane through the chat list API", async () => {
