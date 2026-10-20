@@ -13,7 +13,6 @@ const transitions = {
     failed: ["failed", "closed"],
     orphaned: ["orphaned", "running", "waiting_for_reply", "done", "exited", "failed", "closed"],
     closed: ["closed"],
-    circuit_broken: ["circuit_broken"],
   },
   process: {
     starting: ["starting", "running", "start-unproven", "failed", "stopping", "stopped", "stop-unproven", "abandoned"],
