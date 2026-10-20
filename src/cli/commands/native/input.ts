@@ -6,45 +6,10 @@ import { selfInvocation } from "../../../core/self-invocation.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { usageText } from "../../../core/usage.js";
 import { SIMULATOR_UDID, simCandidates } from "./index.js";
-import { appium, appiumHttpFailure, appiumResponse, createAppiumSession, appiumInputSessionCapabilities, APPIUM_REQUEST_TIMEOUT_MS } from "./session.js";
 import type { Environment } from "./index.js";
 
-
-async function mjpegFrame(port: number): Promise<Buffer> {
-  const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(2_000) });
-  if (!response.ok || response.body === null) throw new Error(`MJPEG stream returned HTTP ${response.status}`);
-  const reader = response.body.getReader();
-  let bytes = Buffer.alloc(0);
-  try {
-    while (bytes.length < 8_000_000) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      bytes = Buffer.concat([bytes, Buffer.from(chunk.value)]);
-      const start = bytes.indexOf(Buffer.from([0xff, 0xd8]));
-      if (start < 0) continue;
-      const end = bytes.indexOf(Buffer.from([0xff, 0xd9]), start + 2);
-      if (end >= 0) return bytes.subarray(start, end + 2);
-    }
-    throw new Error("MJPEG stream did not contain a complete JPEG frame");
-  } finally {
-    await reader.cancel().catch(() => undefined);
-  }
-}
-
-type RecordEntry = { udid: string; session: string; platform: "iOS" | "tvOS"; pointWidth?: number; pointHeight?: number };
+type RecordEntry = { udid: string; session: string; platform: "iOS" | "tvOS"; pid: number; port: number; streamUrl: string; wsUrl: string; pointWidth?: number; pointHeight?: number };
 type InputStatus = { udid: string; state: "none" | "starting" | "ready" | "failed"; phase: string; startedAt?: string; error?: string; session?: string; port?: number };
-async function windowSize(process: ProcessAdapter, env: Environment, session: string): Promise<{ width: number; height: number } | undefined> {
-  for (const path of ["/window/rect", "/window/size"]) {
-    const result = await request(process, env, session, "GET", path);
-    if (result.kind !== "ok") continue;
-    try {
-      const size = (JSON.parse(result.value) as { value?: { width?: number; height?: number } }).value;
-      if (size && Number.isFinite(size.width) && Number.isFinite(size.height) && size.width! > 0 && size.height! > 0)
-        return { width: size.width!, height: size.height! };
-    } catch { /* try the other W3C/Appium window-size route */ }
-  }
-  return undefined;
-}
 const stateFile = (env: Environment) => join(resolveStateDirectory(env), "native-input-sessions.json");
 const statusFile = (env: Environment, udid: string) => join(resolveStateDirectory(env), "native-input", `${udid}.json`);
 const lockFile = (env: Environment, udid: string) => join(resolveStateDirectory(env), "native-input", `${udid}.lock`);
@@ -55,11 +20,31 @@ function writeStatus(env: Environment, value: InputStatus): void {
   const file = statusFile(env, value.udid); mkdirSync(join(resolveStateDirectory(env), "native-input"), { recursive: true });
   const tmp = `${file}.${globalThis.process.pid}.tmp`; writeFileSync(tmp, `${JSON.stringify(value)}\n`, { mode: 0o600 }); renameSync(tmp, file);
 }
-function option(args: readonly string[], name: string): string | undefined { const index = args.indexOf(name); return index >= 0 ? args[index + 1] : undefined; }
-function decisiveAppiumLine(env: Environment, fallback: string): string {
-  try { const lines = readFileSync(join(resolveStateDirectory(env), "appium.log"), "utf8").trim().split("\n").filter((line) => /error|failed|unable|xcodebuild/i.test(line)); return lines.at(-1) ?? fallback; } catch { return fallback; }
+function records(env: Environment): RecordEntry[] {
+  try { const parsed = JSON.parse(readFileSync(stateFile(env), "utf8")) as { version?: number; sessions?: RecordEntry[] }; return parsed.version === 1 && Array.isArray(parsed.sessions) ? parsed.sessions : []; } catch { return []; }
 }
-async function waitForInput(env: Environment, udid: string, _process: ProcessAdapter, timeoutSeconds: number): Promise<Result<string>> {
+function save(env: Environment, entries: RecordEntry[]): void {
+  const file = stateFile(env); mkdirSync(resolveStateDirectory(env), { recursive: true });
+  const tmp = `${file}.${globalThis.process.pid}.tmp`; writeFileSync(tmp, `${JSON.stringify({ version: 1, sessions: entries }, null, 2)}\n`, { mode: 0o600 }); renameSync(tmp, file);
+}
+function parseHelper(stdout: string, udid: string): Omit<RecordEntry, "platform"> | undefined {
+  try {
+    const value = JSON.parse(stdout) as Partial<RecordEntry> & { device?: string };
+    if (value.device !== udid && value.udid !== udid) return undefined;
+    if (typeof value.pid !== "number" || typeof value.port !== "number" || typeof value.streamUrl !== "string" || typeof value.wsUrl !== "string") return undefined;
+    return { udid, session: String(value.pid), pid: value.pid, port: value.port, streamUrl: value.streamUrl, wsUrl: value.wsUrl };
+  } catch { return undefined; }
+}
+
+export async function endNativeInputSession(_env: Environment, process: ProcessAdapter, udid: string): Promise<Result<void>> {
+  const stopped = await process.run("serve-sim", ["--kill", udid]);
+  return stopped.kind === "ok" ? ok(undefined) : failed(stopped.error);
+}
+async function helperState(process: ProcessAdapter, udid: string) {
+  const result = await process.run("serve-sim", ["--list", udid]);
+  return result.kind === "ok" ? parseHelper(result.value.stdout, udid) : undefined;
+}
+async function waitForInput(env: Environment, udid: string, timeoutSeconds: number): Promise<Result<string>> {
   const deadline = Date.now() + Math.max(1, timeoutSeconds) * 1000;
   while (Date.now() < deadline) {
     const status = readStatus(env, udid);
@@ -69,23 +54,45 @@ async function waitForInput(env: Environment, udid: string, _process: ProcessAda
   }
   return failed(`timed out waiting for native input session ${udid}`);
 }
-function records(env: Environment): RecordEntry[] {
-  try { const parsed = JSON.parse(readFileSync(stateFile(env), "utf8")) as { version?: number; sessions?: RecordEntry[] }; return parsed.version === 1 && Array.isArray(parsed.sessions) ? parsed.sessions : []; } catch { return []; }
+async function frame(url: string): Promise<Buffer> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+  if (!response.ok || response.body === null) throw new Error(`MJPEG stream returned HTTP ${response.status}`);
+  const reader = response.body.getReader(); let bytes = Buffer.alloc(0);
+  try {
+    while (bytes.length < 8_000_000) {
+      const chunk = await reader.read(); if (chunk.done) break;
+      bytes = Buffer.concat([bytes, Buffer.from(chunk.value)]);
+      const start = bytes.indexOf(Buffer.from([0xff, 0xd8]));
+      const end = start < 0 ? -1 : bytes.indexOf(Buffer.from([0xff, 0xd9]), start + 2);
+      if (start >= 0 && end >= 0) return bytes.subarray(start, end + 2);
+    }
+    throw new Error("MJPEG stream did not contain a complete JPEG frame");
+  } finally { await reader.cancel().catch(() => undefined); }
 }
-function save(env: Environment, entries: RecordEntry[]): void {
-  const file = stateFile(env); mkdirSync(resolveStateDirectory(env), { recursive: true });
-  const tmp = `${file}.${globalThis.process.pid}.tmp`; writeFileSync(tmp, `${JSON.stringify({ version: 1, sessions: entries }, null, 2)}\n`, { mode: 0o600 }); renameSync(tmp, file);
+function jpegSize(jpeg: Buffer): { width: number; height: number } | undefined {
+  for (let offset = 2; offset + 9 < jpeg.length;) {
+    if (jpeg[offset] !== 0xff) { offset += 1; continue; }
+    const marker = jpeg[offset + 1]!; const length = jpeg.readUInt16BE(offset + 2);
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) return { height: jpeg.readUInt16BE(offset + 5), width: jpeg.readUInt16BE(offset + 7) };
+    if (length < 2) break; offset += length + 2;
+  }
+  return undefined;
 }
-async function request(process: ProcessAdapter, env: Environment, session: string, method: string, path: string, body?: unknown): Promise<Result<string>> {
-  const args = ["-sS", "-w", "\n%{http_code}", "-X", method, `http://127.0.0.1:${env.MEGABRAIN_APPIUM_PORT ?? "4723"}/session/${session}${path}`, "-H", "Content-Type: application/json"];
-  if (body !== undefined) args.push("-d", JSON.stringify(body));
-  const response = await process.run("curl", args, { timeoutMs: APPIUM_REQUEST_TIMEOUT_MS });
-  if (response.kind !== "ok") return failed(response.error);
-  const parsed = appiumResponse(response.value.stdout);
-  if (parsed === undefined) return failed("Appium response did not include an HTTP status");
-  if (parsed.status < 200 || parsed.status >= 300) return failed(appiumHttpFailure("Appium input failed", parsed));
-  return ok(parsed.body);
+async function sendWs(url: string, type: number, value?: unknown): Promise<void> {
+  const socket = new WebSocket(url); socket.binaryType = "arraybuffer";
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => { socket.close(); reject(new Error("timed out connecting to serve-sim helper")); }, 2_000);
+    socket.addEventListener("open", () => {
+      clearTimeout(timeout);
+      const body = value === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(value));
+      const message = new Uint8Array(body.length + 1); message[0] = type; message.set(body, 1); socket.send(message);
+      setTimeout(() => { socket.close(); resolve(); }, 60);
+    }, { once: true });
+    socket.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("could not connect to serve-sim control socket")); }, { once: true });
+  });
 }
+function startedAt(env: Environment, udid: string) { return readStatus(env, udid)?.startedAt ?? new Date().toISOString(); }
+
 export async function nativeInput(args: readonly string[], env: Environment, process: ProcessAdapter): Promise<Result<string>> {
   if (args.length === 0 || args.includes("--help") || args.includes("-h")) return ok(`${usageText("native-input")}\n${usageText("native-input-stream")}\n${usageText("native-input-rotate")}\nCoordinates use device points; frames report image pixels and pixels per point.\n`);
   const [verb, udid, ...rawRest] = args.filter((arg) => arg !== "--json");
@@ -93,168 +100,105 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
   const durationIndex = rawRest.indexOf("--duration");
   const duration = durationIndex >= 0 ? Number(rawRest[durationIndex + 1]) : 500;
   const rest = durationIndex >= 0 ? rawRest.filter((_, index) => index !== durationIndex && index !== durationIndex + 1) : rawRest;
-  if (!verb || !udid || !SIMULATOR_UDID.test(udid)) return failed("native input requires start|status|stop|tap|swipe|scroll|type|key|button|frame|stream and a simulator UDID", 2);
-  const all = records(env); const old = all.find((entry) => entry.udid === udid);
+  if (!verb || !udid || !SIMULATOR_UDID.test(udid)) return failed("native input requires start|status|stop|tap|swipe|scroll|type|key|button|frame|stream|rotate and a simulator UDID", 2);
+  const all = records(env); let old = all.find((entry) => entry.udid === udid);
   if (verb === "status") {
-    const status = readStatus(env, udid) ?? (old ? { udid, state: "ready" as const, phase: "ready", startedAt: "", session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) } : { udid, state: "none" as const, phase: "idle" });
+    const helper = old ? await helperState(process, udid) : undefined;
+    if (old && !helper) { save(env, all.filter((entry) => entry.udid !== udid)); old = undefined; }
+    const status = readStatus(env, udid) ?? (old ? { udid, state: "ready" as const, phase: "ready", startedAt: "", session: old.session, port: old.port } : { udid, state: "none" as const, phase: "idle" });
     return ok(`${JSON.stringify(status)}\n`);
   }
   if (verb !== "stop" && verb !== "stream") { const { activeRunForDevice } = await import("../maestro.js"); const activeRun = activeRunForDevice(env, udid); if (activeRun) return failed(`simulator ${udid} is being driven by Maestro run ${activeRun}`); }
   if (verb === "stop") {
-    if (old) { await request(process, env, old.session, "DELETE", "").catch(() => undefined); save(env, all.filter((entry) => entry.udid !== udid)); }
-    writeStatus(env, { udid, state: "none", phase: "idle", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString() });
+    await process.run("serve-sim", ["--kill", udid]);
+    save(env, all.filter((entry) => entry.udid !== udid));
+    writeStatus(env, { udid, state: "none", phase: "idle", startedAt: startedAt(env, udid) });
     return ok(`${JSON.stringify({ udid, stopped: true })}\n`);
   }
   if (verb === "start") {
     if (!worker) {
       const prior = readStatus(env, udid);
-      if (old && prior?.state !== "starting") return ok(`${JSON.stringify({ udid, state: "ready", session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) })}\n`);
-      if (prior?.state === "starting") return rest.includes("--wait") ? waitForInput(env, udid, process, Number(option(rest, "--timeout") ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);
-      const directory = join(resolveStateDirectory(env), "native-input"); mkdirSync(directory, { recursive: true });
-      const lock = lockFile(env, udid); let fd: number;
-      try { fd = openSync(lock, "wx", 0o600); }
-      catch { const current = readStatus(env, udid); return current?.state === "starting" ? (rest.includes("--wait") ? waitForInput(env, udid, process, Number(option(rest, "--timeout") ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`)) : failed(`input start for ${udid} is already being claimed`); }
-      closeSync(fd);
-      writeStatus(env, { udid, state: "starting", phase: "validating simulator", startedAt: new Date().toISOString() });
-      const worker = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["native", "input", "start", udid, "--worker"]);
-      const launched = await process.startDetached(worker.command, worker.args, { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env), ...(env.MEGABRAIN_APPIUM_PORT ? { MEGABRAIN_APPIUM_PORT: env.MEGABRAIN_APPIUM_PORT } : {}) } });
-      if (launched.kind !== "ok") { writeStatus(env, { udid, state: "failed", phase: "launching", startedAt: readStatus(env, udid)!.startedAt, error: launched.error }); try { unlinkSync(lock); } catch {} return launched; }
-      return rest.includes("--wait") ? waitForInput(env, udid, process, Number(option(rest, "--timeout") ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);
+      if (old && prior?.state !== "starting") return ok(`${JSON.stringify({ udid, state: "ready", session: old.session, port: old.port })}\n`);
+      if (prior?.state === "starting") return rest.includes("--wait") ? waitForInput(env, udid, Number(rest[rest.indexOf("--timeout") + 1] ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);
+      mkdirSync(join(resolveStateDirectory(env), "native-input"), { recursive: true });
+      try { closeSync(openSync(lockFile(env, udid), "wx", 0o600)); } catch { return failed(`input start for ${udid} is already being claimed`); }
+      writeStatus(env, { udid, state: "starting", phase: "launching serve-sim helper", startedAt: new Date().toISOString() });
+      const child = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["native", "input", "start", udid, "--worker"]);
+      const launched = await process.startDetached(child.command, child.args, { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env) } });
+      if (launched.kind !== "ok") { writeStatus(env, { udid, state: "failed", phase: "launching", startedAt: startedAt(env, udid), error: launched.error }); try { unlinkSync(lockFile(env, udid)); } catch {} return launched; }
+      return rest.includes("--wait") ? waitForInput(env, udid, Number(rest[rest.indexOf("--timeout") + 1] ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);
     }
-    const lock = lockFile(env, udid);
-    const update = (phase: string) => writeStatus(env, { udid, state: "starting", phase, startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString() });
+    const lock = lockFile(env, udid); const update = (phase: string) => writeStatus(env, { udid, state: "starting", phase, startedAt: startedAt(env, udid) });
     try {
-    update("validating simulator");
-    const phones = await simCandidates(process, "phone");
-    const tvs = await simCandidates(process, "tv");
-    const candidate = [...(phones.kind === "ok" ? phones.value : []), ...(tvs.kind === "ok" ? tvs.value : [])].find((d) => d.udid === udid);
-    if (!candidate) throw new Error(`unknown simulator: ${udid}`);
-    if (candidate.state !== "Booted") throw new Error(`simulator ${udid} is not booted (state: ${candidate.state})`);
-    const platform = phones.kind === "ok" && phones.value.some((d) => d.udid === udid) ? "iOS" : "tvOS";
-    if (old) {
-      const live = await request(process, env, old.session, "GET", "");
-      if (live.kind === "ok") {
-        const size = await windowSize(process, env, old.session);
-        const updated = { ...old, ...(size ? { pointWidth: size.width, pointHeight: size.height } : {}) };
-        save(env, [...all.filter((entry) => entry.udid !== udid), updated]);
-        writeStatus(env, { udid, state: "ready", phase: "ready", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString(), session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) });
-        return ok(`${JSON.stringify({ udid, session: old.session, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) })}\n`);
+      update("validating simulator");
+      const [phones, tvs] = await Promise.all([simCandidates(process, "phone"), simCandidates(process, "tv")]);
+      const candidate = [...(phones.kind === "ok" ? phones.value : []), ...(tvs.kind === "ok" ? tvs.value : [])].find((device) => device.udid === udid);
+      if (!candidate) throw new Error(`unknown simulator: ${udid}`);
+      if (candidate.state !== "Booted") throw new Error(`simulator ${udid} is not booted (state: ${candidate.state})`);
+      const platform = phones.kind === "ok" && phones.value.some((device) => device.udid === udid) ? "iOS" : "tvOS";
+      const existing = await helperState(process, udid);
+      let helper = existing;
+      if (!helper) {
+        update("starting serve-sim helper");
+        const launch = await process.run("serve-sim", ["--detach", "--exit-on-simulator-shutdown", "--quiet", udid], { env: { SERVE_SIM_DISABLE_DEVICE_HUB_KEYBOARD: "1" } });
+        if (launch.kind !== "ok") throw new Error(`failed to start serve-sim helper: ${launch.error}`);
+        helper = parseHelper(launch.value.stdout, udid) ?? await helperState(process, udid);
       }
-    }
-    update("launching Appium");
-    if ((await appium(["status"], env, process)).kind !== "ok") { const started = await appium(["start"], env, process); if (started.kind !== "ok") throw new Error(started.error); }
-    const port = Number(env.MEGABRAIN_APPIUM_PORT ?? 4723);
-    update(platform === "tvOS" ? "building tvOS WebDriverAgent" : "building WebDriverAgent");
-    const created = await createAppiumSession(process, { udid, bundleId: platform === "iOS" ? "com.apple.springboard" : "com.apple.TVHomeScreen" }, platform, appiumInputSessionCapabilities(platform, udid), port);
-    if (created.kind !== "ok") throw new Error(created.error);
-    update("connecting to WebDriverAgent");
-    const size = await windowSize(process, env, created.value);
-    save(env, [...all.filter((entry) => entry.udid !== udid), { udid, session: created.value, platform, ...(size ? { pointWidth: size.width, pointHeight: size.height } : {}) }]);
-    writeStatus(env, { udid, state: "ready", phase: "ready", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString(), session: created.value, port });
-    return ok(`${JSON.stringify({ udid, session: created.value, port: Number(env.MEGABRAIN_APPIUM_PORT ?? 4723) })}\n`);
+      if (!helper) throw new Error(`serve-sim did not report a live helper for ${udid}`);
+      const entry: RecordEntry = { ...helper, platform };
+      save(env, [...all.filter((item) => item.udid !== udid), entry]);
+      writeStatus(env, { udid, state: "ready", phase: "ready", startedAt: startedAt(env, udid), session: entry.session, port: entry.port });
+      return ok(`${JSON.stringify({ udid, session: entry.session, port: entry.port })}\n`);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
-      writeStatus(env, { udid, state: "failed", phase: readStatus(env, udid)?.phase ?? "starting", startedAt: readStatus(env, udid)?.startedAt ?? new Date().toISOString(), error: decisiveAppiumLine(env, message) });
+      writeStatus(env, { udid, state: "failed", phase: readStatus(env, udid)?.phase ?? "starting", startedAt: startedAt(env, udid), error: message });
       return failed(message);
     } finally { try { unlinkSync(lock); } catch {} }
   }
-  if (verb === "stream") {
-    if (!old) return failed(`no input session for ${udid}; run native input start ${udid} first`);
-    const port = appiumInputSessionCapabilities(old.platform, udid)["appium:mjpegServerPort"] as number;
-    try {
-      const jpeg = await mjpegFrame(port);
-      const size = old.pointWidth && old.pointHeight ? { width: old.pointWidth, height: old.pointHeight } : await windowSize(process, env, old.session);
-      if (!size) return failed("could not read simulator point dimensions from Appium");
-      let width = 0; let height = 0;
-      for (let offset = 2; offset + 9 < jpeg.length;) {
-        if (jpeg[offset] !== 0xff) { offset += 1; continue; }
-        const marker = jpeg[offset + 1]!; const length = jpeg.readUInt16BE(offset + 2);
-        if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) { height = jpeg.readUInt16BE(offset + 5); width = jpeg.readUInt16BE(offset + 7); break; }
-        if (length < 2) break; offset += length + 2;
-      }
-      if (width <= 0 || height <= 0) return failed("MJPEG frame did not contain image dimensions");
-      return ok(`${JSON.stringify({ streamUrl: `http://127.0.0.1:${port}/`, width, height, scale: width / size.width })}\n`);
-    } catch (cause) { return failed(`could not read simulator MJPEG stream: ${cause instanceof Error ? cause.message : String(cause)}`); }
-  }
+  if (!old) return failed(`no input session for ${udid}; run native input start ${udid} first`);
   const pending = readStatus(env, udid);
   if (pending?.state === "starting") return failed(`input session for ${udid} state starting (phase: ${pending.phase})`);
-  if (!old) return failed(`no input session for ${udid}; run native input start ${udid} first`);
-  if (verb === "rotate") {
-    const orientation = rest[0];
-    if (rest.length !== 1 || (orientation !== "portrait" && orientation !== "landscape")) return failed("usage: megabrain native input rotate <udid> portrait|landscape [--json]", 2);
-    const changed = await request(process, env, old.session, "POST", "/orientation", { orientation: orientation.toUpperCase() });
-    if (changed.kind !== "ok") return changed;
-    const size = await windowSize(process, env, old.session);
-    if (!size) return failed("could not read simulator point dimensions from Appium after rotation");
-    return ok(`${JSON.stringify({ ok: true, orientation, width: size.width, height: size.height })}\n`);
-  }
-  const started = Date.now(); let route = ""; let body: unknown;
-  const nums = rest.slice(0, 6).map(Number);
-  if (verb === "tap" && nums.length === 2) { route = "/execute/sync"; body = { script: "mobile: tap", args: [{ x: nums[0], y: nums[1] }] }; }
-  else if (verb === "swipe" && nums.length === 4 && Number.isFinite(duration) && duration > 0) { route = "/actions"; body = pointerGesture(nums[0]!, nums[1]!, nums[2]!, nums[3]!, duration); }
-  else if (verb === "scroll" && nums.length === 4) { route = "/actions"; body = pointerGesture(nums[0]!, nums[1]!, nums[0]! + nums[2]!, nums[1]! + nums[3]!, 400); }
-  else if (verb === "type" && rest.length) { route = "/wda/keys"; body = { value: [...rest.join(" ")] }; }
-  else if (verb === "key" && rest.length === 1) { const map: Record<string, string> = { return: "\n", delete: "\u0008", tab: "\t", escape: "\u001b", up: "\uF700", down: "\uF701", left: "\uF702", right: "\uF703", space: " " }; if (!map[rest[0]!.toLowerCase()]) return failed(`unknown input key: ${rest[0]}`, 2); route = "/wda/keys"; body = { value: [map[rest[0]!.toLowerCase()]] }; }
-  else if (verb === "button" && rest.length === 1) { const supported = old.platform === "tvOS" ? ["up", "down", "left", "right", "select", "menu", "play-pause", "home"] : ["home", "lock", "volume-up", "volume-down", "siri"]; if (!supported.includes(rest[0]!)) return failed(`unsupported ${old.platform} button: ${rest[0]}`, 2); const appiumName = ({ "volume-up": "volumeUp", "volume-down": "volumeDown", "play-pause": "playPause" } as Record<string, string>)[rest[0]!] ?? rest[0]; route = "/execute/sync"; body = { script: "mobile: pressButton", args: [{ name: appiumName }] }; }
-  else if (verb === "frame") {
-    let image: string; let width: number; let height: number;
+  const started = Date.now();
+  if (verb === "stream" || verb === "frame") {
     try {
-      const port = appiumInputSessionCapabilities(old.platform, udid)["appium:mjpegServerPort"] as number;
-      const jpeg = await mjpegFrame(port);
-      const size = old.pointWidth && old.pointHeight
-        ? { width: old.pointWidth, height: old.pointHeight }
-        : await windowSize(process, env, old.session);
-      if (!size) return failed("could not read simulator point dimensions from Appium");
-      if (size.width <= 0 || size.height <= 0) return failed("Appium returned invalid screenshot dimensions");
-      // WDA's stream is JPEG; the data URL keeps its actual format for the device view.
-      image = `data:image/jpeg;base64,${jpeg.toString("base64")}`;
-      width = 0; height = 0;
-      for (let offset = 2; offset + 9 < jpeg.length;) {
-        if (jpeg[offset] !== 0xff) { offset += 1; continue; }
-        const marker = jpeg[offset + 1]!;
-        const length = jpeg.readUInt16BE(offset + 2);
-        if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
-          height = jpeg.readUInt16BE(offset + 5); width = jpeg.readUInt16BE(offset + 7); break;
-        }
-        if (length < 2) break;
-        offset += length + 2;
-      }
-      if (width <= 0 || height <= 0) throw new Error("MJPEG frame did not contain image dimensions");
-      return ok(`${JSON.stringify({ image, width, height, scale: width / size.width, ms: Date.now() - started })}\n`);
-    } catch (streamError) {
-      const shot = await request(process, env, old.session, "GET", "/screenshot");
-      if (shot.kind !== "ok") return failed(`MJPEG failed (${streamError instanceof Error ? streamError.message : String(streamError)}); Appium screenshot failed (${shot.error})`);
-      let data: string;
-      try { data = (JSON.parse(shot.value) as { value?: string }).value ?? ""; }
-      catch { return failed("Appium screenshot response was not valid JSON"); }
-      const png = Buffer.from(data, "base64");
-      if (png.length < 24 || !png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return failed("Appium screenshot did not contain a valid PNG");
-      const size = old.pointWidth && old.pointHeight ? { width: old.pointWidth, height: old.pointHeight } : await windowSize(process, env, old.session);
-      if (!size) return failed("could not read simulator point dimensions from Appium");
-      const width = png.readUInt32BE(16); const height = png.readUInt32BE(20);
-      return ok(`${JSON.stringify({ image: `data:image/png;base64,${data}`, width, height, scale: width / size.width, ms: Date.now() - started })}\n`);
-    }
+      const jpeg = await frame(old.streamUrl); const size = jpegSize(jpeg);
+      if (!size || size.width <= 0 || size.height <= 0) return failed("MJPEG frame did not contain image dimensions");
+      const pointWidth = old.pointWidth ?? size.width / 3; const pointHeight = old.pointHeight ?? size.height / 3;
+      old = { ...old, pointWidth, pointHeight }; save(env, [...all.filter((item) => item.udid !== udid), old]);
+      if (verb === "stream") return ok(`${JSON.stringify({ streamUrl: old.streamUrl, width: size.width, height: size.height, scale: size.width / pointWidth })}\n`);
+      return ok(`${JSON.stringify({ image: `data:image/jpeg;base64,${jpeg.toString("base64")}`, width: size.width, height: size.height, scale: size.width / pointWidth, ms: Date.now() - started })}\n`);
+    } catch (cause) { return failed(`could not read simulator MJPEG stream: ${cause instanceof Error ? cause.message : String(cause)}`); }
   }
-  else return failed(`invalid native input ${verb} arguments`, 2);
-  const result = await request(process, env, old.session, "POST", route, body); if (result.kind !== "ok") return result;
-  return ok(`${JSON.stringify({ ok: true, ms: Date.now() - started })}\n`);
+  const nums = rest.slice(0, 6).map(Number);
+  try {
+    if (verb === "tap" && nums.length === 2) {
+      const size = old.pointWidth && old.pointHeight ? { width: old.pointWidth, height: old.pointHeight } : { width: 0, height: 0 };
+      if (!size.width) return failed("read a frame before sending point-coordinate input");
+      await sendWs(old.wsUrl, 3, { type: "begin", x: nums[0]! / size.width, y: nums[1]! / size.height });
+      await sendWs(old.wsUrl, 3, { type: "end", x: nums[0]! / size.width, y: nums[1]! / size.height });
+    } else if ((verb === "swipe" || verb === "scroll") && nums.length === 4 && (verb === "scroll" || (Number.isFinite(duration) && duration > 0))) {
+      const size = old.pointWidth && old.pointHeight ? { width: old.pointWidth, height: old.pointHeight } : { width: 0, height: 0 };
+      if (!size.width) return failed("read a frame before sending point-coordinate input");
+      const [x1, y1, x2, y2] = verb === "scroll" ? [nums[0]!, nums[1]!, nums[0]! + nums[2]!, nums[1]! + nums[3]!] : nums;
+      await sendWs(old.wsUrl, 3, { type: "begin", x: x1 / size.width, y: y1 / size.height });
+      await new Promise((resolve) => setTimeout(resolve, verb === "scroll" ? 400 : duration));
+      await sendWs(old.wsUrl, 3, { type: "end", x: x2 / size.width, y: y2 / size.height });
+    } else if (verb === "type" && rest.length) {
+      const result = await process.run("serve-sim", ["type", rest.join(" "), "--device", udid]); if (result.kind !== "ok") return failed(result.error);
+    } else if (verb === "key" && rest.length === 1) {
+      const keyUsage: Record<string, number> = { return: 40, delete: 42, tab: 43, escape: 41, space: 44, up: 82, down: 81, left: 80, right: 79 };
+      const usage = keyUsage[rest[0]!.toLowerCase()]; if (!usage) return failed(`unknown input key: ${rest[0]}`, 2);
+      await sendWs(old.wsUrl, 6, { type: "down", usage }); await sendWs(old.wsUrl, 6, { type: "up", usage });
+    } else if (verb === "button" && rest.length === 1) {
+      const buttons: Record<string, string> = { select: "action", menu: "menu", "play-pause": "play-pause", home: "home", lock: "power", "volume-up": "volume-up", "volume-down": "volume-down", siri: "siri", up: "up", down: "down", left: "left", right: "right" };
+      const button = buttons[rest[0]!]; const supported = old.platform === "tvOS" ? ["up", "down", "left", "right", "select", "menu", "play-pause", "home"] : ["home", "lock", "volume-up", "volume-down", "siri"];
+      if (!supported.includes(rest[0]!)) return failed(`unsupported ${old.platform} button: ${rest[0]}`, 2);
+      await sendWs(old.wsUrl, 4, { button });
+    } else if (verb === "rotate") {
+      const orientation = rest[0]; if (rest.length !== 1 || (orientation !== "portrait" && orientation !== "landscape")) return failed("usage: megabrain native input rotate <udid> portrait|landscape [--json]", 2);
+      await sendWs(old.wsUrl, 7, { orientation: orientation === "portrait" ? "portrait" : "landscape_left" });
+      return ok(`${JSON.stringify({ ok: true, orientation, width: old.pointWidth ?? 0, height: old.pointHeight ?? 0 })}\n`);
+    } else return failed(`invalid native input ${verb} arguments`, 2);
+    return ok(`${JSON.stringify({ ok: true, ms: Date.now() - started })}\n`);
+  } catch (cause) { return failed(`serve-sim input failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
 }
-
-function pointerGesture(x1: number, y1: number, x2: number, y2: number, duration: number): unknown {
-  return { actions: [{ type: "pointer", id: "finger1", parameters: { pointerType: "touch" }, actions: [
-    { type: "pointerMove", duration: 0, x: x1, y: y1 },
-    { type: "pointerDown", button: 0 },
-    { type: "pointerMove", duration, x: x2, y: y2 },
-    { type: "pointerUp", button: 0 },
-  ] }] };
-}
-
-export async function endNativeInputSession(env: Environment, process: ProcessAdapter, udid: string): Promise<Result<void>> {
-  const all = records(env); const entry = all.find((candidate) => candidate.udid === udid);
-  if (!entry) return ok(undefined);
-  const deleted = await request(process, env, entry.session, "DELETE", "");
-  if (deleted.kind !== "ok") return deleted;
-  save(env, all.filter((candidate) => candidate.udid !== udid));
-  return ok(undefined);
-}
-
