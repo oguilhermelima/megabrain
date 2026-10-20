@@ -250,8 +250,8 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const debugOutput = join(artifacts, "debug");
   mkdirSync(debugOutput, { recursive: true });
   const commandArgs = webFlow
-    ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, "--debug-output-dir", debugOutput, flowPath]
-    : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, "--debug-output-dir", debugOutput, flowPath];
+    ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, "--debug-output", debugOutput, "--flatten-debug-output", flowPath]
+    : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, "--debug-output", debugOutput, "--flatten-debug-output", flowPath];
   let current: RunRecord = { runId, flow, worktree, device: device.value, pid: 0, state: "running", startedAt: new Date(startedMs).toISOString() };
   writeRecord(directory, current);
   send({ type: "start", state: "running", runId, flow, device: device.value, artifacts: directory });
