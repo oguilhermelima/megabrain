@@ -9,15 +9,25 @@ fn cli_stream_forwards_each_stdout_line_without_reformatting() {
 }
 
 #[test]
-fn cli_stream_reports_only_the_first_stderr_line_as_a_contract_error() {
+fn cli_stream_reports_the_full_bounded_stderr_as_a_contract_error() {
     assert_eq!(
         first_error_line("first failure\nsecond detail\n"),
-        r#"{"cursor":"","error":"first failure"}"#
+        r#"{"cursor":"","error":"first failure\nsecond detail\n"}"#
     );
     assert_eq!(
         first_error_line("a quote: \" and a newline\n"),
         r#"{"cursor":"","error":"a quote: \" and a newline"}"#
     );
+}
+
+#[test]
+fn cli_stream_bounds_large_stderr_to_the_last_64_kibibytes() {
+    let stderr = format!("{}tail", "x".repeat(70 * 1024));
+    let result = first_error_line(&stderr);
+    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+    let error = parsed["error"].as_str().unwrap();
+    assert!(error.len() <= 64 * 1024);
+    assert!(error.ends_with("tail"));
 }
 
 #[test]

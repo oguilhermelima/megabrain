@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -37,7 +38,7 @@ function sandbox() {
   writeFileSync(join(worktree, "maestro", "home.yml"), "appId: com.example.app\nname: Home\n---\n- launchApp\n");
   const environment: Record<string, string | undefined> = {
     PATH: process.env.PATH, HOME: home, MEGABRAIN_STATE_DIR: join(root, "state"), JAVA_HOME: jdk,
-    MEGABRAIN_MAESTRO_INSTALLER: "unused", FAKE_MAESTRO_ARGS: join(root, "args.txt"),
+    MEGABRAIN_MAESTRO_INSTALLER: "unused", FAKE_MAESTRO_ARGS: join(root, "args.txt"), FAKE_MAESTRO_INVOCATIONS: join(root, "invocations"),
   };
   return { root, home, worktree, environment };
 }
@@ -106,6 +107,51 @@ describe("maestro run", () => {
     expect(failedStep?.index).toBe(2);
     expect(String(failedStep?.error)).toContain('Assertion is false: "General" is visible');
     expect(events.find((event) => event.type === "run")).toMatchObject({ state: "failed", exitCode: 1 });
+  });
+
+  test("preserves non-ASCII flow bytes when invoking Maestro", async () => {
+    const { worktree, environment, root } = sandbox();
+    const flow = join(worktree, ".maestro", "acentos.yaml");
+    const contents = "appId: com.example.app\n---\n- inputText: " + JSON.stringify("ação, café, 東京") + "\n";
+    writeFileSync(flow, contents, "utf8");
+    const result = await executeMaestro(["run", ".maestro/acentos.yaml", "--worktree", worktree, "--device", UDID, "--json"], { ...environment, FAKE_MAESTRO_HASH: "1" }, adapter);
+    expect(result.kind).toBe("ok");
+    expect(readFileSync(join(root, "args.txt"), "utf8")).toContain(join(worktree, ".maestro", "acentos.yaml"));
+    expect(readFileSync(join(root, "echoed-flow.sha256"), "utf8").trim()).toBe(createHash("sha256").update(readFileSync(flow)).digest("hex"));
+  });
+
+  test("rejects decimal percentage points before starting Maestro with source location", async () => {
+    const { worktree, environment, root } = sandbox();
+    writeFileSync(join(worktree, ".maestro", "prefs.yaml"), 'appId: com.example.app\n---\n- tapOn:\n    point: "43%,90.6%"\n');
+    const result = await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", worktree, "--device", UDID, "--json"], environment, adapter);
+    expect(result.kind).toBe("failed");
+    expect(result.kind === "failed" ? result.error : "").toContain("prefs.yaml:4");
+    expect(result.kind === "failed" ? result.error : "").toContain("90.6%");
+    expect(existsSync(join(root, "args.txt"))).toBe(false);
+  });
+
+  test("copies Maestro's run log into artifacts and reports its path", async () => {
+    const { worktree, environment } = sandbox();
+    const result = await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", worktree, "--device", UDID, "--json"], { ...environment, FAKE_MAESTRO_LOG: "diagnostic log" }, adapter);
+    expect(result.kind).toBe("ok");
+    const end = lines(result.kind === "ok" ? result.value : "").find((event) => event.type === "run");
+    expect(typeof end?.maestroLog).toBe("string");
+    expect(readFileSync(String(end?.maestroLog), "utf8")).toBe("diagnostic log");
+  });
+
+  test("retries only an XCUITest driver startup failure and reports its reason", async () => {
+    const { worktree, environment, root } = sandbox();
+    const result = await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", worktree, "--device", UDID, "--json"], { ...environment, FAKE_MAESTRO_DRIVER_FAIL_ONCE: "1" }, adapter);
+    expect(result.kind).toBe("ok");
+    expect(readFileSync(join(root, "invocations"), "utf8").trim().split("\n")).toHaveLength(2);
+    expect(lines(result.kind === "ok" ? result.value : "").find((event) => event.type === "run")).toMatchObject({ reasonCode: "xcuitest_driver_start_failed" });
+  });
+
+  test("surfaces launchApp privacy grant failures in the run event", async () => {
+    const { worktree, environment } = sandbox();
+    const result = await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", worktree, "--device", UDID, "--json"], { ...environment, FAKE_MAESTRO_OUTPUT: "privacy-failed.txt", FAKE_MAESTRO_EXIT: "1" }, adapter);
+    expect(result.kind).toBe("ok");
+    expect(lines(result.kind === "ok" ? result.value : "").find((event) => event.type === "run")).toMatchObject({ reasonCode: "privacy_grant_failed", reason: expect.stringContaining("privacy grant") });
   });
 
   test("refuses a flow that is not in the worktree", async () => {

@@ -4,12 +4,17 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "$1" in
   --version|-v) echo "2.11.0"; exit 0 ;;
 esac
-out=""; prev=""
+out=""; debug=""; flow=""; prev=""
 for arg in "$@"; do
   [ "$prev" = "--test-output-dir" ] && out="$arg"
+  [ "$prev" = "--debug-output-dir" ] && debug="$arg"
+  case "$arg" in *.yaml|*.yml) flow="$arg" ;; esac
   prev="$arg"
 done
 printf '%s\n' "$*" > "${FAKE_MAESTRO_ARGS:-/dev/null}"
+[ -n "${FAKE_MAESTRO_HASH:-}" ] && sha256sum "$flow" | cut -d' ' -f1 > "${FAKE_MAESTRO_HASH_OUTPUT:-$(dirname "${FAKE_MAESTRO_ARGS:-/dev/null}")/echoed-flow.sha256}"
+[ -n "${FAKE_MAESTRO_LOG:-}" ] && { mkdir -p "$debug"; printf '%s' "$FAKE_MAESTRO_LOG" > "$debug/maestro.log"; }
+[ -n "${FAKE_MAESTRO_DRIVER_FAIL_ONCE:-}" ] && { count=0; [ -f "${FAKE_MAESTRO_INVOCATIONS:-/dev/null}" ] && count=$(wc -l < "$FAKE_MAESTRO_INVOCATIONS"); echo "invocation" >> "$FAKE_MAESTRO_INVOCATIONS"; if [ "$count" -eq 0 ]; then echo "Failed to connect to /127.0.0.1:"; exit 1; fi; }
 [ -n "$out" ] && mkdir -p "$out" && cp -R "$dir/artifacts/." "$out/"
 if [ -n "$FAKE_MAESTRO_SLEEP" ]; then sleep "$FAKE_MAESTRO_SLEEP"; fi
 cat "$dir/${FAKE_MAESTRO_OUTPUT:-run-passed.txt}"
