@@ -453,6 +453,19 @@ describe("single state owner", () => {
     }
   });
 
+  test("state owner socket address is stable when callers use different TMPDIR values", () => {
+    const previousTmpdir = process.env.TMPDIR;
+    try {
+      process.env.TMPDIR = "/tmp/megabrain-owner-first-tmpdir";
+      const first = stateOwnerSocket(root);
+      process.env.TMPDIR = "/tmp/megabrain-owner-second-tmpdir";
+      expect(stateOwnerSocket(root)).toBe(first);
+    } finally {
+      if (previousTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpdir;
+    }
+  });
+
   test("one typed mail operation commits its message and outbox together", async () => {
     const seeded = openDatabase({ MEGABRAIN_STATE_DIR: root });
     expect(seeded.kind).toBe("ok");
