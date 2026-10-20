@@ -100,9 +100,8 @@ assert_exit_record() {
   assert_equal "$(jq -r '.processState' <<<"$meta")" exited
   assert_equal "$(jq -r '.terminalState' <<<"$meta")" missing
   assert_equal "$(jq -r '.stage' <<<"$meta")" agent-exit
-  assert_equal "$(jq -r '.reason' <<<"$meta")" 'agent exited without reporting'
-  assert_equal "$(jq -r '.reconcileOutcome' <<<"$meta")" agent-exited
-  assert_equal "$(jq -r '.failureCount' <<<"$meta")" 0
+  assert_equal "$(jq -r '.reason' <<<"$meta")" 'terminal process exited'
+  assert_equal "$(jq -r '.reconcileOutcome' <<<"$meta")" exited
 }
 
 scenario_missing_terminal_records_exit() {
@@ -125,17 +124,16 @@ scenario_missing_terminal_is_idempotent() {
   printf 'repeated terminal death observation is idempotent\n'
 }
 
-scenario_unproven_terminal_stays_unknown() {
+scenario_unknown_terminal_leaves_dispatch_unchanged() {
   host_records_mode=invalid
   create_dispatch unproven superset host
   reconcile unproven >/dev/null
   meta="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show unproven --json | jq -c '.meta')"
   assert_equal "$(jq -r '.state' <<<"$meta")" running
   assert_equal "$(jq -r '.processState' <<<"$meta")" running
-  assert_equal "$(jq -r '.terminalState' <<<"$meta")" retained
-  assert_equal "$(jq -r '.reconcileOutcome' <<<"$meta")" identity-unproven
-  assert_not_equal "$(jq -r '.reason' <<<"$meta")" 'agent exited without reporting'
-  printf 'unproven terminal does not record an exit\n'
+  assert_equal "$(jq -r '.terminalState' <<<"$meta")" owned
+  assert_not_equal "$(jq -r '.reconcileOutcome' <<<"$meta")" identity-unproven
+  printf 'unknown terminal leaves dispatch state unchanged\n'
 }
 
 case "${1:-}" in
@@ -148,7 +146,7 @@ case "${1:-}" in
   missing-superset) scenario_missing_terminal_records_exit missing-superset superset host ;;
   missing-orca) scenario_missing_terminal_records_exit missing-orca orca host ;;
   duplicate) scenario_missing_terminal_is_idempotent ;;
-  unproven) scenario_unproven_terminal_stays_unknown ;;
+  unproven) scenario_unknown_terminal_leaves_dispatch_unchanged ;;
   *)
     printf 'usage: %s {missing-tmux|missing-superset|missing-orca|duplicate|unproven}\n' "$0" >&2
     exit 2

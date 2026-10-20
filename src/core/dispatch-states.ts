@@ -1,8 +1,8 @@
 import { failed, ok, unknown, type Result } from "./result.js";
 
-export const dispatchStates = ["queued", "spawning", "running", "waiting_for_reply", "done", "failed", "orphaned", "closed", "circuit_broken"] as const;
+export const dispatchStates = ["queued", "spawning", "running", "waiting_for_reply", "done", "exited", "failed", "orphaned", "closed"] as const;
 export const processStates = ["starting", "start-unproven", "running", "succeeded", "failed", "stopping", "stopped", "stop-unproven", "abandoned", "exited"] as const;
-export const terminalStates = ["owned", "retained", "missing", "released"] as const;
+export const terminalStates = ["owned", "missing", "released"] as const;
 
 // The dispatch states a coordinator still expects progress from, used to decide which dispatches
 // the turn-end hook's parent-notify scan should look at at all.
@@ -15,15 +15,15 @@ export type TerminalStateValue = typeof terminalStates[number];
 
 const transitionTable: Readonly<Record<DispatchAxis, Readonly<Record<string, readonly string[]>>>> = {
   dispatch: {
-    queued: ["queued", "spawning", "failed", "closed"],
-    spawning: ["spawning", "running", "failed", "closed"],
-    running: ["running", "waiting_for_reply", "done", "failed", "orphaned", "closed"],
-    waiting_for_reply: ["waiting_for_reply", "running", "done", "failed", "orphaned", "closed"],
-    done: ["done", "failed", "orphaned", "closed"],
-    failed: ["failed", "circuit_broken", "closed"],
-    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "failed", "circuit_broken", "closed"],
+    queued: ["queued", "spawning", "exited", "failed", "closed"],
+    spawning: ["spawning", "running", "exited", "failed", "closed"],
+    running: ["running", "waiting_for_reply", "done", "exited", "failed", "orphaned", "closed"],
+    waiting_for_reply: ["waiting_for_reply", "running", "done", "exited", "failed", "orphaned", "closed"],
+    done: ["done", "closed"],
+    exited: ["exited", "closed"],
+    failed: ["failed", "closed"],
+    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "exited", "failed", "closed"],
     closed: ["closed"],
-    circuit_broken: ["circuit_broken"],
   },
   process: {
     starting: ["starting", "running", "start-unproven", "failed", "stopping", "stopped", "stop-unproven", "abandoned"],
@@ -38,10 +38,8 @@ const transitionTable: Readonly<Record<DispatchAxis, Readonly<Record<string, rea
     exited: ["exited", "running", "succeeded"],
   },
   terminal: {
-    owned: ["owned", "missing", "retained", "released"],
-    // A reconciled proof of identity lets a retained terminal be adopted again.
-    retained: ["retained", "owned", "missing", "released"],
-    missing: ["missing", "retained", "released"],
+    owned: ["owned", "missing", "released"],
+    missing: ["missing", "released"],
     released: ["released"],
   },
 } as const;

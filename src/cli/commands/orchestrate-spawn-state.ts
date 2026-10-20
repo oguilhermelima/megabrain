@@ -158,7 +158,6 @@ export async function initialMeta(id: string, options: SpawnOptions, worktree: S
     processState: "starting",
     terminalState: "owned",
     terminalReason: null,
-    failureCount: 0,
     stage: null,
     reason: null,
     reconcileOutcome: null,

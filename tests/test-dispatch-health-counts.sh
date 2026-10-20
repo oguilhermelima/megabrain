@@ -73,7 +73,7 @@ run_doctor() {
   PATH="$wrapper_dir:$PATH" MEGABRAIN_STATE_DIR="$state_dir" "$binary" doctor orchestration --json || true
 }
 
-# Scenario: `doctor orchestration` counts every uncertain/retained/leaked dispatch exactly
+# Scenario: `doctor orchestration` counts every uncertain/leaked dispatch exactly
 # once, dedupes a leaked tmux session shared by two dispatches, and excludes a session that
 # equals its own parent or that this caller is itself running in.
 # Falsification: a miscount, a duplicate leaked session, or counting a dispatch that does not
@@ -96,14 +96,11 @@ printf '%s\n' 'ignored' >"$state_dir/dispatches/archive/ignored/meta.json"
 doctor_output="$(run_doctor)"
 
 assert_equal "$(printf '%s' "$doctor_output" | jq -r '.uncertainDispatches')" 4
-assert_equal "$(printf '%s' "$doctor_output" | jq -r '.retainedTerminals')" 2
 assert_equal "$(printf '%s' "$doctor_output" | jq -r '.leakedDispatchSessions')" 1
 # Reason order is directory-read order, not guaranteed; compare as a sorted set.
 expected_uncertain='[{"dispatchId":"uncertain-abandoned","reason":"process was abandoned without proof","processState":"abandoned","terminalState":"owned"},{"dispatchId":"uncertain-exited","reason":"agent exited without reporting","processState":"exited","terminalState":"owned"},{"dispatchId":"uncertain-start","reason":"process start was not proven","processState":"start-unproven","terminalState":"owned"},{"dispatchId":"uncertain-stop","reason":"process stop was not proven","processState":"stop-unproven","terminalState":"owned"}]'
-expected_retained='[{"dispatchId":"retained-custom","reason":"identity check pending","processState":"running","terminalState":"retained"},{"dispatchId":"retained-default","reason":"terminal identity remains unproven","processState":"running","terminalState":"retained"}]'
 assert_json "$doctor_output" "(.uncertainReasons | sort_by(.dispatchId)) == ($expected_uncertain | sort_by(.dispatchId))"
-assert_json "$doctor_output" "(.retainedReasons | sort_by(.dispatchId)) == ($expected_retained | sort_by(.dispatchId))"
-printf 'health counts: uncertain, retained, and leaked-session counts and reasons match\n'
+printf 'health counts: uncertain and leaked-session counts and reasons match\n'
 
 # Scenario: the tmux session listing is read once per doctor run, not once per dispatch record,
 # so a large dispatch directory does not multiply tmux invocations.

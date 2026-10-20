@@ -1,5 +1,6 @@
 import { failed, ok, type Result } from "./result.js";
 import { checkDispatchTransition } from "./dispatch-states.js";
+import { dispatchStateFromMeta } from "./orchestrate-reconcile.js";
 import { usageText } from "./usage.js";
 
 export type ParentReplyArguments = Readonly<{
@@ -70,7 +71,7 @@ export function parseParentChangeArgs(args: readonly string[]): Result<ParentCha
 export function replyStateError(dispatch: string, state: string, change: boolean): string | undefined {
   const allowed = checkDispatchTransition("dispatch", state, "running").kind === "ok";
   if (allowed) return undefined;
-  if (!change && ["done", "failed", "closed", "circuit_broken"].includes(state)) {
+  if (!change && ["done", "exited", "failed", "closed"].includes(state)) {
     return `dispatch ${dispatch} is settled in state ${state}; open a new dispatch for a reply`;
   }
   return `dispatch ${dispatch} cannot receive a ${change ? "change" : "reply"} in state ${state}`;
@@ -82,8 +83,10 @@ export function replyStateError(dispatch: string, state: string, change: boolean
 // in dispatch-states.ts, so a caller that skips this and passes the raw value into
 // replyStateError gets the generic "cannot receive a reply" refusal instead of the shell's
 // accept-and-resume-to-running behaviour.
-export function normalizeDispatchState(state: string): string {
-  return state === "stalled" || state === "timeout" ? "running" : state;
+export function normalizeDispatchState(state: string, meta: Readonly<Record<string, unknown>> = {}): string {
+  if (dispatchStateFromMeta({ ...meta, state }) === "exited") return "exited";
+  if (state === "stalled" || state === "timeout") return "running";
+  return state;
 }
 
 export function supersedeDelivery(status: string, consumer: string | null, sequences: readonly number[], alreadySuperseded: boolean): SupersedeSummary {

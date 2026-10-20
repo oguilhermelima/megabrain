@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parsePruneArgs, pruneDecision, pruneStates, type PruneOptions } from "../../core/orchestrate-prune.js";
-import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
+import { dispatchStateFromMeta, reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
@@ -9,7 +9,7 @@ import { getHost } from "../../hosts/index.js";
 import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { hostCloseReason, isHostTerminalAbsent } from "../../core/orchestrate-close.js";
 import { usageText } from "../../core/usage.js";
-import { readOnlyStateDatabase, listDispatches, listMessages, transcriptPath } from "../../adapters/state-db.js";
+import { readOnlyStateDatabase, listDispatches, transcriptPath } from "../../adapters/state-db.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
 import { callStateOwner } from "../../db/state-owner.js";
@@ -23,6 +23,9 @@ function text(value: unknown): string { return typeof value === "string" ? value
 
 function normalizeMetadata(meta: RecordValue): RecordValue {
   const state = text(meta.state);
+  if (dispatchStateFromMeta(meta) === "exited") {
+    return { ...meta, state: "exited", processState: "exited", terminalState: "missing" };
+  }
   if (state !== "stalled" && state !== "timeout") return meta;
   return {
     ...meta,
@@ -46,31 +49,22 @@ async function terminalStatus(meta: RecordValue, process: ProcessAdapter): Promi
   return panes.value.includes(text(meta.tmuxPane)) ? "proven" : "missing";
 }
 
-function childIdentityProof(handle: DatabaseHandle, dispatchId: string): boolean {
-  const messages = listMessages(handle, dispatchId);
-  return messages.kind === "ok" && messages.value.some((message) => message.from === "child");
-}
-
-async function reconcileEntry(root: string, handle: DatabaseHandle, entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
+async function reconcileEntry(root: string, entry: Entry, process: ProcessAdapter): Promise<RecordValue> {
   const state = text(entry.meta.state);
   const processState = text(entry.meta.processState);
-  const terminalState = text(entry.meta.terminalState);
+  if (processState === "exited") return { ...entry.meta, state: "exited", terminalState: "missing" };
   const needsReconcile = ["spawning", "running", "waiting_for_reply"].includes(state) &&
-    (terminalState === "retained" || ["start-unproven", "stop-unproven", "abandoned", "exited"].includes(processState));
+    ["start-unproven", "stop-unproven", "abandoned", "exited"].includes(processState);
   if (!needsReconcile) return entry.meta;
   const terminal = await terminalStatus(entry.meta, process);
-  const proven = terminal === "proven" || childIdentityProof(handle, entry.id);
-  let parent: "alive" | "gone" | "unknown" = "unknown";
-  const parentSession = text(entry.meta.parentTmuxSession);
-  if (proven && parentSession !== "") parent = (await getTmux().sessionExists(parentSession, process)).kind === "ok" ? "alive" : "gone";
-  const decision = reconcileDecision(entry.meta, proven ? "proven" : terminal, parent);
-  if (decision.outcome === "unchanged") return entry.meta;
-  const next: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  await callStateOwner(root, { operation: "dispatch-patch", dispatchId: entry.id, patch: next });
-  if (next.state !== entry.meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
-    await setTmuxChatPane(next.tmuxPane, text(next.agent) || "unknown", text(next.chatName) || text(next.branch) || entry.id, text(next.state) || "idle", process);
+  const decision = reconcileDecision(entry.meta, terminal);
+  if (decision.outcome === "unchanged" || Object.keys(decision.updates).length === 0) return entry.meta;
+  const persisted: RecordValue = { ...entry.meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
+  await callStateOwner(root, { operation: "dispatch-patch", dispatchId: entry.id, patch: persisted });
+  if ((decision.outcome === "done" || decision.outcome === "exited") && persisted.runtime === "tmux" && typeof persisted.tmuxPane === "string") {
+    await setTmuxChatPane(persisted.tmuxPane, text(persisted.agent) || "unknown", text(persisted.chatName) || text(persisted.branch) || entry.id, decision.outcome, process);
   }
-  return next;
+  return decision.outcome === "exited" ? { ...persisted, state: "exited" } : persisted;
 }
 
 function hostTerminalArgs(meta: RecordValue): { readonly command: string; readonly args: readonly string[]; readonly host: string } | undefined {
@@ -87,7 +81,6 @@ const blocked = (reason: string): ReleaseResult => ({ kind: "blocked", reason })
 async function releaseBeforePrune(meta: RecordValue, environment: Environment, process: ProcessAdapter, dryRun: boolean): Promise<ReleaseResult> {
   const terminalState = text(meta.terminalState);
   if (terminalState === "released" || terminalState === "missing") return gone;
-  if (terminalState === "retained") return blocked(text(meta.terminalReason) || "terminal identity is unproven");
   if (text(meta.runtime) === "tmux") {
     const session = await getTmux().sessionExists(text(meta.tmuxSession), process);
     if (session.kind === "ok" && !session.value) return gone;
@@ -147,7 +140,8 @@ async function entries(root: string, handle: DatabaseHandle): Promise<Entry[]> {
   if (records.kind !== "ok") return [];
   return Promise.all(records.value.map(async (record) => {
     const meta = normalizeMetadata(record as RecordValue);
-    if (meta !== record) {
+    const legacyTerminal = meta.state === "exited" && dispatchStateFromMeta(record) === "exited";
+    if (meta !== record && !legacyTerminal) {
       await callStateOwner(root, { operation: "dispatch-patch", dispatchId: record.dispatchId, patch: meta });
     }
     return { id: record.dispatchId, meta };
@@ -167,16 +161,12 @@ export async function executeOrchestratePrune(args: readonly string[], environme
   catch (cause: unknown) { return failed(`state owner could not normalize prune candidates: ${cause instanceof Error ? cause.message : String(cause)}`); }
   for (const entry of candidates) {
     let meta = entry.meta;
-    try { meta = await reconcileEntry(root, handle, entry, process); } catch (cause: unknown) { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: `could not reconcile dispatch: ${cause instanceof Error ? cause.message : String(cause)}` }); continue; }
+    try { meta = await reconcileEntry(root, entry, process); } catch (cause: unknown) { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: `could not reconcile dispatch: ${cause instanceof Error ? cause.message : String(cause)}` }); continue; }
     const decision = pruneDecision(meta, options, now);
     if (!decision.eligible) { skipped.push({ dispatchId: entry.id, state: typeof entry.meta.state === "string" ? entry.meta.state : null, reason: decision.reason ?? "not eligible" }); continue; }
     const released = await releaseBeforePrune(meta, environment, process, options.dryRun);
     if (released.kind === "unproven") {
       terminalNotProvenGone.push({ dispatchId: entry.id, reason: released.reason });
-      if (!options.dryRun) {
-        try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: entry.id, patch: { terminalState: "retained", terminalReason: released.reason, updatedAt: new Date().toISOString() } }); }
-        catch (cause: unknown) { return failed(`state owner could not retain dispatch ${entry.id}: ${cause instanceof Error ? cause.message : String(cause)}`); }
-      }
       continue;
     }
     if (released.kind === "blocked") { skipped.push({ dispatchId: entry.id, state: text(meta.state) || null, reason: released.reason }); continue; }

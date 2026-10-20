@@ -2,7 +2,7 @@ import { failed, ok, type Result } from "./result.js";
 import { usageText } from "./usage.js";
 
 export type CloseArguments = Readonly<{ dispatchId: string; forceRelease: boolean; json: boolean }>;
-export type CloseDecision = "close" | "duplicate" | "retained" | "caller";
+export type CloseDecision = "close" | "duplicate";
 
 export function isHostTerminalAbsent(value: string): boolean {
   const detail = value.replaceAll("_", " ");
@@ -46,11 +46,10 @@ export function parseCloseArgs(args: readonly string[]): Result<CloseArguments> 
   return ok({ dispatchId, forceRelease, json });
 }
 
-export function closeDecision(meta: Readonly<Record<string, unknown>>, caller: Readonly<{ host?: string; id?: string; tmuxPane?: string; tmuxSession?: string }>, forceRelease: boolean): Result<CloseDecision> {
+export function closeDecision(meta: Readonly<Record<string, unknown>>, caller: Readonly<{ host?: string; id?: string; tmuxPane?: string; tmuxSession?: string }>, _forceRelease: boolean): Result<CloseDecision> {
   if (meta.runtime === "tmux" && caller.tmuxPane !== undefined && caller.tmuxPane !== "" && meta.tmuxPane === caller.tmuxPane && (caller.tmuxSession === undefined || caller.tmuxSession === "" || meta.tmuxSession === caller.tmuxSession)) {
     return failed(`refusing to close dispatch ${String(meta.dispatchId ?? "")}: target tmux pane ${caller.tmuxPane} is the calling pane`);
   }
-  if (meta.terminalState === "retained" && !forceRelease) return ok("retained");
   if (meta.state === "closed") return ok("duplicate");
   return ok("close");
 }

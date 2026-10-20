@@ -104,7 +104,7 @@
 - Run megabrain orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--operator] [--json]. — recommended when you need to change context policies on an active dispatch.
 - Run megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]. — recommended when you need to find active, archived, orphaned, or uncertain dispatches.
 - Run megabrain orchestrate graph (--chat <chat id> | --session <agent:id>) [--follow] --json. — recommended when you need the coordinator and all lanes in its orchestration tree.
-- Run megabrain orchestrate adopt <dispatch-id-or-suffix> [--force] [--json]. — recommended when you need to take ownership of an existing dispatch in this coordinator session.
+- Run megabrain orchestrate adopt <dispatch-id-or-suffix> [--json]. — deprecated no-op for one release; dispatches now follow their terminal.
 - Run megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]. — recommended when you need to archive or delete old terminal dispatch records.
 - Run megabrain orchestrate reconcile <dispatch-id-or-suffix> [--all] [--operator] [--json]. — recommended when you need to refresh a dispatch record from its terminal without starting it again.
 - Run megabrain orchestrate liveness <dispatch-id-or-suffix> [--operator] [--json]. — recommended when you need to check the child terminal execution state without waiting for a message.

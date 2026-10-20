@@ -23,40 +23,20 @@ describe("orchestrate stop", () => {
 describe("orchestrate reconcile", () => {
   const meta = (values: Record<string, unknown> = {}) => ({ state: "running", processState: "running", terminalState: "owned", failureCount: 0, ...values });
 
-  test("adopts a proven live terminal and keeps unknown parent unclassified", () => {
-    expect(reconcileDecision(meta(), "proven", "alive")).toEqual({ outcome: "adopted", updates: { stage: "terminal-proven", reason: "identity-proven" } });
-    expect(reconcileDecision(meta(), "proven", "unknown").outcome).toBe("parent-unproven");
+  test("does not create dispatch state from terminal identity proofs", () => {
+    expect(reconcileDecision(meta(), "proven", "alive")).toEqual({ outcome: "running", updates: {} });
   });
 
-  test("marks a missing running terminal as exited and does not use time", () => {
-    expect(reconcileDecision(meta(), "missing", "unknown")).toEqual({ outcome: "agent-exited", updates: { processState: "exited", terminalState: "missing", stage: "agent-exit", reason: "agent exited without reporting" } });
+  test("derives exited state from a dead terminal", () => {
+    expect(reconcileDecision(meta(), "missing", "unknown")).toEqual({ outcome: "exited", updates: { processState: "exited", terminalState: "missing", stage: "agent-exit", reason: "terminal process exited" } });
   });
 
-  test("increments missing terminal failures and preserves settled process states", () => {
-    expect(reconcileDecision(meta({ processState: "succeeded" }), "missing", "unknown").updates.processState).toBeUndefined();
-    const first = reconcileDecision(meta({ processState: "stopped", failureCount: 2 }), "missing", "unknown");
-    expect(first.updates.state).toBe("failed");
-    expect(reconcileDecision({ ...meta({ processState: "stopped", terminalState: "missing", failureCount: 3 }), state: first.updates.state }, "missing", "unknown").updates.state).toBe("circuit_broken");
+  test("keeps terminal exit final and honors a child done report", () => {
+    expect(reconcileDecision({ ...meta(), childDone: true }, "missing")).toEqual({ outcome: "done", updates: { state: "done", processState: "succeeded", terminalState: "missing", stage: "agent-exit", reason: "child reported done" } });
+    expect(reconcileDecision({ ...meta(), state: "exited", processState: "exited" }, "missing")).toEqual({ outcome: "unchanged", updates: {} });
   });
 
-  test("retains an unknown terminal when the parent is alive", () => {
-    expect(reconcileDecision(meta(), "unknown", "alive")).toEqual({
-      outcome: "identity-unproven",
-      updates: { terminalState: "retained", stage: "identity-unproven", reason: "identity-unproven" },
-    });
-  });
-
-  test("retains an unknown terminal when the parent is unknown", () => {
-    expect(reconcileDecision(meta(), "unknown", "unknown")).toEqual({
-      outcome: "identity-unproven",
-      updates: { terminalState: "retained", stage: "identity-unproven", reason: "identity-unproven" },
-    });
-  });
-
-  test("marks a starting process as start-unproven for an unknown terminal", () => {
-    expect(reconcileDecision(meta({ processState: "starting" }), "unknown", "alive")).toEqual({
-      outcome: "identity-unproven",
-      updates: { processState: "start-unproven", terminalState: "retained", stage: "identity-unproven", reason: "identity-unproven" },
-    });
+  test("does not mutate state while the terminal is still alive", () => {
+    expect(reconcileDecision(meta(), "proven", "alive")).toEqual({ outcome: "running", updates: {} });
   });
 });

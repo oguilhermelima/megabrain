@@ -5,14 +5,14 @@ import { checkDispatchTransition, dispatchStates, processStates, terminalStates,
 
 const transitions = {
   dispatch: {
-    spawning: ["spawning", "running", "failed", "closed"],
-    running: ["running", "waiting_for_reply", "done", "failed", "orphaned", "closed"],
-    waiting_for_reply: ["waiting_for_reply", "running", "done", "failed", "orphaned", "closed"],
-    done: ["done", "failed", "orphaned", "closed"],
-    failed: ["failed", "circuit_broken", "closed"],
-    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "failed", "circuit_broken", "closed"],
+    spawning: ["spawning", "running", "exited", "failed", "closed"],
+    running: ["running", "waiting_for_reply", "done", "exited", "failed", "orphaned", "closed"],
+    waiting_for_reply: ["waiting_for_reply", "running", "done", "exited", "failed", "orphaned", "closed"],
+    done: ["done", "closed"],
+    exited: ["exited", "closed"],
+    failed: ["failed", "closed"],
+    orphaned: ["orphaned", "running", "waiting_for_reply", "done", "exited", "failed", "closed"],
     closed: ["closed"],
-    circuit_broken: ["circuit_broken"],
   },
   process: {
     starting: ["starting", "running", "start-unproven", "failed", "stopping", "stopped", "stop-unproven", "abandoned"],
@@ -27,9 +27,8 @@ const transitions = {
     exited: ["exited", "running", "succeeded"],
   },
   terminal: {
-    owned: ["owned", "missing", "retained", "released"],
-    retained: ["retained", "owned", "missing", "released"],
-    missing: ["missing", "retained", "released"],
+    owned: ["owned", "missing", "released"],
+    missing: ["missing", "released"],
     released: ["released"],
   },
 } as const satisfies Record<DispatchAxis, Readonly<Record<string, readonly string[]>>>;
@@ -53,10 +52,18 @@ describe("dispatch transition table", () => {
 });
 
 describe("dispatch state consumers", () => {
-  test("recognises circuit_broken as a dispatch state", () => {
+  test("reads legacy circuit-broken rows as exited", () => {
     const result = parseDispatchRecord({ state: "circuit_broken" });
     expect(result.kind).toBe("ok");
-    if (result.kind === "ok") expect(result.value.state).toBe("circuit_broken");
+    if (result.kind === "ok") expect(result.value.state).toBe("exited");
+  });
+
+  test("reads terminal exit as exited without a dispatch-state schema write", () => {
+    const raw = { state: "running", processState: "exited", terminalState: "missing", stage: "agent-exit" };
+    const result = parseDispatchRecord(raw);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.value.raw.state).toBe("exited");
+    expect(raw.state).toBe("running");
   });
 
   test("keeps every orphaned recovery transition legal", () => {
@@ -65,16 +72,13 @@ describe("dispatch state consumers", () => {
     expect(checkDispatchTransition("dispatch", "orphaned", "done").kind).toBe("ok");
   });
 
-  test("keeps a waiting dispatch waiting when reconcile proves it alive", () => {
+  test("does not change dispatch state while its terminal is alive", () => {
     const result = reconcileDecision({ state: "waiting_for_reply", processState: "running", terminalState: "owned" }, "proven", "alive");
-    expect(result).toEqual({ outcome: "adopted", updates: { stage: "terminal-proven", reason: "identity-proven" } });
-    // Reply depends on the transition table retaining this legal state change.
-    expect(checkDispatchTransition("dispatch", "waiting_for_reply", "running").kind).toBe("ok");
+    expect(result).toEqual({ outcome: "running", updates: {} });
   });
 
-  test("allows retained-to-owned adoption after terminal identity is proven", () => {
-    expect(checkDispatchTransition("terminal", "retained", "owned").kind).toBe("ok");
-    const result = reconcileDecision({ state: "running", processState: "running", terminalState: "retained" }, "proven", "alive");
-    expect(result).toEqual({ outcome: "adopted", updates: { terminalState: "owned", stage: "terminal-proven", reason: "identity-proven" } });
+  test("makes exited state final", () => {
+    expect(checkDispatchTransition("dispatch", "exited", "running").kind).toBe("failed");
+    expect(checkDispatchTransition("dispatch", "exited", "closed").kind).toBe("ok");
   });
 });

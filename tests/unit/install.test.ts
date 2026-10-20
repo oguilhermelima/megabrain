@@ -91,7 +91,7 @@ describe("executeInstall", () => {
     const result = await executeInstall(["orchestration", "--yes"], { HOME: home, MEGABRAIN_STATE_DIR: home }, process);
     expect(result.kind).toBe("ok");
     if (result.kind !== "ok") throw new Error("expected success");
-    expect(result.value).toBe('orchestration: ok (usable runtimes: orca; other runtimes are optional; uncertain dispatches: 0 (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: 0; leaked dispatch sessions: 0; prunable dispatches: 0)\n');
+    expect(result.value).toBe('orchestration: ok (usable runtimes: orca; other runtimes are optional; uncertain dispatches: 0 (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); leaked dispatch sessions: 0; prunable dispatches: 0)\n');
   });
 
   test("install repairs, backs up, and migrates a legacy megabrain-turn-end.sh entry from another checkout", async () => {

@@ -573,7 +573,7 @@ sleeps, and the answer has to survive all of it. Every message is written to an 
 megabrain orchestrate watch <id> --json          # blocks until there is mail
 megabrain orchestrate list --mine --json         # show dispatches owned by this session
 megabrain orchestrate list --all --json          # include foreign and unknown owners
-megabrain orchestrate adopt <id> [--force] --json # take ownership of a dispatch
+megabrain orchestrate adopt <id> --json # deprecated no-op; dispatches follow their terminal
 megabrain orchestrate reply <dispatch-id-or-suffix> --text "..."   # answer a question
 megabrain send --session codex:<thread-id> --text "..." --operator # message any available agent session
 megabrain session own claude:<session-id> [--json]   # resume a session that runs elsewhere under megabrain's tmux server (-L megabrain-app); send --operator then delivers there

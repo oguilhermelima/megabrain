@@ -110,7 +110,7 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   // (megabrain_dispatch_meta_normalize), before the reply's own state check ever runs — so it,
   // and the "state !== done" guard below that decides whether to resume the dispatch, both see
   // the normalized value, never the raw legacy one.
-  const state = normalizeDispatchState(typeof parent.value.state === "string" ? parent.value.state : "");
+  const state = normalizeDispatchState(typeof parent.value.state === "string" ? parent.value.state : "", parent.value);
   const stateError = replyStateError(dispatchId, state, false); if (stateError !== undefined) return failed(stateError);
   const caller = await resolveCaller(environment, processAdapter);
   const sessionId = caller.id || caller.terminalId || "";
@@ -151,7 +151,7 @@ export async function executeOrchestrateChange(args: readonly string[], environm
   let dispatchId = parsed.value.dispatchId;
   const parent = await requireParent(database.value, dispatchId, environment, processAdapter); if (parent.kind !== "ok") return parent;
   dispatchId = parent.value.dispatchId;
-  const state = normalizeDispatchState(typeof parent.value.state === "string" ? parent.value.state : "");
+  const state = normalizeDispatchState(typeof parent.value.state === "string" ? parent.value.state : "", parent.value);
   const stateError = replyStateError(dispatchId, state, true); if (stateError !== undefined) return failed(stateError);
   const caller = await resolveCaller(environment, processAdapter);
   const session = caller.id || caller.terminalId || "";

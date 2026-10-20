@@ -18,7 +18,6 @@ import { executeContext } from "../../src/cli/commands/context.js";
 import { executeSpawn, type SpawnDependencies, type SpawnWorktree } from "../../src/cli/commands/orchestrate-spawn.js";
 import { executeOrchestrateClose } from "../../src/cli/commands/orchestrate-close.js";
 import { executeOrchestrateLiveness, executeOrchestrateRead } from "../../src/cli/commands/orchestrate-read-liveness.js";
-import { executeOrchestrateAdopt } from "../../src/cli/commands/orchestrate-adopt.js";
 import { executeOrchestrateReply } from "../../src/cli/commands/orchestrate-reply.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "../../src/cli/commands/orchestrate-stop-reconcile.js";
 import { executeOrchestrateAck, executeOrchestrateWatch } from "../../src/cli/commands/orchestrate-parent.js";
@@ -404,16 +403,6 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     expect(result.kind === "ok" ? JSON.parse(result.value).dispatchId : "").toBe(dispatchId);
   });
 
-  test("adopt resolves a unique dispatch suffix", async () => {
-    const root = await tempStateDir();
-    const dispatchId = "dispatch-20261011-abcdef01";
-    await writeDispatch(root, dispatchId, baseMeta({ parentHost: "superset", parentSessionId: "old-parent" }));
-    const environment = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_SESSION_HOST: "superset", MEGABRAIN_SESSION_ID: "claude:test-uuid" };
-    const result = await executeOrchestrateAdopt(["abcdef01", "--json"], environment, fakeProcess());
-    expect(result.kind).toBe("ok");
-    expect(result.kind === "ok" ? JSON.parse(result.value).dispatchId : "").toBe(dispatchId);
-  });
-
   test("watch", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta());
@@ -487,25 +476,23 @@ describe("a legacy record owned by a terminal handle is still accepted from that
   });
 });
 
-describe("a different session is refused", () => {
-  test("close refuses a caller with a different terminal and a different agent session", async () => {
+describe("caller identity does not authorize dispatch close", () => {
+  test("close accepts a caller with a different terminal and a different agent session", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta({ parentHost: "orca", parentSessionId: "term-legacy" }));
     const process = orcaHostProcess("child-term-1");
     const environment = { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "term-other" };
     const result = await executeOrchestrateClose(["dispatch-1", "--json"], environment, process);
-    expect(result.kind).toBe("failed");
-    expect(result.kind === "failed" ? result.error : "").toContain("is owned by");
+    expect(isOwnershipRefusal(result)).toBe(false);
   });
 
-  test("a plain-shell caller is refused as a different owner, never as an unknown one", async () => {
+  test("a plain-shell caller is not refused for a different owner", async () => {
     const root = await tempStateDir();
     await writeDispatch(root, "dispatch-1", baseMeta());
     // With no agent or terminal handle, use the tty when the process tree has no stable ancestor.
     const process = fakeProcess((command, args) => command === "ps" && args.includes("tty=") ? ok({ stdout: "ttys042\n", stderr: "", exitCode: 0 }) : ok({ stdout: "{}", stderr: "", exitCode: 0 }));
     const result = await executeOrchestrateClose(["dispatch-1", "--json"], { MEGABRAIN_STATE_DIR: root }, process);
-    expect(result.kind).toBe("failed");
-    expect(result.kind === "failed" ? result.error : "").toContain("is owned by orca/claude:test-uuid, not local/shell:ttys042");
+    expect(isOwnershipRefusal(result)).toBe(false);
   });
 });
 

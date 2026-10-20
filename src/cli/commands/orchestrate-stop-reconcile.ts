@@ -1,11 +1,11 @@
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseStopArgs, stopDecision, stopOutput } from "../../core/orchestrate-stop.js";
-import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
+import { dispatchStateFromMeta, reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
-import { parentStatus, terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
+import { terminalStatus, type RecordValue, type TerminalStatus } from "./orchestrate-terminal.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
 import { interruptKey } from "../../agents/index.js";
 import { getTmux } from "../../hosts/tmux.js";
@@ -22,13 +22,14 @@ const value = (input: unknown): string => typeof input === "string" ? input : ""
 
 function normalize(meta: RecordValue): RecordValue {
   const storedState = value(meta.state);
+  const legacyExit = dispatchStateFromMeta(meta) === "exited";
   const state = storedState === "stalled" || storedState === "timeout" ? "running" : storedState === "" ? "running" : storedState;
   return {
     ...meta,
-    processState: value(meta.processState) || (state === "closed" ? "stopped" : state === "done" ? "succeeded" : state === "failed" ? "failed" : state === "spawning" ? "starting" : "running"),
-    terminalState: value(meta.terminalState) || "owned",
+    state: legacyExit ? "exited" : state,
+    processState: legacyExit ? "exited" : value(meta.processState) || (state === "closed" ? "stopped" : state === "done" ? "succeeded" : state === "failed" ? "failed" : state === "spawning" ? "starting" : "running"),
+    terminalState: legacyExit ? "missing" : value(meta.terminalState) || "owned",
     terminalReason: meta.terminalReason ?? null,
-    failureCount: typeof meta.failureCount === "number" ? meta.failureCount : 0,
     stage: meta.stage ?? null,
     reason: meta.reason ?? null,
     reconcileOutcome: meta.reconcileOutcome ?? null,
@@ -69,10 +70,6 @@ function childMessages(database: DatabaseHandle, dispatch: string): RecordValue[
   return messages.kind === "ok" ? messages.value as RecordValue[] : [];
 }
 
-function hasChildIdentityProof(messages: readonly RecordValue[]): boolean {
-  return messages.some((message) => message.from === "child" && (message.type === "received" || message.type === "ask" || message.type === "done"));
-}
-
 async function syncPromptReceipt(root: string, dispatch: string, meta: RecordValue, messages: readonly RecordValue[]): Promise<Result<RecordValue>> {
   if (!messages.some((message) => message.from === "child" && message.type === "received")) return ok(meta);
   const delivery = value(meta.promptDelivery) || "pending";
@@ -92,7 +89,8 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   if (loaded.kind !== "ok") return loaded;
   if (loaded.value === undefined) return failed(`dispatch not found: ${dispatch}`);
   let meta = normalize(loaded.value as RecordValue);
-  if (JSON.stringify(meta) !== JSON.stringify(loaded.value)) {
+  const legacyTerminal = meta.state === "exited" && dispatchStateFromMeta(loaded.value) === "exited";
+  if (!legacyTerminal && JSON.stringify(meta) !== JSON.stringify(loaded.value)) {
     try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: meta }); }
     catch (cause: unknown) { return failed(`state owner could not normalize dispatch: ${cause instanceof Error ? cause.message : String(cause)}`); }
   }
@@ -101,20 +99,20 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   if (synced.kind !== "ok") return synced;
   meta = synced.value;
   const state = value(meta.state);
-  if (state === "closed" || state === "circuit_broken") return ok({ ...meta, reconcileResult: "unchanged" });
+  if (state === "closed" || state === "done" || state === "exited" || state === "failed") return ok({ ...meta, reconcileResult: "unchanged" });
   const terminal = await terminalStatus(meta, process);
-  const proven = terminal === "proven" || hasChildIdentityProof(messages);
-  let parent: "alive" | "gone" | "unknown" = "unknown";
-  if (proven) parent = await parentStatus(meta, process);
-  const decision = reconcileDecision(meta, proven ? "proven" : terminal, parent);
-  const next = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
-  if (decision.outcome !== "unchanged") {
-    try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: next }); }
+  const decision = reconcileDecision({ ...meta, childDone: messages.some((message) => message.from === "child" && message.type === "done") }, terminal);
+  const persisted = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
+  if (decision.outcome !== "unchanged" && Object.keys(decision.updates).length > 0) {
+    try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: persisted }); }
     catch (cause: unknown) { return failed(`state owner could not reconcile dispatch: ${cause instanceof Error ? cause.message : String(cause)}`); }
-    if (next.state !== meta.state && next.runtime === "tmux" && typeof next.tmuxPane === "string") {
-      await setTmuxChatPane(next.tmuxPane, value(next.agent) || "unknown", value(next.chatName) || value(next.branch) || dispatch, value(next.state) || "idle", process);
+    if (decision.outcome === "done" || decision.outcome === "exited") {
+      if (persisted.runtime === "tmux" && typeof persisted.tmuxPane === "string") {
+        await setTmuxChatPane(persisted.tmuxPane, value(persisted.agent) || "unknown", value(persisted.chatName) || value(persisted.branch) || dispatch, decision.outcome, process);
+      }
     }
   }
+  const next = decision.outcome === "exited" ? { ...persisted, state: "exited" } : persisted;
   return ok({ ...next, reconcileResult: decision.outcome });
 }
 

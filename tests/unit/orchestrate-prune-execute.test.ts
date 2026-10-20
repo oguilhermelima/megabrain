@@ -80,10 +80,8 @@ describe("orchestrate prune terminal proof", () => {
           { dispatchId: "dispatch-1", reason: "terminal is absent from the host listing" },
         ]);
       }
-      expect(records(f.root)[0]).toMatchObject({
-        terminalState: "retained",
-        terminalReason: "terminal is absent from the host listing",
-      });
+      expect(records(f.root)[0]).not.toHaveProperty("terminalState", "retained");
+      expect(records(f.root)[0]).not.toHaveProperty("terminalReason", "terminal is absent from the host listing");
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 

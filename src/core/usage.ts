@@ -101,7 +101,7 @@ export const USAGE_LINES = {
   "terminal-close": "terminal close <selector> [--json] | --app <id> [--server <tmux -L name>] [--json]",
   "orchestrate-spawn": "orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]",
   "orchestrate-policy": "orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--operator] [--json]",
-  "orchestrate-adopt": "orchestrate adopt <dispatch-id-or-suffix> [--force] [--json]",
+  "orchestrate-adopt": "orchestrate adopt <dispatch-id-or-suffix> [--json]",
   "orchestrate-list": "orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]",
   "orchestrate-graph": "orchestrate graph (--chat <chat id> | --session <agent:id>) [--follow] --json",
   "orchestrate-prune": "orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]",

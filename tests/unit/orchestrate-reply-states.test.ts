@@ -10,7 +10,7 @@ import { appendMessage, appendParentReply, createDelivery, createDispatch, getDi
 
 // End-to-end (CLI-verb level, in-process) coverage of the shell parity bugs found in
 // tests/test-e2e-findings.sh: a "done" dispatch must refuse a reply exactly like
-// failed/closed/circuit_broken, and a "stalled" dispatch (a state megabrain_dispatch_meta_normalize
+// failed/closed/exited, and a "stalled" dispatch (a state megabrain_dispatch_meta_normalize
 // rewrote to "running" on every read in the shell) must accept a reply and resume to "running".
 // These duplicate no coverage in parent-reply.test.ts, which only exercises the pure decision
 // function — this file proves the CLI wiring actually normalizes state before checking it and
@@ -190,14 +190,14 @@ describe("orchestrate reply: shell-parity state rules", () => {
     expect(requireOk(listDeliveries(database, "dispatch-1")).find((delivery) => delivery.id === "parent-ask-delivery")?.status).toBe("acknowledged");
   });
 
-  test("still refuses the other settled states (failed, closed, circuit_broken)", async () => {
+  test("refuses exited and maps legacy terminal states to exited", async () => {
     const root = await tempStateDir();
-    for (const state of ["failed", "closed", "circuit_broken"]) {
-      const id = `dispatch-${state}`;
-      await writeDispatch(root, id, baseMeta({ dispatchId: id, state }));
+    for (const [index, [state, terminalState, processState, expected]] of [["failed", "owned", "failed", "failed"], ["closed", "owned", "stopped", "closed"], ["running", "missing", "exited", "exited"], ["running", "retained", "running", "exited"]].entries()) {
+      const id = `dispatch-${index}`;
+      await writeDispatch(root, id, baseMeta({ dispatchId: id, state, terminalState, processState }));
       const result = await executeOrchestrateReply([id, "--text", "x", "--json"], environment(root), fakeProcess());
       expect(result.kind).toBe("failed");
-      expect(result.kind === "failed" ? result.error : "").toContain(`is settled in state ${state}`);
+      expect(result.kind === "failed" ? result.error : "").toContain(`is settled in state ${expected}`);
     }
   });
 });

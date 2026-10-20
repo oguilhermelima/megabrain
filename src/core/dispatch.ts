@@ -1,5 +1,6 @@
 import { ok, unknown, type Result } from "./result.js";
 import { dispatchStates, processStates, terminalStates, type DispatchStateValue, type ProcessStateValue, type TerminalStateValue } from "./dispatch-states.js";
+import { dispatchStateFromMeta } from "./orchestrate-reconcile.js";
 import { isAgentSessionId, ownsDispatch, type CallerIdentity } from "./context.js";
 
 export type JsonRecord = { readonly [key: string]: unknown };
@@ -35,7 +36,11 @@ function stringField(value: unknown): string | undefined {
 
 export function parseDispatchRecord(value: unknown): Result<DispatchRecord> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return unknown("dispatch metadata is not a JSON object");
-  const raw = value as JsonRecord;
+  const stored = value as JsonRecord;
+  // Legacy uncertainty markers describe a terminal whose process is no longer trusted alive.
+  // Present them as exited at read time; persisted metadata remains untouched.
+  const state = dispatchStateFromMeta(stored);
+  const raw = state !== stored.state ? { ...stored, state, ...(stored.terminalState === "retained" ? { terminalState: "missing" } : {}) } : stored;
   return ok({
     raw,
     dispatchId: stringField(raw.dispatchId),
