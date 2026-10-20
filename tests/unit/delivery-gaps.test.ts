@@ -91,6 +91,39 @@ describe("Grok's boxed composer", () => {
   });
 });
 
+describe("Codex idle child delivery", () => {
+  test("types a reply when queueing would leave the idle turn unprocessed", async () => {
+    const root = await tempRoot();
+    const db = stateDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    const meta = { agent: "codex", agentPid: 991, agentThreadId: "thread-123", runtime: "tmux", childHost: "local", tmuxPane: "%11", parentAgent: "claude", parentHost: "local" };
+    createDispatch(db.value, { dispatchId: "d-codex-idle", state: "running", ...meta });
+    appendMessage(db.value, "d-codex-idle", { from: "parent", type: "reply", text: "continue" }, {
+      outbox: { id: "ob-codex-idle", targetKind: "child-delivery", target: "codex:thread-123", payload: { dispatchId: "d-codex-idle", sequence: 1, meta, targetKind: "child-delivery", fullMessage: "↩ reply: continue" } },
+    });
+    createDelivery(db.value, { id: "dl-codex-idle", dispatchId: "d-codex-idle", messageSeqs: [1], status: "outstanding" });
+    const screen = await fixture("orca-terminal-screen-codex-idle.json");
+    const calls: string[] = [];
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push(`${command} ${args.join(" ")}`);
+        if (command === "ps" && args[0] === "-ax") return ok<ProcessOutput>({ stdout: "991 /usr/local/bin/codex --thread-id thread-123\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "-ww") return ok<ProcessOutput>({ stdout: "991 991 991 /usr/local/bin/codex\n", stderr: "", exitCode: 0 });
+        if (command === "lsof") return ok<ProcessOutput>({ stdout: "n/rollouts/rollout-thread-123.jsonl\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "capture-pane") return ok<ProcessOutput>({ stdout: JSON.parse(screen).result.terminal.tail.join("\n"), stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "send-keys") return ok<ProcessOutput>({ stdout: "", stderr: "", exitCode: 0 });
+        return failed(`unexpected ${command} ${args.join(" ")}`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    await deliverWithOwner(root, process, { HOME: root }, "ob-codex-idle", 4000);
+    expect(calls.some((call) => call.startsWith("tmux send-keys"))).toBe(true);
+    expect(calls.some((call) => call.startsWith("codex"))).toBe(false);
+    expect(listDeliveries(db.value, "d-codex-idle")).toMatchObject({ value: [{ transport: "typed" }] });
+  });
+});
+
 function processFor(leaders: ReadonlySet<string>, calls: string[]): ProcessAdapter {
   return {
     async run(name, args) {
