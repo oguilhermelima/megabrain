@@ -105,6 +105,7 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
       if (foreignOwner.length > 0) throw new ChatHandoffError("chat-busy", heldMessage(chat, foreignOwner));
       if (appOwner) {
         if (daemon.draining) throw new Error(DRAINING);
+        if (await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
         await daemon.endAppTerminals(chat);
         await daemon.importTerminalTurns(chat);
         if (chat.pendingPrompt !== undefined) {
@@ -327,6 +328,7 @@ export async function endAppTerminals(daemon: ChatDaemon, chat: Chat): Promise<R
     const ended = holders.filter((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
     const elsewhere = holders.filter((holder) => !ended.includes(holder));
     if (elsewhere.length > 0) throw new ChatHandoffError("terminal-busy", heldMessage(chat, elsewhere));
+    if ((ended.length > 0 || own !== null) && await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
     const sessions = new Set(ended.flatMap((holder) => holder.tmuxSession === null ? [] : [holder.tmuxSession]));
     if (own !== null) sessions.add(own);
     const tmux = ownedTmuxProcess(daemon.processes());
@@ -357,6 +359,7 @@ export async function endAppTerminals(daemon: ChatDaemon, chat: Chat): Promise<R
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     if ([...pids].some(pidAlive)) {
+      if (await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
       for (const pid of pids) if (pidAlive(pid)) try { process.kill(pid, "SIGKILL"); } catch { /* exited between check and signal */ }
       const killedBy = Date.now() + 2_000;
       while (Date.now() < killedBy && [...pids].some(pidAlive)) await new Promise((resolve) => setTimeout(resolve, 25));
