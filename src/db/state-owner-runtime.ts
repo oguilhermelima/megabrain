@@ -29,6 +29,11 @@ export function stateOwnerSocket(stateDir: string): string {
   return join(socketDirectory(), `s-${createHash("sha256").update(resolve(stateDir)).digest("hex").slice(0, 24)}`);
 }
 
+export function legacyStateOwnerSocket(stateDir: string): string {
+  const uid = typeof process.getuid === "function" ? process.getuid() : "user";
+  return join(tmpdir(), `mb-owner-${uid}`, `s-${createHash("sha256").update(resolve(stateDir)).digest("hex").slice(0, 24)}`);
+}
+
 function ownerPidPath(stateDir: string): string {
   return join(stateDir, "state-owner", "owner.pid");
 }
@@ -45,14 +50,38 @@ export function processStartTime(pid: number): number | undefined {
   return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
-function ownerIsAlive(stateDir: string): boolean {
-  if (!existsSync(stateOwnerSocket(stateDir))) return false;
+function ownerIsAliveAtSocket(stateDir: string, socket: string): boolean {
+  if (!existsSync(socket)) return false;
   try {
     const pid = Number(readFileSync(ownerPidPath(stateDir), "utf8").trim());
     if (!Number.isSafeInteger(pid) || pid <= 0) return false;
     process.kill(pid, 0);
     return true;
   } catch { return false; }
+}
+
+export function legacyStateOwnerIsAlive(stateDir: string): boolean {
+  const legacySocket = legacyStateOwnerSocket(stateDir);
+  return legacySocket !== stateOwnerSocket(stateDir) && ownerIsAliveAtSocket(stateDir, legacySocket);
+}
+
+export function ownerStateSocketCandidates(stateDir: string): readonly string[] {
+  const currentSocket = stateOwnerSocket(stateDir);
+  const legacySocket = legacyStateOwnerSocket(stateDir);
+  let pid: number;
+  try { pid = Number(readFileSync(ownerPidPath(stateDir), "utf8").trim()); }
+  catch { return []; }
+  if (!Number.isSafeInteger(pid) || pid <= 0) return [];
+  try { process.kill(pid, 0); } catch { return []; }
+  return [currentSocket, legacySocket].filter((socket, index, all) => all.indexOf(socket) === index && existsSync(socket));
+}
+
+export function ownerStateSocketForClient(stateDir: string): string {
+  return ownerStateSocketCandidates(stateDir)[0] ?? stateOwnerSocket(stateDir);
+}
+
+function ownerIsAlive(stateDir: string): boolean {
+  return ownerStateSocketCandidates(stateDir).length > 0;
 }
 
 function wait(milliseconds: number): void {

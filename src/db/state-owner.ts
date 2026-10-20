@@ -32,7 +32,7 @@ import { nativeSessionFor, removeNativeSession, replaceNativeSession, type Nativ
 import { ensureAutomaticCutoverOnHandle, markExplicitImport, migrateLegacyStateOnHandle } from "./cutover.js";
 import { applyJsonStateImport, type ParsedJsonState } from "./import/json-state.js";
 import { settleClosedParentBacklog } from "../core/closed-deliveries.js";
-import { ensureStateOwnerSocketDirectory, processStartIdentity, stateOwnerSocket } from "./state-owner-runtime.js";
+import { ensureStateOwnerSocketDirectory, legacyStateOwnerIsAlive, ownerStateSocketCandidates, ownerStateSocketForClient, processStartIdentity, stateOwnerSocket } from "./state-owner-runtime.js";
 import { ownerOperation } from "./state-owner-operations.js";
 export { stateOwnerSocket } from "./state-owner-runtime.js";
 
@@ -147,7 +147,7 @@ async function waitForPreviousOwner(stateDir: string): Promise<void> {
 }
 
 export async function inspectStateOwner(stateDir: string): Promise<{ running: false; error?: string } | { running: true; pid: number }> {
-  if (!existsSync(stateOwnerSocket(stateDir))) return { running: false };
+  if (!existsSync(ownerStateSocketForClient(stateDir))) return { running: false };
   try {
     const value = await requestOnce(stateDir, { operation: "status" }, 1_000) as { pid?: unknown };
     return typeof value.pid === "number" ? { running: true, pid: value.pid } : { running: false, error: "state owner returned an invalid status" };
@@ -378,6 +378,7 @@ function stopForLifecycle(owner: StateOwner): void {
 }
 
 export async function startStateOwner(stateDir: string, processAdapter: ProcessAdapter = createProcessAdapter(), environment: Readonly<Record<string, string | undefined>> = process.env): Promise<StateOwner> {
+  if (legacyStateOwnerIsAlive(stateDir)) throw new Error(`state owner is already running on its legacy socket for ${stateDir}`);
   const executablePath = environment.MEGABRAIN_STATE_OWNER_EXECUTABLE ?? (process.argv[1] !== undefined && !process.argv[1].startsWith("/$bunfs/") ? resolve(process.argv[1]) : process.execPath);
   const directory = join(stateDir, "state-owner");
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -504,12 +505,12 @@ export async function stopStateOwner(owner: StateOwner): Promise<void> {
   if (ownsLock) await Promise.all([unlink(stateOwnerPid(owner.stateDir)).catch(() => undefined), unlink(owner.lockPath).catch(() => undefined)]);
 }
 
-function requestOnce(stateDir: string, request: StateOwnerRequest, timeoutMs: number): Promise<unknown> {
-  if (!existsSync(stateOwnerSocket(stateDir))) return Promise.reject(Object.assign(new Error("state owner socket is not present"), { code: "ENOENT" }));
+function requestOnceAt(socketPath: string, request: StateOwnerRequest, timeoutMs: number): Promise<unknown> {
+  if (!existsSync(socketPath)) return Promise.reject(Object.assign(new Error("state owner socket is not present"), { code: "ENOENT" }));
   return new Promise((resolve, reject) => {
-    const socket = createConnection(stateOwnerSocket(stateDir));
+    const socket = createConnection(socketPath);
     let buffer = "";
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error(`state owner did not answer within ${timeoutMs} ms`)); }, timeoutMs);
+    const timer = setTimeout(() => { socket.destroy(); reject(Object.assign(new Error(`state owner did not answer within ${timeoutMs} ms`), { code: "ETIMEDOUT" })); }, timeoutMs);
     socket.setEncoding("utf8");
     socket.once("connect", () => socket.write(`${JSON.stringify(request)}\n`));
     socket.on("data", (chunk: string) => {
@@ -526,6 +527,22 @@ function requestOnce(stateDir: string, request: StateOwnerRequest, timeoutMs: nu
     });
     socket.once("error", (error) => { clearTimeout(timer); reject(error); });
   });
+}
+
+function requestOnce(stateDir: string, request: StateOwnerRequest, timeoutMs: number): Promise<unknown> {
+  const candidates = ownerStateSocketCandidates(stateDir);
+  const sockets = candidates.length === 0 ? [ownerStateSocketForClient(stateDir)] : candidates;
+  const trySocket = async (index: number): Promise<unknown> => {
+    const socketPath = sockets[index];
+    if (socketPath === undefined) throw new Error("state owner socket is not present");
+    try { return await requestOnceAt(socketPath, request, timeoutMs); }
+    catch (cause: unknown) {
+      const code = typeof cause === "object" && cause !== null && "code" in cause ? String((cause as { code?: unknown }).code) : "";
+      if ((code === "ENOENT" || code === "ECONNREFUSED" || code === "ETIMEDOUT") && index + 1 < sockets.length) return trySocket(index + 1);
+      throw cause;
+    }
+  };
+  return trySocket(0);
 }
 
 export async function callStateOwner(stateDir: string, request: StateOwnerRequest, timeoutMs = 5_000, startupTimeoutMs = Math.max(timeoutMs, 130_000)): Promise<unknown> {
