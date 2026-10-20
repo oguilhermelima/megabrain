@@ -13,7 +13,7 @@ const directories: string[] = [];
 const helpers: Array<() => Promise<void>> = [];
 const udid = "11111111-1111-4111-8111-111111111111";
 const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0, 17, 8, 9, 252, 4, 155, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 0xff, 0xd9]);
-async function fakeHelper() {
+async function fakeHelper(dropAfterFirstGestureEvent = false) {
   const server = createServer((request, response) => {
     if (request.url !== "/stream.mjpeg") { response.writeHead(404).end(); return; }
     response.writeHead(200, { "content-type": "multipart/x-mixed-replace; boundary=frame" });
@@ -21,7 +21,10 @@ async function fakeHelper() {
     writeFrame(); const timer = setInterval(writeFrame, 30); request.on("close", () => clearInterval(timer));
   });
   const ws = new WebSocketServer({ server }); const messages: Buffer[] = [];
-  ws.on("connection", (socket) => socket.on("message", (message) => messages.push(Buffer.from(message))));
+  ws.on("connection", (socket) => socket.on("message", (message) => {
+    const bytes = Buffer.from(message); messages.push(bytes);
+    if (dropAfterFirstGestureEvent && bytes[0] === 3) socket.close();
+  }));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address(); if (!address || typeof address === "string") throw new Error("fake helper failed to bind");
   const helper = { pid: 456, port: address.port, device: udid, url: `http://127.0.0.1:${address.port}`, streamUrl: `http://127.0.0.1:${address.port}/stream.mjpeg`, wsUrl: `ws://127.0.0.1:${address.port}` };
@@ -29,20 +32,7 @@ async function fakeHelper() {
   return { helper, messages };
 }
 async function fakeHelperThatDropsGestureAfterBegin() {
-  const fake = await fakeHelper();
-  const ws = new WebSocketServer({ noServer: true });
-  // This fixture is filled in by a dedicated server so the connection is cut
-  // between the gesture's begin and end messages.
-  await Promise.all(helpers.splice(0).map((close) => close()));
-  const server = createServer();
-  server.on("upgrade", (request, socket, head) => ws.handleUpgrade(request, socket, head, (client) => {
-    client.on("message", () => client.close());
-  }));
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const address = server.address(); if (!address || typeof address === "string") throw new Error("fake helper failed to bind");
-  const helper = { ...fake.helper, port: address.port, url: `http://127.0.0.1:${address.port}`, wsUrl: `ws://127.0.0.1:${address.port}` };
-  helpers.push(() => new Promise<void>((resolve, reject) => ws.close((error) => error ? reject(error) : server.close(() => resolve()))));
-  return { helper };
+  return fakeHelper(true);
 }
 async function fixture(helper: Awaited<ReturnType<typeof fakeHelper>>["helper"]) { const directory = await mkdtemp(join(tmpdir(), "native-input-")); directories.push(directory); await writeFile(join(directory, "native-input-sessions.json"), JSON.stringify({ version: 1, sessions: [{ ...helper, udid, session: String(helper.pid), platform: "iOS", pointWidth: 393, pointHeight: 852 }] })); return directory; }
 async function emptyFixture() { const directory = await mkdtemp(join(tmpdir(), "native-input-")); directories.push(directory); return directory; }
