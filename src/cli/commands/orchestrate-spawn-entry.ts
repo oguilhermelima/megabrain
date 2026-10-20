@@ -41,6 +41,10 @@ import { resultError } from "./orchestrate-spawn-state.js";
 import { runSpawn } from "./orchestrate-spawn-run.js";
 import { forgetTmuxSession, type SpawnTrace } from "./orchestrate-spawn-state.js";
 import { type SpawnEnvironment, type SpawnDependencies } from "./orchestrate-spawn-options.js";
+
+const ADMISSION_WAIT_MS = 120_000;
+const ADMISSION_POLL_MS = 250;
+
 export async function executeSpawn(args: readonly string[], environment: SpawnEnvironment, process: ProcessAdapter, dependencies: SpawnDependencies = {}): Promise<Result<string>> {
   const trace: SpawnTrace = {};
   const jsonRequested = args.includes("--json");
@@ -54,7 +58,7 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
       status: "failed",
       reason: trace.reason ?? code,
       error: message,
-      ...(details === undefined ? {} : { ...details, details }),
+      ...(details ?? {}),
     })}\n`);
   };
   if (args.includes("-h") || args.includes("--help")) {
@@ -65,7 +69,16 @@ export async function executeSpawn(args: readonly string[], environment: SpawnEn
   const holder = `${globalThis.process.pid}-admission-${randomUUID()}`;
   let leased = false;
   if (policy !== undefined) {
-    try { leased = await callStateOwner(resolveStateDirectory(environment), { operation: "acquire-lease", key: "resource-admission", holder, seconds: 300 }) as boolean; }
+    const stateDir = resolveStateDirectory(environment);
+    const failImmediately = args.includes("--admission") && args[args.indexOf("--admission") + 1] === "fail";
+    const deadline = Date.now() + ADMISSION_WAIT_MS;
+    try {
+      do {
+        leased = await callStateOwner(stateDir, { operation: "acquire-lease", key: "resource-admission", holder, seconds: 300 }) as boolean;
+        if (leased || failImmediately || Date.now() >= deadline) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, Math.min(ADMISSION_POLL_MS, deadline - Date.now())));
+      } while (true);
+    }
     catch (cause: unknown) { return reportFailure(failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`)); }
     if (!leased) return reportFailure(failed("resource admission is busy; retry the spawn", 1), "admission-busy", {
       slot: "resource-admission",
