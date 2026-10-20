@@ -103,10 +103,6 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
           catch (cause: unknown) { return failed(`state owner delivery claim failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
           if (claimed === undefined) continue;
         }
-        if (selected.delivery.recipient === "parent") {
-          try { await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId, deliveryId: selected.delivery.id, recipient: "parent" }); }
-          catch (cause: unknown) { return failed(`state owner delivery acknowledgement failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
-        }
         return ok(report(dispatchId, selected.delivery, messages, selected.replayed, parsed.value.json));
       }
       const elapsed = Date.now() - started;
@@ -151,10 +147,19 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   try { ack = await callStateOwner(root, { operation: "ack-delivery", id: parsed.value.deliveryId, consumer: identity.value, generation: parsed.value.generation }) as typeof ack; }
   catch (cause: unknown) { return failed(`state owner delivery acknowledgement failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
   const messageSeqs = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs : [];
-  const acknowledgment = { dispatchId, deliveryId: parsed.value.deliveryId, acknowledged: true, duplicate: ack.duplicate, status: "acknowledged", messageSeqs };
+  const acknowledgment = {
+    dispatchId,
+    deliveryId: parsed.value.deliveryId,
+    acknowledged: true,
+    duplicate: ack.duplicate,
+    status: "acknowledged",
+    messageSeqs,
+    ...(ack.duplicate && typeof delivery.acknowledgedAt === "string" ? { firstAcknowledgedAt: delivery.acknowledgedAt } : {}),
+    ...(ack.duplicate && typeof delivery.consumer === "string" ? { firstAcknowledgedBy: delivery.consumer } : {}),
+  };
   if (parsed.value.close !== true) {
     if (parsed.value.json) return ok(`${JSON.stringify(acknowledgment, null, 2)}\n`);
-    return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.duplicate}\n`);
+    return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.duplicate}\n${ack.duplicate && typeof delivery.acknowledgedAt === "string" ? `first acknowledged at: ${delivery.acknowledgedAt}\n` : ""}${ack.duplicate && typeof delivery.consumer === "string" ? `first acknowledged by: ${delivery.consumer}\n` : ""}`);
   }
   const closed = await executeOrchestrateClose([dispatchId, ...(parsed.value.json ? ["--json"] : [])], environment, process);
   if (closed.kind !== "ok") return failed(`delivery ${parsed.value.deliveryId} acknowledged; ${closed.error}`, closed.exitCode);
