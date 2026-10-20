@@ -140,12 +140,17 @@ describe("maestro run", () => {
     expect(readFileSync(String(end?.maestroLog), "utf8")).toBe("diagnostic log");
   });
 
-  test("retries only an XCUITest driver startup failure and reports its reason", async () => {
+  test("retries driver startup with reinstall and reports the final attempt", async () => {
     const { worktree, environment, root } = sandbox();
     const result = await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", worktree, "--device", UDID, "--json"], { ...environment, FAKE_MAESTRO_DRIVER_FAIL_ONCE: "1" }, adapter);
     expect(result.kind).toBe("ok");
-    expect(readFileSync(join(root, "invocations"), "utf8").trim().split("\n")).toHaveLength(2);
-    expect(lines(result.kind === "ok" ? result.value : "").find((event) => event.type === "run")).toMatchObject({ reasonCode: "xcuitest_driver_start_failed" });
+    const attempts = readFileSync(join(root, "invocations"), "utf8").trim().split("\n");
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).not.toContain("--reinstall-driver");
+    expect(attempts[1]).toContain("--reinstall-driver");
+    const finalRun = lines(result.kind === "ok" ? result.value : "").find((event) => event.type === "run");
+    expect(finalRun).toMatchObject({ state: "passed", exitCode: 0 });
+    expect(finalRun?.reasonCode).toBeUndefined();
   });
 
   test("surfaces launchApp privacy grant failures in the run event", async () => {
