@@ -39,11 +39,6 @@ export async function start(daemon: ChatDaemon): Promise<void> {
     try { readConversations(daemon.stateDir); } catch { /* a locked registry is retried by the next write */ }
     await daemon.pruneUnused();
     await daemon.suspendActive();
-    for (const chat of await daemon.store.list()) {
-      if (chat.owner !== undefined) continue;
-      chat.owner = chat.mode === "terminal" ? "terminal" : "none";
-      await daemon.store.put(chat);
-    }
     await writeFile(chatPid(daemon.stateDir), `${process.pid}\n`, { mode: 0o600 });
     await chmod(chatPid(daemon.stateDir), 0o600);
     await daemon.resumeDrained();
@@ -77,7 +72,7 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
     const terminal = mode === "terminal";
     const chat: Chat = {
       id: randomUUID(), agent, capabilities: agent === "agy" ? { approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true } : { approvals: true, interrupt: true, liveModelSwitch: agent === "grok", steer: agent === "codex", structuredTools: true }, cwd, model: text(request.model) || null, ...(text(request.effort) ? { effort: text(request.effort) } : {}), ...(request.approvals === true && agent !== "agy" ? { approvals: true } : {}),
-      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: terminal || agent === "agy" ? "idle" : "starting", mode, owner: agent === "agy" ? "terminal" : "none",
+      title: firstText(parts).slice(0, 120) || null, titleSource: "first-message", summary: null, state: terminal || agent === "agy" ? "idle" : "starting", mode,
       agentSessionId: null, createdAt: now, lastActivityAt: now, error: null,
       ...(terminal && agent !== "agy" ? { terminalSince: now } : {}), ...(terminal && firstText(parts) !== "" ? { pendingPrompt: firstText(parts) } : {}),
     };
@@ -113,8 +108,9 @@ export async function startChat(daemon: ChatDaemon, request: Request): Promise<C
 
 export async function suspendActive(daemon: ChatDaemon): Promise<string[]> {
     const interrupted: string[] = [];
-    for (const chat of await daemon.store.list()) {
-      if (chat.state === "error" || chat.mode === "terminal" || (chat.agent === "agy" && chat.owner === "terminal")) continue;
+    for (const stored of await daemon.store.list()) {
+      const chat = await daemon.requireChat(stored.id);
+      if (chat.state === "error" || chat.mode === "terminal") continue;
       const child = daemon.children.get(chat.id);
       if (child) {
         daemon.children.delete(chat.id);
@@ -136,7 +132,6 @@ export async function suspendActive(daemon: ChatDaemon): Promise<string[]> {
       for (const task of latestTasks.values()) if (task.state === "running") await daemon.publishBackgroundTask(chat, { ...task, state: "lost", endedAt: new Date().toISOString(), summary: "Chat daemon restarted before the task reported completion" });
       if (chat.state === "suspended") continue;
       chat.state = "suspended";
-      chat.owner = "none";
       chat.error = null;
       await daemon.save(chat);
     }
@@ -155,19 +150,24 @@ export async function handover(daemon: ChatDaemon): Promise<{ handedOver: true; 
   }
 
 export async function busy(daemon: ChatDaemon): Promise<boolean> {
-    return (await daemon.store.list()).some((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval"));
+    return (await chats(daemon)).some((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval"));
   }
+
+async function chats(daemon: ChatDaemon): Promise<Chat[]> {
+  return Promise.all((await daemon.store.list()).map(({ id }) => daemon.requireChat(id)));
+}
 
 export async function liveChats(daemon: ChatDaemon): Promise<number> {
     let live = 0;
-    for (const chat of await daemon.store.list()) if (chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval" || (await daemon.loadQueue(chat.id)).length > 0)) live += 1;
+    for (const chat of await chats(daemon)) if (chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval" || (await daemon.loadQueue(chat.id)).length > 0)) live += 1;
     return live;
   }
 
 export async function daemonStatus(daemon: ChatDaemon): Promise<{ pid: number; protocol: { version: number; min: number; max: number }; daemonVersion: string; superseded: boolean; liveChats: number; build: number; draining: boolean; working: string[]; terminalRefreshError?: string }> {
-    const working = (await daemon.store.list()).filter((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval")).map((chat) => chat.id);
+    const currentChats = await chats(daemon);
+    const working = currentChats.filter((chat) => chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval")).map((chat) => chat.id);
     let liveChats = 0;
-    for (const chat of await daemon.store.list()) if (chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval" || (await daemon.loadQueue(chat.id)).length > 0)) liveChats += 1;
+    for (const chat of currentChats) if (chat.mode === "chat" && (chat.state === "working" || chat.state === "waiting-approval" || (await daemon.loadQueue(chat.id)).length > 0)) liveChats += 1;
     return { pid: process.pid, protocol: { version: daemon.protocol, min: CHAT_PROTOCOL_MIN_VERSION, max: daemon.protocol }, daemonVersion: daemon.version, superseded: daemon.superseded, liveChats, build: daemon.build, draining: daemon.draining, working, ...(daemon.terminalRefreshError === null ? {} : { terminalRefreshError: daemon.terminalRefreshError }) };
   }
 
@@ -176,7 +176,7 @@ export async function drainDaemon(daemon: ChatDaemon): Promise<{ drained: true; 
     const started = Date.now();
     while (await daemon.busy()) await new Promise((resolve) => setTimeout(resolve, 50));
     await Promise.all([...daemon.eventChains.values(), ...daemon.appendChains.values(), ...daemon.queueWrites.values()]);
-    for (const chat of await daemon.store.list()) if (chat.mode === "chat" && (await daemon.loadQueue(chat.id)).length > 0) daemon.resumeOnStart.add(chat.id);
+    for (const chat of await chats(daemon)) if (chat.mode === "chat" && (await daemon.loadQueue(chat.id)).length > 0) daemon.resumeOnStart.add(chat.id);
     const resumes = [...daemon.resumeOnStart];
     if (resumes.length > 0) await writeFile(chatResumes(daemon.stateDir), `${JSON.stringify(resumes)}\n`, { mode: 0o600 });
     await daemon.suspendActive();

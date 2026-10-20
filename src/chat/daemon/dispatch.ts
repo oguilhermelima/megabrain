@@ -7,7 +7,7 @@ export async function dispatchRequest(daemon: ChatDaemon, request: Request, sock
   switch (request.operation) {
     case "list":
       await Promise.all([...daemon.eventChains.values(), ...daemon.appendChains.values()]);
-      return await daemon.store.list();
+      return await Promise.all((await daemon.store.list()).map((chat) => daemon.requireChat(chat.id)));
     case "hello": {
       const offered = object(request.protocol);
       const clientMin = Number(offered.min ?? 1);

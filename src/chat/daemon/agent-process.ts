@@ -63,7 +63,6 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
     if (chat.agent === "grok" && daemon.environment.GROK_HOME !== undefined) childEnvironment.GROK_HOME = daemon.environment.GROK_HOME;
     const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...childEnvironment, MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });
     daemon.children.set(chat.id, child);
-    chat.owner = "chat";
     await daemon.save(chat);
     const childRecord = chatChildRecord(daemon.stateDir, chat.id);
     await mkdir(join(daemon.stateDir, "chatd", "children"), { recursive: true, mode: 0o700 });
@@ -108,9 +107,9 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
       if (daemon.closed || daemon.children.get(chat.id) !== child) return;
       daemon.clearStartTimer(chat.id);
       daemon.children.delete(chat.id);
-      await daemon.store.get(chat.id).then(async (current) => {
-        if (!current) return;
-        if (current.owner === "chat") current.owner = "none";
+      await daemon.store.get(chat.id).then(async (stored) => {
+        if (!stored) return;
+        const current = await daemon.requireChat(chat.id);
         if (current.state === "suspended" || current.state === "stopped" || current.mode === "terminal") { await daemon.save(current); return; }
         if (daemon.interrupting.has(chat.id)) {
           daemon.interrupting.delete(chat.id);

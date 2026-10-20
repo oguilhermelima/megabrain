@@ -75,12 +75,10 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
         if (elsewhere.length > 0) throw new ChatHandoffError("chat-busy", heldMessage(chat, elsewhere));
         if (appOwner) {
           chat.mode = "terminal";
-          chat.owner = "terminal";
         } else {
           const child = daemon.children.get(id);
           if (child) { daemon.children.delete(id); await stopChild(child); }
           daemon.clearStartTimer(id);
-          chat.owner = "none";
           chat.error = null;
           chat.mode = "terminal";
           chat.state = "idle";
@@ -97,7 +95,6 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
         await startAgyTerminal(daemon, chat);
       }
       chat.mode = "chat";
-      chat.owner = "terminal";
       chat.state = "idle";
       await daemon.save(chat);
     } else if (chat.mode !== "chat") {
@@ -107,15 +104,19 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
       const foreignOwner = holders.filter((holder) => !holder.tmuxSession?.startsWith(APP_SESSION_PREFIX));
       if (foreignOwner.length > 0) throw new ChatHandoffError("chat-busy", heldMessage(chat, foreignOwner));
       if (appOwner) {
-        const removed = await reportAndRemoveExitedChatTerminals(daemon, chat, holders);
-        if (!removed) {
-          if (await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
-          await captureTerminalDraft(daemon, chat, holders);
+        if (daemon.draining) throw new Error(DRAINING);
+        await daemon.endAppTerminals(chat);
+        await daemon.importTerminalTurns(chat);
+        if (chat.pendingPrompt !== undefined) {
+          daemon.queues.set(id, [...(daemon.queues.get(id) ?? []), [{ type: "text", text: chat.pendingPrompt }]]);
+          delete chat.pendingPrompt;
         }
-        // Selecting the chat view does not take ownership away from the TUI.
         chat.mode = "chat";
-        chat.owner = removed ? "none" : "terminal";
+        chat.state = "starting";
+        chat.error = null;
+        chat.terminalSince = undefined;
         await daemon.save(chat);
+        daemon.trackCallback(daemon.runAgent(chat, true).catch((error) => daemon.fail(id, error)));
       } else {
         // Old records may have terminal turns without a running app pane. Import those once, then resume through chatd.
         if (daemon.draining) throw new Error(DRAINING);
@@ -131,10 +132,17 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
           delete chat.pendingPrompt;
         }
         chat.mode = "chat";
-        chat.owner = "none";
         chat.state = "starting";
+        chat.terminalSince = undefined;
         await daemon.save(chat);
         daemon.trackCallback(daemon.runAgent(chat, true).catch((error) => daemon.fail(id, error)));
+      }
+    } else if (chat.terminalSince !== undefined) {
+      await daemon.refreshTerminalChats();
+      const current = await daemon.requireChat(id);
+      if (current.terminalSince !== undefined) {
+        current.terminalSince = undefined;
+        await daemon.save(current);
       }
     }
     await daemon.syncTerminalPolling();
@@ -148,7 +156,7 @@ export async function takeOver(daemon: ChatDaemon, id: string): Promise<Chat> {
     if (chat.agentSessionId === null && chat.mode === "terminal") chat.agentSessionId = await daemon.sessionOfTerminal(chat);
     const holders = await daemon.foreignHolders(chat);
     const appOwner = holders.some((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
-    if (chat.owner !== "terminal" && chat.mode !== "terminal" && !appOwner) return chat;
+    if (chat.mode !== "terminal" && !appOwner) return chat;
     const otherOwner = holders.filter((holder) => !holder.tmuxSession?.startsWith(APP_SESSION_PREFIX));
     if (otherOwner.length > 0) throw new ChatHandoffError("terminal-busy", heldMessage(chat, otherOwner));
     if (await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before sending from chat");
@@ -156,7 +164,6 @@ export async function takeOver(daemon: ChatDaemon, id: string): Promise<Chat> {
     const elsewhere = (await daemon.foreignHolders(chat, undefined, ended)).filter((holder) => !holder.tmuxSession?.startsWith(APP_SESSION_PREFIX));
     if (elsewhere.length > 0) throw new ChatHandoffError("terminal-busy", heldMessage(chat, elsewhere));
     await daemon.importTerminalTurns(chat);
-    chat.owner = "none";
     chat.mode = "chat";
     chat.state = "starting";
     chat.error = null;
@@ -320,9 +327,6 @@ export async function endAppTerminals(daemon: ChatDaemon, chat: Chat): Promise<R
     const ended = holders.filter((holder) => holder.tmuxSession?.startsWith(APP_SESSION_PREFIX) === true);
     const elsewhere = holders.filter((holder) => !ended.includes(holder));
     if (elsewhere.length > 0) throw new ChatHandoffError("terminal-busy", heldMessage(chat, elsewhere));
-    if (ended.length > 0 && await daemon.logTurnOpen(chat)) {
-      throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
-    }
     const sessions = new Set(ended.flatMap((holder) => holder.tmuxSession === null ? [] : [holder.tmuxSession]));
     if (own !== null) sessions.add(own);
     const tmux = ownedTmuxProcess(daemon.processes());
@@ -353,7 +357,6 @@ export async function endAppTerminals(daemon: ChatDaemon, chat: Chat): Promise<R
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     if ([...pids].some(pidAlive)) {
-      if (await daemon.logTurnOpen(chat)) throw new ChatHandoffError("terminal-busy", "the terminal is still working; wait or interrupt it before switching to chat");
       for (const pid of pids) if (pidAlive(pid)) try { process.kill(pid, "SIGKILL"); } catch { /* exited between check and signal */ }
       const killedBy = Date.now() + 2_000;
       while (Date.now() < killedBy && [...pids].some(pidAlive)) await new Promise((resolve) => setTimeout(resolve, 25));
@@ -375,14 +378,27 @@ export async function endAppTerminals(daemon: ChatDaemon, chat: Chat): Promise<R
   }
 
 export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
-    for (const listed of await daemon.store.list()) {
+    for (const stored of await daemon.store.list()) {
       if (daemon.closed) return;
-      if (listed.agentSessionId === null && (listed.mode === "terminal" || listed.owner === "terminal")) {
+      const listed = await daemon.requireChat(stored.id);
+      const entry = daemon.entryOf(listed.id);
+      const alias = entry?.[1].aliases.tmux ?? null;
+      if (alias?.startsWith(`${OWNED_TMUX_SERVER}:${APP_SESSION_PREFIX}`) && listed.mode === "chat") {
+        await reportAndRemoveExitedChatTerminals(daemon, listed, []);
+        if (listed.agentSessionId !== null) await daemon.importTerminalTurns(listed);
+        try { if (entry !== undefined) setConversationAlias(daemon.stateDir, entry[0], { tmux: null }); } catch { /* retry on the next poll */ }
+        listed.terminalSince = undefined;
+        listed.state = "idle";
+        await daemon.save(listed);
+        await daemon.syncTerminalPolling();
+        continue;
+      }
+      if (listed.agentSessionId === null && listed.mode === "terminal") {
         const found = await daemon.sessionOfTerminal(listed);
         if (found !== null) { listed.agentSessionId = found; await daemon.save(listed); }
       }
       const terminalSelected = listed.mode === "terminal";
-      const terminalOwns = listed.owner === "terminal" || (listed.owner === undefined && terminalSelected);
+      const terminalOwns = terminalSelected;
       if (!terminalSelected && !terminalOwns || listed.agentSessionId === null) continue;
       const path = await sessionLogPath(listed, daemon.environment.HOME ?? homedir(), daemon.environment.GROK_HOME);
       let content: string;
@@ -402,9 +418,9 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
       daemon.terminalLogs.set(listed.id, key);
       const holders = await daemon.foreignHolders(listed);
       const active = holders.length > 0;
-      const owner: Chat["owner"] = active || (terminalSelected && (listed.owner === undefined || listed.owner === "terminal")) ? "terminal" : "none";
-      if (owner === "terminal" && logExists && (!hadRead || previousKey !== key)) await daemon.importTerminalTurns(listed, false);
-      if (owner === "terminal" && logExists && path !== null) {
+      const terminalActive = active || terminalSelected;
+      if (terminalActive && logExists && (!hadRead || previousKey !== key)) await daemon.importTerminalTurns(listed, false);
+      if (terminalActive && logExists && path !== null) {
         const currentWatch = daemon.terminalFileWatches.get(listed.id);
         if (currentWatch?.path !== path) {
           currentWatch?.close();
@@ -418,13 +434,13 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
         daemon.terminalFileWatches.get(listed.id)?.close();
         daemon.terminalFileWatches.delete(listed.id);
       }
-      const working = owner === "terminal" && turnOpen && active;
+      const working = terminalActive && turnOpen && active;
       const state: Chat["state"] = working ? "working" : "idle";
       // The record may have moved on while the log was read: only the same session/view snapshot is refreshed.
       const chat = await daemon.store.get(listed.id);
       if (daemon.closed) return;
-      if (!chat || chat.terminalSince !== listed.terminalSince || chat.mode !== listed.mode || chat.owner !== listed.owner) continue;
-      if (!working && owner === "terminal" && chat.agent !== "agy" && (await daemon.loadQueue(chat.id)).length > 0) {
+      if (!chat || chat.terminalSince !== listed.terminalSince) continue;
+      if (!working && terminalActive && chat.agent !== "agy" && (await daemon.loadQueue(chat.id)).length > 0) {
         if (daemon.terminalHandoffs.has(chat.id)) continue;
         daemon.terminalHandoffs.add(chat.id);
         try { await daemon.takeOver(chat.id); }
@@ -433,7 +449,6 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
         continue;
       }
       let changed = false;
-      if (chat.owner !== owner) { chat.owner = owner; changed = true; }
       if (chat.state !== state) { chat.state = state; changed = true; if (!working) chat.lastActivityAt = new Date().toISOString(); }
       if (changed) await daemon.save(chat);
     }

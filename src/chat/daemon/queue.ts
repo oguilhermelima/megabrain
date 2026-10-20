@@ -127,8 +127,8 @@ export function drain(daemon: ChatDaemon, id: string): Promise<void> {
 
 export async function drainOnce(daemon: ChatDaemon, id: string): Promise<void> {
     const child = daemon.children.get(id);
-    const chat = await daemon.store.get(id);
-    if (!child || !chat || chat.state === "working" || chat.state === "waiting-approval") return;
+    const chat = await daemon.requireChat(id);
+    if (!child || chat.mode !== "chat" || chat.state === "working" || chat.state === "waiting-approval") return;
     let parts: Part[];
     const outbox = daemon.queues.get(id);
     if (outbox !== undefined && outbox.length > 0) {

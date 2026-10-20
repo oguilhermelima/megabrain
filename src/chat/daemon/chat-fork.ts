@@ -41,7 +41,6 @@ export async function fork(daemon: ChatDaemon, id: string, eventId: string): Pro
       seedContext: context || undefined,
       state: "idle",
       mode: "chat",
-      owner: "none",
       agentSessionId,
       createdAt,
       lastActivityAt: createdAt,

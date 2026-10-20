@@ -27,8 +27,6 @@ export type Chat = {
   /** `suspended`: no agent process, but the record keeps `agentSessionId`; the next send resumes it. `stopped` is only read from records written before that state existed. */
   state: "starting" | "idle" | "working" | "waiting-approval" | "suspended" | "stopped" | "error";
   mode: "chat" | "terminal";
-  /** The single process currently allowed to write this session; the selected view is `mode`. */
-  owner?: "chat" | "terminal" | "none";
   /** Last complete byte read from the agent's session log while its TUI owned the conversation. */
   terminalLogCursor?: { byteOffset: number; lastMessageId: string | null };
   /** Whether the most recently read complete terminal log row leaves a turn open. */
@@ -101,7 +99,10 @@ export class ChatStore {
   }
 
   async get(id: string): Promise<Chat | null> {
-    try { return JSON.parse(await readFile(this.recordPath(id), "utf8")) as Chat; }
+    try {
+      const { mode: _mode, owner: _owner, ...chat } = JSON.parse(await readFile(this.recordPath(id), "utf8")) as Chat & { owner?: unknown };
+      return { ...chat, mode: "chat" } as Chat;
+    }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
   }
 
@@ -111,7 +112,8 @@ export class ChatStore {
     await chmod(dir, 0o700);
     const target = this.recordPath(chat.id);
     const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(chat)}\n`, { mode: 0o600 });
+    const { mode: _mode, owner: _owner, ...record } = chat as Chat & { owner?: unknown };
+    await writeFile(temporary, `${JSON.stringify(record)}\n`, { mode: 0o600 });
     await rename(temporary, target);
   }
 
