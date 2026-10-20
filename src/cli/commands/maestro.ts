@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
@@ -10,8 +10,8 @@ import { findJavaHome, maestroBinary, maestroEnvironment, readMaestroRecord } fr
 import { usageText } from "../../core/usage.js";
 import { recordSimulatorOwner } from "../../core/native-sim-owner.js";
 import { systemClock } from "../../core/clock.js";
-import { endNativeInputSession } from "./native/input.js";
 import { readWebDevices } from "../../core/web-device.js";
+import { parseAllDocuments } from "yaml";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Emit = (text: string) => void;
@@ -23,6 +23,9 @@ const FLOW_ROOTS = [".maestro", "maestro"];
 const UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
 const STEP = /^(.*)\.\.\. (COMPLETED|FAILED|SKIPPED|WARNED)$/;
 const DEBUG_MARKER = /^==== Debug output/;
+const DRIVER_START_FAILURE = /Failed to connect to \/127\.0\.0\.1:|XCUITest.{0,80}(?:driver|start)|(?:driver|status check).{0,80}(?:timed out|timeout)/i;
+const PRIVACY_GRANT_FAILURE = /simctl\s+privacy\b[^\r\n]*\bgrant\b|CommandFailed:\s*null\b/i;
+const PERCENT_POINT = /^\s*(?:\d+%\s*,\s*\d+%|\d+\s*,\s*\d+)\s*$/;
 
 const keyFor = (worktree: string): string => createHash("sha256").update(worktree).digest("hex").slice(0, 16);
 const worktreeRoot = (environment: Environment, worktree: string): string => join(resolveStateDirectory(environment), "maestro", keyFor(worktree));
@@ -49,6 +52,22 @@ function headerValue(text: string, key: string): string | null {
   const header = text.split(/^---\s*$/m)[0] ?? "";
   const match = new RegExp(`^${key}:\\s*(.+?)\\s*$`, "m").exec(header);
   return match?.[1]?.replace(/^["']|["']$/g, "") ?? null;
+}
+
+function validatePercentagePoints(text: string, path: string): string | undefined {
+  const documents = parseAllDocuments(text);
+  const syntaxError = documents.flatMap((document) => document.errors)[0];
+  if (syntaxError) {
+    const line = syntaxError.linePos?.[0]?.line ?? 1;
+    return `${path}:${line}: invalid flow YAML: ${syntaxError.message}`;
+  }
+  const lines = text.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^\s*point:\s*["']?([^"'#\r\n]+?)["']?\s*$/.exec(lines[index] ?? "");
+    if (!match?.[1]?.includes("%")) continue;
+    const value = match[1].trim();
+    if (!PERCENT_POINT.test(value)) return `${path}:${index + 1}: invalid percentage point "${value}"; coordinates must be whole percentages`;
+  }
 }
 
 export function listFlows(worktree: string): Flow[] {
@@ -192,7 +211,10 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const flowPath = resolve(worktree, positional[0] ?? "");
   const flow = relative(worktree, flowPath);
   if (flow.startsWith("..") || isAbsolute(flow) || !existsSync(flowPath) || !statSync(flowPath).isFile()) return failed(`flow not found in ${worktree}: ${positional[0]}`);
-  const webFlow = headerValue(readFileSync(flowPath, "utf8"), "url") !== null;
+  const flowText = readFileSync(flowPath, "utf8");
+  const pointError = validatePercentagePoints(flowText, positional[0] ?? flow);
+  if (pointError) return failed(pointError);
+  const webFlow = headerValue(flowText, "url") !== null;
   let device: Result<string>;
   if (webFlow) {
     const version = await process.run(maestroBinary(environment), ["--version"], { timeoutMs: 10_000, env: maestroEnvironment(environment, javaHome) });
@@ -209,10 +231,7 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const admitted = await awaitProcAdmission({ name: "maestro-run", worktree, mode: admission ?? "wait" }, environment, process);
   if (admitted.kind !== "ok") return admitted;
 
-  if (!webFlow) {
-    const inputStopped = await endNativeInputSession(environment, process, device.value);
-    if (inputStopped.kind !== "ok") return failed(`could not end native input session for ${device.value} before Maestro: ${inputStopped.error}`);
-  } else if (values["--device"]) {
+  if (webFlow && values["--device"]) {
     console.error(`Maestro web runs in its own headless Chromium; it cannot attach to ${values["--device"]}.`);
   }
 
@@ -228,14 +247,12 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     if (emit === undefined) collected.push(line); else emit(line);
   };
   const startedMs = Date.now();
+  const debugOutput = join(artifacts, "debug");
+  mkdirSync(debugOutput, { recursive: true });
   const commandArgs = webFlow
-    ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, flowPath]
-    : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, flowPath];
-  const child = spawn(maestroBinary(environment), commandArgs, {
-    cwd: worktree, detached: true, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...maestroEnvironment(environment, javaHome) },
-  });
-  let current: RunRecord = { runId, flow, worktree, device: device.value, pid: child.pid ?? 0, state: "running", startedAt: new Date(startedMs).toISOString() };
+    ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, "--debug-output", debugOutput, "--flatten-debug-output", flowPath]
+    : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, "--debug-output", debugOutput, "--flatten-debug-output", flowPath];
+  let current: RunRecord = { runId, flow, worktree, device: device.value, pid: 0, state: "running", startedAt: new Date(startedMs).toISOString() };
   writeRecord(directory, current);
   send({ type: "start", state: "running", runId, flow, device: device.value, artifacts: directory });
   if (ownerNotice) console.error(ownerNotice);
@@ -251,7 +268,9 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     held = undefined;
   };
   let pending = "";
+  const output: string[] = [];
   const onLine = (line: string): void => {
+    output.push(line);
     if (held !== undefined) {
       if (DEBUG_MARKER.test(line)) flush(); else errorLines.push(line);
       return;
@@ -273,11 +292,28 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     pending = lines.pop() ?? "";
     for (const line of lines) onLine(line);
   };
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", drain);
-  child.stderr.on("data", drain);
-  const exitCode = await new Promise<number>((resolveCode) => {
+  let exitCode = 1;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt > 0) {
+      output.length = 0;
+      pending = "";
+      held = undefined;
+      errorLines = [];
+      index = 0;
+      lastLine = Date.now();
+    }
+    const attemptArgs = attempt === 0 ? commandArgs : [...commandArgs.slice(0, -1), "--reinstall-driver", commandArgs.at(-1) ?? flowPath];
+    const child = spawn(maestroBinary(environment), attemptArgs, {
+      cwd: worktree, detached: true, stdio: ["ignore", "pipe", "pipe"],
+      env: { ...Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...maestroEnvironment(environment, javaHome) },
+    });
+    current = { ...current, pid: child.pid ?? 0 };
+    writeRecord(directory, current);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", drain);
+    child.stderr.on("data", drain);
+    exitCode = await new Promise<number>((resolveCode) => {
     let settled = false;
     let timedOut = false;
     const finish = (code: number) => { if (settled) return; settled = true; clearTimeout(timeout); resolveCode(timedOut ? 124 : code); };
@@ -289,14 +325,31 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     }, 30 * 60_000);
     child.once("error", () => finish(127));
     child.once("close", (code, signal) => finish(code ?? (signal === null ? 1 : 128)));
-  });
-  if (pending !== "") onLine(pending);
+    });
+    if (pending !== "") onLine(pending);
+    pending = "";
+    if (attempt === 0 && exitCode !== 0 && DRIVER_START_FAILURE.test(output.join("\n"))) {
+      continue;
+    }
+    break;
+  }
   flush();
 
   const stopped = readRecord(directory)?.state === "stopped";
-  current = { ...current, state: stopped ? "stopped" : exitCode === 0 ? "passed" : "failed", exitCode, finishedAt: new Date().toISOString() };
+  const completeOutput = output.join("\n");
+  const driverFailed = DRIVER_START_FAILURE.test(completeOutput);
+  const privacyFailed = exitCode !== 0 && PRIVACY_GRANT_FAILURE.test(completeOutput);
+  const reasonCode = driverFailed ? "xcuitest_driver_start_failed" : privacyFailed ? "privacy_grant_failed" : undefined;
+  const outputLines = completeOutput.split(/\r?\n/);
+  const privacyMessage = outputLines.find((line) => /CommandFailed:\s*null\b/i.test(line))?.trim()
+    ?? outputLines.find((line) => PRIVACY_GRANT_FAILURE.test(line))?.trim();
+  const reason = driverFailed ? "Maestro could not start the XCUITest driver." : privacyFailed ? `privacy grant failed: ${privacyMessage ?? "Maestro returned CommandFailed: null."}` : undefined;
+  const debugLog = [join(debugOutput, "maestro.log"), ...findFiles(debugOutput, /maestro\.log$/)].find((path) => existsSync(path));
+  const maestroLog = debugLog ? join(artifacts, "maestro.log") : undefined;
+  if (debugLog && maestroLog && debugLog !== maestroLog) copyFileSync(debugLog, maestroLog);
+  current = { ...current, state: stopped ? "stopped" : exitCode === 0 ? "passed" : "failed", exitCode, finishedAt: new Date().toISOString(), ...(reasonCode ? { reasonCode, reason } : {}), ...(maestroLog ? { maestroLog } : {}) };
   writeRecord(directory, current);
-  send({ type: "run", state: current.state, runId, flow, device: device.value, exitCode, durationMs: Date.now() - startedMs, artifacts: directory });
+  send({ type: "run", state: current.state, runId, flow, device: device.value, exitCode, durationMs: Date.now() - startedMs, artifacts: directory, ...(reasonCode ? { reasonCode, reason } : {}), ...(maestroLog ? { maestroLog } : {}) });
   writeFileSync(join(directory, "events.jsonl"), log.join(""));
   return ok(collected.join(""), exitCode);
 }

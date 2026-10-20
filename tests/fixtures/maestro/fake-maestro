@@ -4,12 +4,34 @@ dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 case "$1" in
   --version|-v) echo "2.11.0"; exit 0 ;;
 esac
-out=""; prev=""
-for arg in "$@"; do
-  [ "$prev" = "--test-output-dir" ] && out="$arg"
-  prev="$arg"
+out=""; debug=""; flow=""; prev=""
+invocation="$*"
+while [ "$#" -gt 0 ]; do
+  arg="$1"; shift
+  option="${arg%%=*}"
+  value="${arg#*=}"
+  case "$option" in
+    --analyze|--flatten-debug-output|--headless|--ansi|--no-ansi|--color|--no-color|--continuous|-c|--help|-h|--reinstall-driver|--no-reinstall-driver) ;;
+    --api-key|--api-url|--config|--debug-output|--format|--output|--platform|-p|--screen-size|--shards|-s|--shard-all|--shard-split|--test-output-dir|--test-suite-name|--udid|--device|--env|-e|--exclude-tags|--include-tags)
+      if [ "$arg" = "$option" ]; then
+        if [ "$#" -eq 0 ]; then echo "Missing value for $option" >&2; exit 2; fi
+        value="$1"; shift
+      fi
+      case "$option" in
+        --debug-output) debug="$value" ;;
+        --test-output-dir) out="$value" ;;
+      esac
+      ;;
+    --version|-v) echo "2.11.0"; exit 0 ;;
+    -*) echo "Unknown option: $arg" >&2; exit 2 ;;
+    *.yaml|*.yml) flow="$arg" ;;
+  esac
 done
-printf '%s\n' "$*" > "${FAKE_MAESTRO_ARGS:-/dev/null}"
+printf '%s\n' "$invocation" > "${FAKE_MAESTRO_ARGS:-/dev/null}"
+[ -n "${FAKE_MAESTRO_INVOCATIONS:-}" ] && printf '%s\n' "$invocation" >> "$FAKE_MAESTRO_INVOCATIONS"
+[ -n "${FAKE_MAESTRO_HASH:-}" ] && sha256sum "$flow" | cut -d' ' -f1 > "${FAKE_MAESTRO_HASH_OUTPUT:-$(dirname "${FAKE_MAESTRO_ARGS:-/dev/null}")/echoed-flow.sha256}"
+[ -n "${FAKE_MAESTRO_LOG:-}" ] && { mkdir -p "$debug"; printf '%s' "$FAKE_MAESTRO_LOG" > "$debug/maestro.log"; }
+[ -n "${FAKE_MAESTRO_DRIVER_FAIL_ONCE:-}" ] && { count=$(wc -l < "$FAKE_MAESTRO_INVOCATIONS"); if [ "$count" -eq 1 ]; then echo "Failed to connect to /127.0.0.1:"; exit 1; fi; }
 [ -n "$out" ] && mkdir -p "$out" && cp -R "$dir/artifacts/." "$out/"
 if [ -n "$FAKE_MAESTRO_SLEEP" ]; then sleep "$FAKE_MAESTRO_SLEEP"; fi
 cat "$dir/${FAKE_MAESTRO_OUTPUT:-run-passed.txt}"

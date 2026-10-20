@@ -1,0 +1,2 @@
+Failed to run xcrun simctl privacy booted grant photos com.example.app
+CommandFailed: null
