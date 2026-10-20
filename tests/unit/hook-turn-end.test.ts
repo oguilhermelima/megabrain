@@ -446,7 +446,7 @@ describe("executeHookTurnEnd: parent-notify scan (this session is not itself a d
       if (first.kind !== "ok") return;
       expect(JSON.parse(first.value)).toMatchObject({ hookSpecificOutput: {
         hookEventName: "Stop",
-        additionalContext: "1 unread child message: ask which branch? — megabrain orchestrate watch d1",
+        additionalContext: "1 unread child message: ask which branch? — megabrain orchestrate watch d1 --full",
       } });
       expect(await executeHookTurnEnd([], parentEnv(root), fakeProcess(), noStdin)).toEqual({ kind: "ok", value: "{}\n" });
       const deliveries = listDeliveries(database.value, "d1");

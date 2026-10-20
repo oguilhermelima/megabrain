@@ -102,6 +102,7 @@ if [ ! -f "$done_file" ]; then
 fi
 wait "$reply_pid"
 assert_equal "$(jq -r '.status' "$reply_output")" queued
+assert_equal "$(jq -r '.delivery.status' "$reply_output")" queued-for-check
 reply_message="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.messages[0]')"
 assert_equal "$(jq -r '.seq' <<<"$reply_message")" 1
 assert_equal "$(jq -r '.text' <<<"$reply_message")" "$answer"
@@ -136,6 +137,7 @@ scenario_agent_nudge() {
   output="$(PATH="$fake_bin:$PATH" "$root/.build/megabrain" orchestrate reply "$dispatch_id" --text "answer for $agent" --json)"
   assert_equal "$(jq -r '.status' <<<"$output")" queued
   assert_equal "$(jq -r '.nudge' <<<"$output")" not-typed
+  assert_equal "$(jq -r '.delivery.status' <<<"$output")" queued-for-check
   message="$(MEGABRAIN_STATE_DIR="$state_dir" "$root/.build/megabrain" db show "$dispatch_id" --json | jq '.messages[0]')"
   assert_equal "$(jq -r '.text' <<<"$message")" "answer for $agent"
   assert_contains "$(jq -r '.sessionId' <<<"$message")" ':'
