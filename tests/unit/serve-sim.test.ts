@@ -34,5 +34,5 @@ test("falls back to a repository package and then PATH", async () => {
   expect(resolveServeSim({ MEGABRAIN_ROOT: join(root, "repo") }, executable, join(root, "empty"))).toEqual({
     command: "node", args: [script],
   });
-  expect(resolveServeSim({}, executable, join(root, "empty"))).toEqual({ command: "serve-sim", args: [] });
+  expect(resolveServeSim({ MEGABRAIN_ROOT: join(root, "empty") }, executable, join(root, "empty"))).toEqual({ command: "serve-sim", args: [] });
 });
