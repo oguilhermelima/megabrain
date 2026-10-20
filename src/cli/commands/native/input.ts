@@ -113,6 +113,19 @@ function jpegSize(jpeg: Buffer): { width: number; height: number } | undefined {
   }
   return undefined;
 }
+async function waitForHelperReady(process: ProcessAdapter, helper: Omit<RecordEntry, "platform">, timeoutMs = 15_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = "framebuffer stream is not available";
+  while (Date.now() < deadline) {
+    const alive = await process.run("kill", ["-0", String(helper.pid)]);
+    if (alive.kind === "ok") {
+      try { await frame(helper.streamUrl); return; }
+      catch (cause) { lastError = cause instanceof Error ? cause.message : String(cause); }
+    } else lastError = `helper process ${helper.pid} is not running`;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(`serve-sim helper did not become ready within ${timeoutMs}ms: ${lastError}`);
+}
 async function sendWs(url: string, type: number, value?: unknown): Promise<void> {
   return sendWsSequence(url, [{ type, value }]);
 }
@@ -211,6 +224,8 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
         helper = parseHelper(launch.value.stdout, udid) ?? await helperState(process, env, udid);
       }
       if (!helper) throw new Error(`serve-sim did not report a live helper for ${udid}`);
+      update("waiting for serve-sim framebuffer");
+      await waitForHelperReady(process, helper);
       const ownerPid = Number(env.MEGABRAIN_NATIVE_INPUT_OWNER_PID);
       const entry: RecordEntry = { ...helper, platform, ...(worker && Number.isInteger(ownerPid) && ownerPid > 0 ? { ownerPid } : {}), watchdogPid: readStatus(env, udid)?.watchdogPid };
       save(env, [...all.filter((item) => item.udid !== udid), entry]);

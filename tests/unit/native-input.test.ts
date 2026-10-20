@@ -38,6 +38,7 @@ function fakeProcess(helper?: Awaited<ReturnType<typeof fakeHelper>>["helper"]) 
     calls,
     async run(command, args) {
       calls.push({ command, args: [...args] });
+      if (command === "kill" && args[0] === "-0") return ok({ stdout: "", stderr: "", exitCode: 0 });
       if (command === "xcrun") return ok({ stdout: JSON.stringify({ devices: { "iOS 18": [{ udid, state: "Booted", name: "Phone", isAvailable: true }] } }), stderr: "", exitCode: 0 });
       if (command === "serve-sim" && args[0] === "--list") return helper ? ok({ stdout: JSON.stringify({ running: true, ...helper }), stderr: "", exitCode: 0 }) : ok({ stdout: JSON.stringify({ running: false, device: udid }), stderr: "", exitCode: 0 });
       if (command === "serve-sim" && args[0] === "--detach") return helper ? ok({ stdout: JSON.stringify(helper), stderr: "", exitCode: 0 }) : failed("fake helper missing");
@@ -150,7 +151,7 @@ describe("native input scenarios", () => {
     const fake = await fakeHelper(); const state = await emptyFixture(); const { process, calls } = fakeProcess(fake.helper);
     const run = process.run.bind(process);
     process.run = async (command, args, options) => {
-      if (command === "kill" && args[0] === "-0") { calls.push({ command, args: [...args] }); return failed("owner process exited"); }
+      if (command === "kill" && args[0] === "-0" && args[1] === "98765") { calls.push({ command, args: [...args] }); return failed("owner process exited"); }
       return run(command, args, options);
     };
     const result = await nativeInput(["start", udid, "--worker", "--watch", "--json"], { MEGABRAIN_STATE_DIR: state, MEGABRAIN_NATIVE_INPUT_OWNER_PID: "98765" }, process);
