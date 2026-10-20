@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";import { basename, join, resolve } from "node:path";import { ok } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { resolveStateDirectory } from "../../../core/state.js";import { pruneDecision, pruneStates } from "../../../core/orchestrate-prune.js";import { getTmux } from "../../../hosts/tmux.js";import { tmuxCallerPaneSession } from "../queue-write.js";import { resolvePackageRoot } from "../../../core/package-root.js";import { discoverAgentDirectories } from "../../../core/agent-directories.js";import { getInstallState, listDispatches, readOnlyStateDatabase } from "../../../adapters/state-db.js";
 import type { HookAgent } from "./hook-config.js";
 export type Environment = Readonly<Record<string, string | undefined>>;
-export type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; retainedTerminals: number; retainedReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
+export type Report = { module: string; status: string; reason: string; uncertainDispatches: number; uncertainReasons: unknown[]; leakedDispatchSessions: number; prunableDispatches: number; usableRuntimes?: number };
 export type State = Record<string, Record<string, unknown>>;
 export const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "summaries-context", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime", "skill-sync", "terminal-openers", "artifacts-diagram"];
 export async function available(process: ProcessAdapter, command: string): Promise<boolean> {
@@ -209,7 +209,7 @@ export function tmuxFileState(environment: Environment): { tuningBlock: boolean;
 }
 
 export function emptyCounts(): Omit<Report, "module" | "status" | "reason"> {
-  return { uncertainDispatches: 0, uncertainReasons: [], retainedTerminals: 0, retainedReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
+  return { uncertainDispatches: 0, uncertainReasons: [], leakedDispatchSessions: 0, prunableDispatches: 0 };
 }
 
 export type DispatchHealth = Omit<Report, "module" | "status" | "reason">;
@@ -236,10 +236,6 @@ export async function dispatchHealth(environment: Environment, process: ProcessA
     if (reason !== undefined) {
       result.uncertainDispatches += 1;
       result.uncertainReasons.push({ dispatchId: record.dispatchId, reason, processState, terminalState: record.terminalState ?? null });
-    }
-    if (record.terminalState === "retained") {
-      result.retainedTerminals += 1;
-      result.retainedReasons.push({ dispatchId: record.dispatchId, reason: record.terminalReason ?? "terminal identity remains unproven", processState, terminalState: "retained" });
     }
     if (pruneDecision(record, pruneOptions, now).eligible) result.prunableDispatches += 1;
   }

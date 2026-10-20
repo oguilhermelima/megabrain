@@ -35,7 +35,12 @@ function stringField(value: unknown): string | undefined {
 
 export function parseDispatchRecord(value: unknown): Result<DispatchRecord> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return unknown("dispatch metadata is not a JSON object");
-  const raw = value as JsonRecord;
+  const stored = value as JsonRecord;
+  // Legacy uncertainty markers describe a terminal whose process is no longer trusted alive.
+  // Present them as exited at read time; persisted metadata remains untouched.
+  const legacyExit = stored.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(String(stored.state)) ||
+    stored.stage === "identity-unproven" || stored.stage === "parent-missing";
+  const raw = legacyExit ? { ...stored, state: "exited", terminalState: "missing" } : stored;
   return ok({
     raw,
     dispatchId: stringField(raw.dispatchId),

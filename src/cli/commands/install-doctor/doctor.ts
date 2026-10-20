@@ -51,10 +51,9 @@ export async function report(module: string, environment: Environment, process: 
     if (orca) usable.push("orca"); else missing.push("orca");
     if (superset) usable.push("superset"); else missing.push("superset");
     if (tmux && tmuxEnabled) usable.push("tmux"); else if (!tmuxEnabled) missing.push("tmux");
-    let suffix = `; uncertain dispatches: ${health.uncertainDispatches} (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); retained terminals: ${health.retainedTerminals}; leaked dispatch sessions: ${health.leakedDispatchSessions}; prunable dispatches: ${health.prunableDispatches}`;
+    let suffix = `; uncertain dispatches: ${health.uncertainDispatches} (review with megabrain orchestrate list --uncertain; reconcile or archive eligible records with megabrain orchestrate prune --older-than 1); leaked dispatch sessions: ${health.leakedDispatchSessions}; prunable dispatches: ${health.prunableDispatches}`;
     if (health.uncertainDispatches > 0) suffix += `; unresolved reasons: ${[...new Set(health.uncertainReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
-    if (health.retainedTerminals > 0) suffix += `; retained reasons: ${[...new Set(health.retainedReasons.map(item => (item as { reason: string }).reason))].join(", ")}`;
-    if (health.uncertainDispatches > 0 || health.retainedTerminals > 0) {
+    if (health.uncertainDispatches > 0) {
       status = "misconfigured";
       reason = `dispatch state requires reconciliation${suffix}`;
     } else if (usable.length > 0) { status = "ok"; reason = `usable runtimes: ${usable.join(", ")}; other runtimes are optional${suffix}`; }

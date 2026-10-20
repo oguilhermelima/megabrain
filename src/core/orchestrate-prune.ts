@@ -1,6 +1,6 @@
 import { failed, ok, type Result } from "./result.js";
 
-export const pruneStates = ["closed", "done", "failed", "orphaned", "circuit_broken"] as const;
+export const pruneStates = ["closed", "done", "exited", "failed", "orphaned"] as const;
 export type PruneOptions = Readonly<{ olderThan: number; states: readonly string[]; mode: "archive" | "delete"; dryRun: boolean; json: boolean }>;
 export type PruneDecision = Readonly<{ eligible: boolean; reason?: string; timestamp?: string }>;
 

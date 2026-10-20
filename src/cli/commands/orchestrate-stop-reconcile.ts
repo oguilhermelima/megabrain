@@ -22,13 +22,15 @@ const value = (input: unknown): string => typeof input === "string" ? input : ""
 
 function normalize(meta: RecordValue): RecordValue {
   const storedState = value(meta.state);
+  const legacyExit = meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(storedState) ||
+    meta.stage === "identity-unproven" || meta.stage === "parent-missing";
   const state = storedState === "stalled" || storedState === "timeout" ? "running" : storedState === "" ? "running" : storedState;
   return {
     ...meta,
-    processState: value(meta.processState) || (state === "closed" ? "stopped" : state === "done" ? "succeeded" : state === "failed" ? "failed" : state === "spawning" ? "starting" : "running"),
-    terminalState: value(meta.terminalState) || "owned",
+    state: legacyExit ? "exited" : state,
+    processState: legacyExit ? "exited" : value(meta.processState) || (state === "closed" ? "stopped" : state === "done" ? "succeeded" : state === "failed" ? "failed" : state === "spawning" ? "starting" : "running"),
+    terminalState: legacyExit ? "missing" : value(meta.terminalState) || "owned",
     terminalReason: meta.terminalReason ?? null,
-    failureCount: typeof meta.failureCount === "number" ? meta.failureCount : 0,
     stage: meta.stage ?? null,
     reason: meta.reason ?? null,
     reconcileOutcome: meta.reconcileOutcome ?? null,
@@ -88,7 +90,9 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   if (loaded.kind !== "ok") return loaded;
   if (loaded.value === undefined) return failed(`dispatch not found: ${dispatch}`);
   let meta = normalize(loaded.value as RecordValue);
-  if (JSON.stringify(meta) !== JSON.stringify(loaded.value)) {
+  const legacyTerminal = meta.state === "exited" && (["retained", "identity_unproven", "circuit_broken"].includes(value(loaded.value.state)) ||
+    loaded.value.terminalState === "retained" || loaded.value.stage === "identity-unproven" || loaded.value.stage === "parent-missing");
+  if (!legacyTerminal && JSON.stringify(meta) !== JSON.stringify(loaded.value)) {
     try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: meta }); }
     catch (cause: unknown) { return failed(`state owner could not normalize dispatch: ${cause instanceof Error ? cause.message : String(cause)}`); }
   }
@@ -97,8 +101,8 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   if (synced.kind !== "ok") return synced;
   meta = synced.value;
   const state = value(meta.state);
-  if (state === "closed" || state === "circuit_broken") return ok({ ...meta, reconcileResult: "unchanged" });
-  const terminal = meta.terminalState === "retained" ? "missing" : await terminalStatus(meta, process);
+  if (state === "closed" || state === "done" || state === "exited" || state === "failed") return ok({ ...meta, reconcileResult: "unchanged" });
+  const terminal = await terminalStatus(meta, process);
   const decision = reconcileDecision({ ...meta, childDone: messages.some((message) => message.from === "child" && message.type === "done") }, terminal);
   const next = decision.outcome === "unchanged" ? meta : { ...meta, ...decision.updates, reconcileOutcome: decision.outcome, updatedAt: new Date().toISOString() };
   if (decision.outcome !== "unchanged") {

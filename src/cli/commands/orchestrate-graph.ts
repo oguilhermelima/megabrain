@@ -46,7 +46,8 @@ function dispatchState(state: string, messages: readonly Record<string, unknown>
   if (state === "waiting_for_reply") return "idle";
   if (state === "done") return "done";
   if (state === "closed") return "closed";
-  if (state === "failed" || state === "circuit_broken") return "failed";
+  if (state === "failed") return "failed";
+  if (state === "exited" || state === "circuit_broken") return "done";
   return latest?.type === "stalled" ? "stalled" : "failed";
 }
 
@@ -112,7 +113,7 @@ async function lane(record: Dispatch, parent: string, messages: Record<string, u
   const messagesForState = messages;
   const state = dispatchState(record.state, messagesForState);
   const startedAt = string(record.createdAt) ?? new Date(0).toISOString();
-  const endedAt = ["done", "failed", "closed", "circuit_broken"].includes(record.state) ? string(record.updatedAt) : null;
+  const endedAt = ["done", "exited", "failed", "closed", "circuit_broken"].includes(record.state) ? string(record.updatedAt) : null;
   const worktree = string(record.worktreePath);
   const branch = string(record.branch);
   const explicitPercent = typeof record.contextPercent === "number" ? record.contextPercent

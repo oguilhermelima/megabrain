@@ -70,7 +70,7 @@ export function parseParentChangeArgs(args: readonly string[]): Result<ParentCha
 export function replyStateError(dispatch: string, state: string, change: boolean): string | undefined {
   const allowed = checkDispatchTransition("dispatch", state, "running").kind === "ok";
   if (allowed) return undefined;
-  if (!change && ["done", "failed", "closed", "circuit_broken"].includes(state)) {
+  if (!change && ["done", "exited", "failed", "closed"].includes(state)) {
     return `dispatch ${dispatch} is settled in state ${state}; open a new dispatch for a reply`;
   }
   return `dispatch ${dispatch} cannot receive a ${change ? "change" : "reply"} in state ${state}`;
