@@ -6,6 +6,7 @@ import { resolveStateDirectory } from "../../../core/state.js";
 import { selfInvocation } from "../../../core/self-invocation.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { usageText } from "../../../core/usage.js";
+import WebSocket from "ws";
 import { SIMULATOR_UDID, simCandidates } from "./index.js";
 import type { Environment } from "./index.js";
 
@@ -116,19 +117,40 @@ async function sendWs(url: string, type: number, value?: unknown): Promise<void>
   return sendWsSequence(url, [{ type, value }]);
 }
 async function sendWsSequence(url: string, events: readonly { type: number; value?: unknown }[], gapMs = 0): Promise<void> {
-  const socket = new WebSocket(url); socket.binaryType = "arraybuffer";
+  const socket = new WebSocket(url);
   await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => { socket.close(); reject(new Error("timed out connecting to serve-sim helper")); }, 2_000);
-    socket.addEventListener("open", async () => {
-      clearTimeout(timeout);
-      for (const event of events) {
+    let sent = 0;
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    let gapTimer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout); if (closeTimer) clearTimeout(closeTimer); if (gapTimer) clearTimeout(gapTimer);
+      socket.removeAllListeners();
+      if (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN) socket.close();
+      if (error) reject(error); else resolve();
+    };
+    const onError = () => finish(new Error(sent === 0 ? "could not connect to serve-sim control socket" : `serve-sim control socket failed after sending ${sent} of ${events.length} events`));
+    const onClose = () => { if (sent < events.length) finish(new Error(`serve-sim control socket closed after sending ${sent} of ${events.length} events`)); };
+    const sendNext = () => {
+      if (socket.readyState !== WebSocket.OPEN) { finish(new Error(`serve-sim control socket closed before sending event ${sent + 1} of ${events.length}`)); return; }
+      try {
+        const event = events[sent]!;
         const body = event.value === undefined ? new Uint8Array() : new TextEncoder().encode(JSON.stringify(event.value));
-        const message = new Uint8Array(body.length + 1); message[0] = event.type; message.set(body, 1); socket.send(message);
-        if (gapMs > 0) await new Promise((pause) => setTimeout(pause, gapMs));
-      }
-      setTimeout(() => { socket.close(); resolve(); }, 60);
-    }, { once: true });
-    socket.addEventListener("error", () => { clearTimeout(timeout); reject(new Error("could not connect to serve-sim control socket")); }, { once: true });
+        const message = Buffer.allocUnsafe(body.length + 1); message[0] = event.type; Buffer.from(body).copy(message, 1);
+        socket.send(message, (error) => {
+          if (error) { finish(new Error(`could not send event ${sent + 1} to serve-sim: ${error.message}`)); return; }
+          sent += 1;
+          if (sent === events.length) closeTimer = setTimeout(() => finish(), 50);
+          else gapTimer = setTimeout(sendNext, gapMs);
+        });
+      } catch (cause) { finish(new Error(`could not send event ${sent + 1} to serve-sim: ${cause instanceof Error ? cause.message : String(cause)}`)); return; }
+    };
+    const onOpen = () => { clearTimeout(timeout); sendNext(); };
+    timeout = setTimeout(() => finish(new Error("timed out connecting to serve-sim control socket")), 2_000);
+    socket.once("open", onOpen); socket.on("error", onError); socket.on("close", onClose);
   });
 }
 function startedAt(env: Environment, udid: string) { return readStatus(env, udid)?.startedAt ?? new Date().toISOString(); }
