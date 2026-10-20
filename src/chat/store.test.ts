@@ -19,7 +19,7 @@ test("legacy mode and owner values are ignored when reading a chat", async () =>
   writeFileSync(join(directory, "chat.json"), JSON.stringify(chat));
 
   const loaded = await store.get(id);
-  expect(loaded).not.toHaveProperty("mode");
+  expect(loaded?.mode).toBe("chat");
   expect(loaded).not.toHaveProperty("owner");
 });
 
