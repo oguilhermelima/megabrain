@@ -1,5 +1,6 @@
 import { ok, unknown, type Result } from "./result.js";
 import { dispatchStates, processStates, terminalStates, type DispatchStateValue, type ProcessStateValue, type TerminalStateValue } from "./dispatch-states.js";
+import { dispatchStateFromMeta } from "./orchestrate-reconcile.js";
 import { isAgentSessionId, ownsDispatch, type CallerIdentity } from "./context.js";
 
 export type JsonRecord = { readonly [key: string]: unknown };
@@ -38,9 +39,8 @@ export function parseDispatchRecord(value: unknown): Result<DispatchRecord> {
   const stored = value as JsonRecord;
   // Legacy uncertainty markers describe a terminal whose process is no longer trusted alive.
   // Present them as exited at read time; persisted metadata remains untouched.
-  const legacyExit = stored.processState === "exited" || stored.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(String(stored.state)) ||
-    stored.stage === "identity-unproven" || stored.stage === "parent-missing";
-  const raw = legacyExit ? { ...stored, state: "exited", terminalState: "missing" } : stored;
+  const state = dispatchStateFromMeta(stored);
+  const raw = state !== stored.state ? { ...stored, state, ...(stored.terminalState === "retained" ? { terminalState: "missing" } : {}) } : stored;
   return ok({
     raw,
     dispatchId: stringField(raw.dispatchId),

@@ -1,5 +1,6 @@
 import { failed, ok, type Result } from "./result.js";
 import { checkDispatchTransition } from "./dispatch-states.js";
+import { dispatchStateFromMeta } from "./orchestrate-reconcile.js";
 import { usageText } from "./usage.js";
 
 export type ParentReplyArguments = Readonly<{
@@ -83,8 +84,7 @@ export function replyStateError(dispatch: string, state: string, change: boolean
 // replyStateError gets the generic "cannot receive a reply" refusal instead of the shell's
 // accept-and-resume-to-running behaviour.
 export function normalizeDispatchState(state: string, meta: Readonly<Record<string, unknown>> = {}): string {
-  if (meta.processState === "exited" || meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(state) ||
-    meta.stage === "identity-unproven" || meta.stage === "parent-missing") return "exited";
+  if (dispatchStateFromMeta({ ...meta, state }) === "exited") return "exited";
   if (state === "stalled" || state === "timeout") return "running";
   return state;
 }

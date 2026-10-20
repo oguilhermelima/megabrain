@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { failed, ok, type Result } from "../../core/result.js";
 import { parsePruneArgs, pruneDecision, pruneStates, type PruneOptions } from "../../core/orchestrate-prune.js";
-import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
+import { dispatchStateFromMeta, reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { type ProcessAdapter } from "../../adapters/proc.js";
 import { tmuxCallerPaneSession } from "./queue-write.js";
@@ -23,7 +23,7 @@ function text(value: unknown): string { return typeof value === "string" ? value
 
 function normalizeMetadata(meta: RecordValue): RecordValue {
   const state = text(meta.state);
-  if (meta.processState === "exited" || meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(state) || meta.stage === "identity-unproven" || meta.stage === "parent-missing") {
+  if (dispatchStateFromMeta(meta) === "exited") {
     return { ...meta, state: "exited", processState: "exited", terminalState: "missing" };
   }
   if (state !== "stalled" && state !== "timeout") return meta;
@@ -140,8 +140,7 @@ async function entries(root: string, handle: DatabaseHandle): Promise<Entry[]> {
   if (records.kind !== "ok") return [];
   return Promise.all(records.value.map(async (record) => {
     const meta = normalizeMetadata(record as RecordValue);
-  const legacyTerminal = meta.state === "exited" && (record.processState === "exited" || ["retained", "identity_unproven", "circuit_broken"].includes(text(record.state)) ||
-      record.terminalState === "retained" || record.stage === "identity-unproven" || record.stage === "parent-missing");
+    const legacyTerminal = meta.state === "exited" && dispatchStateFromMeta(record) === "exited";
     if (meta !== record && !legacyTerminal) {
       await callStateOwner(root, { operation: "dispatch-patch", dispatchId: record.dispatchId, patch: meta });
     }

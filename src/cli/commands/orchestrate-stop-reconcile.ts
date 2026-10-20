@@ -1,6 +1,6 @@
 import { failed, ok, type Result } from "../../core/result.js";
 import { parseStopArgs, stopDecision, stopOutput } from "../../core/orchestrate-stop.js";
-import { reconcileDecision } from "../../core/orchestrate-reconcile.js";
+import { dispatchStateFromMeta, reconcileDecision } from "../../core/orchestrate-reconcile.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { appendMessage, resolveCaller, type QueueEnvironment } from "./queue-write.js";
@@ -22,8 +22,7 @@ const value = (input: unknown): string => typeof input === "string" ? input : ""
 
 function normalize(meta: RecordValue): RecordValue {
   const storedState = value(meta.state);
-  const legacyExit = meta.processState === "exited" || meta.terminalState === "retained" || ["retained", "identity_unproven", "circuit_broken"].includes(storedState) ||
-    meta.stage === "identity-unproven" || meta.stage === "parent-missing";
+  const legacyExit = dispatchStateFromMeta(meta) === "exited";
   const state = storedState === "stalled" || storedState === "timeout" ? "running" : storedState === "" ? "running" : storedState;
   return {
     ...meta,
@@ -90,8 +89,7 @@ async function reconcileOne(database: DatabaseHandle, root: string, dispatch: st
   if (loaded.kind !== "ok") return loaded;
   if (loaded.value === undefined) return failed(`dispatch not found: ${dispatch}`);
   let meta = normalize(loaded.value as RecordValue);
-  const legacyTerminal = meta.state === "exited" && (loaded.value.processState === "exited" || ["retained", "identity_unproven", "circuit_broken"].includes(value(loaded.value.state)) ||
-    loaded.value.terminalState === "retained" || loaded.value.stage === "identity-unproven" || loaded.value.stage === "parent-missing");
+  const legacyTerminal = meta.state === "exited" && dispatchStateFromMeta(loaded.value) === "exited";
   if (!legacyTerminal && JSON.stringify(meta) !== JSON.stringify(loaded.value)) {
     try { await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: meta }); }
     catch (cause: unknown) { return failed(`state owner could not normalize dispatch: ${cause instanceof Error ? cause.message : String(cause)}`); }
