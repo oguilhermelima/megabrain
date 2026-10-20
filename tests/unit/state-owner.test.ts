@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createConnection } from "node:net";
-import { join } from "node:path";
+import { createConnection, createServer } from "node:net";
+import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { callStateOwner, inspectStateOwner, startStateOwner, stateOwnerPid, stateOwnerSocket, stopStateOwner, type StateOwnerRequest } from "../../src/db/state-owner.js";
 import { inspectDatabase, openDatabase, openDatabaseReadOnly } from "../../src/db/db.js";
@@ -463,6 +464,39 @@ describe("single state owner", () => {
     } finally {
       if (previousTmpdir === undefined) delete process.env.TMPDIR;
       else process.env.TMPDIR = previousTmpdir;
+    }
+  });
+
+  test("client reuses a live owner on the legacy TMPDIR socket", async () => {
+    const previousTmpdir = process.env.TMPDIR;
+    const legacyTmpdir = mkdtempSync(join(tmpdir(), "mb-owner-legacy-tmpdir-"));
+    let server: ReturnType<typeof createServer> | undefined;
+    try {
+      process.env.TMPDIR = legacyTmpdir;
+      const uid = typeof process.getuid === "function" ? process.getuid() : "user";
+      const socketDirectory = join(legacyTmpdir, `mb-owner-${uid}`);
+      mkdirSync(socketDirectory, { recursive: true, mode: 0o700 });
+      const legacySocket = join(socketDirectory, `s-${createHash("sha256").update(resolve(root)).digest("hex").slice(0, 24)}`);
+      mkdirSync(join(root, "state-owner"), { recursive: true });
+      writeFileSync(stateOwnerPid(root), `${process.pid}\n`);
+      writeFileSync(join(root, "state-owner", "owner.lock"), `${process.pid}\n`);
+      server = createServer((socket) => {
+        socket.once("data", () => socket.end(`${JSON.stringify({ ok: true, value: { pid: process.pid, legacy: true } })}\n`));
+      });
+      await new Promise<void>((resolveListen, reject) => {
+        server!.once("error", reject);
+        server!.listen(legacySocket, resolveListen);
+      });
+
+      const response = await callStateOwner(root, { operation: "status" }, 100, 250) as { legacy?: boolean };
+      expect(response.legacy).toBe(true);
+      expect(existsSync(stateOwnerSocket(root))).toBe(false);
+      expect(existsSync(join(root, "logs", "state-owner.log"))).toBe(false);
+    } finally {
+      await new Promise<void>((resolveClose) => server === undefined ? resolveClose() : server.close(() => resolveClose()));
+      if (previousTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpdir;
+      rmSync(legacyTmpdir, { recursive: true, force: true });
     }
   });
 
