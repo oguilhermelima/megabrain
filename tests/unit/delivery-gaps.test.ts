@@ -116,6 +116,7 @@ describe("Codex idle child delivery", () => {
         if (command === "tmux" && args.includes("list-panes")) return ok<ProcessOutput>({ stdout: "%11\n", stderr: "", exitCode: 0 });
         if (command === "tmux" && args.includes("capture-pane")) return ok<ProcessOutput>({ stdout: JSON.parse(screen).result.terminal.tail.join("\n"), stderr: "", exitCode: 0 });
         if (command === "tmux" && args.includes("send-keys")) return ok<ProcessOutput>({ stdout: "", stderr: "", exitCode: 0 });
+        if (command === "tmux" && (args.includes("load-buffer") || args.includes("paste-buffer"))) return ok<ProcessOutput>({ stdout: "", stderr: "", exitCode: 0 });
         if (command === "ps" && args[0] === "-p") return ok<ProcessOutput>({ stdout: "ttys001\n", stderr: "", exitCode: 0 });
         if (command === "ps" && args[0] === "eww") return ok<ProcessOutput>({ stdout: "991 1 /usr/local/bin/codex MEGABRAIN_DISPATCH_ID=d-codex-idle\n", stderr: "", exitCode: 0 });
         return failed(`unexpected ${command} ${args.join(" ")}`);
