@@ -252,11 +252,7 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const commandArgs = webFlow
     ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, "--debug-output-dir", debugOutput, flowPath]
     : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, "--debug-output-dir", debugOutput, flowPath];
-  const child = spawn(maestroBinary(environment), commandArgs, {
-    cwd: worktree, detached: true, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...maestroEnvironment(environment, javaHome) },
-  });
-  let current: RunRecord = { runId, flow, worktree, device: device.value, pid: child.pid ?? 0, state: "running", startedAt: new Date(startedMs).toISOString() };
+  let current: RunRecord = { runId, flow, worktree, device: device.value, pid: 0, state: "running", startedAt: new Date(startedMs).toISOString() };
   writeRecord(directory, current);
   send({ type: "start", state: "running", runId, flow, device: device.value, artifacts: directory });
   if (ownerNotice) console.error(ownerNotice);
@@ -272,7 +268,9 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     held = undefined;
   };
   let pending = "";
+  const output: string[] = [];
   const onLine = (line: string): void => {
+    output.push(line);
     if (held !== undefined) {
       if (DEBUG_MARKER.test(line)) flush(); else errorLines.push(line);
       return;
@@ -294,11 +292,19 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     pending = lines.pop() ?? "";
     for (const line of lines) onLine(line);
   };
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", drain);
-  child.stderr.on("data", drain);
-  const exitCode = await new Promise<number>((resolveCode) => {
+  let exitCode = 1;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const child = spawn(maestroBinary(environment), commandArgs, {
+      cwd: worktree, detached: true, stdio: ["ignore", "pipe", "pipe"],
+      env: { ...Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...maestroEnvironment(environment, javaHome) },
+    });
+    current = { ...current, pid: child.pid ?? 0 };
+    writeRecord(directory, current);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", drain);
+    child.stderr.on("data", drain);
+    exitCode = await new Promise<number>((resolveCode) => {
     let settled = false;
     let timedOut = false;
     const finish = (code: number) => { if (settled) return; settled = true; clearTimeout(timeout); resolveCode(timedOut ? 124 : code); };
@@ -310,17 +316,31 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     }, 30 * 60_000);
     child.once("error", () => finish(127));
     child.once("close", (code, signal) => finish(code ?? (signal === null ? 1 : 128)));
-  });
-  if (pending !== "") onLine(pending);
+    });
+    if (pending !== "") onLine(pending);
+    pending = "";
+    if (attempt === 0 && exitCode !== 0 && DRIVER_START_FAILURE.test(output.join("\n"))) {
+      held = undefined;
+      errorLines = [];
+      index = 0;
+      lastLine = Date.now();
+      continue;
+    }
+    break;
+  }
   flush();
 
   const stopped = readRecord(directory)?.state === "stopped";
+  const completeOutput = output.join("\n");
+  const driverFailed = DRIVER_START_FAILURE.test(completeOutput);
+  const reasonCode = driverFailed ? "xcuitest_driver_start_failed" : undefined;
+  const reason = driverFailed ? "Maestro could not start the XCUITest driver." : undefined;
   const debugLog = [join(debugOutput, "maestro.log"), ...findFiles(debugOutput, /maestro\.log$/)].find((path) => existsSync(path));
   const maestroLog = debugLog ? join(artifacts, "maestro.log") : undefined;
   if (debugLog && maestroLog && debugLog !== maestroLog) copyFileSync(debugLog, maestroLog);
-  current = { ...current, state: stopped ? "stopped" : exitCode === 0 ? "passed" : "failed", exitCode, finishedAt: new Date().toISOString(), ...(maestroLog ? { maestroLog } : {}) };
+  current = { ...current, state: stopped ? "stopped" : exitCode === 0 ? "passed" : "failed", exitCode, finishedAt: new Date().toISOString(), ...(reasonCode ? { reasonCode, reason } : {}), ...(maestroLog ? { maestroLog } : {}) };
   writeRecord(directory, current);
-  send({ type: "run", state: current.state, runId, flow, device: device.value, exitCode, durationMs: Date.now() - startedMs, artifacts: directory, ...(maestroLog ? { maestroLog } : {}) });
+  send({ type: "run", state: current.state, runId, flow, device: device.value, exitCode, durationMs: Date.now() - startedMs, artifacts: directory, ...(reasonCode ? { reasonCode, reason } : {}), ...(maestroLog ? { maestroLog } : {}) });
   writeFileSync(join(directory, "events.jsonl"), log.join(""));
   return ok(collected.join(""), exitCode);
 }
