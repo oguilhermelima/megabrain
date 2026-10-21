@@ -149,15 +149,19 @@ async function routeCommand(
       throw cause;
     }
     let stopping = false;
+    let exitBackstop: ReturnType<typeof setTimeout> | undefined;
+    const armExitBackstop = () => {
+      if (exitBackstop !== undefined) return;
+      exitBackstop = setTimeout(() => process.exit(0), 1_500);
+      exitBackstop.unref?.();
+    };
+    owner.onStopped = armExitBackstop;
+    if (owner.stopped) armExitBackstop();
     const stop = () => {
       if (stopping) return;
       stopping = true;
-      const deadline = setTimeout(() => process.exit(0), 900);
-      void stopStateOwner(owner).then(() => {
-        clearTimeout(deadline);
-        process.exit(0);
-      }, (cause: unknown) => {
-        clearTimeout(deadline);
+      armExitBackstop();
+      void stopStateOwner(owner).catch((cause: unknown) => {
         process.stderr.write(`state owner shutdown failed: ${cause instanceof Error ? cause.message : String(cause)}\n`);
         process.exit(1);
       });
