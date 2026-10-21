@@ -161,6 +161,26 @@ describe("Claude subagents in a live chat", () => {
     expect(tasks.filter((task) => task.id === MISSING).map((task) => task.state)).toEqual(["running", "completed"]);
   });
 
+  test("a running background shell is killed when its Claude process exits", async () => {
+    const rows = [
+      { type: "system", subtype: "init", session_id: "shell-session" },
+      { type: "assistant", message: { id: "shell-message", content: [{ type: "tool_use", id: "shell-tool", name: "Bash", input: { command: "build", run_in_background: true } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "shell-tool", content: "Command running in background with ID: shell-task. You will be notified when it completes.", is_error: false }] } },
+    ];
+    const script = `const rows = ${JSON.stringify(rows)}; const rl = require("node:readline").createInterface({ input: process.stdin }); rl.once("line", () => { for (const row of rows) process.stdout.write(JSON.stringify(row) + "\\n"); process.exit(0); });`;
+    const h = await harness("claude", script);
+    const chat = await h.daemon.handle({ operation: "start", agent: "claude", cwd: h.cwd }) as Chat;
+    const watcher = follow(h.state, chat.id);
+    try {
+      await until(() => watcher.events().some((event) => event.kind === "state"), "follow started");
+      await h.daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "start shell" }] });
+      await until(() => watcher.events().some((event) => event.backgroundTask?.state === "killed"), "shell killed after process exit");
+      const tasks = watcher.events().flatMap((event) => event.backgroundTask ? [event.backgroundTask] : []);
+      expect(tasks.map(({ id, state }) => [id, state])).toEqual([["shell-tool", "running"], ["shell-tool", "killed"]]);
+      expect(tasks[1]).toMatchObject({ summary: "agent process ended", endedAt: expect.any(String) });
+    } finally { watcher.close(); }
+  });
+
   test("a Claude stream interrupt after partial text records one named cut", async () => {
     const h = await harness("claude", claudeReplay([
       JSON.stringify({ type: "system", subtype: "init", session_id: "partial-session" }),
@@ -277,6 +297,15 @@ describe("subagents imported from a session log", () => {
       { type: "user", uuid: "interrupt-row", timestamp: "2026-10-17T10:00:01.000Z", message: { content: "[Request interrupted by user]" } },
     ].map((row) => JSON.stringify(row)).join("\n");
     expect(parseClaudeLog(log).filter((turn) => turn.kind === "turn-cut").map((turn) => ({ reason: turn.reason, partial: turn.partial }))).toEqual([{ reason: "interrupted", partial: true }]);
+  });
+
+  test("a background Bash stays running after its launch receipt and ends on its task notification", () => {
+    const log = readFileSync(join(FIXTURES, "chat-session", "claude-background-shell.jsonl"), "utf8");
+    const turns = parseClaudeLog(log);
+    const tasks = turns.flatMap((turn) => turn.backgroundTask ? [turn.backgroundTask] : []);
+    expect(tasks.map(({ state, id }) => [id, state])).toEqual([["toolu_shell", "running"], ["toolu_shell", "completed"]]);
+    expect(tasks[0]?.endedAt).toBeUndefined();
+    expect(tasks[1]).toMatchObject({ endedAt: "2026-10-20T12:05:00.000Z", summary: "Build finished" });
   });
 
   test("Claude: each Agent call joins its subagents/agent-<id>.jsonl steps under it", async () => {

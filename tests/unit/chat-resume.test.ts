@@ -161,15 +161,17 @@ describe("chats survive a daemon restart", () => {
     expect(await eventTexts(quiet)).not.toContain("system:Interrupted");
   });
 
-  test("a background task left running in the event log is marked lost on daemon restart", async () => {
+  test("every background task left running is killed when the daemon restarts", async () => {
     const env = sandbox();
     const store = new ChatStore(env.state);
     await store.put(record(env, { state: "idle" }));
-    await store.append(ID, { id: "task-running", at: new Date().toISOString(), kind: "background-task", text: "Build", backgroundTask: { id: "task-1", kind: "shell", label: "Build", state: "running", startedAt: new Date().toISOString() } });
+    for (const [id, kind] of [["shell-1", "shell"], ["monitor-1", "monitor"], ["agent-1", "agent"]] as const) {
+      await store.append(ID, { id: `task-${id}`, at: new Date().toISOString(), kind: "background-task", text: id, backgroundTask: { id, kind, label: id, state: "running", startedAt: new Date().toISOString() } });
+    }
     const daemon = await daemonFor(env);
     const tasks = (await daemon.store.events(ID)).flatMap((line) => line.event?.backgroundTask ? [line.event.backgroundTask] : []);
-    expect(tasks.map((task) => task.state)).toEqual(["running", "lost"]);
-    expect(tasks[1]).toMatchObject({ id: "task-1", summary: expect.stringContaining("restarted") });
+    expect(tasks.map((task) => [task.id, task.state])).toEqual([["shell-1", "running"], ["monitor-1", "running"], ["agent-1", "running"], ["shell-1", "killed"], ["monitor-1", "killed"], ["agent-1", "killed"]]);
+    expect(tasks.slice(-3).map(({ endedAt, summary }) => [endedAt, summary])).toEqual(expect.arrayContaining([[expect.any(String), "agent process ended"], [expect.any(String), "agent process ended"], [expect.any(String), "agent process ended"]]));
   });
 
   test("a send to a suspended Claude chat respawns it with --resume and the recorded id, then delivers the message", async () => {

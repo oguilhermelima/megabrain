@@ -104,6 +104,11 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
       daemon.acpPeers.delete(chat.id);
       for (const waiter of daemon.rpcWaiters.get(chat.id)?.values() ?? []) waiter.reject(new Error(stderr.trim() || `${signal ?? "agent exited"}`));
       daemon.rpcWaiters.delete(chat.id);
+      if (!daemon.closed) {
+        await (daemon.eventChains.get(chat.id) ?? Promise.resolve());
+        const tasks = daemon.backgroundTasks.get(chat.id);
+        if (tasks) for (const task of tasks.values()) if (task.state === "running") await daemon.publishBackgroundTask(await daemon.requireChat(chat.id), { ...task, state: "killed", endedAt: new Date().toISOString(), summary: "agent process ended" });
+      }
       if (daemon.closed || daemon.children.get(chat.id) !== child) return;
       daemon.clearStartTimer(chat.id);
       daemon.children.delete(chat.id);

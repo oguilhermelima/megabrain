@@ -60,6 +60,7 @@ function endTurn(end: SubagentEnd, name: string): Omit<LoggedTurn, "sourceId" | 
 export function parseClaudeLog(content: string, parentId?: string): LoggedTurn[] {
   const names = new Map<string, string>();
   const tasks = new Map<string, NonNullable<ChatEvent["backgroundTask"]>>();
+  const taskIds = new Map<string, string>();
   const turns: LoggedTurn[] = [];
   let turnPartial = false;
   const parent = parentId === undefined ? {} : { parentId };
@@ -68,7 +69,7 @@ export function parseClaudeLog(content: string, parentId?: string): LoggedTurn[]
     const at = text(row.timestamp);
     if (uuid === "" || at === "" || (row.isSidechain === true && parentId === undefined) || row.isMeta === true) continue;
     if (row.type === "system" && row.subtype === "task_notification") {
-      const id = text(row.tool_use_id);
+      const id = text(row.tool_use_id) || taskIds.get(text(row.task_id)) || "";
       const task = tasks.get(id);
       if (task) {
         const status = text(row.status);
@@ -101,8 +102,11 @@ export function parseClaudeLog(content: string, parentId?: string): LoggedTurn[]
           found.push({ kind: "tool-result", text: flatten(block.content), tool: { name, status: block.is_error === true ? "error" : "ok" }, ...parent });
           const task = tasks.get(text(block.tool_use_id));
           const result = object(row.toolUseResult);
-          if (task && result.status !== "async_launched") {
-            const update = { ...task, state: block.is_error === true ? "failed" as const : "completed" as const, endedAt: at, summary: flatten(block.content) };
+          const receipt = flatten(block.content);
+          const taskId = text(result.agentId) || receipt.match(/Command running in background with ID:\s*([A-Za-z0-9_-]+)/)?.[1];
+          if (task && taskId) taskIds.set(taskId, task.id);
+          if (task && result.status !== "async_launched" && !taskId) {
+            const update = { ...task, state: block.is_error === true ? "failed" as const : "completed" as const, endedAt: at, summary: receipt };
             tasks.set(task.id, update);
             found.push({ kind: "background-task", text: task.label, backgroundTask: update });
           }

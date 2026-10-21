@@ -1,0 +1,3 @@
+{"type":"assistant","uuid":"shell-call","timestamp":"2026-10-20T12:00:00.000Z","message":{"id":"message-shell","content":[{"type":"tool_use","id":"toolu_shell","name":"Bash","input":{"command":"pnpm build","run_in_background":true}}]}}
+{"type":"user","uuid":"shell-launch-result","timestamp":"2026-10-20T12:00:00.200Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_shell","content":"Command running in background with ID: task_shell. Output is being written to: /tmp/claude/tasks/task_shell.output. You will be notified when it completes.","is_error":false}]}}
+{"type":"system","subtype":"task_notification","uuid":"shell-finished","timestamp":"2026-10-20T12:05:00.000Z","task_id":"task_shell","status":"completed","summary":"Build finished"}
