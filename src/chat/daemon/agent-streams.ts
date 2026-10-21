@@ -200,7 +200,10 @@ export async function handleClaude(daemon: ChatDaemon, id: string, child: ChildP
         const taskId = daemon.backgroundTaskIds.get(id)?.get(text(block.tool_use_id));
         const task = taskId ? daemon.backgroundTasks.get(id)?.get(taskId) : undefined;
         const result = object(item.tool_use_result);
-        if (task && result.status !== "async_launched") await daemon.publishBackgroundTask(chat, { ...task, state: block.is_error === true ? "failed" : "completed", endedAt: new Date().toISOString(), summary: flattenContent(block.content) });
+        const receipt = flattenContent(block.content);
+        const backgroundId = text(result.agentId) || receipt.match(/Command running in background with ID:\s*([A-Za-z0-9_-]+)/)?.[1];
+        if (task && backgroundId) daemon.backgroundTaskIds.get(id)?.set(backgroundId, task.id);
+        if (task && result.status !== "async_launched" && !backgroundId) await daemon.publishBackgroundTask(chat, { ...task, state: block.is_error === true ? "failed" : "completed", endedAt: new Date().toISOString(), summary: receipt });
       }
       return;
     }

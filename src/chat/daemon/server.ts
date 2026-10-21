@@ -129,7 +129,7 @@ export async function suspendActive(daemon: ChatDaemon): Promise<string[]> {
         const task = line.event?.backgroundTask;
         if (task) latestTasks.set(task.id, task);
       }
-      for (const task of latestTasks.values()) if (task.state === "running") await daemon.publishBackgroundTask(chat, { ...task, state: "lost", endedAt: new Date().toISOString(), summary: "Chat daemon restarted before the task reported completion" });
+      for (const task of latestTasks.values()) if (task.state === "running") await daemon.publishBackgroundTask(chat, { ...task, state: "killed", endedAt: new Date().toISOString(), summary: "agent process ended" });
       if (chat.state === "suspended") continue;
       chat.state = "suspended";
       chat.error = null;
