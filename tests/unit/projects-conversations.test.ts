@@ -102,10 +102,10 @@ function chatRecord(id: string, sessionId: string | null, overrides: Record<stri
   writeFileSync(join(directory, "chat.json"), JSON.stringify({ id, agent: "claude", model: "claude-opus", cwd: project, title: "Fix the registry", state: "suspended", mode: "chat", agentSessionId: sessionId, createdAt: "2026-10-16T09:00:00.000Z", lastActivityAt: "2026-10-16T09:30:00.000Z", ...overrides }));
 }
 
-function dispatch(id: string, fields: Record<string, unknown>): void {
+function dispatch(id: string, fields: Record<string, unknown>, archivedAt: string | null = null): void {
   const opened = openDatabase(env);
   if (opened.kind !== "ok") throw new Error(opened.error);
-  try { insertDispatch(opened.value.db, { dispatchId: id, state: "running", agent: "codex", worktreePath: project, createdAt: new Date().toISOString(), ...fields }); }
+  try { insertDispatch(opened.value.db, { dispatchId: id, state: "running", agent: "codex", worktreePath: project, createdAt: new Date().toISOString(), ...fields }, archivedAt); }
   finally { opened.value.close(); }
 }
 
@@ -202,6 +202,18 @@ describe("what is not ours stays out of the app's list", () => {
     dispatch("dispatch-2", { agent: "claude", agentPid: 4242 });
     const adapter = machine({ ps: ["1 0 /sbin/launchd", "4242 1 claude", `${pid} 4242 node helper`] });
     expect(await listed(adapter, "--include-foreign")).toMatchObject([{ sessionId: "claude:unrecorded-worker", conversationOwner: "dispatch", dispatchId: "dispatch-2" }]);
+  });
+
+  test("a session whose dispatch is closed or archived leaves the list", async () => {
+    await repository();
+    const closedPid = livePid();
+    claudeRegistry(closedPid, "closed-worker");
+    dispatch("dispatch-closed", { agent: "claude", state: "closed", agentThreadId: "closed-worker" });
+    dispatch("dispatch-archived", { agent: "claude", agentThreadId: "archived-worker" }, new Date().toISOString());
+    claudeRegistry(livePid(), "archived-worker");
+    const rows = await listed(machine({ ps: ["1 0 /sbin/launchd", `${closedPid} 1 claude`] }), "--include-foreign");
+    expect(rows.map((row) => row.sessionId)).not.toContain("claude:closed-worker");
+    expect(rows.map((row) => row.sessionId)).not.toContain("claude:archived-worker");
   });
 
   test("a session started within ten minutes of an unrelated dispatch carries no dispatch id", async () => {
