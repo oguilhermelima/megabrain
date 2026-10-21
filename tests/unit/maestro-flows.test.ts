@@ -218,16 +218,17 @@ describe("maestro run", () => {
       await owner.exited;
       const runDirectory = join(root, "state", "maestro", createHash("sha256").update(worktree).digest("hex").slice(0, 16));
       const finishedBy = Date.now() + 5000;
-      let record: { state?: string } | undefined;
+      let record: { state?: string; reason?: string } | undefined;
       let maestroAlive = true;
       while (Date.now() < finishedBy) {
         const file = readdirSync(runDirectory, { recursive: true }).find((name) => String(name).endsWith("run.json"));
-        if (file) record = JSON.parse(readFileSync(join(runDirectory, String(file)), "utf8")) as { state?: string };
+        if (file) record = JSON.parse(readFileSync(join(runDirectory, String(file)), "utf8")) as { state?: string; reason?: string };
         maestroAlive = (await adapter.run("kill", ["-0", String(maestroPid)])).kind === "ok";
         if (record?.state === "stopped" && !maestroAlive) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       expect(record?.state).toBe("stopped");
+      expect(record?.reason).toBe("owner-gone");
       expect(maestroAlive).toBe(false);
     } finally {
       owner.kill("SIGKILL");
