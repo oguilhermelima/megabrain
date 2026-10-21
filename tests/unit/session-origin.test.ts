@@ -108,9 +108,12 @@ describe("session origin", () => {
     });
   });
 
-  test("by default, and with --origin megabrain, only conversations megabrain owns are listed", async () => {
+  test("the default lists every conversation, while --origin megabrain filters to owned conversations", async () => {
     const table = await scenario();
-    expect((await listed(table)).map((session) => session.sessionId)).toEqual(["claude:native-chat"]);
+    expect((await listed(table)).map((session) => session.sessionId).sort()).toEqual([
+      "claude:app-terminal", "claude:app-tmux", "claude:ended-plain", "claude:native-chat",
+      "claude:orca-child", "claude:owned-record", "claude:plain-terminal",
+    ]);
     expect((await listed(table, "--origin", "megabrain")).map((session) => session.sessionId)).toEqual(["claude:native-chat"]);
   });
 
