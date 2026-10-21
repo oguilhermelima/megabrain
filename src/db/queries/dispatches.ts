@@ -26,7 +26,6 @@ export function toMeta(row: DispatchRow): DispatchRecord {
   const present = new Set(Array.isArray(extra.$present) ? extra.$present.filter((field): field is string => typeof field === "string") : []);
   delete extra.$present;
   const result: Record<string, unknown> = { ...extra };
-  result.archivedAt = row.archived_at;
   if (present.has("dispatchId")) result.dispatchId = row.id;
   if (present.has("state")) result.state = row.state;
   for (const [field, column] of Object.entries(promoted)) {
@@ -112,6 +111,10 @@ export function listDispatches(db: DatabaseAdapter, options: Readonly<{ includeA
     if (page.nextCursor === undefined) return records;
     after = page.nextCursor;
   }
+}
+
+export function listArchivedDispatchIds(db: DatabaseAdapter): string[] {
+  return db.query<{ id: string }>("SELECT id FROM dispatches WHERE archived_at IS NOT NULL").all().map(({ id }) => id);
 }
 
 export function listDispatchesByOwner(db: DatabaseAdapter, ownerSessionId: string, options: Readonly<{ includeArchived?: boolean }> = {}): DispatchRecord[] {
