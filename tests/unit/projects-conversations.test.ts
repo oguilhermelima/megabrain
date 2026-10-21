@@ -187,10 +187,10 @@ describe("what is not ours stays out of the app's list", () => {
     await repository();
     const pid = livePid();
     claudeRegistry(pid, "worker-session");
-    dispatch("dispatch-1", { agent: "claude", agentPid: pid, agentThreadId: "worker-session", chatName: "lane A" });
+    dispatch("dispatch-1", { agent: "claude", agentPid: pid, agentThreadId: "worker-session", childHost: "tmux", parentSessionId: "parent-session", chatName: "lane A" });
     const adapter = machine({ ps: ["1 0 /sbin/launchd", "200 1 tmux -L megabrain-app new-session -d -s mb-app-t1", `${pid} 200 claude`], panes: [`${pid} mb-app-t1`] });
     ours(terminalKey("t1"), "app-terminal", { tmux: "megabrain-app:mb-app-t1" });
-    expect(await listed(adapter, "--origin", "megabrain")).toEqual([]);
+    expect(await listed(adapter, "--origin", "megabrain")).toMatchObject([{ sessionId: "claude:worker-session", host: "tmux", parent: "parent-session", origin: "megabrain" }]);
     expect(await listed(adapter, "--include-foreign")).toMatchObject([{ sessionId: "claude:worker-session", conversationOwner: "dispatch", dispatchId: "dispatch-1" }]);
     expect(readConversations(state).conversations[terminalKey("t1")]).toBeDefined();
   });
