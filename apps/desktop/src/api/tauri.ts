@@ -193,6 +193,7 @@ export function createTauriApi(): DesktopApi {
     openUrl: (url) => openUrl(url),
     revealPath: (path) => revealItemInDir(path),
     releaseSession: async (sessionId) => void (await cliText(['session', 'release', sessionId, '--json'])),
+    closeDispatch: async (dispatchId) => void (await cliText(['orchestrate', 'close', dispatchId, '--json'])),
     ownSession: async (sessionId) => void (await cliText(['session', 'own', sessionId, '--json'])),
     openCodeServer: (root) => cliJson(['code', 'open', root, '--json'], codeServerSchema),
     stopCodeServer: async (root) => void (await cliText(['code', 'stop', root])),

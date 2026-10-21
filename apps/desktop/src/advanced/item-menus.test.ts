@@ -77,6 +77,7 @@ describe('every sidebar item row can be closed from its menu', () => {
     ['a terminal conversation of ours', (actions) => sessionMenu(owned(), actions)],
     ['an ended terminal conversation of ours', (actions) => sessionMenu(owned({ status: 'ended', tmuxServer: null, tmuxSession: null }), actions)],
     ['a chat conversation of ours listed without its chat', (actions) => sessionMenu(ofChat(), actions)],
+    ['a dispatch lane', (actions) => sessionMenu(session({ conversationOwner: 'dispatch', dispatchId: 'dispatch-1' }), actions)],
   ]
   for (const [name, menu] of kinds) {
     test(`${name} has a destructive item that closes, stops, releases or hides it`, () => {

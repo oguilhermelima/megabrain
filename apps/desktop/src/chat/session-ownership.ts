@@ -21,13 +21,14 @@ export function appLaunched(session: ProjectSession): boolean {
 /**
  * The one Close a conversation has, by its owner: a chat closes as the chat (stop, kill its tmux alias,
  * delete); a terminal conversation, live or ended, by ending its process or tmux session and dropping
- * its entry. A dispatch worker or another app's session has none. A row from an older CLI, which names
+ * its entry; a dispatch lane by closing its dispatch (`orchestrate close`). Another app's session has none. A row from an older CLI, which names
  * no owner, closes as a terminal while megabrain runs it.
  */
-export type ConversationClose = { kind: 'chat'; chatId: string } | { kind: 'terminal'; sessionId: string }
+export type ConversationClose = { kind: 'chat'; chatId: string } | { kind: 'terminal'; sessionId: string } | { kind: 'dispatch'; dispatchId: string }
 
 export function closeOf(session: ProjectSession): ConversationClose | null {
-  const { conversationOwner: owner, chatId } = session
+  const { conversationOwner: owner, chatId, dispatchId } = session
+  if (typeof dispatchId === 'string' && dispatchId !== '') return { kind: 'dispatch', dispatchId }
   if (owner === 'app-chat') return typeof chatId === 'string' && chatId !== '' ? { kind: 'chat', chatId } : { kind: 'terminal', sessionId: session.sessionId }
   if (owner === 'app-terminal') return { kind: 'terminal', sessionId: session.sessionId }
   if (owner === undefined && (ownership(session).owned || appLaunched(session))) return { kind: 'terminal', sessionId: session.sessionId }
