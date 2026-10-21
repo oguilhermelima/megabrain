@@ -26,6 +26,7 @@ export function toMeta(row: DispatchRow): DispatchRecord {
   const present = new Set(Array.isArray(extra.$present) ? extra.$present.filter((field): field is string => typeof field === "string") : []);
   delete extra.$present;
   const result: Record<string, unknown> = { ...extra };
+  result.archivedAt = row.archived_at;
   if (present.has("dispatchId")) result.dispatchId = row.id;
   if (present.has("state")) result.state = row.state;
   for (const [field, column] of Object.entries(promoted)) {

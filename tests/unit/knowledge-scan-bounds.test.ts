@@ -231,7 +231,7 @@ describe("scan cap", () => {
 
   test("the CLI takes the cap from --limit", async () => {
     const h = harness();
-    for (let index = 0; index < 3; index += 1) claudeLog(h, `S${index}`, ago(1 + index));
+    for (let index = 0; index < 3; index += 1) claudeLog(h, `S${index}`, new Date(Date.now() - (index + 1) * DAY));
     const outcome = await executeKnowledge(["scan", "--repo", h.repo, "--limit", "2", "--dry-run", "--json"], h.environment);
     const body = outcome.kind === "ok" ? JSON.parse(outcome.value) : null;
     expect(body.projects[0]).toMatchObject({ inHorizon: 3, estimatedCalls: 4 });
