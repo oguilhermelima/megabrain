@@ -279,6 +279,15 @@ describe("subagents imported from a session log", () => {
     expect(parseClaudeLog(log).filter((turn) => turn.kind === "turn-cut").map((turn) => ({ reason: turn.reason, partial: turn.partial }))).toEqual([{ reason: "interrupted", partial: true }]);
   });
 
+  test("a background Bash stays running after its launch receipt and ends on its task notification", () => {
+    const log = readFileSync(join(FIXTURES, "chat-session", "claude-background-shell.jsonl"), "utf8");
+    const turns = parseClaudeLog(log);
+    const tasks = turns.flatMap((turn) => turn.backgroundTask ? [turn.backgroundTask] : []);
+    expect(tasks.map(({ state, id }) => [id, state])).toEqual([["toolu_shell", "running"], ["toolu_shell", "completed"]]);
+    expect(tasks[0]?.endedAt).toBeUndefined();
+    expect(tasks[1]).toMatchObject({ endedAt: "2026-10-20T12:05:00.000Z", summary: "Build finished" });
+  });
+
   test("Claude: each Agent call joins its subagents/agent-<id>.jsonl steps under it", async () => {
     const home = scratch("megabrain-subagent-log-");
     const cwd = "/Users/operator/Workspaces/Canto";
