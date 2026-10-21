@@ -45,6 +45,16 @@ export function seedContext(lines: readonly ChatLine[]): string {
     else turns.push(entry);
   }
 
+  return capSeedTurns(turns);
+}
+
+/** Applies the seed budget to a previously stored transcript using its Human turn markers. */
+export function capSeedContext(seed: string): string {
+  if (Buffer.byteLength(seed) <= MAX_SEED_CONTEXT_BYTES) return seed;
+  return capSeedTurns(seed.split(/\n\n(?=Human: )/));
+}
+
+function capSeedTurns(turns: readonly string[]): string {
   const complete = turns.join("\n\n");
   if (Buffer.byteLength(complete) <= MAX_SEED_CONTEXT_BYTES) return complete;
 
