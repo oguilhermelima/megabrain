@@ -35,9 +35,9 @@ const MAESTRO_REAPER = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { ownerPid, ownerStart, groupPid, directory } = JSON.parse(Buffer.from(process.argv[1], "base64").toString());
+const { ownerPid, ownerStart, directory } = JSON.parse(Buffer.from(process.argv[1], "base64").toString());
 const identity = (pid) => { const result = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" }); return result.status === 0 ? result.stdout.trim() : undefined; };
-const groupAlive = () => { try { process.kill(-groupPid, 0); return true; } catch { return false; } };
+const groupAlive = (pid) => { try { process.kill(-pid, 0); return pid > 0; } catch { return false; } };
 const markStopped = () => {
   try {
     const file = path.join(directory, "run.json");
@@ -50,21 +50,28 @@ const markStopped = () => {
   } catch {}
 };
 let stopping = false;
-const stop = () => {
+const stop = (groupPid) => {
   if (stopping) return;
   stopping = true;
   clearInterval(watch);
-  try { process.kill(-groupPid, "SIGTERM"); } catch {}
+  try { if (groupPid > 0) process.kill(-groupPid, "SIGTERM"); } catch {}
   setTimeout(() => {
-    try { process.kill(-groupPid, "SIGKILL"); } catch {}
+    try { if (groupPid > 0) process.kill(-groupPid, "SIGKILL"); } catch {}
     markStopped();
     process.exit(0);
   }, 1000);
 };
 const watch = setInterval(() => {
-  if (!groupAlive()) { clearInterval(watch); process.exit(0); }
-  if (process.ppid !== ownerPid || (ownerStart !== undefined && identity(ownerPid) !== ownerStart)) stop();
-}, 100);
+  try {
+    const record = JSON.parse(fs.readFileSync(path.join(directory, "run.json"), "utf8"));
+    if (record.state !== "running") { clearInterval(watch); process.exit(0); }
+    if (process.ppid !== ownerPid || (ownerStart !== undefined && identity(ownerPid) !== ownerStart)) {
+      const groupPid = Number(record.pid);
+      if (!groupAlive(groupPid)) { markStopped(); process.exit(0); }
+      stop(groupPid);
+    }
+  } catch { clearInterval(watch); process.exit(0); }
+}, 1000);
 `;
 
 async function resolveWorktree(explicit: string | undefined, process: ProcessAdapter): Promise<string> {
@@ -309,6 +316,8 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const ownerStart = processStartIdentity(ownerPid);
   let current: RunRecord = { runId, flow, worktree, device: device.value, pid: 0, state: "running", startedAt: new Date(startedMs).toISOString(), ownerPid, ...(ownerStart === undefined ? {} : { ownerStart }) };
   writeRecord(directory, current);
+  const reaper = spawn(globalThis.process.execPath, ["-e", MAESTRO_REAPER, Buffer.from(JSON.stringify({ ownerPid, ownerStart, directory })).toString("base64")], { detached: true, stdio: "ignore" });
+  reaper.unref();
   send({ type: "start", state: "running", runId, flow, device: device.value, artifacts: directory });
   if (ownerNotice) console.error(ownerNotice);
 
@@ -365,10 +374,6 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     });
     current = { ...current, pid: child.pid ?? 0 };
     writeRecord(directory, current);
-    if (child.pid !== undefined) {
-      const reaper = spawn(globalThis.process.execPath, ["-e", MAESTRO_REAPER, Buffer.from(JSON.stringify({ ownerPid, ownerStart, groupPid: child.pid, directory })).toString("base64")], { detached: true, stdio: "ignore" });
-      reaper.unref();
-    }
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", drain);
