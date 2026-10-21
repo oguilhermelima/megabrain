@@ -7,8 +7,9 @@ import { terminalRuns, type AppTerminal } from "@/terminal/terminal-list";
 // terminals the app opened, then the conversations neither holds (an ended terminal conversation that
 // resumes on click). The projects list names each conversation's owner and aliases, so a chat claims
 // its conversation by chat id (or agent session id), a terminal by the tmux session or process it runs,
-// and the conversation lends the row its data (the compaction clock). Dispatch workers and sessions
-// other apps run never get a row. The person can drag the rows into an order of their own, kept per
+// and the conversation lends the row its data (the compaction clock). A dispatch worker (a lane) is a
+// session row under the worktree it runs in, once per session and dispatch; sessions other apps run
+// never get a row. The person can drag the rows into an order of their own, kept per
 // viewer and per worktree.
 
 export type WorktreeItem =
@@ -29,9 +30,19 @@ const sameSession = (session: ProjectSession, agent: string, id: string) =>
   session.sessionId === `${agent}:${id}` ||
   (session.sessionId === id && session.agent === agent);
 
-/** Only conversations megabrain owns are rows; a dispatch worker is its coordinator's, a foreign session its app's. */
-const ours = (session: ProjectSession) =>
-  session.conversationOwner !== 'dispatch' && session.conversationOwner !== 'foreign';
+/** Only conversations megabrain runs are rows, lanes included; a foreign session is its app's. */
+const ours = (session: ProjectSession) => session.conversationOwner !== 'foreign';
+
+/** Each session once, by session id and by dispatch id: a lane can be listed under both. */
+const once = (sessions: ProjectSession[]) => {
+  const seen = new Set<string>();
+  return sessions.filter((session) => {
+    const ids = [`session:${session.sessionId}`, ...(session.dispatchId === null ? [] : [`dispatch:${session.dispatchId}`])];
+    if (ids.some((id) => seen.has(id))) return false;
+    for (const id of ids) seen.add(id);
+    return true;
+  });
+};
 
 /** Chats, then terminals, then the conversations neither runs (live before ended), each once. */
 export function worktreeItems(
@@ -39,7 +50,7 @@ export function worktreeItems(
   terminals: AppTerminal[],
   listed: ProjectSession[],
 ): KeyedItem[] {
-  const sessions = listed.filter(ours);
+  const sessions = once(listed.filter(ours));
   const absorbed = new Set<ProjectSession>();
   const take = (found: ProjectSession | undefined) => {
     if (found === undefined) return null;

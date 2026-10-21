@@ -136,13 +136,20 @@ describe('one row per conversation from the projects rows', () => {
     expect(keys(worktreeItems([], [], [ended]))).toEqual(['session:claude:t'])
   })
 
-  test('owners are never foreign: dispatch workers and sessions from other apps get no row', () => {
+  test('a dispatch lane gets a row under its worktree; sessions from other apps get none', () => {
     const rows = worktreeItems([], [], [
-      session('claude:worker', { conversationOwner: 'dispatch', dispatchId: 'dispatch-1', origin: 'external', owner: 'external' }),
+      session('claude:worker', { conversationOwner: 'dispatch', dispatchId: 'dispatch-1', origin: 'megabrain', parent: 'claude:coordinator' }),
       session('claude:orca', { conversationOwner: 'foreign', origin: 'external', owner: 'external' }),
       session('codex:ours', { agent: 'codex', conversationOwner: 'app-terminal' }),
     ])
-    expect(keys(rows)).toEqual(['session:codex:ours'])
+    expect(keys(rows).sort()).toEqual(['session:claude:worker', 'session:codex:ours'])
+    expect(rows.find((row) => row.key === 'session:claude:worker')).toMatchObject({ kind: 'session', session: { dispatchId: 'dispatch-1' } })
+  })
+
+  test('a lane listed twice, by session id or by dispatch id, gets one row', () => {
+    const lane = session('claude:worker', { conversationOwner: 'dispatch', dispatchId: 'dispatch-1' })
+    const rows = worktreeItems([], [], [lane, { ...lane }, session('claude:worker-2', { conversationOwner: 'dispatch', dispatchId: 'dispatch-1' })])
+    expect(keys(rows)).toEqual(['session:claude:worker'])
   })
 })
 
