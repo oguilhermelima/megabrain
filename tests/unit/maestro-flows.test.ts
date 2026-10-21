@@ -198,7 +198,7 @@ describe("maestro run", () => {
     expect(readdirSync(join(root, "state", "maestro")).length).toBe(1);
   });
 
-  test("ends Maestro and marks the run stopped when its CLI owner is killed", async () => {
+  test("launches the compiled-Bun reaper and stops the run when its CLI owner is killed", async () => {
     const { root, home, worktree, environment } = sandbox();
     const binary = join(home, ".maestro", "bin", "maestro");
     const childPidFile = join(root, "maestro.pid");
@@ -207,7 +207,7 @@ describe("maestro run", () => {
     writeFileSync(join(worktree, ".maestro", "web.yaml"), "url: data:text/html,<h1>hi</h1>\n---\n- assertVisible: hi\n");
     const moduleUrl = new URL("../../src/cli/commands/maestro.js", import.meta.url).href;
     const adapterUrl = new URL("../../src/adapters/proc.js", import.meta.url).href;
-    const childScript = `const { executeMaestro } = await import(${JSON.stringify(moduleUrl)}); const { createProcessAdapter } = await import(${JSON.stringify(adapterUrl)}); const env = JSON.parse(Buffer.from(process.argv[1], "base64").toString()); await executeMaestro(["run", ".maestro/web.yaml", "--worktree", env.worktree, "--json"], env, createProcessAdapter()); setInterval(() => {}, 1000);`;
+    const childScript = `delete process.env.BUN_BE_BUN; const { executeMaestro } = await import(${JSON.stringify(moduleUrl)}); const { createProcessAdapter } = await import(${JSON.stringify(adapterUrl)}); const env = JSON.parse(Buffer.from(process.argv[1], "base64").toString()); await executeMaestro(["run", ".maestro/web.yaml", "--worktree", env.worktree, "--json"], env, createProcessAdapter()); setInterval(() => {}, 1000);`;
     const owner = Bun.spawn([process.execPath, "-e", childScript, Buffer.from(JSON.stringify({ ...environment, worktree })).toString("base64")], { stdout: "ignore", stderr: "ignore" });
     let maestroPid = 0;
     try {
