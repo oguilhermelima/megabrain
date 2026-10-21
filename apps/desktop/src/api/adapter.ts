@@ -75,6 +75,8 @@ export interface DesktopApi {
   sendToSession(sessionId: string, text: string): Promise<SendResult>
   /** Forget ownership and kill megabrain's tmux session for it, or end an agent the app launched (`session release`). */
   releaseSession(sessionId: string): Promise<void>
+  /** Close a dispatch lane: end its agent and release its terminal (`orchestrate close`). */
+  closeDispatch(dispatchId: string): Promise<void>
   /** Resume a session in a tmux session megabrain owns (`session own`), so the app shows and closes it. */
   ownSession(sessionId: string): Promise<void>
   /** Open an https address in the system's browser, or a mailto address in the mail app. */

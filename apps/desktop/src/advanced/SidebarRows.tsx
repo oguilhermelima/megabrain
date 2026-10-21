@@ -208,7 +208,6 @@ export function SessionRow({ session, selected, now, onSelect, menuItems, onMenu
       >
         <AgentIcon agent={session.agent} activity={activityOf(session.status)} className="shrink-0 text-ink-300" />
         <span className="min-w-0 flex-1 truncate">{session.title}</span>
-        {session.dispatchId === null ? null : <span className="shrink-0 rounded-[6px] px-1 text-[10px] text-ink-400 ring-1 ring-ink-400/40">lane</span>}
         <TimerChip session={session} now={now} />
         <span className={`w-[30px] shrink-0 text-right text-[11px] whitespace-nowrap text-ink-400 tabular-nums ${hasEnd ? hiddenOnHover : ''}`}>{age}</span>
         <span className={`size-1.5 shrink-0 rounded-full ${sessionDot[session.status]} ${hasEnd ? hiddenOnHover : ''}`} aria-label={session.status} />

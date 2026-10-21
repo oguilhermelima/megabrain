@@ -79,12 +79,14 @@ export function createMockApi(): DesktopApi {
   // Sessions released from megabrain's tmux server (`session release`), and ones taken over (`session own`).
   const released = new Set<string>()
   const taken = new Set<string>()
+  // Dispatch lanes closed from the sidebar (`orchestrate close`) leave the list.
+  const closedDispatches = new Set<string>()
   const withOwnership = (projects: Project[]): Project[] =>
     projects.map((project) => ({
       ...project,
       worktrees: project.worktrees.map((worktree) => ({
         ...worktree,
-        sessions: worktree.sessions.map((session) =>
+        sessions: worktree.sessions.filter((session) => session.dispatchId === null || !closedDispatches.has(session.dispatchId)).map((session) =>
           released.has(session.sessionId)
             ? { ...session, owner: 'external' as const, tmuxServer: null, tmuxSession: null }
             : taken.has(session.sessionId)
@@ -208,6 +210,7 @@ export function createMockApi(): DesktopApi {
       taken.delete(sessionId)
       released.add(sessionId)
     },
+    closeDispatch: async (dispatchId) => void closedDispatches.add(dispatchId),
     ownSession: async (sessionId) => {
       released.delete(sessionId)
       taken.add(sessionId)

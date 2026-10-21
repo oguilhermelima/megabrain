@@ -74,6 +74,16 @@ export function useSidebarCloseActions({
       if (chat !== undefined) return requestClose({ kind: 'native', chat })
       return api.removeChat(close.chatId).then(() => dropChat(close.chatId))
     }
+    if (close.kind === 'dispatch') {
+      if (session.status === 'ended') return api.closeDispatch(close.dispatchId)
+      setCloseConfirm({
+        title: `Close ${session.title}?`,
+        body: 'Closing ends the agent running this lane and takes it out of the list.',
+        action: 'Close',
+        run: () => api.closeDispatch(close.dispatchId),
+      })
+      return
+    }
     if (session.status === 'ended') return api.releaseSession(close.sessionId)
     setCloseConfirm({
       title: `Close ${session.title}?`,
