@@ -28,6 +28,25 @@ describe("chat seed context", () => {
     expect(statSync(path!).mode & 0o777).toBe(0o600);
   });
 
+  test("caps an already stored seed at launch while keeping the newest turn", async () => {
+    const state = mkdtempSync(join(tmpdir(), "megabrain-chat-seed-"));
+    directories.push(state);
+    const chat: Chat = {
+      id: "stored-seed-chat", agent: "claude", model: null, cwd: state, title: null, state: "idle", mode: "chat",
+      agentSessionId: null, createdAt: new Date().toISOString(), lastActivityAt: null,
+      seedContext: `Human: old turn ${"old text ".repeat(30_000)}\n\nAssistant: old answer\n\nHuman: newest turn\n\nAssistant: newest answer`,
+    };
+
+    const invocation = await chatProtocolAdapters.claude.prepare(chat, state);
+    const flag = invocation.args.indexOf("--append-system-prompt-file");
+    const contents = readFileSync(invocation.args[flag + 1]!, "utf8");
+    expect(Buffer.byteLength(contents)).toBeLessThanOrEqual(MAX_SEED_CONTEXT_BYTES);
+    expect(contents).toContain("Human: newest turn");
+    expect(contents).toContain("Assistant: newest answer");
+    expect(contents).toContain("Earlier turns were omitted");
+    expect(contents).not.toContain("old text");
+  });
+
   test("bounds the seed while retaining the newest complete turn", () => {
     const lines: ChatLine[] = [
       { cursor: "1", event: { kind: "user", id: "old", at: "", text: "old turn ".repeat(30_000) } },
