@@ -63,9 +63,15 @@ async function watchInputOwner(env: Environment, process: ProcessAdapter, entry:
   const ownerPid = entry.ownerPid;
   if (!ownerPid || !Number.isInteger(ownerPid)) return failed("native input watchdog has no valid owner PID");
   const ownerStart = env.MEGABRAIN_NATIVE_INPUT_OWNER_START;
+  let nextIdentityCheck = 0;
   while (true) {
     const owner = await process.run("kill", ["-0", String(ownerPid)]);
-    const ownerGone = owner.kind !== "ok" || (ownerStart !== undefined && !processIdentityMatches(ownerPid, ownerStart));
+    let ownerIdentityChanged = false;
+    if (owner.kind === "ok" && ownerStart !== undefined && Date.now() >= nextIdentityCheck) {
+      nextIdentityCheck = Date.now() + 1000;
+      ownerIdentityChanged = !processIdentityMatches(ownerPid, ownerStart);
+    }
+    const ownerGone = owner.kind !== "ok" || ownerIdentityChanged;
     if (ownerGone) {
       let stopped = false;
       for (let attempt = 0; attempt < 3; attempt += 1) {
