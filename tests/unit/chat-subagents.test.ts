@@ -161,6 +161,26 @@ describe("Claude subagents in a live chat", () => {
     expect(tasks.filter((task) => task.id === MISSING).map((task) => task.state)).toEqual(["running", "completed"]);
   });
 
+  test("a running background shell is killed when its Claude process exits", async () => {
+    const rows = [
+      { type: "system", subtype: "init", session_id: "shell-session" },
+      { type: "assistant", message: { id: "shell-message", content: [{ type: "tool_use", id: "shell-tool", name: "Bash", input: { command: "build", run_in_background: true } }] } },
+      { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "shell-tool", content: "Command running in background with ID: shell-task. You will be notified when it completes.", is_error: false }] } },
+    ];
+    const script = `const rows = ${JSON.stringify(rows)}; const rl = require("node:readline").createInterface({ input: process.stdin }); rl.once("line", () => { for (const row of rows) process.stdout.write(JSON.stringify(row) + "\\n"); process.exit(0); });`;
+    const h = await harness("claude", script);
+    const chat = await h.daemon.handle({ operation: "start", agent: "claude", cwd: h.cwd }) as Chat;
+    const watcher = follow(h.state, chat.id);
+    try {
+      await until(() => watcher.events().some((event) => event.kind === "state"), "follow started");
+      await h.daemon.handle({ operation: "send", id: chat.id, parts: [{ type: "text", text: "start shell" }] });
+      await until(() => watcher.events().some((event) => event.backgroundTask?.state === "killed"), "shell killed after process exit");
+      const tasks = watcher.events().flatMap((event) => event.backgroundTask ? [event.backgroundTask] : []);
+      expect(tasks.map(({ id, state }) => [id, state])).toEqual([["shell-tool", "running"], ["shell-tool", "killed"]]);
+      expect(tasks[1]).toMatchObject({ summary: "agent process ended", endedAt: expect.any(String) });
+    } finally { watcher.close(); }
+  });
+
   test("a Claude stream interrupt after partial text records one named cut", async () => {
     const h = await harness("claude", claudeReplay([
       JSON.stringify({ type: "system", subtype: "init", session_id: "partial-session" }),
