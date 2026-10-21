@@ -12,13 +12,13 @@ import { recordSimulatorOwner } from "../../core/native-sim-owner.js";
 import { systemClock } from "../../core/clock.js";
 import { readWebDevices } from "../../core/web-device.js";
 import { parseAllDocuments } from "yaml";
-import { processStartIdentity } from "../../db/state-owner-runtime.js";
+import { processIdentityMatches, processStartIdentity } from "../../db/state-owner-runtime.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type Emit = (text: string) => void;
 type Flow = Readonly<{ path: string; name: string; appId: string | null; kind?: "native" | "web"; url?: string }>;
 type RunState = "running" | "passed" | "failed" | "stopped";
-type RunRecord = Readonly<{ runId: string; flow: string; worktree: string; device: string; pid: number; state: RunState; startedAt: string; finishedAt?: string; exitCode?: number }>;
+type RunRecord = Readonly<{ runId: string; flow: string; worktree: string; device: string; pid: number; state: RunState; startedAt: string; finishedAt?: string; exitCode?: number; ownerPid?: number; ownerStart?: string; reason?: string }>;
 
 const FLOW_ROOTS = [".maestro", "maestro"];
 const UUID = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
@@ -43,7 +43,7 @@ const markStopped = () => {
     const file = path.join(directory, "run.json");
     const record = JSON.parse(fs.readFileSync(file, "utf8"));
     if (record.state !== "running") return;
-    const next = { ...record, state: "stopped", exitCode: 143, finishedAt: new Date().toISOString() };
+    const next = { ...record, state: "stopped", exitCode: 143, finishedAt: new Date().toISOString(), reason: "owner-gone" };
     const temp = file + "." + process.pid + ".tmp";
     fs.writeFileSync(temp, JSON.stringify(next, null, 2) + "\n", { mode: 0o600 });
     fs.renameSync(temp, file);
@@ -144,6 +144,22 @@ function alive(pid: number): boolean {
   try { globalThis.process.kill(pid, 0); return pid > 0; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 }
 
+function groupAlive(pid: number): boolean {
+  try { globalThis.process.kill(-pid, 0); return pid > 0; } catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
+}
+
+function reconcileRecord(directory: string, record: RunRecord): RunRecord {
+  if (record.state !== "running") return record;
+  const ownerGone = record.ownerPid !== undefined && (record.ownerStart === undefined ? !alive(record.ownerPid) : !processIdentityMatches(record.ownerPid, record.ownerStart));
+  const groupGone = !groupAlive(record.pid);
+  if (ownerGone && groupGone) {
+    const stopped: RunRecord = { ...record, state: "stopped", exitCode: 143, finishedAt: new Date().toISOString(), reason: "owner-gone" };
+    writeRecord(directory, stopped);
+    return stopped;
+  }
+  return groupGone ? { ...record, state: "failed" } : record;
+}
+
 function latestRun(environment: Environment, worktree: string): { directory: string; record: RunRecord } | undefined {
   const root = worktreeRoot(environment, worktree);
   if (!existsSync(root)) return undefined;
@@ -152,8 +168,7 @@ function latestRun(environment: Environment, worktree: string): { directory: str
   const directory = join(root, latest);
   const record = readRecord(directory);
   if (record === undefined) return undefined;
-  // A run whose process is gone without a verdict was killed from outside.
-  return { directory, record: record.state === "running" && !alive(record.pid) ? { ...record, state: "failed" } : record };
+  return { directory, record: reconcileRecord(directory, record) };
 }
 
 function allRuns(environment: Environment, worktree: string): Array<{ directory: string; record: RunRecord }> {
@@ -163,7 +178,7 @@ function allRuns(environment: Environment, worktree: string): Array<{ directory:
     const directory = join(root, name);
     const record = readRecord(directory);
     if (record === undefined) return [];
-    return [{ directory, record: record.state === "running" && !alive(record.pid) ? { ...record, state: "failed" as const } : record }];
+    return [{ directory, record: reconcileRecord(directory, record) }];
   });
 }
 
@@ -245,6 +260,7 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const javaHome = await findJavaHome({ ...environment, JAVA_HOME: record.javaHome }, process);
   if (javaHome === undefined) return failed(`no JDK 17 or newer at ${record.javaHome}; reinstall with megabrain install simulator-maestro`);
   const worktree = await resolveWorktree(values["--worktree"], process);
+  latestRun(environment, worktree);
   const flowPath = resolve(worktree, positional[0] ?? "");
   const flow = relative(worktree, flowPath);
   if (flow.startsWith("..") || isAbsolute(flow) || !existsSync(flowPath) || !statSync(flowPath).isFile()) return failed(`flow not found in ${worktree}: ${positional[0]}`);
@@ -289,7 +305,9 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const commandArgs = webFlow
     ? ["--no-ansi", "test", "--headless", "--platform", "web", "--test-output-dir", artifacts, "--debug-output", debugOutput, "--flatten-debug-output", flowPath]
     : ["--no-ansi", "--udid", device.value, "test", "--test-output-dir", artifacts, "--debug-output", debugOutput, "--flatten-debug-output", flowPath];
-  let current: RunRecord = { runId, flow, worktree, device: device.value, pid: 0, state: "running", startedAt: new Date(startedMs).toISOString() };
+  const ownerPid = globalThis.process.pid;
+  const ownerStart = processStartIdentity(ownerPid);
+  let current: RunRecord = { runId, flow, worktree, device: device.value, pid: 0, state: "running", startedAt: new Date(startedMs).toISOString(), ownerPid, ...(ownerStart === undefined ? {} : { ownerStart }) };
   writeRecord(directory, current);
   send({ type: "start", state: "running", runId, flow, device: device.value, artifacts: directory });
   if (ownerNotice) console.error(ownerNotice);
@@ -348,8 +366,7 @@ async function runVerb(args: readonly string[], environment: Environment, proces
     current = { ...current, pid: child.pid ?? 0 };
     writeRecord(directory, current);
     if (child.pid !== undefined) {
-      const ownerPid = globalThis.process.pid;
-      const reaper = spawn(globalThis.process.execPath, ["-e", MAESTRO_REAPER, Buffer.from(JSON.stringify({ ownerPid, ownerStart: processStartIdentity(ownerPid), groupPid: child.pid, directory })).toString("base64")], { detached: true, stdio: "ignore" });
+      const reaper = spawn(globalThis.process.execPath, ["-e", MAESTRO_REAPER, Buffer.from(JSON.stringify({ ownerPid, ownerStart, groupPid: child.pid, directory })).toString("base64")], { detached: true, stdio: "ignore" });
       reaper.unref();
     }
     child.stdout.setEncoding("utf8");
