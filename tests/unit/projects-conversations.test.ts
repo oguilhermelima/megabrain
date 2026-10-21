@@ -17,7 +17,7 @@ let project = "";
 let env: NodeJS.ProcessEnv;
 let children: ChildProcess[] = [];
 
-type Row = { sessionId: string; agent: string; title: string; status: string; lastActivityAt: string | null; dispatchId: string | null; conversationOwner: string; owner: string; origin: string; chatId?: string | null };
+type Row = { sessionId: string; agent: string; title: string; status: string; lastActivityAt: string | null; dispatchId: string | null; conversationOwner: string; owner: string; origin: string; host: string; parent: string | null; chatId?: string | null };
 
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "megabrain-projects-conv-")));
@@ -165,23 +165,22 @@ describe("projects lists conversations from the registry", () => {
 });
 
 describe("what is not ours stays out of the app's list", () => {
-  test("a live session from another host is not listed by default", async () => {
+  test("a dispatch session on Orca is megabrain-originated and reports its recorded host and parent", async () => {
+    await repository();
+    const pid = livePid();
+    claudeRegistry(pid, "orca-dispatch");
+    dispatch("dispatch-orca", { agent: "claude", agentPid: pid, agentThreadId: "orca-dispatch", childHost: "orca", parentSessionId: "coordinator-session" });
+    const adapter = machine({ ps: ["1 0 /sbin/launchd", "300 1 /Applications/Orca.app/Contents/MacOS/Orca", `${pid} 300 claude`] });
+    expect(await listed(adapter, "--origin", "megabrain")).toMatchObject([{ sessionId: "claude:orca-dispatch", dispatchId: "dispatch-orca", origin: "megabrain", host: "orca", parent: "coordinator-session" }]);
+  });
+
+  test("a hand-opened Orca session is only in all, with its inferred host and no parent", async () => {
     await repository();
     const pid = livePid();
     claudeRegistry(pid, "orca-child");
     const adapter = machine({ ps: ["1 0 /sbin/launchd", "300 1 /Applications/Orca.app/Contents/MacOS/Orca", `${pid} 300 claude`] });
-    expect(await listed(adapter)).toEqual([]);
     expect(await listed(adapter, "--origin", "megabrain")).toEqual([]);
-  });
-
-  test("--include-foreign and --origin all list it as foreign", async () => {
-    await repository();
-    const pid = livePid();
-    claudeRegistry(pid, "orca-child");
-    const adapter = machine({ ps: ["1 0 /sbin/launchd", `${pid} 1 claude`] });
-    for (const flag of [["--include-foreign"], ["--origin", "all"]]) {
-      expect(await listed(adapter, ...flag)).toMatchObject([{ sessionId: "claude:orca-child", conversationOwner: "foreign", owner: "external", origin: "external" }]);
-    }
+    expect(await listed(adapter, "--origin", "all")).toMatchObject([{ sessionId: "claude:orca-child", conversationOwner: "foreign", owner: "external", origin: "external", host: "orca", parent: null }]);
   });
 
   test("a worker running under an app terminal is the dispatch's, not the terminal's", async () => {
