@@ -197,10 +197,12 @@ describe("maestro run", () => {
     const { root, home, worktree, environment } = sandbox();
     const binary = join(home, ".maestro", "bin", "maestro");
     const childPidFile = join(root, "maestro.pid");
-    writeFileSync(binary, `#!/bin/sh\necho $$ > ${childPidFile}\nexec sleep 30\n`);
+    writeFileSync(binary, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 2.11.0; exit 0; fi\necho $$ > ${childPidFile}\nexec sleep 30\n`);
     chmodSync(binary, 0o755);
+    writeFileSync(join(worktree, ".maestro", "web.yaml"), "url: data:text/html,<h1>hi</h1>\n---\n- assertVisible: hi\n");
     const moduleUrl = new URL("../../src/cli/commands/maestro.js", import.meta.url).href;
-    const childScript = `const { executeMaestro } = await import(${JSON.stringify(moduleUrl)}); const env = JSON.parse(Buffer.from(process.argv[1], "base64").toString()); await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", env.worktree, "--device", ${JSON.stringify(UDID)}, "--json"], env, { run: async () => ({ kind: "failed", error: "not used" }), startDetached: async () => ({ kind: "failed", error: "not used" }), invocationCount: () => 0 }); setInterval(() => {}, 1000);`;
+    const adapterUrl = new URL("../../src/adapters/proc.js", import.meta.url).href;
+    const childScript = `const { executeMaestro } = await import(${JSON.stringify(moduleUrl)}); const { createProcessAdapter } = await import(${JSON.stringify(adapterUrl)}); const env = JSON.parse(Buffer.from(process.argv[1], "base64").toString()); await executeMaestro(["run", ".maestro/web.yaml", "--worktree", env.worktree, "--json"], env, createProcessAdapter()); setInterval(() => {}, 1000);`;
     const owner = Bun.spawn([process.execPath, "-e", childScript, Buffer.from(JSON.stringify({ ...environment, worktree })).toString("base64")], { stdout: "ignore", stderr: "ignore" });
     let maestroPid = 0;
     try {
