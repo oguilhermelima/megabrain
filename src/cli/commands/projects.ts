@@ -593,9 +593,11 @@ async function projectSessions(path: string, found: readonly RawSession[], dispa
     });
   }
   const now = Date.now();
-  const strangers = found.filter((session) => resolve(session.cwd) === here && context.registry.conversations[`${session.agent}:${session.id}`] === undefined && !context.registry.hiddenKeys.includes(`${session.agent}:${session.id}`)).map((session): ProjectSession => {
+  const strangers = found.filter((session) => resolve(session.cwd) === here && context.registry.conversations[`${session.agent}:${session.id}`] === undefined && !context.registry.hiddenKeys.includes(`${session.agent}:${session.id}`)).flatMap((session): ProjectSession[] => {
     const dispatch = dispatchForSession(session, dispatches, context.table);
-    return {
+    // A lane whose dispatch was closed or archived is gone from the app; its session never turns foreign.
+    if (dispatch !== null && (dispatch.state === "closed" || typeof dispatch.archivedAt === "string")) return [];
+    return [{
       agent: session.agent, sessionId: `${session.agent}:${session.id}`,
       title: (stringField(dispatch ?? {}, "label", "chatName") ?? session.title).slice(0, 80),
       status: dispatch?.state === "waiting_for_reply" ? "waiting" : session.status,
@@ -604,7 +606,7 @@ async function projectSessions(path: string, found: readonly RawSession[], dispa
       owner: "external", origin: dispatch === null ? "external" : "megabrain", conversationOwner: dispatch === null ? "foreign" : "dispatch",
       host: dispatch === null ? inferSessionHost(context.table, session.processId) : dispatchHost(dispatch),
       parent: dispatch === null ? null : stringField(dispatch, "parentSessionId") ?? null,
-    };
+    }];
   });
   const included = strangers.filter((session) => context.includeForeign || session.conversationOwner === "dispatch");
   rows.push(...included.filter((session) => session.status !== "ended"));
