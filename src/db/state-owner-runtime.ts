@@ -92,13 +92,12 @@ function wait(milliseconds: number): void {
 export function ensureStateOwnerForRead(stateDir: string, environment: Readonly<Record<string, string | undefined>>): void {
   if (ownerIsAlive(stateDir)) return;
   const socketDir = ensureStateOwnerSocketDirectory();
-  const builtEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../.build/megabrain");
   const testRunner = process.argv[1]?.endsWith(".test.ts") === true;
-  const invocation = testRunner && existsSync(builtEntry)
-    ? { command: builtEntry, args: ["__state-owner"] }
+  const cliEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../cli/index.ts");
+  const invocation = testRunner
+    ? { command: process.execPath, args: [cliEntry, "__state-owner"] }
     : selfInvocation(process.execPath, process.argv, ["__state-owner"]);
-  const ownerSource = process.argv[1] !== undefined && !process.argv[1].startsWith("/$bunfs/") ? resolve(process.argv[1]) : process.execPath;
-  const ownerExecutable = testRunner && existsSync(builtEntry) ? builtEntry : ownerSource;
+  const ownerExecutable = testRunner ? cliEntry : process.argv[1] !== undefined && !process.argv[1].startsWith("/$bunfs/") ? resolve(process.argv[1]) : process.execPath;
   const base = scrubAgentEnvironment({ ...process.env, ...environment });
   const testMode = testRunner || base.MEGABRAIN_STATE_OWNER_TEST_REGISTRY !== undefined;
   const ownerEnvironment = {

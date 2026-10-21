@@ -93,7 +93,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "settle-closed-parent-backlog" }
   )
 >;
-export type StateOwner = { readonly stateDir: string; readonly executablePath: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; readonly abortController: AbortController; readonly sockets: Set<Socket>; socketIdentity?: { dev: number; ino: number }; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
+export type StateOwner = { readonly stateDir: string; readonly executablePath: string; readonly handle: DatabaseHandle; readonly server: ReturnType<typeof createServer>; readonly lockPath: string; readonly abortController: AbortController; readonly sockets: Set<Socket>; socketIdentity?: { dev: number; ino: number }; onStopped?: () => void; readonly processAdapter: ProcessAdapter; readonly environment: Readonly<Record<string, string | undefined>>; readonly pendingDeliveries: Set<Promise<void>>; readonly pendingVerifications: Set<Promise<void>>; readonly deliveryChains: Map<string, Promise<void>>; readonly scheduledOutbox: Set<string>; readonly scheduledVerifications: Set<string>; readonly verificationTimers: Map<string, ReturnType<typeof setTimeout>>; readonly requests: Map<string, Promise<Response>>; clients: number; stopped: boolean; idleTimer?: ReturnType<typeof setTimeout>; sweepTimer?: ReturnType<typeof setTimeout>; lifecycleTimer?: ReturnType<typeof setInterval> };
 type Response = { ok: true; value: unknown } | { ok: false; error: string };
 
 function ownerLogPath(stateDir: string): string { return join(stateDir, "logs", "state-owner.log"); }
@@ -501,6 +501,7 @@ export async function stopStateOwner(owner: StateOwner): Promise<void> {
   await new Promise<void>((resolve) => owner.server.close(() => resolve()));
   owner.handle.close();
   logOwner(owner.stateDir, "stopped");
+  owner.onStopped?.();
   // A replacement may already own these paths. Only the process whose lock is still
   // present may remove the published socket and pid during normal shutdown.
   const ownsLock = ownsStateOwnerLock(owner);
@@ -557,11 +558,10 @@ export async function callStateOwner(stateDir: string, request: StateOwnerReques
   const requestWithId = { ...request, requestId: request.requestId ?? randomUUID() } as StateOwnerRequest;
   const retryDeadline = Date.now() + Math.max(1, startupTimeoutMs);
   const processAdapter = createProcessAdapter();
-  const builtEntry = resolve(dirname(fileURLToPath(import.meta.url)), "../../.build/megabrain");
   const temporaryState = resolve(stateDir) === resolve(tmpdir()) || resolve(stateDir).startsWith(`${resolve(tmpdir())}/`);
   const testRunner = process.argv[1]?.endsWith(".test.ts") === true;
-  const invocation = testRunner && existsSync(builtEntry)
-    ? { command: builtEntry, args: ["__state-owner"] }
+  const invocation = testRunner
+    ? { command: process.execPath, args: [resolve(dirname(fileURLToPath(import.meta.url)), "../cli/index.ts"), "__state-owner"] }
     : selfInvocation(process.execPath, process.argv, ["__state-owner"]);
   const { MEGABRAIN_DISPATCH_ID: _dispatchId, ...baseEnvironment } = process.env;
   const testMode = testRunner || baseEnvironment.MEGABRAIN_STATE_OWNER_TEST_REGISTRY !== undefined;
