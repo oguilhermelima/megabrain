@@ -233,6 +233,20 @@ describe("chats survive a daemon restart", () => {
     expect(captured(env)).toContainEqual({ user: "hello again" });
   });
 
+  test("a failed launch with no session retries on send and clears its stale error", async () => {
+    const env = sandbox();
+    fakeAgent(env.bin, "claude", FAKE_CLAUDE);
+    await new ChatStore(env.state).put(record(env, { state: "error", error: "spawn E2BIG", agentSessionId: null }));
+    const daemon = await daemonFor(env);
+
+    await send(daemon, "try again");
+    await waitForClaudeTurn(daemon, "try again");
+
+    expect(await daemon.store.get(ID)).toMatchObject({ state: "idle", error: null, agentSessionId: "fresh-session" });
+    expect(captured(env)).toContainEqual({ user: "try again" });
+    expect(captured(env).filter((row) => Array.isArray(row.argv))).toHaveLength(1);
+  });
+
   test("a failed resume leaves the chat suspended with the error, and the message is not replayed on a fresh start", async () => {
     const env = sandbox();
     fakeAgent(env.bin, "claude", FAKE_CLAUDE);

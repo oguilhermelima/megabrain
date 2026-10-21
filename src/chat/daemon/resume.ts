@@ -132,7 +132,8 @@ export async function resume(daemon: ChatDaemon, id: string): Promise<Chat> {
 
 export async function deliver(daemon: ChatDaemon, chat: Chat, parts: Part[], options: { fresh?: boolean; keepInterrupt?: boolean } = {}): Promise<void> {
     const id = chat.id;
-    const resuming = chat.state === "suspended" || chat.state === "stopped";
+    const failedLaunch = chat.state === "error" && chat.agentSessionId === null && !chat.error?.includes("already open in another process");
+    const resuming = chat.state === "suspended" || chat.state === "stopped" || failedLaunch;
     const textValue = firstText(parts);
     if (chat.title === null && textValue !== "") chat.title = textValue.slice(0, 120);
     chat.lastActivityAt = new Date().toISOString();
