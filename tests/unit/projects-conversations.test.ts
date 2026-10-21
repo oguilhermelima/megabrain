@@ -17,7 +17,7 @@ let project = "";
 let env: NodeJS.ProcessEnv;
 let children: ChildProcess[] = [];
 
-type Row = { sessionId: string; agent: string; title: string; status: string; lastActivityAt: string | null; dispatchId: string | null; conversationOwner: string; owner: string; origin: string; chatId?: string | null };
+type Row = { sessionId: string; agent: string; title: string; status: string; lastActivityAt: string | null; dispatchId: string | null; conversationOwner: string; owner: string; origin: string; host: string; parent: string | null; chatId?: string | null };
 
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "megabrain-projects-conv-")));
@@ -165,33 +165,32 @@ describe("projects lists conversations from the registry", () => {
 });
 
 describe("what is not ours stays out of the app's list", () => {
-  test("a live session from another host is not listed by default", async () => {
+  test("a dispatch session on Orca is megabrain-originated and reports its recorded host and parent", async () => {
+    await repository();
+    const pid = livePid();
+    claudeRegistry(pid, "orca-dispatch");
+    dispatch("dispatch-orca", { agent: "claude", agentPid: pid, agentThreadId: "orca-dispatch", childHost: "orca", parentSessionId: "coordinator-session" });
+    const adapter = machine({ ps: ["1 0 /sbin/launchd", "300 1 /Applications/Orca.app/Contents/MacOS/Orca", `${pid} 300 claude`] });
+    expect(await listed(adapter, "--origin", "megabrain")).toMatchObject([{ sessionId: "claude:orca-dispatch", dispatchId: "dispatch-orca", origin: "megabrain", host: "orca", parent: "coordinator-session" }]);
+  });
+
+  test("a hand-opened Orca session is only in all, with its inferred host and no parent", async () => {
     await repository();
     const pid = livePid();
     claudeRegistry(pid, "orca-child");
     const adapter = machine({ ps: ["1 0 /sbin/launchd", "300 1 /Applications/Orca.app/Contents/MacOS/Orca", `${pid} 300 claude`] });
-    expect(await listed(adapter)).toEqual([]);
     expect(await listed(adapter, "--origin", "megabrain")).toEqual([]);
-  });
-
-  test("--include-foreign and --origin all list it as foreign", async () => {
-    await repository();
-    const pid = livePid();
-    claudeRegistry(pid, "orca-child");
-    const adapter = machine({ ps: ["1 0 /sbin/launchd", `${pid} 1 claude`] });
-    for (const flag of [["--include-foreign"], ["--origin", "all"]]) {
-      expect(await listed(adapter, ...flag)).toMatchObject([{ sessionId: "claude:orca-child", conversationOwner: "foreign", owner: "external", origin: "external" }]);
-    }
+    expect(await listed(adapter)).toMatchObject([{ sessionId: "claude:orca-child", conversationOwner: "foreign", owner: "external", origin: "external", host: "orca", parent: null }]);
   });
 
   test("a worker running under an app terminal is the dispatch's, not the terminal's", async () => {
     await repository();
     const pid = livePid();
     claudeRegistry(pid, "worker-session");
-    dispatch("dispatch-1", { agent: "claude", agentPid: pid, agentThreadId: "worker-session", chatName: "lane A" });
+    dispatch("dispatch-1", { agent: "claude", agentPid: pid, agentThreadId: "worker-session", childHost: "tmux", parentSessionId: "parent-session", chatName: "lane A" });
     const adapter = machine({ ps: ["1 0 /sbin/launchd", "200 1 tmux -L megabrain-app new-session -d -s mb-app-t1", `${pid} 200 claude`], panes: [`${pid} mb-app-t1`] });
     ours(terminalKey("t1"), "app-terminal", { tmux: "megabrain-app:mb-app-t1" });
-    expect(await listed(adapter)).toEqual([]);
+    expect(await listed(adapter, "--origin", "megabrain")).toMatchObject([{ sessionId: "claude:worker-session", host: "tmux", parent: "parent-session", origin: "megabrain" }]);
     expect(await listed(adapter, "--include-foreign")).toMatchObject([{ sessionId: "claude:worker-session", conversationOwner: "dispatch", dispatchId: "dispatch-1" }]);
     expect(readConversations(state).conversations[terminalKey("t1")]).toBeDefined();
   });
@@ -235,6 +234,6 @@ describe("what is not ours stays out of the app's list", () => {
     writeFileSync(join(home, ".gemini", "antigravity-cli", "history.jsonl"), `${JSON.stringify({ conversationId: conversation, workspace: project, timestamp: new Date().toISOString(), display: "Write the brief", type: "prompt" })}\n`);
     const adapter = machine({ lsof: { [`${conversation}.lock`]: `p4343\nn${join(home, ".gemini", "antigravity-cli", "presence", `${conversation}.lock`)}\n` } });
     expect(await listed(adapter, "--include-foreign")).toMatchObject([{ sessionId: `agy:${conversation}`, agent: "agy", status: "working", title: "Write the brief", conversationOwner: "foreign" }]);
-    expect(await listed(adapter)).toEqual([]);
+    expect(await listed(adapter, "--origin", "megabrain")).toEqual([]);
   });
 });

@@ -52,6 +52,23 @@ export function appHost(table: ProcessTable, pid: number | null | undefined): Ap
   return undefined;
 }
 
+// The host for an unrecorded session, inferred from the process tree. Recorded sessions use their
+// creator's durable host instead, so this is only a fallback for sessions opened by hand.
+export function inferSessionHost(table: ProcessTable, pid: number | null | undefined): string {
+  if (appHost(table, pid) !== undefined) return "megabrain";
+  const seen = new Set<number>();
+  for (let current = pid ?? undefined; current !== undefined && current > 1 && !seen.has(current);) {
+    seen.add(current);
+    const entry = table.get(current);
+    if (entry === undefined) break;
+    if (/orca/i.test(entry.command)) return "orca";
+    if (/superset/i.test(entry.command)) return "superset";
+    if (/(?:^|\/)tmux(?:\s|$)/.test(entry.command)) return "tmux";
+    current = entry.ppid;
+  }
+  return "terminal";
+}
+
 // Pane process to session name on the app's tmux server; empty when the server is not running.
 export async function readAppPanes(processAdapter: ProcessAdapter): Promise<ReadonlyMap<number, string>> {
   const panes = new Map<number, string>();

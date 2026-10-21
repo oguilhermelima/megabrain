@@ -19,7 +19,7 @@ import { OWNED_TMUX_SERVER } from "../../core/session-ownership.js";
 import { promoteConversation, readConversations, sessionKey, type ConversationRegistry } from "../../core/conversations.js";
 import { agyConversationIndex, sessionHistory, type HistorySession } from "../../adapters/session-history.js";
 import { ChatStore, type Chat } from "../../chat/store.js";
-import { appHost, appTarget, readAppPanes, readProcessTable, type ProcessTable } from "../../core/session-origin.js";
+import { appHost, appTarget, inferSessionHost, readAppPanes, readProcessTable, type ProcessTable } from "../../core/session-origin.js";
 import { loadAndPersistModelRegistry, contextWindowOf, type ModelRegistry } from "../../core/model.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { readArchivedWorktrees } from "../../core/archived-worktrees.js";
@@ -29,7 +29,7 @@ import { selfInvocation } from "../../core/self-invocation.js";
 type Environment = Readonly<Record<string, string | undefined>>;
 type SessionStatus = "working" | "idle" | "waiting" | "ended";
 type ConversationOwner = "app-chat" | "app-terminal" | "dispatch" | "foreign";
-type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; model: string | null; contextWindow: number | null; contextTokens?: number | null; owner: "megabrain" | "external"; origin: "megabrain" | "external"; conversationOwner: ConversationOwner; chatId?: string | null; tmuxServer?: string; tmuxSession?: string; terminalPid?: number; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
+type ProjectSession = Readonly<{ agent: "claude" | "codex" | "grok" | "agy"; sessionId: string; title: string; status: SessionStatus; startedAt: string | null; lastActivityAt: string | null; dispatchId: string | null; model: string | null; contextWindow: number | null; contextTokens?: number | null; owner: "megabrain" | "external"; origin: "megabrain" | "external"; conversationOwner: ConversationOwner; host: string; parent: string | null; chatId?: string | null; tmuxServer?: string; tmuxSession?: string; terminalPid?: number; cacheExpiresAt?: string | null; idleCompactAt?: string | null }>;
 type GitWorktree = Readonly<{ path: string; branch: string | null; head: string | null; primary: boolean; parent: string | null }>;
 type Project = Readonly<{ name: string; path: string; remote: string | null; source: "megabrain" | "import"; missing: boolean; worktrees: readonly (GitWorktree & { pullRequest: PullRequestSummary | null; sessions: readonly ProjectSession[] })[] }>;
 type Dispatch = ReturnType<typeof listDispatches>[number];
@@ -558,6 +558,11 @@ function tmuxOf(alias: string | null, live: RawSession | undefined, context: Lis
   return "terminalPid" in target ? { terminalPid: target.terminalPid } : { tmuxServer: OWNED_TMUX_SERVER, tmuxSession: target.tmuxSession };
 }
 
+function dispatchHost(dispatch: Dispatch): string {
+  const host = stringField(dispatch, "childHost");
+  return host === undefined || host === "local" ? "terminal" : host;
+}
+
 async function projectSessions(path: string, found: readonly RawSession[], dispatches: readonly Dispatch[], context: ListContext): Promise<ProjectSession[]> {
   const here = resolve(path);
   const liveByKey = new Map(found.map((session) => [`${session.agent}:${session.id}`, session]));
@@ -582,27 +587,29 @@ async function projectSessions(path: string, found: readonly RawSession[], dispa
       startedAt: live?.startedAt ?? chat?.createdAt ?? past?.startedAt ?? entry.createdAt,
       lastActivityAt: live?.lastActivityAt ?? chat?.lastActivityAt ?? past?.lastActivityAt ?? entry.createdAt,
       dispatchId: null, model: live?.model ?? chat?.model ?? null, contextWindow: live?.contextWindow ?? chat?.contextWindow ?? null,
-      owner: "megabrain", origin: "megabrain", conversationOwner: entry.owner, chatId: entry.aliases.chatId,
+      owner: "megabrain", origin: "megabrain", conversationOwner: entry.owner,
+      host: "megabrain", parent: chat?.parentSessionId ?? null, chatId: entry.aliases.chatId,
       ...tmuxOf(entry.aliases.tmux, live, context),
     });
   }
-  if (context.includeForeign) {
-    const now = Date.now();
-    const strangers = found.filter((session) => resolve(session.cwd) === here && context.registry.conversations[`${session.agent}:${session.id}`] === undefined && !context.registry.hiddenKeys.includes(`${session.agent}:${session.id}`)).map((session): ProjectSession => {
-      const dispatch = dispatchForSession(session, dispatches, context.table);
-      return {
-        agent: session.agent, sessionId: `${session.agent}:${session.id}`,
-        title: (stringField(dispatch ?? {}, "label", "chatName") ?? session.title).slice(0, 80),
-        status: dispatch?.state === "waiting_for_reply" ? "waiting" : session.status,
-        startedAt: session.startedAt, lastActivityAt: session.lastActivityAt, dispatchId: dispatch?.dispatchId ?? null,
-        model: session.model ?? null, contextWindow: session.contextWindow ?? null,
-        owner: "external", origin: "external", conversationOwner: dispatch === null ? "foreign" : "dispatch",
-      };
-    });
-    rows.push(...strangers.filter((session) => session.status !== "ended"));
-    rows.push(...strangers.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= recentWindow(session.agent))
-      .sort((left, right) => Date.parse(right.lastActivityAt ?? "") - Date.parse(left.lastActivityAt ?? "")).slice(0, 5));
-  }
+  const now = Date.now();
+  const strangers = found.filter((session) => resolve(session.cwd) === here && context.registry.conversations[`${session.agent}:${session.id}`] === undefined && !context.registry.hiddenKeys.includes(`${session.agent}:${session.id}`)).map((session): ProjectSession => {
+    const dispatch = dispatchForSession(session, dispatches, context.table);
+    return {
+      agent: session.agent, sessionId: `${session.agent}:${session.id}`,
+      title: (stringField(dispatch ?? {}, "label", "chatName") ?? session.title).slice(0, 80),
+      status: dispatch?.state === "waiting_for_reply" ? "waiting" : session.status,
+      startedAt: session.startedAt, lastActivityAt: session.lastActivityAt, dispatchId: dispatch?.dispatchId ?? null,
+      model: session.model ?? null, contextWindow: session.contextWindow ?? null,
+      owner: "external", origin: dispatch === null ? "external" : "megabrain", conversationOwner: dispatch === null ? "foreign" : "dispatch",
+      host: dispatch === null ? inferSessionHost(context.table, session.processId) : dispatchHost(dispatch),
+      parent: dispatch === null ? null : stringField(dispatch, "parentSessionId") ?? null,
+    };
+  });
+  const included = strangers.filter((session) => context.includeForeign || session.conversationOwner === "dispatch");
+  rows.push(...included.filter((session) => session.status !== "ended"));
+  rows.push(...included.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= recentWindow(session.agent))
+    .sort((left, right) => Date.parse(right.lastActivityAt ?? "") - Date.parse(left.lastActivityAt ?? "")).slice(0, 5));
   return rows;
 }
 
@@ -862,7 +869,7 @@ export async function executeProjects(args: readonly string[], environment: Envi
     return ok("");
   }
   if (args.includes("-h") || args.includes("--help")) return ok(`${usage}\n`);
-  let includeForeign = false;
+  let includeForeign = true;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") continue;

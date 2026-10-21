@@ -23,6 +23,10 @@ export const projectSessionSchema = z.looseObject({
   lastActivityAt: z.string().nullable(),
   /** Set when megabrain started this session as a dispatch. */
   dispatchId: z.string().nullable(),
+  /** Where this session runs: megabrain, a host IDE, tmux, or a regular terminal. */
+  host: z.string().optional(),
+  /** The coordinator session that started it, or null when opened by hand. */
+  parent: z.string().nullable().optional(),
   /** Tokens in the session's current context, when the agent records it. */
   contextTokens: z.number().nullable().optional(),
   /** When the agent's prompt cache expires if nothing happens (Claude: last activity + 1 hour). */

@@ -32,6 +32,8 @@ export type Chat = {
   /** Whether the most recently read complete terminal log row leaves a turn open. */
   terminalTurnOpen?: boolean;
   agentSessionId: string | null;
+  /** The coordinator session that created this native chat, when it was launched as a child. */
+  parentSessionId?: string | null;
   createdAt: string;
   lastActivityAt: string | null;
   error?: string | null;
