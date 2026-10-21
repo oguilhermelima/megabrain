@@ -521,6 +521,7 @@ export async function findMachineSession(home: string, processAdapter: ProcessAd
 
 type ListContext = Readonly<{
   registry: ConversationRegistry;
+  archivedDispatchIds: ReadonlySet<string>;
   chats: ReadonlyMap<string, Chat>;
   table: ProcessTable;
   appPanes: ReadonlyMap<number, string>;
@@ -541,12 +542,10 @@ function tmuxOf(alias: string | null, live: RawSession | undefined, context: Lis
   return "terminalPid" in target ? { terminalPid: target.terminalPid } : { tmuxServer: OWNED_TMUX_SERVER, tmuxSession: target.tmuxSession };
 }
 
-function dispatchHost(dispatch: Dispatch): string {
-  const host = stringField(dispatch, "childHost");
-  return host === undefined || host === "local" ? "terminal" : host;
-}
+const dispatchHost = (dispatch: Dispatch): string =>
+  stringField(dispatch, "childHost")?.replace(/^local$/, "terminal") ?? "terminal";
 
-async function projectSessions(path: string, found: readonly RawSession[], dispatches: readonly Dispatch[], archivedDispatchIds: ReadonlySet<string>, context: ListContext): Promise<ProjectSession[]> {
+async function projectSessions(path: string, found: readonly RawSession[], dispatches: readonly Dispatch[], context: ListContext): Promise<ProjectSession[]> {
   const here = resolve(path);
   const liveByKey = new Map(found.map((session) => [`${session.agent}:${session.id}`, session]));
   let history: Map<string, HistorySession> | undefined;
@@ -579,7 +578,7 @@ async function projectSessions(path: string, found: readonly RawSession[], dispa
   const strangers = found.filter((session) => resolve(session.cwd) === here && context.registry.conversations[`${session.agent}:${session.id}`] === undefined && !context.registry.hiddenKeys.includes(`${session.agent}:${session.id}`)).flatMap((session): ProjectSession[] => {
     const dispatch = dispatchForSession(session, dispatches, context.table);
     // A lane whose dispatch was closed or archived is gone from the app; its session never turns foreign.
-    if (dispatch !== null && (dispatch.state === "closed" || archivedDispatchIds.has(dispatch.dispatchId))) return [];
+    if (dispatch !== null && (dispatch.state === "closed" || context.archivedDispatchIds.has(dispatch.dispatchId))) return [];
     return [{
       agent: session.agent, sessionId: `${session.agent}:${session.id}`,
       title: (stringField(dispatch ?? {}, "label", "chatName") ?? session.title).slice(0, 80),
@@ -800,7 +799,7 @@ function promoteTerminals(stateDir: string, registry: ConversationRegistry, foun
   return promoted ? readConversations(stateDir) : registry;
 }
 
-async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], archivedDispatchIds: ReadonlySet<string>, processAdapter: ProcessAdapter, database: DatabaseAdapter, home: string, environment: Environment, cache: ProjectCache, context: ListContext): Promise<Project> {
+async function repositoryProject(repository: RepositoryRecord, found: readonly RawSession[], dispatches: readonly Dispatch[], processAdapter: ProcessAdapter, database: DatabaseAdapter, home: string, environment: Environment, cache: ProjectCache, context: ListContext): Promise<Project> {
   const checkoutPath = await realpath(repository.path).catch(() => undefined);
   if (checkoutPath === undefined) return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: true, worktrees: [] };
   const [worktreesResult, parents, pulls] = await Promise.all([
@@ -822,7 +821,7 @@ async function repositoryProject(repository: RepositoryRecord, found: readonly R
     primary: derived?.primary ?? worktree.primary,
     parent,
     pullRequest: worktree.branch === null ? null : pulls.get(worktree.branch) ?? null,
-    sessions: await timedSessions(await projectSessions(worktree.path, found, dispatches, archivedDispatchIds, context), home, worktree.path, environment),
+    sessions: await timedSessions(await projectSessions(worktree.path, found, dispatches, context), home, worktree.path, environment),
   }; }));
   return { name: repository.name, path: repository.path, remote: repository.remote, source: repository.source, missing: false, worktrees };
 }
@@ -882,12 +881,12 @@ export async function executeProjects(args: readonly string[], environment: Envi
     const registry = readConversations(stateDir);
     const waiting = Object.keys(registry.conversations).some((key) => key.startsWith("terminal:"));
     const appPanes = waiting || found.some((session) => appHost(table, session.processId)?.kind === "tmux") ? await readAppPanes(processAdapter) : new Map<number, string>();
-    const context: ListContext = { registry: promoteTerminals(stateDir, registry, found, dispatches, table, appPanes), chats, table, appPanes, includeForeign, home, stateDir };
+    const context: ListContext = { registry: promoteTerminals(stateDir, registry, found, dispatches, table, appPanes), archivedDispatchIds, chats, table, appPanes, includeForeign, home, stateDir };
     const hiddenItems = new Set(listHiddenItems(opened.value.db).map((item) => `${item.kind}:${item.path}`));
     const appearance = (await readProjectAppearance(environment)).projects;
     const archived = new Set((await readArchivedWorktrees(environment)).map((item) => `${item.repo}\0${item.branch}`));
     const projects = await Promise.all(repositories.map(async (repository) => {
-      const project = await repositoryProject(repository, found, dispatches, archivedDispatchIds, processAdapter, opened.value.db, home, environment, cache, context);
+      const project = await repositoryProject(repository, found, dispatches, processAdapter, opened.value.db, home, environment, cache, context);
       return { ...project, appearance: appearance[repository.path] ?? {}, hidden: hiddenItems.has(`repo:${repository.path}`), worktrees: project.worktrees.filter((tree) => tree.branch === null || !archived.has(`${repository.path}\0${tree.branch}`)).map((tree) => ({ ...tree, hidden: hiddenItems.has(`worktree:${tree.path}`) })) };
     }));
     await writeProjectCache(environment, cache);
