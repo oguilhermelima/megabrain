@@ -9,6 +9,7 @@ import WebSocket from "ws";
 import { SIMULATOR_UDID, simCandidates } from "./index.js";
 import type { Environment } from "./index.js";
 import { runServeSim } from "./serve-sim.js";
+import { processIdentityMatches, processStartIdentity } from "../../../db/state-owner-runtime.js";
 
 type RecordEntry = { udid: string; session: string; platform: "iOS" | "tvOS"; pid: number; ownerPid?: number; watchdogPid?: number; port: number; streamUrl: string; wsUrl: string; pointWidth?: number; pointHeight?: number };
 type InputStatus = { udid: string; state: "none" | "starting" | "ready" | "failed"; phase: string; startedAt?: string; error?: string; session?: string; port?: number; ownerPid?: number; watchdogPid?: number };
@@ -61,11 +62,27 @@ async function waitForInput(env: Environment, udid: string, timeoutSeconds: numb
 async function watchInputOwner(env: Environment, process: ProcessAdapter, entry: RecordEntry): Promise<Result<string>> {
   const ownerPid = entry.ownerPid;
   if (!ownerPid || !Number.isInteger(ownerPid)) return failed("native input watchdog has no valid owner PID");
+  const ownerStart = env.MEGABRAIN_NATIVE_INPUT_OWNER_START;
+  let nextIdentityCheck = 0;
   while (true) {
     const owner = await process.run("kill", ["-0", String(ownerPid)]);
-    if (owner.kind !== "ok") {
-      const stopped = await runServeSim(process, env, ["--kill", entry.udid]);
-      if (stopped.kind !== "ok") { await new Promise((resolve) => setTimeout(resolve, 500)); continue; }
+    let ownerIdentityChanged = false;
+    if (owner.kind === "ok" && ownerStart !== undefined && Date.now() >= nextIdentityCheck) {
+      nextIdentityCheck = Date.now() + 1000;
+      ownerIdentityChanged = !processIdentityMatches(ownerPid, ownerStart);
+    }
+    const ownerGone = owner.kind !== "ok" || ownerIdentityChanged;
+    if (ownerGone) {
+      let stopped = false;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if ((await runServeSim(process, env, ["--kill", entry.udid])).kind === "ok") { stopped = true; break; }
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      if (!stopped) {
+        await process.run("kill", ["-TERM", String(entry.pid)]);
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await process.run("kill", ["-KILL", String(entry.pid)]);
+      }
       save(env, records(env).filter((candidate) => candidate.udid !== entry.udid));
       writeStatus(env, { udid: entry.udid, state: "none", phase: "owner exited", startedAt: startedAt(env, entry.udid), ownerPid });
       return ok(`${JSON.stringify({ udid: entry.udid, stopped: true, reason: "owner exited" })}\n`);
@@ -193,8 +210,9 @@ export async function nativeInput(args: readonly string[], env: Environment, pro
       try { closeSync(openSync(lockFile(env, udid), "wx", 0o600)); } catch { return failed(`input start for ${udid} is already being claimed`); }
       writeStatus(env, { udid, state: "starting", phase: "launching serve-sim helper", startedAt: new Date().toISOString() });
       const ownerPid = globalThis.process.ppid;
+      const ownerStart = processStartIdentity(ownerPid);
       const child = selfInvocation(globalThis.process.execPath, globalThis.process.argv, ["native", "input", "start", udid, "--worker", "--watch"]);
-      const launched = await process.startDetached(child.command, child.args, { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env), MEGABRAIN_NATIVE_INPUT_OWNER_PID: String(ownerPid) } });
+      const launched = await process.startDetached(child.command, child.args, { env: { MEGABRAIN_STATE_DIR: resolveStateDirectory(env), MEGABRAIN_NATIVE_INPUT_OWNER_PID: String(ownerPid), ...(ownerStart === undefined ? {} : { MEGABRAIN_NATIVE_INPUT_OWNER_START: ownerStart }) } });
       if (launched.kind !== "ok") { writeStatus(env, { udid, state: "failed", phase: "launching", startedAt: startedAt(env, udid), error: launched.error }); try { unlinkSync(lockFile(env, udid)); } catch {} return launched; }
       writeStatus(env, { udid, state: "starting", phase: "launching serve-sim helper", startedAt: startedAt(env, udid), ownerPid, watchdogPid: launched.value.pid });
       return rest.includes("--wait") ? waitForInput(env, udid, Number(rest[rest.indexOf("--timeout") + 1] ?? 600)) : ok(`${JSON.stringify({ udid, state: "starting" })}\n`);

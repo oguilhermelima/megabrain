@@ -45,6 +45,11 @@ function sandbox() {
 }
 
 const lines = (value: string): Array<Record<string, unknown>> => value.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+function staleMaestroRun(root: string, worktree: string, runId: string): void {
+  const directory = join(root, "state", "maestro", createHash("sha256").update(worktree).digest("hex").slice(0, 16), runId);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "run.json"), JSON.stringify({ runId, flow: ".maestro/old.yaml", worktree, device: "maestro-web", pid: 99999999, state: "running", startedAt: "2026-10-01T00:00:00.000Z", ownerPid: 99999998, ownerStart: "old process identity" }));
+}
 
 describe("maestro flows", () => {
   test("lists flows from .maestro and maestro with name and app id", async () => {
@@ -191,6 +196,62 @@ describe("maestro run", () => {
     const after = await executeMaestro(["status", "--worktree", worktree, "--json"], environment, adapter);
     expect(after.kind === "ok" ? JSON.parse(after.value).state : "").toBe("stopped");
     expect(readdirSync(join(root, "state", "maestro")).length).toBe(1);
+  });
+
+  test("launches the compiled-Bun reaper and stops the run when its CLI owner is killed", async () => {
+    const { root, home, worktree, environment } = sandbox();
+    const binary = join(home, ".maestro", "bin", "maestro");
+    const childPidFile = join(root, "maestro.pid");
+    writeFileSync(binary, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo 2.11.0; exit 0; fi\necho $$ > ${childPidFile}\nexec sleep 30\n`);
+    chmodSync(binary, 0o755);
+    writeFileSync(join(worktree, ".maestro", "web.yaml"), "url: data:text/html,<h1>hi</h1>\n---\n- assertVisible: hi\n");
+    const moduleUrl = new URL("../../src/cli/commands/maestro.js", import.meta.url).href;
+    const adapterUrl = new URL("../../src/adapters/proc.js", import.meta.url).href;
+    const childScript = `delete process.env.BUN_BE_BUN; const { executeMaestro } = await import(${JSON.stringify(moduleUrl)}); const { createProcessAdapter } = await import(${JSON.stringify(adapterUrl)}); const env = JSON.parse(Buffer.from(process.argv[1], "base64").toString()); await executeMaestro(["run", ".maestro/web.yaml", "--worktree", env.worktree, "--json"], env, createProcessAdapter()); setInterval(() => {}, 1000);`;
+    const owner = Bun.spawn([process.execPath, "-e", childScript, Buffer.from(JSON.stringify({ ...environment, worktree })).toString("base64")], { stdout: "ignore", stderr: "ignore" });
+    let maestroPid = 0;
+    try {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && !existsSync(childPidFile)) await new Promise((resolve) => setTimeout(resolve, 25));
+      maestroPid = Number(readFileSync(childPidFile, "utf8").trim());
+      owner.kill("SIGKILL");
+      await owner.exited;
+      const runDirectory = join(root, "state", "maestro", createHash("sha256").update(worktree).digest("hex").slice(0, 16));
+      const finishedBy = Date.now() + 5000;
+      let record: { state?: string; reason?: string } | undefined;
+      let maestroAlive = true;
+      while (Date.now() < finishedBy) {
+        const file = readdirSync(runDirectory, { recursive: true }).find((name) => String(name).endsWith("run.json"));
+        if (file) record = JSON.parse(readFileSync(join(runDirectory, String(file)), "utf8")) as { state?: string; reason?: string };
+        maestroAlive = (await adapter.run("kill", ["-0", String(maestroPid)])).kind === "ok";
+        if (record?.state === "stopped" && !maestroAlive) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(record?.state).toBe("stopped");
+      expect(record?.reason).toBe("owner-gone");
+      expect(maestroAlive).toBe(false);
+    } finally {
+      owner.kill("SIGKILL");
+      await owner.exited;
+      if (maestroPid > 0) await adapter.run("kill", ["-KILL", `-${maestroPid}`]);
+    }
+  }, 15000);
+
+  test("status reconciles an old running record after both owner and group disappear", async () => {
+    const { root, worktree, environment } = sandbox();
+    staleMaestroRun(root, worktree, "zzzz-stale-status");
+    const status = await executeMaestro(["status", "--worktree", worktree, "--json"], environment, adapter);
+    expect(status.kind === "ok" ? JSON.parse(status.value) : null).toMatchObject({ state: "stopped", reason: "owner-gone" });
+  });
+
+  test("run reconciles an old running record before starting another run", async () => {
+    const { root, worktree, environment } = sandbox();
+    staleMaestroRun(root, worktree, "zzzz-stale-run");
+    writeFileSync(join(worktree, ".maestro", "web.yaml"), "url: data:text/html,<h1>hi</h1>\n---\n- assertVisible: hi\n");
+    expect((await executeMaestro(["run", ".maestro/web.yaml", "--worktree", worktree, "--json"], environment, adapter)).kind).toBe("ok");
+    const runs = await executeMaestro(["runs", "--worktree", worktree, "--json"], environment, adapter);
+    const stale = runs.kind === "ok" ? (JSON.parse(runs.value) as Array<Record<string, unknown>>).find((run) => run.runId === "zzzz-stale-run") : undefined;
+    expect(stale).toMatchObject({ state: "stopped", reason: "owner-gone" });
   });
 });
 
