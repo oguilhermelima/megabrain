@@ -1,4 +1,4 @@
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Chat } from "./store.js";
@@ -11,6 +11,7 @@ import { claudeFlags } from "../agents/claude.js";
 import { codexFlags } from "../agents/codex.js";
 import { grokFlags } from "../agents/grok.js";
 import type { AgentFlags } from "../agents/types.js";
+import { capSeedContext } from "./daemon/chat-turns.js";
 
 // The words a terminal starts with: the person's own command, minus the agent's permission flags when
 // the chat asks for approvals, else the built-in ones. The first word is the executable.
@@ -61,8 +62,16 @@ const claude: ChatProtocolAdapter = {
     if (chat.effort) args.push("--effort", chat.effort);
     if (chat.agentSessionId) args.push("--resume", chat.agentSessionId);
     const context = await launchContext(chat, stateDir);
-    const promptContext = [context, chat.seedContext].filter((part): part is string => typeof part === "string" && part !== "").join("\n\n");
-    if (promptContext !== "") args.push("--append-system-prompt", promptContext);
+    const promptContext = [context, typeof chat.seedContext === "string" ? capSeedContext(chat.seedContext) : undefined].filter((part): part is string => typeof part === "string" && part !== "").join("\n\n");
+    const promptPath = join(stateDir, "chats", chat.id, "seed-context.txt");
+    if (promptContext !== "") {
+      await mkdir(join(stateDir, "chats", chat.id), { recursive: true, mode: 0o700 });
+      await writeFile(promptPath, promptContext, { mode: 0o600 });
+      await chmod(promptPath, 0o600);
+      args.push("--append-system-prompt-file", promptPath);
+    } else {
+      await rm(promptPath, { force: true });
+    }
     if (chat.approvals !== true) return { command: "claude", args: [...args, "--dangerously-skip-permissions"] };
     // Only an approving chat needs the permission server, so a bypass chat never pays its startup.
     const server = selfInvocation(process.execPath, process.argv, ["chat", "mcp-permission", chat.id]);

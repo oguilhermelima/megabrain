@@ -4,6 +4,9 @@ import type { Chat, ChatLine } from "../store.js";
 
 export const isBusy = (chat: Chat) => chat.state === "working" || chat.state === "waiting-approval";
 
+export const MAX_SEED_CONTEXT_BYTES = 200 * 1024;
+const OMITTED_SEED_TURNS = "Earlier turns were omitted to fit the conversation context limit.";
+
 export async function mutate<T>(daemon: ChatDaemon, id: string, action: () => Promise<T>): Promise<T> {
   if (daemon.chatMutations.has(id)) throw Object.assign(new Error("chat is busy"), { code: "chat-busy" });
   daemon.chatMutations.add(id);
@@ -23,7 +26,7 @@ export function selectedTurn(lines: readonly ChatLine[], eventId: string): { use
 }
 
 export function seedContext(lines: readonly ChatLine[]): string {
-  return lines.flatMap((line) => {
+  const entries = lines.flatMap((line) => {
     const item = line.event;
     if (!item) return [];
     if (item.kind === "user") {
@@ -34,7 +37,49 @@ export function seedContext(lines: readonly ChatLine[]): string {
     if (item.kind === "tool-call") return [`Tool call (${item.tool?.name ?? item.text}): ${item.tool?.input ?? ""}`];
     if (item.kind === "tool-result") return [`Tool result (${item.tool?.name ?? "tool"}): ${item.text}`];
     return [];
-  }).join("\n\n");
+  });
+  const turns: string[] = [];
+  for (const entry of entries) {
+    if (entry.startsWith("Human: ") && turns.length > 0) turns.push(entry);
+    else if (turns.length > 0) turns[turns.length - 1] += `\n\n${entry}`;
+    else turns.push(entry);
+  }
+
+  return capSeedTurns(turns);
+}
+
+/** Applies the seed budget to a previously stored transcript using its Human turn markers. */
+export function capSeedContext(seed: string): string {
+  if (Buffer.byteLength(seed) <= MAX_SEED_CONTEXT_BYTES) return seed;
+  return capSeedTurns(seed.split(/\n\n(?=Human: )/));
+}
+
+function capSeedTurns(turns: readonly string[]): string {
+  const complete = turns.join("\n\n");
+  if (Buffer.byteLength(complete) <= MAX_SEED_CONTEXT_BYTES) return complete;
+
+  const prefix = `${OMITTED_SEED_TURNS}\n\n`;
+  const budget = MAX_SEED_CONTEXT_BYTES - Buffer.byteLength(prefix);
+  const kept: string[] = [];
+  let used = 0;
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index]!;
+    const separatorBytes = kept.length === 0 ? 0 : Buffer.byteLength("\n\n");
+    const turnBytes = Buffer.byteLength(turn);
+    if (used + separatorBytes + turnBytes <= budget) {
+      kept.unshift(turn);
+      used += separatorBytes + turnBytes;
+      continue;
+    }
+    if (kept.length === 0 && budget > 0) {
+      const bytes = Buffer.from(turn);
+      let start = Math.max(0, bytes.length - budget);
+      while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1;
+      kept.unshift(bytes.subarray(start).toString("utf8"));
+    }
+    break;
+  }
+  return prefix + kept.join("\n\n");
 }
 
 export async function ensureCodexChild(daemon: ChatDaemon, chat: Chat): Promise<ChildProcessWithoutNullStreams> {
