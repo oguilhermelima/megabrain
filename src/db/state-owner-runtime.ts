@@ -43,6 +43,10 @@ export function processStartIdentity(pid: number): string | undefined {
   return result.status === 0 ? String(result.stdout).trim() || undefined : undefined;
 }
 
+export function processIdentityMatches(pid: number, expectedStart: string): boolean {
+  return Number.isSafeInteger(pid) && pid > 0 && expectedStart !== "" && processStartIdentity(pid) === expectedStart;
+}
+
 export function processStartTime(pid: number): number | undefined {
   const identity = processStartIdentity(pid);
   if (identity === undefined) return undefined;

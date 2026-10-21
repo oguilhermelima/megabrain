@@ -9,7 +9,7 @@ import WebSocket from "ws";
 import { SIMULATOR_UDID, simCandidates } from "./index.js";
 import type { Environment } from "./index.js";
 import { runServeSim } from "./serve-sim.js";
-import { processStartIdentity } from "../../../db/state-owner-runtime.js";
+import { processIdentityMatches, processStartIdentity } from "../../../db/state-owner-runtime.js";
 
 type RecordEntry = { udid: string; session: string; platform: "iOS" | "tvOS"; pid: number; ownerPid?: number; watchdogPid?: number; port: number; streamUrl: string; wsUrl: string; pointWidth?: number; pointHeight?: number };
 type InputStatus = { udid: string; state: "none" | "starting" | "ready" | "failed"; phase: string; startedAt?: string; error?: string; session?: string; port?: number; ownerPid?: number; watchdogPid?: number };
@@ -65,7 +65,7 @@ async function watchInputOwner(env: Environment, process: ProcessAdapter, entry:
   const ownerStart = env.MEGABRAIN_NATIVE_INPUT_OWNER_START;
   while (true) {
     const owner = await process.run("kill", ["-0", String(ownerPid)]);
-    const ownerGone = owner.kind !== "ok" || (ownerStart !== undefined && processStartIdentity(ownerPid) !== ownerStart);
+    const ownerGone = owner.kind !== "ok" || (ownerStart !== undefined && !processIdentityMatches(ownerPid, ownerStart));
     if (ownerGone) {
       let stopped = false;
       for (let attempt = 0; attempt < 3; attempt += 1) {
