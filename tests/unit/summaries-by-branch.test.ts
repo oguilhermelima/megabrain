@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -294,19 +294,20 @@ describe("new chats get the context", () => {
     return { id: randomUUID(), agent: "claude", model: null, cwd: w.feature, title: null, state: "starting", mode: "chat", agentSessionId: null, createdAt: at(), lastActivityAt: null, summary: null, titleSource: "first-message" };
   }
 
-  test("claude gets --append-system-prompt with the block only when enabled and there is something to add", async () => {
+  test("claude gets --append-system-prompt-file with the block only when enabled and there is something to add", async () => {
     const on = world();
     const chatOn = await chatWith(on, true, true);
     const invocation = await chatProtocolAdapters.claude.prepare(chatOn, on.state);
-    const flag = invocation.args.indexOf("--append-system-prompt");
+    const flag = invocation.args.indexOf("--append-system-prompt-file");
     expect(flag).toBeGreaterThan(-1);
-    expect(invocation.args[flag + 1]).toContain("fixed the login redirect");
-    expect(Buffer.byteLength(invocation.args[flag + 1] ?? "")).toBeLessThanOrEqual(2200);
+    const promptPath = invocation.args[flag + 1] ?? "";
+    expect(readFileSync(promptPath, "utf8")).toContain("fixed the login redirect");
+    expect(statSync(promptPath).mode & 0o777).toBe(0o600);
 
     const off = world();
-    expect((await chatProtocolAdapters.claude.prepare(await chatWith(off, false, true), off.state)).args).not.toContain("--append-system-prompt");
+    expect((await chatProtocolAdapters.claude.prepare(await chatWith(off, false, true), off.state)).args).not.toContain("--append-system-prompt-file");
     const empty = world();
-    expect((await chatProtocolAdapters.claude.prepare(await chatWith(empty, true, false), empty.state)).args).not.toContain("--append-system-prompt");
+    expect((await chatProtocolAdapters.claude.prepare(await chatWith(empty, true, false), empty.state)).args).not.toContain("--append-system-prompt-file");
   });
 
   test("codex gets developer_instructions through -c under the same rule", async () => {
