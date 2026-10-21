@@ -164,6 +164,24 @@ describe("native input scenarios", () => {
     expect(JSON.parse(await readFile(join(state, "native-input", `${udid}.json`), "utf8"))).toMatchObject({ state: "none", phase: "owner exited" });
   });
 
+  test("treats a reused owner PID as exited and bounds failed helper stops", async () => {
+    const fake = await fakeHelper(); const state = await emptyFixture(); const { process, calls } = fakeProcess(fake.helper);
+    const run = process.run.bind(process); let stopAttempts = 0;
+    process.run = async (command, args, options) => {
+      if (command === "ps" && args[0] === "-p" && args[1] === String(globalThis.process.pid)) return ok({ stdout: "a different process start time\n", stderr: "", exitCode: 0 });
+      if (command === "kill" && args[0] === "-0" && args[1] === String(globalThis.process.pid)) { calls.push({ command, args: [...args] }); return ok({ stdout: "", stderr: "", exitCode: 0 }); }
+      const entry = args.findIndex((arg) => arg.endsWith("/serve-sim.js"));
+      if (entry >= 0 && args[entry + 1] === "--kill") { stopAttempts += 1; calls.push({ command: "serve-sim", args: args.slice(entry + 1) }); return failed("fake serve-sim kill failure"); }
+      return run(command, args, options);
+    };
+    const result = await nativeInput(["start", udid, "--worker", "--watch", "--json"], { MEGABRAIN_STATE_DIR: state, MEGABRAIN_NATIVE_INPUT_OWNER_PID: String(globalThis.process.pid), MEGABRAIN_NATIVE_INPUT_OWNER_START: "an earlier process" }, process);
+    expect(result.kind).toBe("ok");
+    expect(stopAttempts).toBeGreaterThan(0);
+    expect(stopAttempts).toBeLessThanOrEqual(5);
+    expect(calls.some((call) => call.command === "kill" && call.args[0] === "-TERM" && call.args[1] === String(fake.helper.pid))).toBe(true);
+    expect(JSON.parse(await readFile(join(state, "native-input", `${udid}.json`), "utf8"))).toMatchObject({ state: "none", phase: "owner exited" });
+  });
+
   test("reuses its helper for gestures, text, buttons, frame, stream and stop", async () => {
     const fake = await fakeHelper(); const state = await fixture(fake.helper); const { process, calls } = fakeProcess(fake.helper); const env = { MEGABRAIN_STATE_DIR: state };
     const start = await nativeInput(["start", udid, "--json"], env, process);

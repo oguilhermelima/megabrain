@@ -48,4 +48,32 @@ describe("createProcessAdapter", () => {
     const result = await createProcessAdapter({ defaultTimeoutMs: 25 }).run(process.execPath, ["-e", "setTimeout(() => {}, 10000)"]);
     expect(result).toEqual({ kind: "failed", error: `${process.execPath} timed out`, exitCode: 1 });
   });
+
+  test("kills a run child when its owner is killed", async () => {
+    const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const directory = await mkdtemp(join(tmpdir(), "mb-proc-parent-"));
+    const marker = join(directory, "child.pid");
+    const script = `import { createProcessAdapter } from ${JSON.stringify(new URL("../../src/adapters/proc.js", import.meta.url).href)}; createProcessAdapter().run("sh", ["-c", "echo $$ > ${marker}; exec sleep 30"]); setInterval(() => {}, 1000);`;
+    const owner = Bun.spawn([process.execPath, "-e", script], { stdout: "ignore", stderr: "ignore" });
+    try {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        try { await readFile(marker, "utf8"); break; } catch { await new Promise((resolve) => setTimeout(resolve, 25)); }
+      }
+      const childPid = Number((await readFile(marker, "utf8")).trim());
+      owner.kill("SIGKILL");
+      await owner.exited;
+      const goneBy = Date.now() + 3000;
+      let alive = true;
+      while (Date.now() < goneBy) {
+        alive = (await createProcessAdapter().run("kill", ["-0", String(childPid)])).kind === "ok";
+        if (!alive) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (alive) await createProcessAdapter().run("kill", ["-KILL", String(childPid)]);
+      expect(alive).toBe(false);
+    } finally { owner.kill("SIGKILL"); await owner.exited; await rm(directory, { recursive: true, force: true }); }
+  }, 10000);
 });
