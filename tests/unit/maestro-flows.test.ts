@@ -192,6 +192,42 @@ describe("maestro run", () => {
     expect(after.kind === "ok" ? JSON.parse(after.value).state : "").toBe("stopped");
     expect(readdirSync(join(root, "state", "maestro")).length).toBe(1);
   });
+
+  test("ends Maestro and marks the run stopped when its CLI owner is killed", async () => {
+    const { root, home, worktree, environment } = sandbox();
+    const binary = join(home, ".maestro", "bin", "maestro");
+    const childPidFile = join(root, "maestro.pid");
+    writeFileSync(binary, `#!/bin/sh\necho $$ > ${childPidFile}\nexec sleep 30\n`);
+    chmodSync(binary, 0o755);
+    const moduleUrl = new URL("../../src/cli/commands/maestro.js", import.meta.url).href;
+    const childScript = `const { executeMaestro } = await import(${JSON.stringify(moduleUrl)}); const env = JSON.parse(Buffer.from(process.argv[1], "base64").toString()); await executeMaestro(["run", ".maestro/prefs.yaml", "--worktree", env.worktree, "--device", ${JSON.stringify(UDID)}, "--json"], env, { run: async () => ({ kind: "failed", error: "not used" }), startDetached: async () => ({ kind: "failed", error: "not used" }), invocationCount: () => 0 }); setInterval(() => {}, 1000);`;
+    const owner = Bun.spawn([process.execPath, "-e", childScript, Buffer.from(JSON.stringify({ ...environment, worktree })).toString("base64")], { stdout: "ignore", stderr: "ignore" });
+    let maestroPid = 0;
+    try {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && !existsSync(childPidFile)) await new Promise((resolve) => setTimeout(resolve, 25));
+      maestroPid = Number(readFileSync(childPidFile, "utf8").trim());
+      owner.kill("SIGKILL");
+      await owner.exited;
+      const runDirectory = join(root, "state", "maestro", createHash("sha256").update(worktree).digest("hex").slice(0, 16));
+      const finishedBy = Date.now() + 5000;
+      let record: { state?: string } | undefined;
+      let maestroAlive = true;
+      while (Date.now() < finishedBy) {
+        const file = readdirSync(runDirectory, { recursive: true }).find((name) => String(name).endsWith("run.json"));
+        if (file) record = JSON.parse(readFileSync(join(runDirectory, String(file)), "utf8")) as { state?: string };
+        maestroAlive = (await adapter.run("kill", ["-0", String(maestroPid)])).kind === "ok";
+        if (record?.state === "stopped" && !maestroAlive) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(record?.state).toBe("stopped");
+      expect(maestroAlive).toBe(false);
+    } finally {
+      owner.kill("SIGKILL");
+      await owner.exited;
+      if (maestroPid > 0) await adapter.run("kill", ["-KILL", `-${maestroPid}`]);
+    }
+  }, 15000);
 });
 
 describe("maestro runs", () => {
