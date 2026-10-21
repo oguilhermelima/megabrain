@@ -87,8 +87,12 @@ describe('closeOf: one Close per owner', () => {
     expect(closable({ ...session, owner: 'megabrain', conversationOwner: 'app-terminal', status: 'ended' })).toBe(true)
   })
 
-  test('a dispatch worker or a foreign session has no Close here', () => {
-    expect(closeOf({ ...session, conversationOwner: 'dispatch', dispatchId: 'd' })).toBeNull()
+  test('a dispatch lane closes as its dispatch', () => {
+    expect(closeOf({ ...session, conversationOwner: 'dispatch', dispatchId: 'd' })).toEqual({ kind: 'dispatch', dispatchId: 'd' })
+    expect(closable({ ...session, conversationOwner: 'dispatch', dispatchId: 'd' })).toBe(true)
+  })
+
+  test('a foreign session has no Close here', () => {
     expect(closeOf({ ...session, conversationOwner: 'foreign' })).toBeNull()
     expect(closable({ ...session, conversationOwner: 'foreign', owner: 'megabrain', tmuxServer: 'megabrain-app', tmuxSession: 'mb-app-x' })).toBe(false)
   })
