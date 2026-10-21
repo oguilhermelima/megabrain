@@ -34,9 +34,8 @@ const worktreeRoot = (environment: Environment, worktree: string): string => joi
 const MAESTRO_REAPER = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
-const { ownerPid, ownerStart, directory } = JSON.parse(Buffer.from(process.argv[1], "base64").toString());
-const identity = (pid) => { const result = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8" }); return result.status === 0 ? result.stdout.trim() : undefined; };
+const { ownerPid, directory } = JSON.parse(Buffer.from(process.argv[1], "base64").toString());
+if (process.env.BUN_BE_BUN !== "1") process.exit(1);
 const groupAlive = (pid) => { try { process.kill(-pid, 0); return pid > 0; } catch { return false; } };
 const markStopped = () => {
   try {
@@ -65,7 +64,7 @@ const watch = setInterval(() => {
   try {
     const record = JSON.parse(fs.readFileSync(path.join(directory, "run.json"), "utf8"));
     if (record.state !== "running") { clearInterval(watch); process.exit(0); }
-    if (process.ppid !== ownerPid || (ownerStart !== undefined && identity(ownerPid) !== ownerStart)) {
+    if (process.ppid !== ownerPid) {
       const groupPid = Number(record.pid);
       if (!groupAlive(groupPid)) { markStopped(); process.exit(0); }
       stop(groupPid);
@@ -316,7 +315,7 @@ async function runVerb(args: readonly string[], environment: Environment, proces
   const ownerStart = processStartIdentity(ownerPid);
   let current: RunRecord = { runId, flow, worktree, device: device.value, pid: 0, state: "running", startedAt: new Date(startedMs).toISOString(), ownerPid, ...(ownerStart === undefined ? {} : { ownerStart }) };
   writeRecord(directory, current);
-  const reaper = spawn(globalThis.process.execPath, ["-e", MAESTRO_REAPER, Buffer.from(JSON.stringify({ ownerPid, ownerStart, directory })).toString("base64")], { detached: true, stdio: "ignore" });
+  const reaper = spawn(globalThis.process.execPath, ["-e", MAESTRO_REAPER, Buffer.from(JSON.stringify({ ownerPid, directory })).toString("base64")], { detached: true, stdio: "ignore", env: { ...globalThis.process.env, BUN_BE_BUN: "1" } });
   reaper.unref();
   send({ type: "start", state: "running", runId, flow, device: device.value, artifacts: directory });
   if (ownerNotice) console.error(ownerNotice);
