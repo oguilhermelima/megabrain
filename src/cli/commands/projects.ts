@@ -592,25 +592,24 @@ async function projectSessions(path: string, found: readonly RawSession[], dispa
       ...tmuxOf(entry.aliases.tmux, live, context),
     });
   }
-  if (context.includeForeign) {
-    const now = Date.now();
-    const strangers = found.filter((session) => resolve(session.cwd) === here && context.registry.conversations[`${session.agent}:${session.id}`] === undefined && !context.registry.hiddenKeys.includes(`${session.agent}:${session.id}`)).map((session): ProjectSession => {
-      const dispatch = dispatchForSession(session, dispatches, context.table);
-      return {
-        agent: session.agent, sessionId: `${session.agent}:${session.id}`,
-        title: (stringField(dispatch ?? {}, "label", "chatName") ?? session.title).slice(0, 80),
-        status: dispatch?.state === "waiting_for_reply" ? "waiting" : session.status,
-        startedAt: session.startedAt, lastActivityAt: session.lastActivityAt, dispatchId: dispatch?.dispatchId ?? null,
-        model: session.model ?? null, contextWindow: session.contextWindow ?? null,
-        owner: "external", origin: "external", conversationOwner: dispatch === null ? "foreign" : "dispatch",
-        host: dispatch === null ? inferSessionHost(context.table, session.processId) : dispatchHost(dispatch),
-        parent: dispatch === null ? null : stringField(dispatch, "parentSessionId") ?? null,
-      };
-    });
-    rows.push(...strangers.filter((session) => session.status !== "ended"));
-    rows.push(...strangers.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= recentWindow(session.agent))
-      .sort((left, right) => Date.parse(right.lastActivityAt ?? "") - Date.parse(left.lastActivityAt ?? "")).slice(0, 5));
-  }
+  const now = Date.now();
+  const strangers = found.filter((session) => resolve(session.cwd) === here && context.registry.conversations[`${session.agent}:${session.id}`] === undefined && !context.registry.hiddenKeys.includes(`${session.agent}:${session.id}`)).map((session): ProjectSession => {
+    const dispatch = dispatchForSession(session, dispatches, context.table);
+    return {
+      agent: session.agent, sessionId: `${session.agent}:${session.id}`,
+      title: (stringField(dispatch ?? {}, "label", "chatName") ?? session.title).slice(0, 80),
+      status: dispatch?.state === "waiting_for_reply" ? "waiting" : session.status,
+      startedAt: session.startedAt, lastActivityAt: session.lastActivityAt, dispatchId: dispatch?.dispatchId ?? null,
+      model: session.model ?? null, contextWindow: session.contextWindow ?? null,
+      owner: "external", origin: dispatch === null ? "external" : "megabrain", conversationOwner: dispatch === null ? "foreign" : "dispatch",
+      host: dispatch === null ? inferSessionHost(context.table, session.processId) : dispatchHost(dispatch),
+      parent: dispatch === null ? null : stringField(dispatch, "parentSessionId") ?? null,
+    };
+  });
+  const included = strangers.filter((session) => context.includeForeign || session.conversationOwner === "dispatch");
+  rows.push(...included.filter((session) => session.status !== "ended"));
+  rows.push(...included.filter((session) => session.status === "ended" && session.lastActivityAt !== null && now - Date.parse(session.lastActivityAt) <= recentWindow(session.agent))
+    .sort((left, right) => Date.parse(right.lastActivityAt ?? "") - Date.parse(left.lastActivityAt ?? "")).slice(0, 5));
   return rows;
 }
 
@@ -870,7 +869,7 @@ export async function executeProjects(args: readonly string[], environment: Envi
     return ok("");
   }
   if (args.includes("-h") || args.includes("--help")) return ok(`${usage}\n`);
-  let includeForeign = false;
+  let includeForeign = true;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === "--json") continue;
