@@ -45,6 +45,11 @@ function sandbox() {
 }
 
 const lines = (value: string): Array<Record<string, unknown>> => value.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+function staleMaestroRun(root: string, worktree: string, runId: string): void {
+  const directory = join(root, "state", "maestro", createHash("sha256").update(worktree).digest("hex").slice(0, 16), runId);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, "run.json"), JSON.stringify({ runId, flow: ".maestro/old.yaml", worktree, device: "maestro-web", pid: 99999999, state: "running", startedAt: "2026-10-01T00:00:00.000Z", ownerPid: 99999998, ownerStart: "old process identity" }));
+}
 
 describe("maestro flows", () => {
   test("lists flows from .maestro and maestro with name and app id", async () => {
@@ -230,6 +235,23 @@ describe("maestro run", () => {
       if (maestroPid > 0) await adapter.run("kill", ["-KILL", `-${maestroPid}`]);
     }
   }, 15000);
+
+  test("status reconciles an old running record after both owner and group disappear", async () => {
+    const { root, worktree, environment } = sandbox();
+    staleMaestroRun(root, worktree, "zzzz-stale-status");
+    const status = await executeMaestro(["status", "--worktree", worktree, "--json"], environment, adapter);
+    expect(status.kind === "ok" ? JSON.parse(status.value) : null).toMatchObject({ state: "stopped", reason: "owner-gone" });
+  });
+
+  test("run reconciles an old running record before starting another run", async () => {
+    const { root, worktree, environment } = sandbox();
+    staleMaestroRun(root, worktree, "zzzz-stale-run");
+    writeFileSync(join(worktree, ".maestro", "web.yaml"), "url: data:text/html,<h1>hi</h1>\n---\n- assertVisible: hi\n");
+    expect((await executeMaestro(["run", ".maestro/web.yaml", "--worktree", worktree, "--json"], environment, adapter)).kind).toBe("ok");
+    const runs = await executeMaestro(["runs", "--worktree", worktree, "--json"], environment, adapter);
+    const stale = runs.kind === "ok" ? (JSON.parse(runs.value) as Array<Record<string, unknown>>).find((run) => run.runId === "zzzz-stale-run") : undefined;
+    expect(stale).toMatchObject({ state: "stopped", reason: "owner-gone" });
+  });
 });
 
 describe("maestro runs", () => {
