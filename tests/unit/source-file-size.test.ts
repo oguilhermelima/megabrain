@@ -7,7 +7,7 @@ const LIMIT = 800;
 // Keep these ceilings exact so each exception disappears as soon as its file is split.
 const exceptions: Readonly<Record<string, number>> = {
   "apps/desktop/src-tauri/src/terminal.rs": 937,
-  "src/cli/commands/projects.ts": 903,
+  "src/cli/commands/projects.ts": 895,
   "apps/desktop/src/advanced/Sidebar.tsx": 823,
 };
 

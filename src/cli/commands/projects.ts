@@ -25,6 +25,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { readArchivedWorktrees } from "../../core/archived-worktrees.js";
 import { readProjectAppearance } from "../../core/project-appearance.js";
 import { selfInvocation } from "../../core/self-invocation.js";
+import { dispatchForSession } from "../../core/dispatch-session.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type SessionStatus = "working" | "idle" | "waiting" | "ended";
@@ -516,24 +517,6 @@ export async function sessionsForMachine(home: string, processAdapter: ProcessAd
 
 export async function findMachineSession(home: string, processAdapter: ProcessAdapter, agent: string, id: string): Promise<RawSession | undefined> {
   return (await sessionsForMachine(home, processAdapter)).find((session) => session.agent === agent && session.id === id);
-}
-
-const DISPATCH_SESSION_KEYS = ["agentThreadId", "agentSessionId", "grokSessionId", "codexSessionId"];
-
-// A dispatch owns a session by its recorded session id, or by the session's process sitting in the agent process's tree. Never by time.
-function dispatchForSession(session: RawSession, dispatches: readonly Dispatch[], table: ProcessTable): Dispatch | null {
-  const matches = dispatches.filter((dispatch) => dispatch.agent === session.agent);
-  const exact = matches.find((dispatch) => DISPATCH_SESSION_KEYS.some((key) => dispatch[key] === session.id));
-  if (exact !== undefined) return exact;
-  const inTree = (agentPid: number): boolean => {
-    const seen = new Set<number>();
-    for (let current: number | undefined = session.processId; current !== undefined && current > 1 && !seen.has(current); current = table.get(current)?.ppid) {
-      if (current === agentPid) return true;
-      seen.add(current);
-    }
-    return false;
-  };
-  return matches.find((dispatch) => typeof dispatch.agentPid === "number" && inTree(dispatch.agentPid)) ?? null;
 }
 
 type ListContext = Readonly<{
