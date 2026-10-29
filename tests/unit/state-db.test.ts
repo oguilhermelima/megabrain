@@ -19,6 +19,7 @@ import {
   createDispatch,
   fenceDelivery,
   finishOutbox,
+  finishOutboxPeerVerification,
   listDispatches,
   listDeliveries,
   listMessages,
