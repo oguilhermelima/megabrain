@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { backfillSummaries } from "../../src/knowledge/backfill.js";
@@ -9,6 +9,7 @@ import { KnowledgePipeline, type SessionInput } from "../../src/knowledge/pipeli
 import { scanProjects } from "../../src/knowledge/scanner.js";
 import { defaultKnowledgeSettings, effectiveToggles, parseKnowledgeSettings, readKnowledgeSettings } from "../../src/knowledge/settings.js";
 import { ChatStore } from "../../src/chat/store.js";
+import { chatProtocolAdapters } from "../../src/chat/protocol.js";
 import { openProject } from "../../src/knowledge/store.js";
 import type { Topic } from "../../src/knowledge/types.js";
 import { executeHookSessionStart } from "../../src/cli/commands/hook-session-start.js";
@@ -492,6 +493,67 @@ describe("agent context", () => {
     seed(repo, h.state);
     const hook = await executeHookSessionStart([], h.environment, async () => JSON.stringify({ cwd: repo }));
     expect(hook.kind === "ok" && JSON.parse(hook.value).hookSpecificOutput.additionalContext).toContain("Chat summaries");
+  });
+
+  test("the session hook stays silent for megabrain launches and emits normally without the marker", async () => {
+    const h = harness();
+    const repo = gitRepo(h.root, "feat/summaries-wiki");
+    seed(repo, h.state);
+    const input = async () => JSON.stringify({ cwd: repo });
+    expect(await executeHookSessionStart([], { ...h.environment, MEGABRAIN_CONTEXT_INJECTED: "1" }, input)).toEqual({ kind: "ok", value: "" });
+    expect((await executeHookSessionStart([], h.environment, input)).kind).toBe("ok");
+    const result = await executeHookSessionStart([], h.environment, input);
+    expect(result.kind === "ok" && result.value).toContain("Chat summaries");
+  });
+
+  test("branch matching injects only active topics and default branch refs fall through to newest active", async () => {
+    const h = harness();
+    const repo = gitRepo(h.root, "main");
+    const topic = (id: string, status: Topic["status"], updatedAt: string, branch: string): Topic => ({
+      id, project: repo, title: id, kind: "feat", status, createdAt: NOW, updatedAt, aliases: [],
+      sections: { overview: id, state: "", pitfalls: "", open: "" }, decisions: [], refs: [{ kind: "branch", id: branch }], chats: [], keyMessages: [],
+    });
+    const project = openProject(h.state, repo);
+    project.saveTopic(topic("shipped-branch", "shipped", "2026-10-20", "main"));
+    project.saveTopic(topic("dropped-branch", "dropped", "2026-10-19", "main"));
+    project.saveTopic(topic("active-branch", "active", "2026-10-18", "main"));
+    project.saveTopic(topic("active-newest", "active", "2026-10-21", "feat/other"));
+    project.saveTopic(topic("active-next", "active", "2026-10-17", "feat/older"));
+    const titles = (await knowledgeContext(h.state, repo));
+    expect(titles).toContain("active-newest");
+    expect(titles).toContain("active-branch");
+    expect(titles).not.toContain("shipped-branch");
+    expect(titles).not.toContain("dropped-branch");
+  });
+
+  test("terminal Claude and Codex receive shared project context, and Claude resumes with its file", async () => {
+    const h = harness();
+    const repo = gitRepo(h.root, "feat/summaries-wiki");
+    seed(repo, h.state);
+    const chat = { id: "11111111-1111-4111-8111-111111111111", agent: "claude", model: "m1", cwd: repo, title: null, state: "idle", mode: "terminal", agentSessionId: "sess", createdAt: NOW, lastActivityAt: null } as const;
+    const claude = await chatProtocolAdapters.claude.terminalCommand(chat, undefined, undefined, h.state);
+    expect(claude).toContain("--append-system-prompt-file");
+    const contextPath = claude[claude.indexOf("--append-system-prompt-file") + 1]!;
+    expect(readFileSync(contextPath, "utf8")).toContain("Chat summaries");
+    expect(await chatProtocolAdapters.claude.terminalCommand({ ...chat, agentSessionId: "resumed" }, undefined, undefined, h.state)).toContain("resumed");
+    const codex = await chatProtocolAdapters.codex.terminalCommand({ ...chat, agent: "codex" }, undefined, undefined, h.state);
+    expect(codex).toContain(`developer_instructions=${JSON.stringify(await knowledgeContext(h.state, repo))}`);
+  });
+
+  test("terminal commands with context disabled or absent remove stale Claude files and omit context", async () => {
+    const h = harness();
+    const repo = gitRepo(h.root, "feat/summaries-wiki");
+    const chat = { id: "11111111-1111-4111-8111-111111111111", agent: "claude", model: "m1", cwd: repo, title: null, state: "idle", mode: "terminal", agentSessionId: "sess", createdAt: NOW, lastActivityAt: null } as const;
+    const contextPath = join(h.state, "chats", chat.id, "seed-context.txt");
+    mkdirSync(join(h.state, "chats", chat.id), { recursive: true });
+    writeFileSync(contextPath, "stale context");
+    expect(await chatProtocolAdapters.claude.terminalCommand(chat, undefined, undefined, h.state)).not.toContain("--append-system-prompt-file");
+    expect(existsSync(contextPath)).toBe(false);
+    seed(repo, h.state);
+    writeFileSync(join(h.state, "knowledge-settings.json"), JSON.stringify({ projects: { [repo]: { context: false } } }));
+    writeFileSync(contextPath, "stale context");
+    expect(await chatProtocolAdapters.claude.terminalCommand(chat, undefined, undefined, h.state)).not.toContain("--append-system-prompt-file");
+    expect(existsSync(contextPath)).toBe(false);
   });
 });
 

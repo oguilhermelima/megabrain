@@ -8,7 +8,7 @@ import { statSync } from "node:fs";
 import packageJson from "../../package.json" with { type: "json" };
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from "./store.js";
 import { AcpPeer } from "./grok-acp.js";
-import type { MessagePart } from "./protocol.js";
+import type { AgentTerminalCommand, MessagePart } from "./protocol.js";
 import type { ChatArtifact } from "./artifacts.js";
 import type { Subagent, SubagentEnd } from "./subagents.js";
 import { KnowledgePipeline } from "../knowledge/pipeline.js";
@@ -360,7 +360,7 @@ async rename(id: string, title: string): Promise<Chat> { return await renameImpl
   /** Stops the agent and deletes the chat's record and events; the agent's own session log stays resumable. */
 async remove(id: string): Promise<{ removed: string }> { return await removeImpl(this, id); }
 
-async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null }> { return await modeImpl(this, id, mode); }
+async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null; env: Record<string, string> }> { return await modeImpl(this, id, mode); }
 
 async takeOver(id: string): Promise<Chat> { return await takeOverImpl(this, id); }
 
@@ -394,7 +394,7 @@ async refreshTerminalChats(): Promise<void> {
   try { await task; } finally { if (this.terminalRefreshTask === task) this.terminalRefreshTask = undefined; }
 }
 
-async terminalCommand(id: string): Promise<string[]> { return await terminalCommandImpl(this, id); }
+async terminalCommand(id: string): Promise<AgentTerminalCommand> { return await terminalCommandImpl(this, id); }
 
 async fork(id: string, eventId: string): Promise<Chat> { return await forkImpl(this, id, eventId); }
 

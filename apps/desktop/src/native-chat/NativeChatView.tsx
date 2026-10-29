@@ -75,7 +75,7 @@ export function NativeChatView({
   const compose = useComposeChannel()
   // The view being switched to shows at once; the chat record catches up when the switch lands.
   const [target, setTarget] = useState<NativeChat['mode'] | null>(null)
-  const opening = useRef<Promise<{ command: string[] | null }> | null>(null)
+  const opening = useRef<Promise<{ command: string[] | null; env: Record<string, string> }> | null>(null)
   const [startFresh, setStartFresh] = useState(false)
   const [retryingResume, setRetryingResume] = useState(false)
   const [exited, setExited] = useState<number | null | undefined>(undefined)
@@ -357,14 +357,14 @@ export function NativeChatView({
     }
     const switched = opening.current
     const [command, engine] = await Promise.all([
-      (switched === null ? Promise.resolve(null) : switched.then((result) => result.command)).then((value) => value ?? api.chatTerminalCommand(chat.id)),
+      (switched === null ? Promise.resolve(null) : switched.then((result) => result.command === null ? null : { argv: result.command, env: result.env })).then((value) => value ?? api.chatTerminalCommand(chat.id)),
       terminalEngine(),
     ])
     switchEngine(chat.id, engine)
     switchStep(chat.id, 'terminalOpenCalled', 'terminal')
     let terminal: TerminalSession
     try {
-      terminal = await api.openTerminal({ engine, cwd: chat.cwd, command, chatId: chat.id, cols, rows })
+      terminal = await api.openTerminal({ engine, cwd: chat.cwd, command: command.argv, env: command.env, chatId: chat.id, cols, rows })
     } catch (error) {
       await api.setChatMode(chat.id, 'chat').catch(() => {})
       throw error

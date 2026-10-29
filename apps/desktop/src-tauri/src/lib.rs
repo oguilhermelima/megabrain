@@ -13,6 +13,7 @@ mod process_tree;
 mod simulator_sweep;
 mod switch_trace;
 mod terminal;
+mod terminal_tmux_argv;
 mod terminal_tmux_config;
 mod tray;
 #[cfg(test)]

@@ -61,7 +61,7 @@ export async function runAgentInternal(daemon: ChatDaemon, chat: Chat, checked =
     const childEnvironment = scrubAgentEnvironment({ ...process.env, ...daemon.environment });
     // GROK_HOME is configuration and session storage, not a nested-agent marker; keep the isolated home selected by the host.
     if (chat.agent === "grok" && daemon.environment.GROK_HOME !== undefined) childEnvironment.GROK_HOME = daemon.environment.GROK_HOME;
-    const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...childEnvironment, MEGABRAIN_CHAT_ID: chat.id }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(invocation.command, invocation.args, { cwd: chat.cwd, env: { ...childEnvironment, MEGABRAIN_CHAT_ID: chat.id, MEGABRAIN_CONTEXT_INJECTED: "1" }, stdio: ["pipe", "pipe", "pipe"] });
     daemon.children.set(chat.id, child);
     await daemon.save(chat);
     const childRecord = chatChildRecord(daemon.stateDir, chat.id);

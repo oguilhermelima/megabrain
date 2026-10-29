@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { chatProtocolAdapters } from "../chat/protocol.js";
 import type { Chat } from "../chat/store.js";
 import { OWNED_TMUX_SERVER } from "./session-ownership.js";
 import { APP_SESSION_PREFIX } from "./app-terminals.js";
@@ -52,6 +51,14 @@ function resumedSession(command: string): { agent: "claude" | "codex"; id: strin
   return codex === undefined ? undefined : { agent: "codex", id: codex };
 }
 
+function sameLegacyTerminal(chat: Chat, command: string, cwd: string): boolean {
+  if (chat.cwd !== cwd) return false;
+  const resumed = resumedSession(command);
+  if (resumed !== undefined) return resumed.agent === chat.agent && resumed.id === chat.agentSessionId;
+  const executable = command.trim().split(/\s+/, 1)[0]?.split(/[\\/]/).at(-1);
+  return chat.agentSessionId === null && executable === chat.agent;
+}
+
 // The registry as the legacy files describe it, merged under what is already stored.
 export function migrated(stateDir: string, registry: ConversationRegistry, options: MigrationOptions = { isTmuxAlive: tmuxSessionAlive }): ConversationRegistry {
   const conversations: Record<string, Conversation> = { ...registry.conversations };
@@ -84,7 +91,7 @@ export function migrated(stateDir: string, registry: ConversationRegistry, optio
       const cwd = str(value.cwd) ?? "";
       const tmux = `${OWNED_TMUX_SERVER}:${name}`;
       const alive = options.isTmuxAlive(name);
-      const host = chats.find((chat) => chat.mode === "terminal" && chat.cwd === cwd && chatProtocolAdapters[chat.agent].terminalCommand(chat).join(" ") === command);
+      const host = chats.find((chat) => chat.mode === "terminal" && sameLegacyTerminal(chat, command, cwd));
       if (host !== undefined) {
         addAlias(chatKeys.get(host.id) ?? chatKey(host.id), tmux);
         if (alive) hosted.add(host.id);

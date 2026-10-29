@@ -1,5 +1,5 @@
 import type { ProjectsOrigin } from '@/api/projects-origin'
-import type { DispatchMessage, OrchestrationGraph, OrchestrationTarget, AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, GithubProjectArchive, HistorySession, GithubIssueList, GithubPullRequestList, GithubLabel, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame, InputStream, InputRotation, WebDevice, ViewportPreset, WebInputAction, WebActionResult, GithubProjectStatusUpdate, GithubProjectStatusUpdateStatus, GithubProjectStatusUpdates, GithubProjectWorkflows } from '@/api/schema'
+import type { DispatchMessage, OrchestrationGraph, OrchestrationTarget, AgentDefaults, AgentUpdateEntry, AgentUpdates, NativeChat, KnowledgeList, KnowledgeSearch, KnowledgeTopic, KnowledgeTranscript, ArtifactContent, ArtifactList, ChatArtifactContent, ChatArtifactList, ChatDaemonStatus, ChatEventLine, MessagePart, TerminalEngine, TerminalSession, AgentTerminalCommand, GithubDetail, GithubMergeMethod, GithubPullRequestFile, GithubPullRequestFilesPage, GithubReview, GithubReviewThread, GithubReviewer, GithubReviewers, GithubImage, GithubActionRuns, GithubActionRunDetail, GithubActionLog, GithubProjectItem, GithubProjectPage, GithubProjects, GithubProjectArchive, HistorySession, GithubIssueList, GithubPullRequestList, GithubLabel, QueuedMessage, SlashCommand, StackShow, CodeServer, SendResult, AdmissionPolicy, Settings, GithubRepository, GithubOwner, DiscoveredRepository, Project, ProjectAppearance, ProjectScripts, RunScriptResult, ArchivedWorktree, PortListeners, Repository, BranchChanges, ChatRead, CodeChange, CodeDiff, CodeEntry, CodeFile, DoctorReport, InstallEvent, InstallPlan, ModuleResult, ReplyResult, Status, Transcript, Worktree, ChainBody, ChainExplain, ChainExplainInput, ChainValidation, StepPatch, ChatQueueItem, SettingsKey, UsageStats, MaestroEvent, MaestroFlow, MaestroRun, Simulator, BootedSimulator, SimulatorKind, InputStart, InputStatus, InputStop, InputAction, InputFrame, InputStream, InputRotation, WebDevice, ViewportPreset, WebInputAction, WebActionResult, GithubProjectStatusUpdate, GithubProjectStatusUpdateStatus, GithubProjectStatusUpdates, GithubProjectWorkflows } from '@/api/schema'
 
 /** `~/.local/bin/megabrain` as the native side sees it (src-tauri/src/path_link.rs). */
 export interface PathLink {
@@ -344,11 +344,11 @@ export interface DesktopApi {
   /** One of a chat's artifacts with its content, or an earlier revision's (`chat artifact <chat-id> <artifact-id> [--revision <n>] --json`). */
   chatArtifact(chatId: string, artifactId: string, revision?: number): Promise<ChatArtifactContent>
   /** Hand the conversation to the other side when the agent is idle; terminal mode returns the terminal to attach. */
-  setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null }>
+  setChatMode(chatId: string, mode: 'chat' | 'terminal'): Promise<{ chat: NativeChat; terminal: TerminalSession | null; command: string[] | null; env: Record<string, string> }>
   /** The chat takes the session back from the agent's TUI; the daemon checks the terminal is idle, ends it and resumes. Refuses with terminal-busy mid-turn. */
   takeOverChat(chatId: string): Promise<NativeChat>
   /** The argv that resumes this chat in the agent's own TUI, for the embedded terminal. */
-  chatTerminalCommand(chatId: string): Promise<string[]>
+  chatTerminalCommand(chatId: string): Promise<AgentTerminalCommand>
   /** Each agent's default model and effort from its own config, and the login shell's name (`agent defaults`). */
   agentDefaults(): Promise<AgentDefaults>
   /** The argv that starts an agent's own interactive TUI, prompts skipped (`agent command`), or resumes one of its sessions; rejects when its CLI is not installed. */
@@ -375,7 +375,7 @@ export interface DesktopApi {
   logError(record: object): Promise<void>
   /** Embedded terminals (native Tauri commands). */
   /** `chatId` names the chat whose terminal mode this is, so its TUI stays that chat's conversation. */
-  openTerminal(options: { engine: TerminalEngine; cwd: string; command?: string[]; tmuxSession?: string; chatId?: string; cols: number; rows: number }): Promise<TerminalSession>
+  openTerminal(options: { engine: TerminalEngine; cwd: string; command?: string[]; env?: Record<string, string>; tmuxSession?: string; chatId?: string; cols: number; rows: number }): Promise<TerminalSession>
   writeTerminal(terminalId: string, data: string): Promise<void>
   resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void>
   /** Closing kills the terminal for good. `kill` also reaches a terminal the app lists but does not hold open. */

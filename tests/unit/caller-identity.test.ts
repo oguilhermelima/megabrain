@@ -598,6 +598,7 @@ describe("spawn starts children without the parent's identity", () => {
       expect(commandText).toContain("MEGABRAIN_DISPATCH_ID=");
       expect(commandText).toContain("MEGABRAIN_TMUX_SESSION=");
       expect(commandText).toContain("MEGABRAIN_TMUX_PANE=");
+      expect(commandText).toContain("-u MEGABRAIN_CONTEXT_INJECTED");
     } finally {
       registerTmux(original);
     }
@@ -634,6 +635,7 @@ describe("spawn starts children without the parent's identity", () => {
     expect(text).toContain("MEGABRAIN_STATE_DIR=");
     expect(text).toContain("MEGABRAIN_DISPATCH_ID=");
     expect(text).toContain("ORCA_TERMINAL_HANDLE='child-terminal'");
+    expect(text).toContain("-u MEGABRAIN_CONTEXT_INJECTED");
   });
 });
 

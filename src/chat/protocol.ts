@@ -24,6 +24,7 @@ function terminalBase(chat: Chat, flags: AgentFlags, base: readonly string[] | n
 export type MessagePart = { type: "text"; text: string } | { type: "image"; path: string };
 export type RpcRequest = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 export type AgentInvocation = { command: string; args: string[] };
+export type AgentTerminalCommand = { argv: string[]; env: Record<string, string> };
 
 /** The daemon owns the process and transcript; adapters own each agent's wire contract. */
 export interface ChatProtocolAdapter {
@@ -32,7 +33,7 @@ export interface ChatProtocolAdapter {
   steer(chat: Chat, child: ChildProcessWithoutNullStreams, turnId: string, parts: MessagePart[], request: RpcRequest): Promise<void>;
   interrupt(chat: Chat, child: ChildProcessWithoutNullStreams | undefined, turnId: string | undefined, request: RpcRequest): Promise<void>;
   /** The TUI on this conversation; a prompt is the initial message of a fresh session. `base` is the person's own start command. */
-  terminalCommand(chat: Chat, prompt?: string, base?: readonly string[] | null): string[];
+  terminalCommand(chat: Chat, prompt: string | undefined, base: readonly string[] | null | undefined, stateDir: string): Promise<string[]>;
 }
 
 async function claudeContent(parts: MessagePart[]): Promise<unknown[]> {
@@ -55,6 +56,15 @@ async function launchContext(chat: Chat, stateDir: string): Promise<string> {
   } catch { return ""; }
 }
 
+async function claudeContextFile(chat: Chat, stateDir: string, context: string): Promise<string | undefined> {
+  const path = join(stateDir, "chats", chat.id, "seed-context.txt");
+  if (context === "") { await rm(path, { force: true }); return undefined; }
+  await mkdir(join(stateDir, "chats", chat.id), { recursive: true, mode: 0o700 });
+  await writeFile(path, context, { mode: 0o600 });
+  await chmod(path, 0o600);
+  return path;
+}
+
 const claude: ChatProtocolAdapter = {
   async prepare(chat, stateDir) {
     const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--include-partial-messages", "--verbose", "--thinking-display", "summarized"];
@@ -63,15 +73,8 @@ const claude: ChatProtocolAdapter = {
     if (chat.agentSessionId) args.push("--resume", chat.agentSessionId);
     const context = await launchContext(chat, stateDir);
     const promptContext = [context, typeof chat.seedContext === "string" ? capSeedContext(chat.seedContext) : undefined].filter((part): part is string => typeof part === "string" && part !== "").join("\n\n");
-    const promptPath = join(stateDir, "chats", chat.id, "seed-context.txt");
-    if (promptContext !== "") {
-      await mkdir(join(stateDir, "chats", chat.id), { recursive: true, mode: 0o700 });
-      await writeFile(promptPath, promptContext, { mode: 0o600 });
-      await chmod(promptPath, 0o600);
-      args.push("--append-system-prompt-file", promptPath);
-    } else {
-      await rm(promptPath, { force: true });
-    }
+    const promptPath = await claudeContextFile(chat, stateDir, promptContext);
+    if (promptPath !== undefined) args.push("--append-system-prompt-file", promptPath);
     if (chat.approvals !== true) return { command: "claude", args: [...args, "--dangerously-skip-permissions"] };
     // Only an approving chat needs the permission server, so a bypass chat never pays its startup.
     const server = selfInvocation(process.execPath, process.argv, ["chat", "mcp-permission", chat.id]);
@@ -88,9 +91,12 @@ const claude: ChatProtocolAdapter = {
   },
   async steer() { throw new Error("Claude does not support steering a running turn"); },
   async interrupt(_chat, child) { child?.kill("SIGINT"); },
-  terminalCommand(chat, prompt, base) {
+  async terminalCommand(chat, prompt, base, stateDir) {
     const [executable, fixed] = terminalBase(chat, claudeFlags, base, ["claude", ...(chat.approvals === true ? [] : ["--dangerously-skip-permissions"])]);
-    return [executable, ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...fixed, ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
+    const knowledge = await launchContext(chat, stateDir);
+    const context = [knowledge, typeof chat.seedContext === "string" ? capSeedContext(chat.seedContext) : undefined].filter((part): part is string => typeof part === "string" && part !== "").join("\n\n");
+    const contextPath = await claudeContextFile(chat, stateDir, context);
+    return [executable, ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...fixed, ...(contextPath === undefined ? [] : ["--append-system-prompt-file", contextPath]), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
   },
 };
 
@@ -114,9 +120,10 @@ const codex: ChatProtocolAdapter = {
   async interrupt(chat, child, turnId, request) {
     if (turnId) await request("turn/interrupt", { threadId: chat.agentSessionId, turnId });
   },
-  terminalCommand(chat, prompt, base) {
+  async terminalCommand(chat, prompt, base, stateDir) {
     const [executable, fixed] = terminalBase(chat, codexFlags, base, ["codex", ...(chat.approvals === true ? [] : ["--dangerously-bypass-approvals-and-sandbox"]), "-c", "check_for_update_on_startup=false"]);
-    return [executable, ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...fixed, ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
+    const context = await launchContext(chat, stateDir);
+    return [executable, ...(chat.agentSessionId ? ["resume", chat.agentSessionId] : []), ...fixed, ...(context ? ["-c", `developer_instructions=${JSON.stringify(context)}`] : []), ...(chat.model ? ["--model", chat.model] : []), ...(chat.effort ? ["--effort", chat.effort] : []), ...(prompt ? [prompt] : [])];
   },
 };
 
@@ -139,7 +146,7 @@ const grok: ChatProtocolAdapter = {
   async interrupt(chat, _child, _turnId, request) {
     if (chat.agentSessionId) await request("session/cancel", { sessionId: chat.agentSessionId });
   },
-  terminalCommand(chat, prompt, base) {
+  async terminalCommand(chat, prompt, base, _stateDir) {
     const [executable, fixed] = terminalBase(chat, grokFlags, base, ["grok"]);
     return [executable, ...(chat.agentSessionId ? ["--resume", chat.agentSessionId] : []), ...fixed, ...(prompt ? [prompt] : [])];
   },
@@ -150,7 +157,7 @@ const agyUnavailable: ChatProtocolAdapter = {
   async send() { throw new Error("agy messages must be sent through the agy terminal"); },
   async steer() { throw new Error("agy does not support steering"); },
   async interrupt() { throw new Error("agy does not support interruption"); },
-  terminalCommand(chat, prompt, base) {
+  async terminalCommand(chat, prompt, base, _stateDir) {
     const [executable, fixed] = terminalBase(chat, agyFlags, base, ["agy"]);
     return [executable, ...(chat.agentSessionId ? ["--conversation", chat.agentSessionId] : []), ...fixed, ...(chat.model ? ["--model", chat.model] : []), ...(prompt ? ["-i", prompt] : [])];
   },

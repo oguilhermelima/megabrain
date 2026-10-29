@@ -65,8 +65,10 @@ describe("agy terminal-follow transcript", () => {
     expect(agyCapabilities).toEqual({ approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true });
   });
 
-  test("resumes an agy terminal with its conversation id", () => {
-    expect(chatProtocolAdapters.agy.terminalCommand(agyChat())).toEqual(["agy", "--conversation", sessionId, "--model", "gemini-3.8-flash-low"]);
+  test("resumes an agy terminal with its conversation id", async () => {
+    const state = mkdtempSync(join(tmpdir(), "megabrain-agy-terminal-"));
+    directories.push(state);
+    expect(await chatProtocolAdapters.agy.terminalCommand(agyChat(), undefined, undefined, state)).toEqual(["agy", "--conversation", sessionId, "--model", "gemini-3.8-flash-low"]);
   });
 
   test("maps captured user, assistant, tool call and denied tool result records", () => {

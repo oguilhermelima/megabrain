@@ -347,7 +347,7 @@ message, and `chat queue steer <id> <item> --json` puts it into a running Codex 
 session log stays, so it can still be resumed),
 `chat approve <id> <approvalId> --decision allow|allow-session|deny` to answer a permission request,
 and `chat mode <id> terminal --json` to hand an idle chat to the app's terminal. The app gets the
-agent's resume arguments from `chat terminal-command <id> --json`. A session has one live agent
+agent's resume arguments and launch environment from `chat terminal-command <id> --json`. A session has one live agent
 process: reopening the terminal after an app restart attaches to the TUI still running it, switching
 back to chat ends the app's TUIs on that session before the agent resumes, and a resume is refused
 while a process outside the app holds the session. While the TUI owns it, the chat shows the TUI's

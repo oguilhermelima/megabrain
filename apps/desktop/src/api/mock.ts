@@ -605,17 +605,22 @@ export function createMockApi(): DesktopApi {
     },
     setChatMode: async (chatId, mode) => {
       const chat = setMockChatMode(chatId, mode)
+      const env: Record<string, string> = mode === 'terminal' ? { MEGABRAIN_CONTEXT_INJECTED: '1', MEGABRAIN_CHAT_ID: chat.id } : {}
       return {
         chat,
         terminal: mode === 'terminal' ? { id: 'term-mock', engine: 'native', cwd: chat.cwd, title: chat.agent, tmuxSession: null } : null,
         command: mode === 'terminal' ? mockResumeCommand(chat) : null,
+        env,
       }
     },
     takeOverChat: async (chatId) => {
       await wait(300)
       return takeOverMockChat(chatId)
     },
-    chatTerminalCommand: async (chatId) => mockResumeCommand(mockChats.find((chat) => chat.id === chatId) ?? mockNativeChat),
+    chatTerminalCommand: async (chatId) => {
+      const chat = mockChats.find((entry) => entry.id === chatId) ?? mockNativeChat
+      return { argv: mockResumeCommand(chat), env: { MEGABRAIN_CONTEXT_INJECTED: '1', MEGABRAIN_CHAT_ID: chat.id } }
+    },
     agentDefaults: async () => ({
       agents: [
         { agent: 'claude', model: 'opus', effort: 'high' },

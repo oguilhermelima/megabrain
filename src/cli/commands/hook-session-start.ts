@@ -9,6 +9,7 @@ type Environment = Readonly<Record<string, string | undefined>>;
 // cwd on stdin and take hookSpecificOutput.additionalContext back. A hook never fails: bad input,
 // a missing cwd or no summaries all print nothing.
 export async function executeHookSessionStart(_args: readonly string[], environment: Environment, readStdin: () => Promise<string>): Promise<Result<string>> {
+  if (environment.MEGABRAIN_CONTEXT_INJECTED === "1") return ok("");
   let cwd: unknown;
   try { cwd = (JSON.parse(await readStdin()) as { cwd?: unknown }).cwd; } catch { return ok(""); }
   if (typeof cwd !== "string" || cwd === "") return ok("");

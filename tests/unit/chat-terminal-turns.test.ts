@@ -484,7 +484,9 @@ describe("switching to the terminal", () => {
     const daemon = await daemonFor(env);
     await new ChatStore(env.state).put(record(env, { mode: "chat", terminalSince: undefined }));
     const result = await daemon.handle({ operation: "mode", id: ID, mode: "terminal" }) as { command: string[] | null };
-    expect(result.command).toEqual(await daemon.handle({ operation: "terminal-command", id: ID }) as string[]);
+    const terminalCommand = await daemon.handle({ operation: "terminal-command", id: ID }) as { argv: string[]; env: Record<string, string> };
+    expect(result.command).toEqual(terminalCommand.argv);
+    expect(terminalCommand.env).toEqual({ MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: ID });
     expect(result.command?.slice(0, 3)).toEqual(["claude", "--resume", env.sessionId]);
   });
 

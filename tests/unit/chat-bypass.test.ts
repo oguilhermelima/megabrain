@@ -16,6 +16,12 @@ function chat(agent: Chat["agent"], extra: Partial<Chat> = {}): Chat {
   return { id: "11111111-1111-4111-8111-111111111111", agent, model: "m1", cwd: "/tmp", title: null, state: "idle", mode: "chat", agentSessionId: "sess", createdAt: "2026-01-01T00:00:00Z", lastActivityAt: null, ...extra };
 }
 
+function stateDirectory(): string {
+  const state = mkdtempSync(join(tmpdir(), "megabrain-bypass-terminal-"));
+  directories.push(state);
+  return state;
+}
+
 describe("chat protocol argv bypasses permission prompts by default", () => {
   test("claude stream-json carries the bypass flag and skips the permission tool", async () => {
     const stateDir = mkdtempSync(join(tmpdir(), "megabrain-bypass-"));
@@ -35,14 +41,16 @@ describe("chat protocol argv bypasses permission prompts by default", () => {
     expect(args).toContain("--permission-prompt-tool");
   });
 
-  test("terminal-command carries the bypass flag for both agents", () => {
-    expect(chatProtocolAdapters.claude.terminalCommand(chat("claude"))).toEqual(["claude", "--resume", "sess", "--dangerously-skip-permissions", "--model", "m1"]);
-    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex"))).toEqual(["codex", "resume", "sess", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
+  test("terminal-command carries the bypass flag for both agents", async () => {
+    const state = stateDirectory();
+    expect(await chatProtocolAdapters.claude.terminalCommand(chat("claude"), undefined, undefined, state)).toEqual(["claude", "--resume", "sess", "--dangerously-skip-permissions", "--model", "m1"]);
+    expect(await chatProtocolAdapters.codex.terminalCommand(chat("codex"), undefined, undefined, state)).toEqual(["codex", "resume", "sess", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
   });
 
-  test("terminal-command omits the bypass flag when approvals are asked", () => {
-    expect(chatProtocolAdapters.claude.terminalCommand(chat("claude", { approvals: true }))).toEqual(["claude", "--resume", "sess", "--model", "m1"]);
-    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex", { approvals: true }))).toEqual(["codex", "resume", "sess", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
+  test("terminal-command omits the bypass flag when approvals are asked", async () => {
+    const state = stateDirectory();
+    expect(await chatProtocolAdapters.claude.terminalCommand(chat("claude", { approvals: true }), undefined, undefined, state)).toEqual(["claude", "--resume", "sess", "--model", "m1"]);
+    expect(await chatProtocolAdapters.codex.terminalCommand(chat("codex", { approvals: true }), undefined, undefined, state)).toEqual(["codex", "resume", "sess", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
   });
 });
 

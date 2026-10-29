@@ -135,9 +135,9 @@ describe("agent default mode", () => {
     try {
     expect(chat).toMatchObject({ mode: "terminal", state: "idle" });
     const first = await call(["chat", "terminal-command", chat.id, "--json"], env);
-    expect(first.kind === "ok" ? JSON.parse(first.value) as unknown : first).toEqual(["claude", "--dangerously-skip-permissions", "first"]);
+    expect(first.kind === "ok" ? JSON.parse(first.value) as unknown : first).toEqual({ argv: ["claude", "--dangerously-skip-permissions", "first"], env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: chat.id } });
     const again = await call(["chat", "terminal-command", chat.id, "--json"], env);
-    expect(again.kind === "ok" ? JSON.parse(again.value) as unknown : again).toEqual(["claude", "--dangerously-skip-permissions"]);
+    expect(again.kind === "ok" ? JSON.parse(again.value) as unknown : again).toEqual({ argv: ["claude", "--dangerously-skip-permissions"], env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: chat.id } });
     const events = await call(["chat", "events", chat.id, "--json"], env);
     expect(events.kind).toBe("ok");
     if (events.kind === "ok") expect(events.value).toContain("not sent");
@@ -146,6 +146,20 @@ describe("agent default mode", () => {
       await call(["chat", "stop", chat.id], env);
     }
   });
+
+  test("a chat mode agent process receives its context marker and chat id", async () => {
+    const env = sandbox();
+    fakeAgent(env.bin, "claude", `require("node:fs").appendFileSync(process.env.CHAT_CAPTURE, JSON.stringify({ marker: process.env.MEGABRAIN_CONTEXT_INJECTED, chatId: process.env.MEGABRAIN_CHAT_ID }) + "\\n"); process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "marker-session" }) + "\\n"); setInterval(() => {}, 1000);`);
+    writeFileSync(join(env.state, "agent-settings.json"), JSON.stringify({ version: 1, default: null, disabled: [], modes: { claude: "chat" } }));
+    const started = await call(["chat", "start", "--agent", "claude", "--cwd", env.cwd, "--json"], env);
+    if (started.kind !== "ok") throw new Error("start failed");
+    const chat = JSON.parse(started.value) as { id: string };
+    try {
+      await waitForCapture(env, (content) => content.includes('"chatId"'), "record the chat id");
+      const captured = JSON.parse(readFileSync(env.capture, "utf8").trim()) as Record<string, string>;
+      expect(captured).toEqual({ marker: "1", chatId: chat.id });
+    } finally { await call(["chat", "stop", chat.id], env); }
+  }, 20_000);
 
   test("an agent with no saved mode still opens in chat", async () => {
     const env = sandbox();
@@ -813,10 +827,10 @@ rl.on("line", (line) => {
       await waitForChat(chatId, "idle", env);
       const terminalArgv = await call(["chat", "terminal-command", chatId, "--json"], env);
       expect(terminalArgv.kind).toBe("ok");
-      if (terminalArgv.kind === "ok") expect(JSON.parse(terminalArgv.value)).toEqual(["claude", "--resume", "mode-session", "--dangerously-skip-permissions"]);
+      if (terminalArgv.kind === "ok") expect(JSON.parse(terminalArgv.value)).toEqual({ argv: ["claude", "--resume", "mode-session", "--dangerously-skip-permissions"], env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: chatId } });
       const terminal = await call(["chat", "mode", chatId, "terminal", "--json"], env);
       expect(terminal.kind).toBe("ok");
-      if (terminal.kind === "ok") expect(JSON.parse(terminal.value)).toMatchObject({ chat: { mode: "terminal" }, terminal: null });
+      if (terminal.kind === "ok") expect(JSON.parse(terminal.value)).toMatchObject({ chat: { mode: "terminal" }, terminal: null, command: ["claude", "--resume", "mode-session", "--dangerously-skip-permissions"], env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: chatId } });
       linkTerminal(env, chatId);
       const resumed = await call(["chat", "mode", chatId, "chat", "--json"], env);
       expect(resumed.kind).toBe("ok");
