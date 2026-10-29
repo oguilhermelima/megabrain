@@ -8,7 +8,7 @@ import { statSync } from "node:fs";
 import packageJson from "../../package.json" with { type: "json" };
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from "./store.js";
 import { AcpPeer } from "./grok-acp.js";
-import type { MessagePart } from "./protocol.js";
+import type { AgentTerminalCommand, MessagePart } from "./protocol.js";
 import type { ChatArtifact } from "./artifacts.js";
 import type { Subagent, SubagentEnd } from "./subagents.js";
 import { KnowledgePipeline } from "../knowledge/pipeline.js";
@@ -394,7 +394,7 @@ async refreshTerminalChats(): Promise<void> {
   try { await task; } finally { if (this.terminalRefreshTask === task) this.terminalRefreshTask = undefined; }
 }
 
-async terminalCommand(id: string): Promise<string[]> { return await terminalCommandImpl(this, id); }
+async terminalCommand(id: string): Promise<AgentTerminalCommand> { return await terminalCommandImpl(this, id); }
 
 async fork(id: string, eventId: string): Promise<Chat> { return await forkImpl(this, id, eventId); }
 

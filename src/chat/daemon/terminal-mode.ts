@@ -458,7 +458,7 @@ export async function refreshTerminalChats(daemon: ChatDaemon): Promise<void> {
     }
   }
 
-export async function terminalCommand(daemon: ChatDaemon, id: string): Promise<string[]> {
+export async function terminalCommand(daemon: ChatDaemon, id: string): Promise<AgentTerminalCommand> {
     const chat = await daemon.requireChat(id);
     // The first message rides on the first TUI only; a later one resumes without it.
     const prompt = chat.pendingPrompt;
@@ -466,7 +466,7 @@ export async function terminalCommand(daemon: ChatDaemon, id: string): Promise<s
       delete chat.pendingPrompt;
       await daemon.save(chat);
     }
-    return (await terminalLaunch(daemon, chat, prompt)).argv;
+    return await terminalLaunch(daemon, chat, prompt);
   }
 
 async function terminalLaunch(daemon: ChatDaemon, chat: Chat, prompt?: string): Promise<AgentTerminalCommand> {
