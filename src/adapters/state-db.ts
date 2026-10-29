@@ -51,6 +51,8 @@ export {
   getQueuedDispatchId,
   listChildAnsweredDispatches,
   listOutboxPage,
+  listClosedParentOutboxDispatchIds,
+  listOpenOutbox,
   listPendingOutboxPeerVerifications,
   nudgeCursor,
   putWaiter,

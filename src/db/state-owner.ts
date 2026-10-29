@@ -13,7 +13,7 @@ import { createProcessAdapter } from "../adapters/proc.js";
 import type { ProcessAdapter } from "../adapters/proc.js";
 import { insertMessage, listMessages } from "./queries/messages.js";
 import { insertDelivery } from "./queries/deliveries.js";
-import { encode } from "./queries/types.js";
+import { encode, type DatabaseAdapter } from "./queries/types.js";
 import { classifyQueueMail, recipientForQueueMessage } from "../core/queue-write.js";
 import { formatDispatchMessage } from "../core/chat-message-format.js";
 import { randomUUID } from "node:crypto";
@@ -108,6 +108,11 @@ function logOwner(stateDir: string, event: string, fields: Readonly<Record<strin
 }
 
 export function stateOwnerPid(stateDir: string): string { return join(stateDir, "state-owner", "owner.pid"); }
+
+export function ensureOutboxIndexes(db: DatabaseAdapter): void {
+  db.run("CREATE INDEX IF NOT EXISTS state_outbox_open_created_id ON outbox(created_at, id, dispatch_id, target_kind) WHERE status IN ('pending', 'sending')");
+  db.run("CREATE INDEX IF NOT EXISTS state_outbox_parent_status_dispatch ON outbox(target_kind, status, dispatch_id) WHERE target_kind = 'parent-pointer'");
+}
 function stateOwnerLock(stateDir: string): string { return join(stateDir, "state-owner", "owner.lock"); }
 
 function ownsStateOwnerLock(owner: StateOwner): boolean {
@@ -425,6 +430,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
     db.run("CREATE INDEX IF NOT EXISTS state_dispatches_owner_created_id ON dispatches(owner_session_id, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_dispatches_owner_active_created_id ON dispatches(owner_session_id, archived_at, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_created_id ON outbox(created_at, id)");
+    ensureOutboxIndexes(db);
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_dispatch_created_id ON outbox(dispatch_id, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_peer_state_created_id ON outbox(CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END, created_at, id) WHERE detail LIKE 'peer-verification:%'");
     db.run("CREATE INDEX IF NOT EXISTS state_messages_child_activity ON messages(dispatch_id) WHERE \"from\" = 'child' AND type IN ('received', 'ask', 'done')");

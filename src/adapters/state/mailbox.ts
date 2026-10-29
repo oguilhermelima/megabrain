@@ -399,6 +399,23 @@ export function listOutboxPage(handle: DatabaseHandle, options: Readonly<{ dispa
   });
 }
 
+export const closedParentOutboxDispatchIdsSql =
+  "SELECT dispatch_id FROM outbox WHERE target_kind = 'parent-pointer' AND status IN ('pending', 'sending') AND dispatch_id IS NOT NULL " +
+  "UNION SELECT dispatch_id FROM outbox WHERE target_kind = 'parent-pointer' AND status = 'sent' AND dispatch_id IS NOT NULL " +
+  "AND detail LIKE 'peer-verification:%' AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END IN ('pending', 'fallback-queued')";
+
+export const openOutboxSql =
+  "SELECT * FROM outbox WHERE status IN ('pending', 'sending') AND dispatch_id IS NOT NULL AND created_at <= ? ORDER BY created_at, id";
+
+export function listClosedParentOutboxDispatchIds(handle: DatabaseHandle): Result<string[]> {
+  return read(handle, ({ db }) => db.query<{ dispatch_id: string }>(closedParentOutboxDispatchIdsSql).all().map((row) => row.dispatch_id));
+}
+
+export function listOpenOutbox(handle: DatabaseHandle, createdBefore: string): Result<OutboxDetails[]> {
+  return read(handle, ({ db }) => db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>(openOutboxSql)
+    .all(createdBefore).map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail })));
+}
+
 export type PendingPeerVerification = Readonly<{ id: string; dispatchId: string | null; status: string; record: PeerVerificationRecord }>;
 export type PendingPeerVerificationPage = Readonly<{ rows: readonly PendingPeerVerification[]; nextCursor?: OutboxCursor }>;
 
