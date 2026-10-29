@@ -217,7 +217,7 @@ megabrain chat artifacts <chat-id> --json — list a chat's megabrain and Claude
 megabrain chat artifact <chat-id> <artifact-id> [--revision <n>] --json — read one chat artifact revision, with a 1 MiB content limit.
 megabrain chat model <id> <model> [--effort <level>] [--json] — choose the model and reasoning effort for a chat.
 megabrain chat mode <id> chat|terminal --json — hand an idle chat to the terminal or resume it in chat mode.
-megabrain chat terminal-command <id> --json — return the argv for resuming a chat in the terminal.
+megabrain chat terminal-command <id> --json — return the argv and launch environment for resuming a chat in the terminal.
 megabrain chat daemon status|retire|drain [--json] — report the protocol and live chats, retire after replacing the bundle so compatible chats finish in the old daemon, or drain only when the new client reports chatd-incompatible.
 megabrain chat rename <id> <title> [--json] — name a chat by hand; automatic titles stop for it.
 megabrain chat summarize <id> [--json] — write a summary of a chat now with the configured model.

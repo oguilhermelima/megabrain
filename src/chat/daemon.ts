@@ -360,7 +360,7 @@ async rename(id: string, title: string): Promise<Chat> { return await renameImpl
   /** Stops the agent and deletes the chat's record and events; the agent's own session log stays resumable. */
 async remove(id: string): Promise<{ removed: string }> { return await removeImpl(this, id); }
 
-async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null }> { return await modeImpl(this, id, mode); }
+async mode(id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null; env: Record<string, string> }> { return await modeImpl(this, id, mode); }
 
 async takeOver(id: string): Promise<Chat> { return await takeOverImpl(this, id); }
 

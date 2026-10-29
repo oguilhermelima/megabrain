@@ -13,7 +13,7 @@ import { existsSync, statSync, watch as watchFile } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ChatStore, type Chat, type ChatApproval, type ChatEvent, type ChatLine, type ChatProgress, type QueuedChatMessage } from ".././store.js";
-import { chatProtocolAdapters, type MessagePart } from ".././protocol.js";
+import { chatProtocolAdapters, type AgentTerminalCommand, type MessagePart } from ".././protocol.js";
 import { discoverSessionId, parseAgyLog, parseClaudeLog, parseCodexRollout, parseGrokLog, sessionLogPath, sessionTurnOpen } from ".././session-log.js";
 import { claudeHandBack, claudeNotified, claudeSubagent, codexEnded, codexSpawned, isClaudeSubagentTool, type Subagent, type SubagentEnd } from ".././subagents.js";
 import { selfInvocation } from "../../core/self-invocation.js";
@@ -64,7 +64,7 @@ export async function remove(daemon: ChatDaemon, id: string): Promise<{ removed:
     return { removed: id };
   }
 
-export async function mode(daemon: ChatDaemon, id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null }> {
+export async function mode(daemon: ChatDaemon, id: string, mode: string): Promise<{ chat: Chat; terminal: null; command: string[] | null; env: Record<string, string> }> {
     const chat = await daemon.requireChat(id);
     if (mode !== "chat" && mode !== "terminal") throw new Error("mode must be chat or terminal");
     if (mode === "terminal") {
@@ -148,7 +148,8 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
     }
     await daemon.syncTerminalPolling();
     // The terminal's command rides along, so opening it costs no second round trip.
-    return { chat, terminal: null, command: chat.mode === "terminal" ? await chatProtocolAdapters[chat.agent].terminalCommand(chat, undefined, startCommand(await readAgentSettings(daemon.stateDir), chat.agent), daemon.stateDir) : null };
+    const launch = chat.mode === "terminal" ? await terminalLaunch(daemon, chat) : null;
+    return { chat, terminal: null, command: launch?.argv ?? null, env: launch?.env ?? {} };
   }
 
 export async function takeOver(daemon: ChatDaemon, id: string): Promise<Chat> {
@@ -465,5 +466,10 @@ export async function terminalCommand(daemon: ChatDaemon, id: string): Promise<s
       delete chat.pendingPrompt;
       await daemon.save(chat);
     }
-    return await chatProtocolAdapters[chat.agent].terminalCommand(chat, prompt, startCommand(await readAgentSettings(daemon.stateDir), chat.agent), daemon.stateDir);
+    return (await terminalLaunch(daemon, chat, prompt)).argv;
   }
+
+async function terminalLaunch(daemon: ChatDaemon, chat: Chat, prompt?: string): Promise<AgentTerminalCommand> {
+  const argv = await chatProtocolAdapters[chat.agent].terminalCommand(chat, prompt, startCommand(await readAgentSettings(daemon.stateDir), chat.agent), daemon.stateDir);
+  return { argv, env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: chat.id } };
+}

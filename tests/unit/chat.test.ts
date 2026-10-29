@@ -827,10 +827,10 @@ rl.on("line", (line) => {
       await waitForChat(chatId, "idle", env);
       const terminalArgv = await call(["chat", "terminal-command", chatId, "--json"], env);
       expect(terminalArgv.kind).toBe("ok");
-      if (terminalArgv.kind === "ok") expect(JSON.parse(terminalArgv.value)).toEqual(["claude", "--resume", "mode-session", "--dangerously-skip-permissions"]);
+      if (terminalArgv.kind === "ok") expect(JSON.parse(terminalArgv.value)).toEqual({ argv: ["claude", "--resume", "mode-session", "--dangerously-skip-permissions"], env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: chatId } });
       const terminal = await call(["chat", "mode", chatId, "terminal", "--json"], env);
       expect(terminal.kind).toBe("ok");
-      if (terminal.kind === "ok") expect(JSON.parse(terminal.value)).toMatchObject({ chat: { mode: "terminal" }, terminal: null });
+      if (terminal.kind === "ok") expect(JSON.parse(terminal.value)).toMatchObject({ chat: { mode: "terminal" }, terminal: null, command: ["claude", "--resume", "mode-session", "--dangerously-skip-permissions"], env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: chatId } });
       linkTerminal(env, chatId);
       const resumed = await call(["chat", "mode", chatId, "chat", "--json"], env);
       expect(resumed.kind).toBe("ok");

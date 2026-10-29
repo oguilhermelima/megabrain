@@ -236,7 +236,7 @@ export async function executeChat(args: readonly string[], environment: Environm
       const [id, ...tail] = rest;
       if (!id || tail.length !== 1 || tail[0] !== "--json") throw new Error("Usage: megabrain chat terminal-command <id> --json");
       value = await callChatd(dir, { operation: "terminal-command", id }, environment, processAdapter);
-      return ok(argsJson(value));
+      return ok(argsJson({ argv: value, env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: id } }));
     }
     if (verb === "events") {
       const [id, ...tail] = rest;

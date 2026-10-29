@@ -392,6 +392,7 @@ export const sessionHistorySchema = z.array(historySessionSchema)
 // Embedded terminals: the native engine is a PTY the app owns (dies with the app); tmux attaches
 // a PTY to a session on megabrain's own tmux server (survives the app).
 export const terminalEngineSchema = z.enum(['native', 'tmux'])
+export const agentTerminalCommandSchema = z.looseObject({ argv: z.array(z.string()), env: z.record(z.string(), z.string()) })
 export const terminalSessionSchema = z.looseObject({
   id: z.string(),
   engine: terminalEngineSchema,
@@ -490,6 +491,7 @@ export type ChatProgressEvent = z.infer<typeof chatProgressEventSchema>
 export type MessagePart = z.infer<typeof messagePartSchema>
 export type TerminalEngine = z.infer<typeof terminalEngineSchema>
 export type TerminalSession = z.infer<typeof terminalSessionSchema>
+export type AgentTerminalCommand = z.infer<typeof agentTerminalCommandSchema>
 export type SlashCommand = z.infer<typeof slashCommandSchema>
 export type QueuedMessage = z.infer<typeof queuedMessageSchema>
 export type ChatQueueItem = z.infer<typeof chatQueueItemSchema>

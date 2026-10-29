@@ -304,6 +304,7 @@ pub struct TerminalOpenOptions {
     engine: String,
     cwd: String,
     command: Option<Vec<String>>,
+    env: Option<HashMap<String, String>>,
     tmux_session: Option<String>,
     /// The chat whose terminal mode this is: its TUI joins the chat's conversation instead of being one of its own.
     chat_id: Option<String>,
@@ -359,6 +360,12 @@ impl TerminalManager {
         }
         let mut engine = Engine::from_name(&options.engine)?;
         let mut options = options;
+        let context_marker = options.chat_id.as_ref().filter(|chat_id| {
+            options.env.as_ref().is_some_and(|env| {
+                env.get("MEGABRAIN_CONTEXT_INJECTED").map(String::as_str) == Some("1")
+                    && env.get("MEGABRAIN_CHAT_ID") == Some(*chat_id)
+            })
+        }).cloned();
         // A chat's terminal outlives the app: reopening it attaches to the TUI still running its session instead of
         // resuming that session in a second process.
         let mut reattached = false;
@@ -401,7 +408,7 @@ impl TerminalManager {
                     Some(value) => split_tmux_target(value)?,
                     None => {
                         let session = format!("{APP_SESSION_PREFIX}{id}");
-                        create_tmux_session(cli_path, &session, &cwd, (options.cols, options.rows), options.command.as_deref(), options.chat_id.is_some())?;
+                        create_tmux_session(cli_path, &session, &cwd, (options.cols, options.rows), options.command.as_deref(), options.chat_id.is_some(), context_marker.as_deref())?;
                         created_session = Some(session.clone());
                         (Some(TMUX_SERVER.to_string()), session)
                     }
@@ -448,6 +455,10 @@ impl TerminalManager {
         command.cwd(cwd.as_os_str());
         command.env("PATH", cli_path);
         command.env("TERM", "xterm-256color");
+        if let Some(chat_id) = context_marker.as_deref() {
+            command.env("MEGABRAIN_CONTEXT_INJECTED", "1");
+            command.env("MEGABRAIN_CHAT_ID", chat_id);
+        }
         if engine == Engine::Tmux {
             command.env_remove("TMUX");
             command.env_remove("TMUX_PANE");
@@ -768,18 +779,18 @@ fn create_tmux_session(
     size: (u16, u16),
     command: Option<&[String]>,
     retain_exit: bool,
+    context_chat_id: Option<&str>,
 ) -> Result<(), String> {
     let cwd = cwd.to_string_lossy();
     let args = tmux_create_argv(tmux_server_name(), session, &cwd, Some(size), command, retain_exit);
     let tmux = find_on_path("tmux", cli_path)
         .ok_or_else(|| "tmux was not found on the login PATH".to_string())?;
-    let output = Command::new(&tmux)
-        .args(args)
-        .env("PATH", cli_path)
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
-        .stdin(Stdio::null())
-        .output()
+    let mut launcher = Command::new(&tmux);
+    launcher.args(args).env("PATH", cli_path).env_remove("TMUX").env_remove("TMUX_PANE");
+    if let Some(chat_id) = context_chat_id {
+        launcher.env("MEGABRAIN_CONTEXT_INJECTED", "1").env("MEGABRAIN_CHAT_ID", chat_id);
+    }
+    let output = launcher.stdin(Stdio::null()).output()
         .map_err(|error| format!("could not run tmux: {error}"))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
