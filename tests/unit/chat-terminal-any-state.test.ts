@@ -120,8 +120,8 @@ describe("a chat with no session id yet", () => {
   test("terminal-command works too", async () => {
     const env = sandbox();
     const daemon = await daemonWith(env, { agentSessionId: null, state: "idle", mode: "terminal" });
-    const command = await daemon.handle({ operation: "terminal-command", id: ID }) as string[];
-    expect(command[0]).toBe("claude");
+    const command = await daemon.handle({ operation: "terminal-command", id: ID }) as { argv: string[]; env: Record<string, string> };
+    expect(command).toEqual({ argv: ["claude", "--dangerously-skip-permissions"], env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: ID } });
   });
 
   test("the session id of the TUI in the chat's own pane is recorded when switching back", async () => {

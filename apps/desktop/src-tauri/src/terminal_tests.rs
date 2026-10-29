@@ -62,6 +62,10 @@ fn tmux_engine_builds_private_server_commands_for_new_and_existing_sessions() {
         ["-L", "megabrain-app", "new-session", "-d", "-s", "term-test", "-x", "132", "-y", "40", "-c", "/tmp/work", "claude"]
     );
     assert_eq!(
+        tmux_create_argv("megabrain-app", "term-test", "/tmp/work", None, Some(&["claude".into()]), false, Some("chat-123")),
+        ["-L", "megabrain-app", "new-session", "-d", "-s", "term-test", "-e", "MEGABRAIN_CONTEXT_INJECTED=1", "-e", "MEGABRAIN_CHAT_ID=chat-123", "-c", "/tmp/work", "claude"]
+    );
+    assert_eq!(
         tmux_attach_argv(Some("private-test"), "existing"),
         ["-L", "private-test", "attach-session", "-t", "existing"]
     );
