@@ -5,7 +5,7 @@ import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js";
-import { getDispatch, listDispatches, listLeases, listMessages, listOutbox, listDeliveries, listPendingOutboxPeerVerifications, listChildAnsweredDispatches, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, listDispatches, listLeases, listMessages, listOutboxForDispatch, listDeliveries, listPendingOutboxPeerVerifications, listChildAnsweredDispatches, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
@@ -293,11 +293,11 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
 }
 
 async function retryPendingChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
-  const outbox = listOutbox(database);
+  const outbox = listOutboxForDispatch(database, dispatch);
   const deliveries = listDeliveries(database, dispatch);
   const messages = listMessages(database, dispatch);
   if (outbox.kind !== "ok" || deliveries.kind !== "ok" || messages.kind !== "ok") return;
-  const pendingReplies = outbox.value.filter((item) => item.dispatchId === dispatch && item.targetKind === "child-delivery" && item.status === "pending");
+  const pendingReplies = outbox.value.filter((item) => item.targetKind === "child-delivery" && item.status === "pending");
   for (const item of pendingReplies) {
     const payload = object(item.payload);
     const sequence = Number(payload?.sequence);
@@ -311,12 +311,12 @@ async function retryPendingChildReplies(root: string, database: Parameters<typeo
 }
 
 async function retryPendingParentPointers(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
-  const outbox = listOutbox(database);
+  const outbox = listOutboxForDispatch(database, dispatch);
   const deliveries = listDeliveries(database, dispatch);
   const messages = listMessages(database, dispatch);
   if (outbox.kind !== "ok" || deliveries.kind !== "ok" || messages.kind !== "ok") return;
   for (const item of outbox.value) {
-    if (item.dispatchId !== dispatch || item.targetKind !== "parent-pointer" || item.status !== "pending") continue;
+    if (item.targetKind !== "parent-pointer" || item.status !== "pending") continue;
     const payload = object(item.payload);
     const sequence = Number(payload?.sequence);
     if (!Number.isSafeInteger(sequence) || sequence < 1) continue;
