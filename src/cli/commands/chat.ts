@@ -236,6 +236,16 @@ export async function executeChat(args: readonly string[], environment: Environm
       const [id, ...tail] = rest;
       if (!id || tail.length !== 1 || tail[0] !== "--json") throw new Error("Usage: megabrain chat terminal-command <id> --json");
       value = await callChatd(dir, { operation: "terminal-command", id }, environment, processAdapter);
+      if (Array.isArray(value) && value.every((arg): arg is string => typeof arg === "string")) {
+        // This shape is returned by a chatd older than this build.
+        value = { argv: value, env: { MEGABRAIN_CONTEXT_INJECTED: "1", MEGABRAIN_CHAT_ID: id } };
+      } else if (typeof value !== "object" || value === null || Array.isArray(value)
+        || !Array.isArray((value as { argv?: unknown }).argv)
+        || !(value as { argv: unknown[] }).argv.every((arg) => typeof arg === "string")
+        || typeof (value as { env?: unknown }).env !== "object" || (value as { env: unknown }).env === null
+        || Array.isArray((value as { env: unknown }).env)) {
+        throw new Error("chatd returned an invalid terminal command");
+      }
       return ok(argsJson(value));
     }
     if (verb === "events") {
