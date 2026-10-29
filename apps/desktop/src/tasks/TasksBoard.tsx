@@ -12,7 +12,7 @@ import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts
 import { OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
 import { pageDivider, pageX } from '@/lib/page'
 import { answeredItems, otherRepository } from '@/tasks/board-model'
-import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
+import { boardFullReadDue, boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
 import { boardSheetFields } from '@/tasks/BoardFilterBar'
 import { Chips, ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
 import { ItemPanel, type FieldWrite } from '@/tasks/ItemPanel'
@@ -102,9 +102,11 @@ function useBoardItems(root: string, board: GithubProject) {
       if (!boardReadDue(boardCache().items[key]?.at, Date.now(), force)) return
       setLoading(true)
       const before = shown.current ?? []
+      const cached = boardCache().items[key]
+      const fullRead = force || boardFullReadDue(cached?.fullAt, Date.now(), false)
+      let completedFullRead = false
       let totalCount: number | undefined
       try {
-        const cached = boardCache().items[key]
         const all = await readBoardPages({
           read: (after) => api.githubProject(root, board.number, board.owner, after),
           maxPages,
@@ -113,12 +115,17 @@ function useBoardItems(root: string, board: GithubProject) {
           ...(!force && cached?.totalCount !== undefined
             ? { unchanged: { items: cached.value, totalCount: cached.totalCount } }
             : {}),
+          fullRead,
+          onFullRead: () => {
+            completedFullRead = true
+          },
           onTotalCount: (count) => {
             totalCount = count
           },
         })
         if (all === null) return
-        remember(withItems(boardCache(), key, all, Date.now(), totalCount))
+        const at = Date.now()
+        remember(withItems(boardCache(), key, all, at, totalCount, completedFullRead ? at : cached?.fullAt))
         setError(null)
       } catch (cause: unknown) {
         if (current()) setError(cause)
@@ -137,7 +144,7 @@ function useBoardItems(root: string, board: GithubProject) {
     (item: GithubProjectItem) => {
       setItems((current) => (current === null ? current : answeredItems(current, item)))
       const entry = boardCache().items[key]
-      if (entry !== undefined) remember(withItems(boardCache(), key, answeredItems(entry.value, item), entry.at, entry.totalCount))
+      if (entry !== undefined) remember(withItems(boardCache(), key, answeredItems(entry.value, item), entry.at, entry.totalCount, entry.fullAt))
     },
     [key],
   )
@@ -155,6 +162,7 @@ function useBoardItems(root: string, board: GithubProject) {
             [...entry.value.filter((value) => value.id !== item.id), item],
             entry.at,
             entry.totalCount === undefined ? undefined : entry.totalCount + Number(isNew),
+            entry.fullAt,
           ),
         )
       }
