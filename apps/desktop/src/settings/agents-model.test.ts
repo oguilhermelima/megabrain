@@ -32,13 +32,13 @@ describe('agentMode', () => {
   })
 
   test('with nothing saved every agent opens in chat', () => {
-    expect(['claude', 'codex', 'grok', 'agy'].map((agent) => agentMode(defaultAgentSettings, agent))).toEqual(['chat', 'chat', 'chat', 'chat'])
+    expect(['claude', 'codex', 'grok', 'agy'].map((agent) => agentMode(defaultAgentSettings, agent))).toEqual(['terminal', 'terminal', 'terminal', 'terminal'])
   })
 
   test('a saved mode wins over the agent default', () => {
     const settings: AgentSettings = { version: 1, default: null, disabled: [], modes: { claude: 'terminal' } }
     expect(agentMode(settings, 'claude')).toBe('terminal')
-    expect(agentMode(settings, 'codex')).toBe('chat')
+    expect(agentMode(settings, 'codex')).toBe('terminal')
   })
 
   test('agy follows its saved mode like the others', () => {
@@ -72,10 +72,10 @@ describe('agentRows', () => {
   test('every agent in a fixed order with its label, install state, switch, default and launch command', () => {
     const rows = agentRows(plan, { version: 1, default: 'codex', disabled: ['grok'], modes: {} }, { claude: ['claude', '--dangerously-skip-permissions'], codex: undefined, grok: null })
     expect(rows).toEqual([
-      { agent: 'claude', label: 'Claude Code', installed: true, enabled: true, isDefault: false, mode: 'chat', command: 'claude --dangerously-skip-permissions' },
-      { agent: 'codex', label: 'Codex', installed: true, enabled: true, isDefault: true, mode: 'chat', command: undefined },
-      { agent: 'grok', label: 'Grok', installed: true, enabled: false, isDefault: false, mode: 'chat', command: null },
-      { agent: 'agy', label: 'Antigravity (agy)', installed: false, enabled: true, isDefault: false, mode: 'chat', command: undefined },
+      { agent: 'claude', label: 'Claude Code', installed: true, enabled: true, isDefault: false, mode: 'terminal', command: 'claude --dangerously-skip-permissions' },
+      { agent: 'codex', label: 'Codex', installed: true, enabled: true, isDefault: true, mode: 'terminal', command: undefined },
+      { agent: 'grok', label: 'Grok', installed: true, enabled: false, isDefault: false, mode: 'terminal', command: null },
+      { agent: 'agy', label: 'Antigravity (agy)', installed: false, enabled: true, isDefault: false, mode: 'terminal', command: undefined },
     ])
   })
 

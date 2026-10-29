@@ -527,7 +527,7 @@ export function createMockApi(): DesktopApi {
     codeBranchChanges: async () => mockBranchChanges,
     codeBranchDiff: async (_root, _mergeBase, path) => ({ ...(isNew(mockBranchChanges.changes, path) ? mockNewFileDiff : mockCodeDiff), path }),
     chats: async () => mockChats,
-    startChat: async ({ agent, model, cwd }) => {
+    startChat: async ({ agent, model, cwd, mode }) => {
       return {
         ...mockNativeChat,
         id: `chat-${Date.now()}`,
@@ -538,7 +538,7 @@ export function createMockApi(): DesktopApi {
         state: agent === 'agy' ? 'idle' : 'starting',
         ...(agent === 'grok' ? { capabilities: grokCapabilities } : agent === 'agy' ? { capabilities: { approvals: false, interrupt: false, liveModelSwitch: false, steer: false, structuredTools: true }, mode: 'terminal', owner: 'terminal' } : { capabilities: mockNativeChat.capabilities }),
         // Like chatd, a new chat opens in its agent's default mode from Settings > Agents.
-        ...(agentMode(parseAgentSettings(agentSettings), agent) === 'terminal' ? { mode: 'terminal' as const, state: 'idle' as const } : { mode: 'chat' as const }),
+        ...((mode ?? agentMode(parseAgentSettings(agentSettings), agent)) === 'terminal' ? { mode: 'terminal' as const, state: 'idle' as const } : { mode: 'chat' as const }),
       }
     },
     sendChat: async (chatId, parts) => {

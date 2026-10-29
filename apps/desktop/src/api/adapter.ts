@@ -307,7 +307,7 @@ export interface DesktopApi {
   codeBranchDiff(root: string, mergeBase: string, path: string): Promise<CodeDiff>
   /** Native chats (megabrain chat ...). */
   chats(): Promise<NativeChat[]>
-  startChat(options: { agent: string; model?: string; effort?: string; cwd: string; parts?: MessagePart[] }): Promise<NativeChat>
+  startChat(options: { agent: string; model?: string; effort?: string; cwd: string; mode?: 'chat' | 'terminal'; parts?: MessagePart[] }): Promise<NativeChat>
   /** `fresh` starts a new agent session when a suspended chat cannot resume its recorded one. While a turn runs the message waits in the chat's queue and `queued` is it. */
   sendChat(chatId: string, parts: MessagePart[], options?: { fresh?: boolean }): Promise<{ queued: ChatQueueItem | null }>
   /** A new chat holding this conversation through the turn of eventId (`chat fork --at`). */

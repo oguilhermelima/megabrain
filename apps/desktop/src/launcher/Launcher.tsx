@@ -7,6 +7,7 @@ import { AgentIcon } from '@/components/agent-icons'
 import { StartingCard } from '@/components/StartingCard'
 import { ErrorNote } from '@/components/ui'
 import { agentDetail, chatStart, initialTile, launchPlan, launchTiles, launchWorktree, terminalDetail, type LaunchTile, type LaunchTileId } from '@/launcher/launch-model'
+import { agentMode } from '@/settings/agents-model'
 import { moveInColumn } from '@/launcher/launcher-keys'
 import { resumeLaunch } from '@/launcher/resume-model'
 import { ResumeList } from '@/launcher/ResumeList'
@@ -189,7 +190,7 @@ export function Launcher({
     const started = await actions.run(startKey, `Starting ${current?.label ?? tile} in ${worktree?.label ?? folder(cwd)}`, async () => {
       try {
         startStep(trace, 'startSent')
-        const chat = await api.startChat(chatStart(plan))
+        const chat = await api.startChat(chatStart({ ...plan, mode: agentMode(agentSettings, plan.agent) }))
         bindStart(trace, chat.id)
         onChat(chat)
       } catch (caught) {

@@ -94,19 +94,21 @@ export function launchPlan(tile: LaunchTileId, { cwd, parts, model, effort, engi
 export interface ChatStart {
   agent: ChatAgent
   cwd: string
+  mode?: 'chat' | 'terminal'
   model?: string
   effort?: string
   parts?: MessagePart[]
 }
 
 /**
- * The one `chat start` a chat plan makes, carrying the model, the effort and the first message, so
- * chatd spawns the agent once with all of them.
+ * The one `chat start` a chat plan makes, carrying the mode, model, effort and first message, so
+ * chatd starts the agent once with all of them.
  */
-export function chatStart(plan: Extract<LaunchPlan, { kind: 'chat' }>): ChatStart {
+export function chatStart(plan: Extract<LaunchPlan, { kind: 'chat' }> & { mode?: 'chat' | 'terminal' }): ChatStart {
   return {
     agent: plan.agent,
     cwd: plan.cwd,
+    ...(plan.mode === undefined ? {} : { mode: plan.mode }),
     ...(plan.model === null ? {} : { model: plan.model }),
     ...(plan.effort === null ? {} : { effort: plan.effort }),
     ...(plan.parts.length === 0 ? {} : { parts: plan.parts }),

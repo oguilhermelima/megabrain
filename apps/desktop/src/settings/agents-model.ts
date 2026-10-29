@@ -59,9 +59,9 @@ export function withCommand(settings: AgentSettings, agent: string, command: str
   return Object.keys(commands).length === 0 ? base : { ...base, commands }
 }
 
-/** The mode a new chat of this agent opens in: the one chosen, else chat. */
+/** The mode a new desktop chat opens in: the one chosen, else terminal. */
 export function agentMode(settings: AgentSettings, agent: string): ChatMode {
-  return settings.modes[agent] ?? 'chat'
+  return settings.modes[agent] ?? 'terminal'
 }
 
 export function withMode(settings: AgentSettings, agent: string, mode: ChatMode): AgentSettings {

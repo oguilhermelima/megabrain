@@ -125,6 +125,10 @@ describe('chatStart', () => {
     expect(chatStart(plan)).toEqual({ agent: 'claude', cwd: '/w', model: 'opus', parts: text('hi') })
   })
 
+  test('one start carries the resolved terminal mode', () => {
+    expect(chatStart({ ...plan, mode: 'terminal' })).toEqual({ agent: 'claude', cwd: '/w', model: 'opus', mode: 'terminal', parts: text('hi') })
+  })
+
   test('an effort rides on the same start, so the agent is spawned once with it', () => {
     expect(chatStart({ ...plan, effort: 'high' })).toEqual({ agent: 'claude', cwd: '/w', model: 'opus', effort: 'high', parts: text('hi') })
     expect(chatStart({ ...plan, model: null, effort: 'high' })).toEqual({ agent: 'claude', cwd: '/w', effort: 'high', parts: text('hi') })
