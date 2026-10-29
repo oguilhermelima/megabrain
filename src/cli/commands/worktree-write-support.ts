@@ -117,7 +117,7 @@ const pathExists = (path: string) => lstat(path).then(() => true, () => false);
 // removal happened. Returns whether the folder is gone within the settle window.
 export async function folderGone(path: string, environment: Environment): Promise<boolean> {
   const configured = Number(environment.MEGABRAIN_FINISH_SETTLE_MS);
-  const deadline = Date.now() + (Number.isFinite(configured) && configured >= 0 ? configured : 4000);
+  const deadline = Date.now() + (Number.isFinite(configured) && configured >= 0 ? configured : 10_000);
   while (await pathExists(path)) {
     if (Date.now() >= deadline) return false;
     await pause(100);

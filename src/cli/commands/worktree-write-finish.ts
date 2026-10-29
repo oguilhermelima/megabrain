@@ -158,7 +158,9 @@ export async function executeWorktreeFinish(
   const gone = await folderGone(path, environment);
   if (gone) await run(process, "git", ["-C", repo.value, "worktree", "prune"]);
   if (!gone) {
-    const reason = removed.kind === "ok" ? "the folder is still present after the host reported success" : removalReason(removed.error);
+    const reason = removed.kind === "ok"
+      ? "the folder is still present after the host reported success"
+      : "the folder is still present after the host failed: " + removalReason(removed.error);
     const message = "could not remove worktree " + path + ": " + reason;
     return value.json
       ? {
