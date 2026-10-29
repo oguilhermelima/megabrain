@@ -93,4 +93,5 @@ describe("chat terminal mode honours the override", () => {
   test("without an override the built-in command is unchanged", () => {
     expect(chatProtocolAdapters.codex.terminalCommand(chat("codex"))).toEqual(["codex", "resume", "sess", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
   });
+
 });
