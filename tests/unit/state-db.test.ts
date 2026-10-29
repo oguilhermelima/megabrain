@@ -20,6 +20,7 @@ import {
   fenceDelivery,
   finishOutbox,
   finishOutboxPeerVerification,
+  getOutboxPeerVerification,
   listDispatches,
   listDeliveries,
   listMessages,
