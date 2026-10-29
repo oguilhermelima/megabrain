@@ -1,4 +1,7 @@
-use crate::{app_terminals, terminal_tmux_config::{configure_tmux_plain_panes, TMUX_SERVER}};
+use crate::{
+    app_terminals,
+    terminal_tmux_config::{configure_tmux_plain_panes, TMUX_SERVER},
+};
 use base64::engine::general_purpose::STANDARD;
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
@@ -61,12 +64,20 @@ pub fn close_action(engine: Engine, reason: CloseReason) -> CloseAction {
 /// terminals and the `mb-<agent>-<id>` sessions `session own` resumes there. A session on the person's
 /// default server that the app merely attached to is detached, never killed.
 pub fn app_owned_session(server: Option<&str>, session: &str) -> bool {
-    server == Some(TMUX_SERVER) && session.len() > OWNED_SESSION_PREFIX.len() && session.starts_with(OWNED_SESSION_PREFIX)
+    server == Some(TMUX_SERVER)
+        && session.len() > OWNED_SESSION_PREFIX.len()
+        && session.starts_with(OWNED_SESSION_PREFIX)
 }
 
 /// `=` makes tmux match the session name exactly instead of by prefix.
 pub fn tmux_kill_session_argv(server: &str, session: &str) -> Vec<String> {
-    vec!["-L".into(), server.into(), "kill-session".into(), "-t".into(), format!("={session}")]
+    vec![
+        "-L".into(),
+        server.into(),
+        "kill-session".into(),
+        "-t".into(),
+        format!("={session}"),
+    ]
 }
 
 pub fn tmux_server_name() -> &'static str {
@@ -91,6 +102,7 @@ pub fn tmux_create_argv(
     size: Option<(u16, u16)>,
     command: Option<&[String]>,
     retain_exit: bool,
+    context_chat_id: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
         "-L".into(),
@@ -104,10 +116,22 @@ pub fn tmux_create_argv(
     if let Some((cols, rows)) = size {
         args.extend(["-x".into(), cols.to_string(), "-y".into(), rows.to_string()]);
     }
+    if let Some(chat_id) = context_chat_id {
+        args.extend([
+            "-e".into(),
+            "MEGABRAIN_CONTEXT_INJECTED=1".into(),
+            "-e".into(),
+            format!("MEGABRAIN_CHAT_ID={chat_id}"),
+        ]);
+    }
     args.extend(["-c".into(), cwd.into()]);
     if let Some(command) = command {
         if retain_exit {
-            let command = command.iter().map(|part| shell_quote(part)).collect::<Vec<_>>().join(" ");
+            let command = command
+                .iter()
+                .map(|part| shell_quote(part))
+                .collect::<Vec<_>>()
+                .join(" ");
             args.push(format!(
                 "tmux set-option -w -t \"$TMUX_PANE\" remain-on-exit on && exec {command}"
             ));
@@ -133,7 +157,11 @@ pub fn resumed_session(command: &[String]) -> Option<&str> {
 
 /// From `list-panes -a -F "#{session_name}\t#{session_created}\t#{pane_start_command}"`: the session that holds a
 /// chat's agent session. The chat's own terminal (its alias) first, else the newest one whose command resumes it.
-pub fn holder_in_listing(listing: &str, session_id: Option<&str>, alias: Option<&str>) -> Option<String> {
+pub fn holder_in_listing(
+    listing: &str,
+    session_id: Option<&str>,
+    alias: Option<&str>,
+) -> Option<String> {
     let panes: Vec<(&str, u64, &str)> = listing
         .lines()
         .filter_map(|line| {
@@ -148,7 +176,10 @@ pub fn holder_in_listing(listing: &str, session_id: Option<&str>, alias: Option<
     }
     let session_id = session_id?;
     let resumes = |command: &str| {
-        let words: Vec<String> = command.split_whitespace().map(|word| word.trim_matches(|c| c == '"' || c == '\'').to_string()).collect();
+        let words: Vec<String> = command
+            .split_whitespace()
+            .map(|word| word.trim_matches(|c| c == '"' || c == '\'').to_string())
+            .collect();
         resumed_session(&words) == Some(session_id)
     };
     panes
@@ -159,9 +190,21 @@ pub fn holder_in_listing(listing: &str, session_id: Option<&str>, alias: Option<
 }
 
 /// The live tmux session on `server` that holds the chat's agent session, if any; no server, no holder.
-pub fn live_chat_holder(tmux: &Path, server: &str, session_id: Option<&str>, alias: Option<&str>) -> Option<String> {
+pub fn live_chat_holder(
+    tmux: &Path,
+    server: &str,
+    session_id: Option<&str>,
+    alias: Option<&str>,
+) -> Option<String> {
     let output = Command::new(tmux)
-        .args(["-L", server, "list-panes", "-a", "-F", "#{session_name}\t#{session_created}\t#{pane_start_command}"])
+        .args([
+            "-L",
+            server,
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name}\t#{session_created}\t#{pane_start_command}",
+        ])
         .env_remove("TMUX")
         .env_remove("TMUX_PANE")
         .stdin(Stdio::null())
@@ -360,19 +403,27 @@ impl TerminalManager {
         }
         let mut engine = Engine::from_name(&options.engine)?;
         let mut options = options;
-        let context_marker = options.chat_id.as_ref().filter(|chat_id| {
-            options.env.as_ref().is_some_and(|env| {
-                env.get("MEGABRAIN_CONTEXT_INJECTED").map(String::as_str) == Some("1")
-                    && env.get("MEGABRAIN_CHAT_ID") == Some(*chat_id)
+        let context_marker = options
+            .chat_id
+            .as_ref()
+            .filter(|chat_id| {
+                options.env.as_ref().is_some_and(|env| {
+                    env.get("MEGABRAIN_CONTEXT_INJECTED").map(String::as_str) == Some("1")
+                        && env.get("MEGABRAIN_CHAT_ID") == Some(*chat_id)
+                })
             })
-        }).cloned();
+            .cloned();
         // A chat's terminal outlives the app: reopening it attaches to the TUI still running its session instead of
         // resuming that session in a second process.
         let mut reattached = false;
-        if let (Some(chat_id), None) = (options.chat_id.as_deref(), options.tmux_session.as_deref()) {
-            let alias = app_terminals::state_dir().and_then(|state| app_terminals::chat_tmux_alias(&state, chat_id));
+        if let (Some(chat_id), None) = (options.chat_id.as_deref(), options.tmux_session.as_deref())
+        {
+            let alias = app_terminals::state_dir()
+                .and_then(|state| app_terminals::chat_tmux_alias(&state, chat_id));
             let session_id = options.command.as_deref().and_then(resumed_session);
-            let holder = find_on_path("tmux", cli_path).and_then(|tmux| live_chat_holder(&tmux, TMUX_SERVER, session_id, alias.as_deref()));
+            let holder = find_on_path("tmux", cli_path).and_then(|tmux| {
+                live_chat_holder(&tmux, TMUX_SERVER, session_id, alias.as_deref())
+            });
             if let Some(holder) = holder {
                 options.tmux_session = Some(format!("{TMUX_SERVER}:{holder}"));
                 options.engine = "tmux".into();
@@ -408,7 +459,15 @@ impl TerminalManager {
                     Some(value) => split_tmux_target(value)?,
                     None => {
                         let session = format!("{APP_SESSION_PREFIX}{id}");
-                        create_tmux_session(cli_path, &session, &cwd, (options.cols, options.rows), options.command.as_deref(), options.chat_id.is_some(), context_marker.as_deref())?;
+                        create_tmux_session(
+                            cli_path,
+                            &session,
+                            &cwd,
+                            (options.cols, options.rows),
+                            options.command.as_deref(),
+                            options.chat_id.is_some(),
+                            context_marker.as_deref(),
+                        )?;
                         created_session = Some(session.clone());
                         (Some(TMUX_SERVER.to_string()), session)
                     }
@@ -476,7 +535,9 @@ impl TerminalManager {
             .master
             .take_writer()
             .map_err(|error| format!("could not write terminal PTY: {error}"))?;
-        if let (true, Some(target), Some(state)) = (reattached, tmux_target.as_ref(), app_terminals::state_dir()) {
+        if let (true, Some(target), Some(state)) =
+            (reattached, tmux_target.as_ref(), app_terminals::state_dir())
+        {
             let _ = app_terminals::record_terminal_conversation(
                 &state,
                 &format!("{TMUX_SERVER}:{}", target.session),
@@ -489,7 +550,11 @@ impl TerminalManager {
             // The record only labels the session for the next start; a failed write loses a label,
             // not the terminal.
             if let Some(state) = app_terminals::state_dir() {
-                let command = options.command.as_deref().map(|parts| parts.join(" ")).unwrap_or_default();
+                let command = options
+                    .command
+                    .as_deref()
+                    .map(|parts| parts.join(" "))
+                    .unwrap_or_default();
                 let created_at = app_terminals::now_iso();
                 let _ = app_terminals::record_app_terminal(
                     &state,
@@ -508,7 +573,11 @@ impl TerminalManager {
                 );
             }
         }
-        let pid = if engine == Engine::Native { child.process_id() } else { None };
+        let pid = if engine == Engine::Native {
+            child.process_id()
+        } else {
+            None
+        };
         let info = TerminalSession {
             id: id.clone(),
             engine: options.engine,
@@ -616,7 +685,10 @@ impl TerminalManager {
     }
 
     pub fn has(&self, id: &str) -> bool {
-        self.sessions.lock().map(|sessions| sessions.contains_key(id)).unwrap_or(false)
+        self.sessions
+            .lock()
+            .map(|sessions| sessions.contains_key(id))
+            .unwrap_or(false)
     }
 
     pub fn close_all(&self) {
@@ -691,7 +763,10 @@ fn kill_tmux_session(target: &TmuxTarget) {
         .output();
     if let Some(state) = app_terminals::state_dir() {
         let _ = app_terminals::forget_app_terminal(&state, &target.session);
-        let _ = app_terminals::forget_terminal_conversation(&state, &format!("{TMUX_SERVER}:{}", target.session));
+        let _ = app_terminals::forget_terminal_conversation(
+            &state,
+            &format!("{TMUX_SERVER}:{}", target.session),
+        );
     }
 }
 
@@ -782,15 +857,26 @@ fn create_tmux_session(
     context_chat_id: Option<&str>,
 ) -> Result<(), String> {
     let cwd = cwd.to_string_lossy();
-    let args = tmux_create_argv(tmux_server_name(), session, &cwd, Some(size), command, retain_exit);
+    let args = tmux_create_argv(
+        tmux_server_name(),
+        session,
+        &cwd,
+        Some(size),
+        command,
+        retain_exit,
+        context_chat_id,
+    );
     let tmux = find_on_path("tmux", cli_path)
         .ok_or_else(|| "tmux was not found on the login PATH".to_string())?;
     let mut launcher = Command::new(&tmux);
-    launcher.args(args).env("PATH", cli_path).env_remove("TMUX").env_remove("TMUX_PANE");
-    if let Some(chat_id) = context_chat_id {
-        launcher.env("MEGABRAIN_CONTEXT_INJECTED", "1").env("MEGABRAIN_CHAT_ID", chat_id);
-    }
-    let output = launcher.stdin(Stdio::null()).output()
+    launcher
+        .args(args)
+        .env("PATH", cli_path)
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE");
+    let output = launcher
+        .stdin(Stdio::null())
+        .output()
         .map_err(|error| format!("could not run tmux: {error}"))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
