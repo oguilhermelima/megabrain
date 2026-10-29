@@ -63,22 +63,22 @@ describe("worktree finish waits for the host removal", () => {
   test("a host remover that returns before the folder is gone is waited for", async () => {
     const f = await fixture();
     try {
-      const process = hostProcess(f.path, async (removeFolder) => { setTimeout(() => { void removeFolder(); }, 400); return ok({ stdout: "{}", stderr: "", exitCode: 0 }); });
+      const process = hostProcess(f.path, async (removeFolder) => { setTimeout(() => { void removeFolder(); }, 4500); return ok({ stdout: "{}", stderr: "", exitCode: 0 }); });
       const result = await executeWorktreeFinish([f.path, "--delete-branch", "--base", "main", "--json"], { MEGABRAIN_STATE_DIR: f.state }, process);
       expect(result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode).toBe(0);
       expect(await gitOut(f.repo, "branch", "--list", "feat/x")).toBe("");
     } finally { await rm(f.root, { recursive: true, force: true }); }
-  });
+  }, 7000);
 
   test("a folder that never goes away exits non-zero and names what is left", async () => {
     const f = await fixture();
     try {
       const process = hostProcess(f.path, async () => failed(JSON.stringify({ error: "host refused" }), 1));
-      const result = await executeWorktreeFinish([f.path, "--delete-branch", "--base", "main", "--json"], { MEGABRAIN_STATE_DIR: f.state }, process);
+      const result = await executeWorktreeFinish([f.path, "--delete-branch", "--base", "main", "--json"], { MEGABRAIN_STATE_DIR: f.state, MEGABRAIN_FINISH_SETTLE_MS: "200" }, process);
       const exitCode = result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode;
       expect(exitCode).not.toBe(0);
       expect(result.kind === "ok" ? result.stderr ?? "" : result.error).toContain(f.path);
       expect(await exists(f.path)).toBe(true);
     } finally { await rm(f.root, { recursive: true, force: true }); }
-  });
+  }, 3000);
 });
