@@ -415,8 +415,8 @@ export function createTauriApi(): DesktopApi {
     codeBranchChanges: async (root, parent) => branchChangesSchema.parse(await invoke('code_branch_changes', { root, parent })),
     codeBranchDiff: async (root, mergeBase, path) => codeDiffSchema.parse(await invoke('code_branch_diff', { root, mergeBase, path })),
     chats: () => cliJson(['chat', 'list', '--json'], nativeChatSchema.array()),
-    startChat: ({ agent, model, effort, cwd, parts }) =>
-      cliJson(['chat', 'start', '--agent', agent, ...(model === undefined ? [] : ['--model', model]), ...(effort === undefined ? [] : ['--effort', effort]), '--cwd', cwd, ...(parts === undefined ? [] : ['--parts', JSON.stringify(parts)]), '--json'], nativeChatSchema),
+    startChat: ({ agent, model, effort, cwd, mode, parts }) =>
+      cliJson(['chat', 'start', '--agent', agent, ...(model === undefined ? [] : ['--model', model]), ...(effort === undefined ? [] : ['--effort', effort]), '--cwd', cwd, ...(mode === undefined ? [] : ['--mode', mode]), ...(parts === undefined ? [] : ['--parts', JSON.stringify(parts)]), '--json'], nativeChatSchema),
     sendChat: (chatId, parts, options) => cliJson(['chat', 'send', chatId, '--parts', JSON.stringify(parts), ...(options?.fresh === true ? ['--fresh'] : []), '--json'], z.looseObject({ queued: chatQueueItemSchema.nullable() })),
     forkChat: (chatId, eventId) => cliJson(['chat', 'fork', chatId, '--at', eventId, '--json'], nativeChatSchema),
     editLastMessage: (chatId, parts) => cliJson(['chat', 'edit-last', chatId, '--parts', JSON.stringify(parts), '--json'], nativeChatSchema),

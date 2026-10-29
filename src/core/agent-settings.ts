@@ -59,7 +59,7 @@ export function startCommand(settings: AgentSettings, agent: string): string[] |
   return parsed.kind === "ok" ? parsed.value : null;
 }
 
-/** The mode a new chat of this agent opens in: the saved one, else chat. */
+/** CLI callers default to chat so programmatic send remains available; desktop defaults to terminal. */
 export function startMode(settings: AgentSettings, agent: string): ChatMode {
   return settings.modes?.[agent] ?? "chat";
 }

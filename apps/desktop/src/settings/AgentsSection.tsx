@@ -287,7 +287,7 @@ export function AgentsSection({ updates }: { updates: AgentUpdates }) {
           />
         ))}
       </SettingsGroup>
-      <p className="px-1 text-[12px] text-ink-500">A disabled agent stays installed; New chat just does not offer it. Default view is how a new chat with that agent opens; the switch in a chat’s header changes only that chat. The start command is what the app runs to start the agent’s own terminal.</p>
+      <p className="px-1 text-[12px] text-ink-500">A disabled agent stays installed; New chat just does not offer it. New chats open in the terminal by default; Default view lets you choose Chat or Terminal for each agent. The switch in a chat’s header changes only that chat. The start command is what the app runs to start the agent’s own terminal.</p>
       <AgentUpdatesGroup updates={updates} />
       {error !== null && <ErrorNote error={error} />}
       {saveError !== null && <ErrorNote error={saveError} />}
