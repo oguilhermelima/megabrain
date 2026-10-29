@@ -77,21 +77,24 @@ describe("agent command honours the override", () => {
 });
 
 describe("chat terminal mode honours the override", () => {
-  test("resume, model, effort and prompt are added around the override", () => {
-    expect(chatProtocolAdapters.claude.terminalCommand(chat("claude", { effort: "high" }), "hi", ["/opt/claude", "--dangerously-skip-permissions", "--verbose"])).toEqual(["/opt/claude", "--resume", "sess", "--dangerously-skip-permissions", "--verbose", "--model", "m1", "--effort", "high", "hi"]);
-    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex"), undefined, ["codex", "--x"])).toEqual(["codex", "resume", "sess", "--x", "--model", "m1"]);
-    expect(chatProtocolAdapters.grok.terminalCommand(chat("grok"), undefined, ["grok", "--y"])).toEqual(["grok", "--resume", "sess", "--y"]);
-    expect(chatProtocolAdapters.agy.terminalCommand(chat("agy"), "go", ["agy", "--z"])).toEqual(["agy", "--conversation", "sess", "--z", "--model", "m1", "-i", "go"]);
+  test("resume, model, effort and prompt are added around the override", async () => {
+    const state = stateWith({});
+    expect(await chatProtocolAdapters.claude.terminalCommand(chat("claude", { effort: "high" }), "hi", ["/opt/claude", "--dangerously-skip-permissions", "--verbose"], state)).toEqual(["/opt/claude", "--resume", "sess", "--dangerously-skip-permissions", "--verbose", "--model", "m1", "--effort", "high", "hi"]);
+    expect(await chatProtocolAdapters.codex.terminalCommand(chat("codex"), undefined, ["codex", "--x"], state)).toEqual(["codex", "resume", "sess", "--x", "--model", "m1"]);
+    expect(await chatProtocolAdapters.grok.terminalCommand(chat("grok"), undefined, ["grok", "--y"], state)).toEqual(["grok", "--resume", "sess", "--y"]);
+    expect(await chatProtocolAdapters.agy.terminalCommand(chat("agy"), "go", ["agy", "--z"], state)).toEqual(["agy", "--conversation", "sess", "--z", "--model", "m1", "-i", "go"]);
   });
 
-  test("with approvals on, the agent's own permission flags are removed from the override", () => {
-    expect(chatProtocolAdapters.claude.terminalCommand(chat("claude", { approvals: true }), undefined, ["claude", "--dangerously-skip-permissions", "--verbose"])).toEqual(["claude", "--resume", "sess", "--verbose", "--model", "m1"]);
-    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex", { approvals: true }), undefined, ["codex", "--dangerously-bypass-approvals-and-sandbox", "--x"])).toEqual(["codex", "resume", "sess", "--x", "--model", "m1"]);
-    expect(chatProtocolAdapters.grok.terminalCommand(chat("grok", { approvals: true }), undefined, ["grok", "--always-approve"])).toEqual(["grok", "--resume", "sess"]);
+  test("with approvals on, the agent's own permission flags are removed from the override", async () => {
+    const state = stateWith({});
+    expect(await chatProtocolAdapters.claude.terminalCommand(chat("claude", { approvals: true }), undefined, ["claude", "--dangerously-skip-permissions", "--verbose"], state)).toEqual(["claude", "--resume", "sess", "--verbose", "--model", "m1"]);
+    expect(await chatProtocolAdapters.codex.terminalCommand(chat("codex", { approvals: true }), undefined, ["codex", "--dangerously-bypass-approvals-and-sandbox", "--x"], state)).toEqual(["codex", "resume", "sess", "--x", "--model", "m1"]);
+    expect(await chatProtocolAdapters.grok.terminalCommand(chat("grok", { approvals: true }), undefined, ["grok", "--always-approve"], state)).toEqual(["grok", "--resume", "sess"]);
   });
 
-  test("without an override the built-in command is unchanged", () => {
-    expect(chatProtocolAdapters.codex.terminalCommand(chat("codex"))).toEqual(["codex", "resume", "sess", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
+  test("without an override the built-in command is unchanged", async () => {
+    const state = stateWith({});
+    expect(await chatProtocolAdapters.codex.terminalCommand(chat("codex"), undefined, undefined, state)).toEqual(["codex", "resume", "sess", "--dangerously-bypass-approvals-and-sandbox", "-c", "check_for_update_on_startup=false", "--model", "m1"]);
   });
 
 });

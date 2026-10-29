@@ -148,7 +148,7 @@ export async function mode(daemon: ChatDaemon, id: string, mode: string): Promis
     }
     await daemon.syncTerminalPolling();
     // The terminal's command rides along, so opening it costs no second round trip.
-    return { chat, terminal: null, command: chat.mode === "terminal" ? chatProtocolAdapters[chat.agent].terminalCommand(chat, undefined, startCommand(await readAgentSettings(daemon.stateDir), chat.agent)) : null };
+    return { chat, terminal: null, command: chat.mode === "terminal" ? await chatProtocolAdapters[chat.agent].terminalCommand(chat, undefined, startCommand(await readAgentSettings(daemon.stateDir), chat.agent), daemon.stateDir) : null };
   }
 
 export async function takeOver(daemon: ChatDaemon, id: string): Promise<Chat> {
@@ -465,5 +465,5 @@ export async function terminalCommand(daemon: ChatDaemon, id: string): Promise<s
       delete chat.pendingPrompt;
       await daemon.save(chat);
     }
-    return chatProtocolAdapters[chat.agent].terminalCommand(chat, prompt, startCommand(await readAgentSettings(daemon.stateDir), chat.agent));
+    return await chatProtocolAdapters[chat.agent].terminalCommand(chat, prompt, startCommand(await readAgentSettings(daemon.stateDir), chat.agent), daemon.stateDir);
   }
