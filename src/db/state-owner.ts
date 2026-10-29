@@ -17,6 +17,7 @@ import { encode } from "./queries/types.js";
 import { classifyQueueMail, recipientForQueueMessage } from "../core/queue-write.js";
 import { formatDispatchMessage } from "../core/chat-message-format.js";
 import { randomUUID } from "node:crypto";
+import { schedulePeerVerificationResume as reservePeerVerificationResume } from "../adapters/state/mailbox.js";
 import { spawnSync } from "node:child_process";
 import { ackDelivery as claimAndAckDelivery, acknowledgeImplicitDelivery as acknowledgeMail, acknowledgeImplicitDeliveryInTransaction as acknowledgeMailInTransaction, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, listDeliveriesInTransaction as listMailDeliveries, putWaiter as putMailWaiter, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
 import { createDispatch as createDispatchState, mutateDispatch as mutateDispatchState, noDispatchChange } from "../adapters/state/dispatches.js";
@@ -90,6 +91,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "manual-migrate" }
   | { operation: "json-state-import"; parsed: ParsedJsonState; replace: boolean }
   | { operation: "resume-verification"; id: string }
+  | { operation: "schedule-verification-resume"; id: string; now?: number }
   | { operation: "settle-closed-parent-backlog" }
   )
 >;
@@ -209,6 +211,11 @@ function ownerRequest(owner: StateOwner, request: StateOwnerRequest): Promise<Re
     if (owner.idleTimer !== undefined) clearTimeout(owner.idleTimer);
     owner.idleTimer = undefined;
     return Promise.resolve({ ok: true, value: { scheduled: true } });
+  }
+  if (request.operation === "schedule-verification-resume") {
+    const result = reservePeerVerificationResume(owner.handle, request.id, request.now);
+    if (result.kind !== "ok") return Promise.resolve({ ok: false, error: result.error });
+    return Promise.resolve({ ok: true, value: result.value });
   }
   if (request.operation === "settle-closed-parent-backlog") {
     const result = settleClosedParentBacklog(owner.handle);

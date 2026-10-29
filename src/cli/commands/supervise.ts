@@ -353,7 +353,8 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     pendingPeerVerifications ||= page.value.rows.length > 0;
     for (const item of page.value.rows) {
       if (now - item.record.acceptedAt < 5 * 60 * 1000) continue;
-      await callStateOwner(root, { operation: "resume-verification", id: item.id }).catch(() => undefined);
+      const scheduled = await callStateOwner(root, { operation: "schedule-verification-resume", id: item.id, now }).catch(() => undefined) as { scheduled?: boolean } | undefined;
+      if (scheduled?.scheduled === true) await callStateOwner(root, { operation: "resume-verification", id: item.id }).catch(() => undefined);
     }
     verificationCursor = page.value.nextCursor;
   } while (verificationCursor !== undefined);

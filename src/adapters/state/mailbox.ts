@@ -344,6 +344,10 @@ function outboxRow(db: DatabaseAdapter, id: string): OutboxDetails | undefined {
   return row === null ? undefined : { ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail };
 }
 
+export function getOutbox(handle: DatabaseHandle, id: string): Result<OutboxDetails | undefined> {
+  return read(handle, ({ db }) => outboxRow(db, id));
+}
+
 function enqueueOutboxValue(db: DatabaseAdapter, input: OutboxInput, now: string): void {
   if (input.id === "" || input.targetKind === "" || input.target === "") throw new TypeError("outbox requires id, targetKind and target");
   db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, lease_until, transport, created_at, updated_at, lease_holder, detail) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, ?, NULL, NULL)", [input.id, input.dispatchId ?? null, input.targetKind, input.target, encode(input.payload), now, now]);
@@ -500,6 +504,8 @@ export type PeerVerificationRecord = Readonly<{
   transcriptOffset?: number;
   agentVersion: string;
   acceptedAt: number;
+  resumeAttempts?: number;
+  nextResumeAt?: number;
 }>;
 const peerStatePrefix = "peer-verification:";
 
@@ -542,8 +548,23 @@ export function finishOutboxPeerVerification(handle: DatabaseHandle, id: string,
     const row = db.query<{ detail: string | null }>("SELECT detail FROM outbox WHERE id = ?").get(id);
     const current = peerState(row?.detail ?? null);
     if (current === undefined) return false;
-    db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ?", [`${peerStatePrefix}${JSON.stringify({ ...current, state })}`, now, id]);
+    db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ?", [`${peerStatePrefix}${JSON.stringify({ ...current, state, resumeAttempts: 0, nextResumeAt: undefined })}`, now, id]);
     return true;
+  });
+}
+
+export function schedulePeerVerificationResume(handle: DatabaseHandle, id: string, now = Date.now()): Result<Readonly<{ scheduled: boolean; attempt: number; nextEligibleAt: number }>> {
+  return write(handle, ({ db }) => {
+    const row = db.query<{ detail: string | null; status: string }>("SELECT detail, status FROM outbox WHERE id = ?").get(id);
+    const current = peerState(row?.detail ?? null);
+    if (current === undefined || current.state !== "pending" || row?.status !== "sent") return { scheduled: false, attempt: current?.resumeAttempts ?? 0, nextEligibleAt: current?.nextResumeAt ?? now };
+    const attempt = current.resumeAttempts ?? 0;
+    if (current.nextResumeAt !== undefined && now < current.nextResumeAt) return { scheduled: false, attempt, nextEligibleAt: current.nextResumeAt };
+    const nextAttempt = attempt + 1;
+    const delay = Math.min(6 * 60 * 60 * 1000, 5 * 60 * 1000 * 2 ** attempt);
+    const nextEligibleAt = now + delay;
+    db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ? AND status = 'sent'", [`${peerStatePrefix}${JSON.stringify({ ...current, resumeAttempts: nextAttempt, nextResumeAt: nextEligibleAt })}`, new Date(now).toISOString(), id]);
+    return { scheduled: true, attempt: nextAttempt, nextEligibleAt };
   });
 }
 
