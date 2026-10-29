@@ -404,8 +404,8 @@ export function listPendingOutboxPeerVerifications(handle: DatabaseHandle, optio
   return read(handle, ({ db }) => {
     const cursor = options.after;
     const query = cursor === undefined
-      ? db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' ORDER BY created_at, id LIMIT ?")
-      : db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?");
+      ? db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE status = 'sent' AND detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' ORDER BY created_at, id LIMIT ?")
+      : db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE status = 'sent' AND detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?");
     const rows = cursor === undefined
       ? query.all(`${peerStatePrefix}%`, limit + 1)
       : query.all(`${peerStatePrefix}%`, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
