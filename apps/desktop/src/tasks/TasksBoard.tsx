@@ -89,20 +89,36 @@ function useBoardItems(root: string, board: GithubProject) {
   shown.current = items
   // Refresh reads at once; a schedule or a reopened board reads only when the last read is a minute old.
   const asked = useRef(false)
+  const previousKey = useRef<string | null>(null)
   useEffect(() => setItems(boardCache().items[key]?.value ?? null), [key])
   // usePoll's `current` turns false once another board is shown, so an old board's pages never land.
   const poll = usePoll(
     boardItemsPolicy,
     async (current) => {
-      const force = asked.current
+      const changedBoard = previousKey.current !== key
+      previousKey.current = key
+      const force = asked.current || changedBoard
       asked.current = false
       if (!boardReadDue(boardCache().items[key]?.at, Date.now(), force)) return
       setLoading(true)
       const before = shown.current ?? []
+      let totalCount: number | undefined
       try {
-        const all = await readBoardPages({ read: (after) => api.githubProject(root, board.number, board.owner, after), maxPages, current, show: (read, last) => setItems(last ? read : mergedPages(read, before)) })
+        const cached = boardCache().items[key]
+        const all = await readBoardPages({
+          read: (after) => api.githubProject(root, board.number, board.owner, after),
+          maxPages,
+          current,
+          show: (read, last) => setItems(last ? read : mergedPages(read, before)),
+          ...(!force && cached?.totalCount !== undefined
+            ? { unchanged: { items: cached.value, totalCount: cached.totalCount } }
+            : {}),
+          onTotalCount: (count) => {
+            totalCount = count
+          },
+        })
         if (all === null) return
-        remember(withItems(boardCache(), key, all, Date.now()))
+        remember(withItems(boardCache(), key, all, Date.now(), totalCount))
         setError(null)
       } catch (cause: unknown) {
         if (current()) setError(cause)
@@ -121,7 +137,7 @@ function useBoardItems(root: string, board: GithubProject) {
     (item: GithubProjectItem) => {
       setItems((current) => (current === null ? current : answeredItems(current, item)))
       const entry = boardCache().items[key]
-      if (entry !== undefined) remember(withItems(boardCache(), key, answeredItems(entry.value, item), entry.at))
+      if (entry !== undefined) remember(withItems(boardCache(), key, answeredItems(entry.value, item), entry.at, entry.totalCount))
     },
     [key],
   )
@@ -130,7 +146,18 @@ function useBoardItems(root: string, board: GithubProject) {
     (item: GithubProjectItem) => {
       setItems((current) => (current === null ? [item] : [...current.filter((entry) => entry.id !== item.id), item]))
       const entry = boardCache().items[key]
-      if (entry !== undefined) remember(withItems(boardCache(), key, [...entry.value.filter((value) => value.id !== item.id), item], entry.at))
+      if (entry !== undefined) {
+        const isNew = !entry.value.some((value) => value.id === item.id)
+        remember(
+          withItems(
+            boardCache(),
+            key,
+            [...entry.value.filter((value) => value.id !== item.id), item],
+            entry.at,
+            entry.totalCount === undefined ? undefined : entry.totalCount + Number(isNew),
+          ),
+        )
+      }
     },
     [key],
   )
