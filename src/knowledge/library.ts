@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { resolveLocation } from "../chat/summary-library.js";
+import { defaultBranch, resolveLocation } from "../chat/summary-library.js";
 import { listProjects, openProject } from "./store.js";
 import { togglesFor } from "./settings.js";
 import type { ChatRecord, Ref, Topic, TranscriptLine } from "./types.js";
@@ -100,9 +100,10 @@ export function readTranscript(stateDir: string, chatId: string): { chat: ChatRe
 /** The topics for a folder: those that name its branch, else the repository's latest active ones. */
 export async function topicFor(stateDir: string, cwd: string): Promise<Topic[]> {
   const location = await resolveLocation(cwd);
-  const topics = openProject(stateDir, location.repo).topics();
-  const named = topics.filter((topic) => topic.refs.some((ref) => ref.kind === "branch" && ref.id === location.branch));
-  const chosen = named.length > 0 ? named : topics.filter((topic) => topic.status === "active");
+  const defaultRef = await defaultBranch(cwd);
+  const topics = openProject(stateDir, location.repo).topics().filter((topic) => topic.status === "active");
+  const named = topics.filter((topic) => topic.refs.some((ref) => ref.kind === "branch" && ref.id === location.branch && ref.id !== defaultRef));
+  const chosen = named.length > 0 ? named : topics;
   return chosen.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, named.length > 0 ? 3 : 2);
 }
 

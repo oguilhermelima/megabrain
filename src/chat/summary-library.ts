@@ -29,6 +29,16 @@ export async function resolveLocation(cwd: string): Promise<SummaryLocation> {
   return { repo, project: basename(repo), worktree, branch: branch === null || branch === "" ? NO_BRANCH : branch };
 }
 
+/** The configured default branch, with a main/master fallback for repositories without origin/HEAD. */
+export async function defaultBranch(cwd: string): Promise<string | undefined> {
+  const symbolic = await git(cwd, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+  if (symbolic !== null) return symbolic.startsWith("origin/") ? symbolic.slice("origin/".length) : symbolic;
+  for (const candidate of ["main", "master"]) {
+    if (await git(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${candidate}`]) !== null) return candidate;
+  }
+  return undefined;
+}
+
 function chatDirectories(stateDir: string): string[] {
   try { return readdirSync(join(stateDir, "chats")); } catch { return []; }
 }
