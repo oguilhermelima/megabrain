@@ -27,6 +27,7 @@ import {
   getQueuedDispatchId,
   listOutboxPage,
   listPendingOutboxPeerVerifications,
+  schedulePeerVerificationResume,
   listChildAnsweredDispatches,
   mutateDispatch,
   listNudges,
@@ -40,11 +41,13 @@ let environment: { MEGABRAIN_STATE_DIR: string };
 
 beforeEach(() => {
   stateDirectory = mkdtempSync(resolve(tmpdir(), "megabrain-state-facade-"));
+  process.env.MEGABRAIN_STATE_DIR = stateDirectory;
   environment = { MEGABRAIN_STATE_DIR: stateDirectory };
 });
 
 afterEach(() => {
   rmSync(stateDirectory, { recursive: true, force: true });
+  delete process.env.MEGABRAIN_STATE_DIR;
 });
 
 function requireOk<T>(result: { kind: "ok"; value: T } | { kind: string; error?: string }): T {
@@ -108,6 +111,29 @@ describe("state database facade", () => {
     expect(page.rows.map((row) => row.id)).toEqual(["peer-pending"]);
     expect(query).toContain("LIMIT ?");
     expect(query).not.toContain("OFFSET");
+  });
+
+  test("peer verification discovery scopes rows to pending outbox status", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "peer-status-bound", state: "running" }));
+    const detail = `peer-verification:${JSON.stringify({ state: "pending", messageId: "m", agentVersion: "v1", acceptedAt: 1 })}`;
+    for (const [id, status] of [["pending-peer", "sent"], ["failed-peer", "failed"]]) {
+      db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, detail, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)", [id, "peer-status-bound", "parent-pointer", "parent", "{}", status, detail, id, id]);
+    }
+    expect(requireOk(listPendingOutboxPeerVerifications(db)).rows.map((row) => row.id)).toEqual(["pending-peer"]);
+  });
+
+  test("pending peer verification resume scheduling uses exponential windows and resets on settle", () => {
+    const db = requireOk(guardedStateDatabase(environment));
+    requireOk(createDispatch(db, { dispatchId: "peer-backoff", state: "running" }));
+    const acceptedAt = Date.now() - 10 * 60 * 60 * 1000;
+    const detail = `peer-verification:${JSON.stringify({ state: "pending", messageId: "m", agentVersion: "v1", acceptedAt })}`;
+    db.db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, detail, created_at, updated_at) VALUES ('backoff-peer', 'peer-backoff', 'parent-pointer', 'parent', '{}', 'sent', 0, ?, 'a', 'a')", [detail]);
+    // First reservation is immediately eligible; the second is held for five minutes.
+    expect(requireOk(schedulePeerVerificationResume(db, "backoff-peer", Date.now()))).toEqual({ scheduled: true, attempt: 1, nextEligibleAt: expect.any(Number) });
+    expect(requireOk(schedulePeerVerificationResume(db, "backoff-peer", Date.now()))).toEqual({ scheduled: false, attempt: 1, nextEligibleAt: expect.any(Number) });
+    requireOk(finishOutboxPeerVerification(db, "backoff-peer", "delivered"));
+    expect(requireOk(getOutboxPeerVerification(db, "backoff-peer"))).toMatchObject({ state: "delivered", resumeAttempts: 0 });
   });
 
   test("provides bounded outbox pages with a stable cursor", () => {
