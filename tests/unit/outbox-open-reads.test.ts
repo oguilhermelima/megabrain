@@ -4,9 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDispatch } from "../../src/adapters/state/dispatches.js";
 import {
+  closedParentOutboxDispatchIdsSql,
   listClosedParentOutboxDispatchIds,
   listOpenOutbox,
+  openOutboxSql,
 } from "../../src/adapters/state/mailbox.js";
+import { ensureOutboxIndexes } from "../../src/db/state-owner.js";
 import { guardedOpenDatabase } from "./state-db-guard.js";
 
 const root = mkdtempSync(join(tmpdir(), "megabrain-open-outbox-"));
@@ -16,12 +19,7 @@ const opened = guardedOpenDatabase({
 });
 if (opened.kind !== "ok") throw new Error(opened.error);
 const handle = opened.value;
-handle.db.run(
-  "CREATE INDEX IF NOT EXISTS state_outbox_open_created_id ON outbox(created_at, id, dispatch_id, target_kind) WHERE status IN ('pending', 'sending')",
-);
-handle.db.run(
-  "CREATE INDEX IF NOT EXISTS state_outbox_parent_status_dispatch ON outbox(target_kind, status, dispatch_id) WHERE target_kind = 'parent-pointer'",
-);
+ensureOutboxIndexes(handle.db);
 
 function createDispatchRecord(dispatchId: string): void {
   const result = createDispatch(handle, {
@@ -127,9 +125,7 @@ describe("scoped outbox reads", () => {
       expect(result.value.filter((id) => id.startsWith(prefix)).sort()).toEqual(
         [`${prefix}-pending`, `${prefix}-sending`, `${prefix}-verify`],
       );
-    expectIndexedQuery(
-      "SELECT dispatch_id FROM outbox WHERE target_kind = 'parent-pointer' AND status IN ('pending', 'sending') AND dispatch_id IS NOT NULL UNION SELECT dispatch_id FROM outbox WHERE target_kind = 'parent-pointer' AND status = 'sent' AND dispatch_id IS NOT NULL AND detail LIKE 'peer-verification:%' AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END IN ('pending', 'fallback-queued')",
-    );
+    expectIndexedQuery(closedParentOutboxDispatchIdsSql);
   });
 
   test("returns only old pending and sending notices", () => {
@@ -190,7 +186,7 @@ describe("scoped outbox reads", () => {
           .sort(),
       ).toEqual([`${prefix}-pending`, `${prefix}-sending`]);
     expectIndexedQuery(
-      "SELECT * FROM outbox WHERE status IN ('pending', 'sending') AND dispatch_id IS NOT NULL AND created_at <= ? ORDER BY created_at, id",
+      openOutboxSql,
       new Date(Date.now() - 30_000).toISOString(),
     );
   });
