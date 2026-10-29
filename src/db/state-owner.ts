@@ -61,7 +61,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "resource-samples"; samples: readonly Readonly<{ dispatchId: string; agent: string; rssBytes: number; cpuPercent: number }>[]; now?: number }
   | { operation: "setting-read"; key: string }
   | { operation: "append-message"; dispatchId: string; message: Readonly<Record<string, unknown>>; delivery?: Readonly<Record<string, unknown>>; outbox?: Readonly<{ id: string; targetKind: string; target: string; payload: unknown }> }
-  | { operation: "append-queue-message"; dispatchId: string; message: Readonly<{ from: string; type: string; text: string; sessionId: string; createdAt: string }>; dispatch: Readonly<Record<string, unknown>>; childReport?: Readonly<{ type: "ask" | "done"; agent?: string; claudeSessionId?: string }> }
+  | { operation: "append-queue-message"; dispatchId: string; message: Readonly<{ from: string; type: string; text: string; sessionId: string; createdAt: string; idempotencyKey?: string }>; dispatch: Readonly<Record<string, unknown>>; childReport?: Readonly<{ type: "ask" | "done"; agent?: string; claudeSessionId?: string }> }
   | { operation: "message-read"; dispatchId: string; sequence: number }
   | { operation: "claim-delivery"; id: string; consumer: string; generation: number }
   | { operation: "fence-delivery"; id: string; consumer: string; generation: number }

@@ -339,7 +339,7 @@ export async function appendMessage(root: string, dispatch: string, from: string
   const now = new Date().toISOString();
   let appended: { sequence: number; outboxId?: string };
   try {
-    appended = await callStateOwner(root, { operation: "append-queue-message", dispatchId: dispatch, message: { from, type, text, createdAt: now, sessionId }, dispatch: metaRecord, ...(from === "child" && childReport !== undefined ? { childReport } : {}) }) as typeof appended;
+    appended = await callStateOwner(root, { operation: "append-queue-message", dispatchId: dispatch, message: { from, type, text, createdAt: now, sessionId, idempotencyKey: randomUUID() }, dispatch: metaRecord, ...(from === "child" && childReport !== undefined ? { childReport } : {}) }) as typeof appended;
   } catch (cause: unknown) {
     return failed(`state owner write failed: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
