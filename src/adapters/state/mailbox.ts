@@ -344,6 +344,10 @@ function outboxRow(db: DatabaseAdapter, id: string): OutboxDetails | undefined {
   return row === null ? undefined : { ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail };
 }
 
+export function getOutbox(handle: DatabaseHandle, id: string): Result<OutboxDetails | undefined> {
+  return read(handle, ({ db }) => outboxRow(db, id));
+}
+
 function enqueueOutboxValue(db: DatabaseAdapter, input: OutboxInput, now: string): void {
   if (input.id === "" || input.targetKind === "" || input.target === "") throw new TypeError("outbox requires id, targetKind and target");
   db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, lease_until, transport, created_at, updated_at, lease_holder, detail) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, ?, NULL, NULL)", [input.id, input.dispatchId ?? null, input.targetKind, input.target, encode(input.payload), now, now]);
@@ -395,6 +399,23 @@ export function listOutboxPage(handle: DatabaseHandle, options: Readonly<{ dispa
   });
 }
 
+export const closedParentOutboxDispatchIdsSql =
+  "SELECT dispatch_id FROM outbox WHERE target_kind = 'parent-pointer' AND status IN ('pending', 'sending') AND dispatch_id IS NOT NULL " +
+  "UNION SELECT dispatch_id FROM outbox WHERE target_kind = 'parent-pointer' AND status = 'sent' AND dispatch_id IS NOT NULL " +
+  "AND detail LIKE 'peer-verification:%' AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END IN ('pending', 'fallback-queued')";
+
+export const openOutboxSql =
+  "SELECT * FROM outbox WHERE status IN ('pending', 'sending') AND dispatch_id IS NOT NULL AND created_at <= ? ORDER BY created_at, id";
+
+export function listClosedParentOutboxDispatchIds(handle: DatabaseHandle): Result<string[]> {
+  return read(handle, ({ db }) => db.query<{ dispatch_id: string }>(closedParentOutboxDispatchIdsSql).all().map((row) => row.dispatch_id));
+}
+
+export function listOpenOutbox(handle: DatabaseHandle, createdBefore: string): Result<OutboxDetails[]> {
+  return read(handle, ({ db }) => db.query<Parameters<typeof toOutbox>[0] & Readonly<{ lease_holder: string | null; detail: string | null }>>(openOutboxSql)
+    .all(createdBefore).map((row) => ({ ...toOutbox(row), leaseHolder: row.lease_holder, detail: row.detail })));
+}
+
 export type PendingPeerVerification = Readonly<{ id: string; dispatchId: string | null; status: string; record: PeerVerificationRecord }>;
 export type PendingPeerVerificationPage = Readonly<{ rows: readonly PendingPeerVerification[]; nextCursor?: OutboxCursor }>;
 
@@ -404,8 +425,8 @@ export function listPendingOutboxPeerVerifications(handle: DatabaseHandle, optio
   return read(handle, ({ db }) => {
     const cursor = options.after;
     const query = cursor === undefined
-      ? db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' ORDER BY created_at, id LIMIT ?")
-      : db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?");
+      ? db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE status = 'sent' AND detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' ORDER BY created_at, id LIMIT ?")
+      : db.query<{ id: string; dispatch_id: string | null; status: string; detail: string | null; created_at: string }>("SELECT id, dispatch_id, status, detail, created_at FROM outbox WHERE status = 'sent' AND detail LIKE ? AND CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END = 'pending' AND (created_at > ? OR (created_at = ? AND id > ?)) ORDER BY created_at, id LIMIT ?");
     const rows = cursor === undefined
       ? query.all(`${peerStatePrefix}%`, limit + 1)
       : query.all(`${peerStatePrefix}%`, cursor.createdAt, cursor.createdAt, cursor.id, limit + 1);
@@ -500,6 +521,8 @@ export type PeerVerificationRecord = Readonly<{
   transcriptOffset?: number;
   agentVersion: string;
   acceptedAt: number;
+  resumeAttempts?: number;
+  nextResumeAt?: number;
 }>;
 const peerStatePrefix = "peer-verification:";
 
@@ -542,8 +565,23 @@ export function finishOutboxPeerVerification(handle: DatabaseHandle, id: string,
     const row = db.query<{ detail: string | null }>("SELECT detail FROM outbox WHERE id = ?").get(id);
     const current = peerState(row?.detail ?? null);
     if (current === undefined) return false;
-    db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ?", [`${peerStatePrefix}${JSON.stringify({ ...current, state })}`, now, id]);
+    db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ?", [`${peerStatePrefix}${JSON.stringify({ ...current, state, resumeAttempts: 0, nextResumeAt: undefined })}`, now, id]);
     return true;
+  });
+}
+
+export function schedulePeerVerificationResume(handle: DatabaseHandle, id: string, now = Date.now()): Result<Readonly<{ scheduled: boolean; attempt: number; nextEligibleAt: number }>> {
+  return write(handle, ({ db }) => {
+    const row = db.query<{ detail: string | null; status: string }>("SELECT detail, status FROM outbox WHERE id = ?").get(id);
+    const current = peerState(row?.detail ?? null);
+    if (current === undefined || current.state !== "pending" || row?.status !== "sent") return { scheduled: false, attempt: current?.resumeAttempts ?? 0, nextEligibleAt: current?.nextResumeAt ?? now };
+    const attempt = current.resumeAttempts ?? 0;
+    if (current.nextResumeAt !== undefined && now < current.nextResumeAt) return { scheduled: false, attempt, nextEligibleAt: current.nextResumeAt };
+    const nextAttempt = attempt + 1;
+    const delay = Math.min(6 * 60 * 60 * 1000, 5 * 60 * 1000 * 2 ** attempt);
+    const nextEligibleAt = now + delay;
+    db.run("UPDATE outbox SET detail = ?, updated_at = ? WHERE id = ? AND status = 'sent'", [`${peerStatePrefix}${JSON.stringify({ ...current, resumeAttempts: nextAttempt, nextResumeAt: nextEligibleAt })}`, new Date(now).toISOString(), id]);
+    return { scheduled: true, attempt: nextAttempt, nextEligibleAt };
   });
 }
 

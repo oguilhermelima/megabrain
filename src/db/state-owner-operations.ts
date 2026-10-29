@@ -337,6 +337,11 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
   }
   if (request.operation === "append-queue-message") {
     const result = withWrite(owner.handle, (db) => {
+      const idempotencyKey = typeof request.message.idempotencyKey === "string" ? request.message.idempotencyKey : undefined;
+      if (idempotencyKey !== undefined) {
+        const existing = db.query<{ seq: number }>("SELECT seq FROM messages WHERE idempotency_key = ?").get(idempotencyKey);
+        if (existing !== null) return { sequence: existing.seq };
+      }
       if (request.childReport !== undefined) applyChildReport(owner, request.dispatchId, request.childReport);
       const classification = classifyQueueMail(request.message.from, request.message.type, false);
       const recipient = recipientForQueueMessage(request.message.from, request.message.type, false);

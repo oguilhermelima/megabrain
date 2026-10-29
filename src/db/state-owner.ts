@@ -13,10 +13,11 @@ import { createProcessAdapter } from "../adapters/proc.js";
 import type { ProcessAdapter } from "../adapters/proc.js";
 import { insertMessage, listMessages } from "./queries/messages.js";
 import { insertDelivery } from "./queries/deliveries.js";
-import { encode } from "./queries/types.js";
+import { encode, type DatabaseAdapter } from "./queries/types.js";
 import { classifyQueueMail, recipientForQueueMessage } from "../core/queue-write.js";
 import { formatDispatchMessage } from "../core/chat-message-format.js";
 import { randomUUID } from "node:crypto";
+import { schedulePeerVerificationResume as reservePeerVerificationResume } from "../adapters/state/mailbox.js";
 import { spawnSync } from "node:child_process";
 import { ackDelivery as claimAndAckDelivery, acknowledgeImplicitDelivery as acknowledgeMail, acknowledgeImplicitDeliveryInTransaction as acknowledgeMailInTransaction, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, listDeliveriesInTransaction as listMailDeliveries, putWaiter as putMailWaiter, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
 import { createDispatch as createDispatchState, mutateDispatch as mutateDispatchState, noDispatchChange } from "../adapters/state/dispatches.js";
@@ -61,7 +62,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "resource-samples"; samples: readonly Readonly<{ dispatchId: string; agent: string; rssBytes: number; cpuPercent: number }>[]; now?: number }
   | { operation: "setting-read"; key: string }
   | { operation: "append-message"; dispatchId: string; message: Readonly<Record<string, unknown>>; delivery?: Readonly<Record<string, unknown>>; outbox?: Readonly<{ id: string; targetKind: string; target: string; payload: unknown }> }
-  | { operation: "append-queue-message"; dispatchId: string; message: Readonly<{ from: string; type: string; text: string; sessionId: string; createdAt: string }>; dispatch: Readonly<Record<string, unknown>>; childReport?: Readonly<{ type: "ask" | "done"; agent?: string; claudeSessionId?: string }> }
+  | { operation: "append-queue-message"; dispatchId: string; message: Readonly<{ from: string; type: string; text: string; sessionId: string; createdAt: string; idempotencyKey?: string }>; dispatch: Readonly<Record<string, unknown>>; childReport?: Readonly<{ type: "ask" | "done"; agent?: string; claudeSessionId?: string }> }
   | { operation: "message-read"; dispatchId: string; sequence: number }
   | { operation: "claim-delivery"; id: string; consumer: string; generation: number }
   | { operation: "fence-delivery"; id: string; consumer: string; generation: number }
@@ -90,6 +91,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "manual-migrate" }
   | { operation: "json-state-import"; parsed: ParsedJsonState; replace: boolean }
   | { operation: "resume-verification"; id: string }
+  | { operation: "schedule-verification-resume"; id: string; now?: number }
   | { operation: "settle-closed-parent-backlog" }
   )
 >;
@@ -106,6 +108,11 @@ function logOwner(stateDir: string, event: string, fields: Readonly<Record<strin
 }
 
 export function stateOwnerPid(stateDir: string): string { return join(stateDir, "state-owner", "owner.pid"); }
+
+export function ensureOutboxIndexes(db: DatabaseAdapter): void {
+  db.run("CREATE INDEX IF NOT EXISTS state_outbox_open_created_id ON outbox(created_at, id, dispatch_id, target_kind) WHERE status IN ('pending', 'sending')");
+  db.run("CREATE INDEX IF NOT EXISTS state_outbox_parent_status_dispatch ON outbox(target_kind, status, dispatch_id) WHERE target_kind = 'parent-pointer'");
+}
 function stateOwnerLock(stateDir: string): string { return join(stateDir, "state-owner", "owner.lock"); }
 
 function ownsStateOwnerLock(owner: StateOwner): boolean {
@@ -209,6 +216,11 @@ function ownerRequest(owner: StateOwner, request: StateOwnerRequest): Promise<Re
     if (owner.idleTimer !== undefined) clearTimeout(owner.idleTimer);
     owner.idleTimer = undefined;
     return Promise.resolve({ ok: true, value: { scheduled: true } });
+  }
+  if (request.operation === "schedule-verification-resume") {
+    const result = reservePeerVerificationResume(owner.handle, request.id, request.now);
+    if (result.kind !== "ok") return Promise.resolve({ ok: false, error: result.error });
+    return Promise.resolve({ ok: true, value: result.value });
   }
   if (request.operation === "settle-closed-parent-backlog") {
     const result = settleClosedParentBacklog(owner.handle);
@@ -418,6 +430,7 @@ export async function startStateOwner(stateDir: string, processAdapter: ProcessA
     db.run("CREATE INDEX IF NOT EXISTS state_dispatches_owner_created_id ON dispatches(owner_session_id, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_dispatches_owner_active_created_id ON dispatches(owner_session_id, archived_at, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_created_id ON outbox(created_at, id)");
+    ensureOutboxIndexes(db);
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_dispatch_created_id ON outbox(dispatch_id, created_at, id)");
     db.run("CREATE INDEX IF NOT EXISTS state_outbox_peer_state_created_id ON outbox(CASE WHEN json_valid(substr(detail, 19)) THEN json_extract(substr(detail, 19), '$.state') END, created_at, id) WHERE detail LIKE 'peer-verification:%'");
     db.run("CREATE INDEX IF NOT EXISTS state_messages_child_activity ON messages(dispatch_id) WHERE \"from\" = 'child' AND type IN ('received', 'ask', 'done')");

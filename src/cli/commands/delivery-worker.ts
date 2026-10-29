@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { finishOutboxPeerVerification, getDispatch, getOutboxPeerVerification, listDeliveries, listOutbox, markOutboxPeerSent, requeueOutboxPeerFallback, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { finishOutboxPeerVerification, getDispatch, getOutbox, getOutboxPeerVerification, listDeliveries, listOutboxForDispatch, markOutboxPeerSent, requeueOutboxPeerFallback, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { claudeSessionPermissionClass, scanTranscript } from "../../agents/claude-peer.js";
 import { resolveClaudeSession } from "../../agents/claude-session.js";
 import { createDecisionLog } from "../../core/delivery-decision-log.js";
@@ -444,7 +444,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   if (!nested) {
     const quietDeadline = Math.min(deadline, Date.now() + 1000);
     while (Date.now() < quietDeadline) {
-      const pending = listOutbox(database.value);
+      const pending = listOutboxForDispatch(database.value, dispatch);
       if (pending.kind !== "ok") break;
       const next = pending.value.find((item) => item.target === target && item.status === "pending");
       if (next !== undefined) {
@@ -469,9 +469,9 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
   catch (cause: unknown) { return failed(`state owner could not settle closed deliveries: ${cause instanceof Error ? cause.message : String(cause)}`); }
   const saved = getOutboxPeerVerification(database.value, outboxId);
   if (saved.kind !== "ok" || saved.value === undefined || saved.value.state !== "pending") return ok("peer verification is already settled\n");
-  const rows = listOutbox(database.value);
-  if (rows.kind !== "ok") return rows;
-  const outbox = rows.value.find((item) => item.id === outboxId);
+  const outboxResult = getOutbox(database.value, outboxId);
+  if (outboxResult.kind !== "ok") return outboxResult;
+  const outbox = outboxResult.value;
   if (outbox === undefined || outbox.dispatchId === null) return failed(`delivery verification outbox item not found: ${outboxId}`);
   const payload = typeof outbox.payload === "object" && outbox.payload !== null ? outbox.payload as Meta : {};
   const dispatch = String(payload.dispatchId ?? outbox.dispatchId);

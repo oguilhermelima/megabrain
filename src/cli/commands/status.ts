@@ -1,5 +1,5 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { listDeliveries, listDeliveryChannels, listDispatchEntries, listMessages, listOutbox, readAdmissionPolicy, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { listDeliveries, listDeliveryChannels, listDispatchEntries, listMessages, listOpenOutbox, readAdmissionPolicy, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { decorateDispatchRecord, parseDispatchRecord, type DecoratedDispatch } from "../../core/dispatch.js";
 import { listProcQueue } from "../../core/proc-queue.js";
 import { executeProc } from "../../core/proc-runner.js";
@@ -60,15 +60,18 @@ async function collectStatus(environment: Environment, process: ProcessAdapter):
   });
   const queued = queueItems(database.value, dispatches.map((item) => String((item as RecordValue).dispatchId)));
   if (queued.kind !== "ok") return failed(queued.error, queued.exitCode);
-  const outbox = listOutbox(database.value);
   const watcher = supervisorWatcher(database.value);
   const staleBefore = Date.now() - 30_000;
-  const stuckNotices = !watcher.running && outbox.kind === "ok" ? outbox.value.flatMap((item) => {
-    if (!(["pending", "sending"].includes(item.status)) || item.dispatchId === null) return [];
-    const createdAt = Date.parse(item.createdAt);
-    if (!Number.isFinite(createdAt) || createdAt > staleBefore) return [];
-    return [{ outboxId: item.id, dispatchId: item.dispatchId, targetKind: item.targetKind, ageSeconds: Math.floor((Date.now() - createdAt) / 1000) }];
-  }) : [];
+  const stuckNotices: { outboxId: string; dispatchId: string; targetKind: string; ageSeconds: number }[] = [];
+  if (!watcher.running) {
+    const openOutbox = listOpenOutbox(database.value, new Date(staleBefore).toISOString());
+    if (openOutbox.kind !== "ok") return failed(openOutbox.error, openOutbox.exitCode);
+    for (const item of openOutbox.value) {
+      const createdAt = Date.parse(item.createdAt);
+      if (!Number.isFinite(createdAt)) continue;
+      stuckNotices.push({ outboxId: item.id, dispatchId: item.dispatchId!, targetKind: item.targetKind, ageSeconds: Math.floor((Date.now() - createdAt) / 1000) });
+    }
+  }
   const procQueue = (await listProcQueue(stateEnvironment)).map((entry) => ({
     id: entry.id, kind: "proc", dispatch: "-", type: entry.name, createdAt: entry.createdAt, state: "queued", text: entry.reason, owner: entry.owner,
   }));

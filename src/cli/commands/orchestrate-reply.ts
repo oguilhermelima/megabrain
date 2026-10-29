@@ -3,7 +3,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { normalizeDispatchState, parseParentChangeArgs, parseParentReplyArgs, replyStateError, type SupersedeSummary } from "../../core/parent-reply.js";
 import { classifyLiveness } from "../../core/liveness.js";
 import { resolveCaller, appendMessage, type QueueEnvironment } from "./queue-write.js";
-import { getOutboxPeerVerification, listDeliveries, listOutbox, type OutboxDetails } from "../../adapters/state-db.js";
+import { getOutbox, getOutboxPeerVerification, listDeliveries, type OutboxDetails } from "../../adapters/state-db.js";
 import { deliveryTarget } from "./delivery-worker.js";
 import { randomUUID } from "node:crypto";
 import { type ProcessAdapter } from "../../adapters/proc.js";
@@ -131,8 +131,8 @@ export async function executeOrchestrateReply(args: readonly string[], environme
   const deliveryDeadline = Date.now() + 1_000;
   let delivery: ReplyDeliveryResult = { status: "queued-for-check" };
   while (true) {
-    const outbox = listOutbox(opened.value);
-    const item = outbox.kind === "ok" ? outbox.value.find((candidate) => candidate.id === outboxId) : undefined;
+    const itemResult = getOutbox(opened.value, outboxId);
+    const item = itemResult.kind === "ok" ? itemResult.value : undefined;
     if (item !== undefined && item.status !== "pending" && item.status !== "sending") {
       delivery = replyDeliveryResult(opened.value, dispatchId, append.seq, item);
       break;
@@ -188,9 +188,9 @@ export async function executeOrchestrateChange(args: readonly string[], environm
   const deliveryDeadline = Date.now() + Math.max(timeoutMs, 1000);
   let outboxItem: OutboxDetails | undefined;
   while (Date.now() < deliveryDeadline) {
-    const listed = listOutbox(database.value);
+    const listed = getOutbox(database.value, outboxId);
     if (listed.kind === "ok") {
-      outboxItem = listed.value.find((item) => item.id === outboxId);
+      outboxItem = listed.value;
       if (outboxItem !== undefined && outboxItem.status !== "pending" && outboxItem.status !== "sending") break;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
