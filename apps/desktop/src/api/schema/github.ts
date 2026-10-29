@@ -131,7 +131,7 @@ export const githubProjectItemSchema = z.looseObject({
   body: z.string().nullable().optional(),
 })
 export const githubProjectsSchema = z.looseObject({ projects: z.array(githubProjectSchema) })
-export const githubProjectPageSchema = z.looseObject({ project: githubProjectSchema, items: z.array(githubProjectItemSchema), next: z.string().nullable() })
+export const githubProjectPageSchema = z.looseObject({ project: githubProjectSchema, items: z.array(githubProjectItemSchema), totalCount: z.number().optional(), next: z.string().nullable() })
 export const githubProjectMoveSchema = z.looseObject({ item: githubProjectItemSchema })
 export const githubProjectArchiveSchema = z.looseObject({ item: z.looseObject({ id: z.string(), isArchived: z.boolean() }) })
 export const githubProjectStatusUpdateSchema = z.looseObject({

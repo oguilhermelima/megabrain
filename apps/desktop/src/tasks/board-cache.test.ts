@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { fixtureBacklog, fixtureRoadmap, fixtureRoadmapItems } from '@/api/fixtures/github-projects'
 import type { GithubProjectItem } from '@/api/schema'
-import { boardCacheKey, boardKey, boardListReadDue, boardReadDue, createBoardMemory, distinctItems, readBoardPages, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
+import { boardCacheKey, boardKey, boardListReadDue, boardReadDue, boardFullReadDue, createBoardMemory, distinctItems, readBoardPages, emptyBoardCache, keptEntries, keptItems, mergedPages, readBoardCache, withItems, withProjects, writeBoardCache } from '@/tasks/board-cache'
 
 const item = (id: string): GithubProjectItem => ({ id, type: 'ISSUE', number: 1, title: id, url: null, state: 'OPEN', repository: 'o/r', status: null, assignees: [], labels: [], updatedAt: '2026-10-17T00:00:00.000Z' })
 const ids = (items: GithubProjectItem[]) => items.map((entry) => entry.id)
@@ -114,10 +114,17 @@ describe('when a board is read again', () => {
     expect(boardReadDue(1_000, 30_000, true)).toBe(true)
     expect(boardReadDue(1_000, 61_000, false)).toBe(true)
   })
+
+  test('a periodic read checks every page when its last full read is missing or ten minutes old', () => {
+    expect(boardFullReadDue(undefined, 600_000, false)).toBe(true)
+    expect(boardFullReadDue(0, 599_999, false)).toBe(false)
+    expect(boardFullReadDue(0, 600_000, false)).toBe(true)
+    expect(boardFullReadDue(500_000, 500_001, true)).toBe(true)
+  })
 })
 
 describe('reading a board a page at a time', () => {
-  const page = (items: GithubProjectItem[], next: string | null) => ({ items, next })
+  const page = (items: GithubProjectItem[], next: string | null, totalCount?: number) => ({ items, next, ...(totalCount === undefined ? {} : { totalCount }) })
 
   test('reads each page in turn, showing them as they come, and answers every item', async () => {
     const asked: (string | null)[] = []
@@ -146,6 +153,55 @@ describe('reading a board a page at a time', () => {
     expect(all).toBeNull()
     expect(asked).toBe(1)
     expect(shown).toEqual([])
+  })
+
+  test('a periodic refresh stops after the first unchanged page and total count', async () => {
+    const cached = [item('a'), item('b')]
+    const asked: (string | null)[] = []
+    const all = await readBoardPages({
+      read: async (after) => (asked.push(after), page(cached, 'next', 2)),
+      maxPages: 5,
+      current: () => true,
+      show: () => {},
+      unchanged: { items: cached, totalCount: 2 },
+    })
+    expect(asked).toEqual([null])
+    expect(ids(all ?? [])).toEqual(['a', 'b'])
+  })
+
+  test('a periodic refresh reads every page when the first page or total count changed', async () => {
+    const cached = [item('a'), item('b')]
+    for (const [first, totalCount] of [
+      [page([{ ...item('a'), updatedAt: '2026-10-18T00:00:00.000Z' }, item('b')], 'next', 2), 2],
+      [page(cached, 'next', 3), 2],
+      [page(cached, 'next'), 2],
+    ] as const) {
+      const asked: (string | null)[] = []
+      const all = await readBoardPages({
+        read: async (after) => (asked.push(after), after === null ? first : page([item('c')], null, totalCount)),
+        maxPages: 5,
+        current: () => true,
+        show: () => {},
+        unchanged: { items: cached, totalCount: 2 },
+      })
+      expect(asked).toEqual([null, 'next'])
+      expect(ids(all ?? [])).toEqual(['a', 'b', 'c'])
+    }
+  })
+
+  test('a periodic refresh reads every page when a full read is due, even if the first page is unchanged', async () => {
+    const cached = [item('a'), item('b')]
+    const asked: (string | null)[] = []
+    const all = await readBoardPages({
+      read: async (after) => (asked.push(after), after === null ? page(cached, 'next', 2) : page([item('deeply-edited')], null, 2)),
+      maxPages: 5,
+      current: () => true,
+      show: () => {},
+      unchanged: { items: cached, totalCount: 2 },
+      fullRead: true,
+    })
+    expect(asked).toEqual([null, 'next'])
+    expect(ids(all ?? [])).toEqual(['a', 'b', 'deeply-edited'])
   })
 })
 

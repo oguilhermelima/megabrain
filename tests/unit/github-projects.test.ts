@@ -121,6 +121,15 @@ describe('github projects', () => {
     expect(result.next).toBe('cursor-two')
   })
 
+  test('returns the total project item count with each page', async () => {
+    answer = (args) => {
+      expect(query(args)).toContain('totalCount')
+      return stdout({ data: { repositoryOwner: { projectV2: { ...base, items: { totalCount: 2, nodes: [projectItem('I1')], pageInfo: { hasNextPage: true, endCursor: 'cursor-two' } } } } } })
+    }
+    const result = await parsed<{ totalCount: number }>(['project', root, '7', '--json'])
+    expect(result.totalCount).toBe(2)
+  })
+
   test('moves an item using the selected project field and status option ids', async () => {
     answer = (args) => query(args).includes('updateProjectV2ItemFieldValue')
       ? stdout({ data: { updateProjectV2ItemFieldValue: { projectV2Item: projectItem('I1', { __typename: 'ProjectV2ItemFieldSingleSelectValue', name: 'Done', optionId: 'done' }) } } })

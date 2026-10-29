@@ -92,7 +92,7 @@ export const CONTENT_FIELDS = `
 `
 const ITEM_FIELD_VALUES = `fieldValues(first: 30) { nodes { __typename ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title startDate duration field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldLabelValue { field { ... on ProjectV2FieldCommon { name } } labels(first: 20) { nodes { name color } } } ... on ProjectV2ItemFieldMilestoneValue { field { ... on ProjectV2FieldCommon { name } } milestone { title dueOn } } ... on ProjectV2ItemFieldUserValue { users(first: 20) { nodes { login } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldRepositoryValue { repository { nameWithOwner } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldPullRequestValue { pullRequests(first: 20) { nodes { number title url } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldReviewerValue { field { ... on ProjectV2FieldCommon { name } } reviewers(first: 20) { nodes { __typename ... on User { login } ... on Team { name } } } } ... on ProjectV2ItemIssueFieldValue { field { ... on ProjectV2FieldCommon { name } } issueFieldValue { __typename ... on IssueFieldDateValue { value } ... on IssueFieldNumberValue { value } ... on IssueFieldTextValue { value } ... on IssueFieldSingleSelectValue { name optionId } } } } }`
 export const PROJECT_ITEM_FIELD_VALUES = ITEM_FIELD_VALUES
-const PROJECT_ITEMS = `items(first: 100, after: $after) { nodes { id isArchived updatedAt ${ITEM_FIELD_VALUES} fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CONTENT_FIELDS} } } pageInfo { hasNextPage endCursor } }`
+const PROJECT_ITEMS = `items(first: 100, after: $after) { totalCount nodes { id isArchived updatedAt ${ITEM_FIELD_VALUES} fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CONTENT_FIELDS} } } pageInfo { hasNextPage endCursor } }`
 
 export const PROJECTS_QUERY = `query projectsDiscovery($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
@@ -238,7 +238,8 @@ async function projectQuery(repositoryName: string, owner: string, number: numbe
   if (projectValue === null) return failed(`GitHub project ${number} was not found for ${owner}`)
   const items = record(ownerValue)?.items
   const pageInfo = record(record(items)?.pageInfo)
-  return ok({ project: projectValue, items: list(record(items)?.nodes).flatMap((node) => { const normalized = normalizeProjectItem(node); return normalized === null ? [] : [normalized] }), next: pageInfo?.hasNextPage === true ? nullableText(pageInfo.endCursor) : null })
+  const totalCount = record(items)?.totalCount
+  return ok({ project: projectValue, items: list(record(items)?.nodes).flatMap((node) => { const normalized = normalizeProjectItem(node); return normalized === null ? [] : [normalized] }), ...(typeof totalCount === 'number' ? { totalCount } : {}), next: pageInfo?.hasNextPage === true ? nullableText(pageInfo.endCursor) : null })
 }
 
 export async function executeProjects(verb: ProjectVerb, args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
