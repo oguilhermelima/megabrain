@@ -1622,16 +1622,11 @@ describe("executeSpawn", () => {
   // Codex's composer can read idle for one poll and then have something else replace it (the
   // update-check modal from the earlier correction is one example, but the pane can show any
   // transient text) before the next poll. A single idle observation is not proof the composer is
-  // still there to receive the prompt, so readiness must see idle hold for a stretch of time
-  // (1000ms, two observations at least that far apart with nothing else observed between them)
-  // before it is trusted.
-  test("does not send the prompt until an idle composer is stable again after an interruption", async () => {
+  test("fails fast when an update dialog replaces the composer", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-stability-`);
     const events: string[] = [];
     const dispatchId = "dispatch-tmux-readiness-stability";
     let captureCalls = 0;
-    let lastNonIdleAt = 0;
-    let promptSentAt = 0;
     const process = processFor(events, (command, args) => command === "tmux" && args[0] === "list-panes"
       ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
       : ok({ stdout: "", stderr: "", exitCode: 0 }));
@@ -1643,7 +1638,6 @@ describe("executeSpawn", () => {
         const isPrompt = text.startsWith("[megabrain dispatch");
         events.push(`text:${isPrompt ? "prompt" : "command"}`);
         if (isPrompt) {
-          promptSentAt = Date.now();
           appendReceived(root, dispatchId);
         }
         return ok(undefined);
@@ -1652,12 +1646,10 @@ describe("executeSpawn", () => {
       capturePane: async () => {
         captureCalls += 1;
         events.push(`capture:${captureCalls}`);
-        // idle briefly (calls 3-5), then an interruption (calls 6-7, e.g. an update-check modal
-        // replacing the composer), then idle again from call 8 onward until it is stable.
+        // idle briefly, then show a real captured update dialog.
         if (captureCalls <= 2) return ok("");
         if (captureCalls >= 3 && captureCalls <= 5) return ok(codexIdleOutput);
         if (captureCalls === 6 || captureCalls === 7) {
-          lastNonIdleAt = Date.now();
           return ok("Update available! 0.155.1 -> 0.156.0\n1. Update now\n2. Skip\nPress enter to continue");
         }
         return ok(codexIdleOutput);
@@ -1669,13 +1661,13 @@ describe("executeSpawn", () => {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "5000",
       }, process, options(worktree("existing")));
-      expect(result.kind).toBe("ok");
-      expect(events).toContain("text:prompt");
-      expect(captureCalls).toBeGreaterThan(7);
-      // The prompt must land at least 1000ms after the last non-idle observation, proving the
-      // composer had to be idle continuously for that long after the interruption, not merely
-      // idle again for one poll.
-      expect(promptSentAt - lastNonIdleAt).toBeGreaterThanOrEqual(950);
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") {
+        expect(result.error).toContain("update-dialog");
+        expect(result.error).toContain("Update available!");
+      }
+      expect(events).not.toContain("text:prompt");
+      expect(captureCalls).toBe(6);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
