@@ -21,6 +21,7 @@ import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { callStateOwner } from "../../db/state-owner.js";
 import { interruptKey } from "../../agents/index.js";
 import { agentOwnsForegroundProcess } from "../../core/terminal-process.js";
+import { withNextOrchestrationStep } from "../../core/orchestration-next.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -38,7 +39,10 @@ function changeOutput(dispatch: string, json: boolean, value: {
   oversized: boolean;
   reason?: string;
 }): string {
-  if (json) return `${JSON.stringify({ dispatchId: dispatch, queueChanged: true, interrupted: value.interrupted, status: value.delivered ? value.confirmed ? "delivered" : "delivered-unconfirmed" : "queued", attempts: value.attempts, idleReached: value.idleReached, delivered: value.delivered, confirmed: value.confirmed, supersededQueued: value.superseded.queued, supersededDelivered: value.superseded.delivered, deliveredSequences: value.superseded.deliveredSequences, oversized: value.oversized, ...(value.reason === undefined ? {} : { reason: value.reason }) }, null, 2)}\n`;
+  if (json) {
+    const receipt = { dispatchId: dispatch, queueChanged: true, interrupted: value.interrupted, status: value.delivered ? value.confirmed ? "delivered" : "delivered-unconfirmed" : "queued", attempts: value.attempts, idleReached: value.idleReached, delivered: value.delivered, confirmed: value.confirmed, supersededQueued: value.superseded.queued, supersededDelivered: value.superseded.delivered, deliveredSequences: value.superseded.deliveredSequences, oversized: value.oversized, ...(value.reason === undefined ? {} : { reason: value.reason }) };
+    return `${JSON.stringify(withNextOrchestrationStep("change", receipt, receipt), null, 2)}\n`;
+  }
   return `changed: ${dispatch}\nattempts: ${value.attempts}\nidle reached: ${value.idleReached}\ndelivered: ${value.delivered ? value.confirmed ? "yes (confirmed)" : "yes (unconfirmed)" : "no"}\nsuperseded queued: ${value.superseded.queued}\nsuperseded delivered: ${value.superseded.delivered}\n${value.oversized ? "direction exceeded the tmux limit; sent a megabrain check pointer\n" : ""}${value.reason === undefined ? "" : `${value.reason}\n`}`;
 }
 
@@ -89,7 +93,10 @@ function replyDeliveryResult(database: DatabaseHandle, dispatchId: string, seque
 
 function outputReply(dispatch: string, json: boolean, summary: SupersedeSummary, delivery: ReplyDeliveryResult): string {
   const nudge = delivery.status === "delivered" ? delivery.channel : delivery.status === "failed" ? "failed" : "not-typed";
-  if (json) return `${JSON.stringify({ dispatchId: dispatch, status: "queued", nudge, delivery, supersededQueued: summary.queued, supersededDelivered: summary.delivered, deliveredSequences: summary.deliveredSequences }, null, 2)}\n`;
+  if (json) {
+    const receipt = { dispatchId: dispatch, status: "queued", nudge, delivery, supersededQueued: summary.queued, supersededDelivered: summary.delivered, deliveredSequences: summary.deliveredSequences };
+    return `${JSON.stringify(withNextOrchestrationStep("reply", { delivery: delivery.status }, receipt), null, 2)}\n`;
+  }
   const deliveryLine = delivery.status === "delivered"
     ? `delivery: delivered via ${delivery.channel}\n`
     : delivery.status === "failed"

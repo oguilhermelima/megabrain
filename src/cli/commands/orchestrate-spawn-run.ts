@@ -43,6 +43,7 @@ import { scheduleAgentAutoUpdate } from "../../core/agent-update.js";
 import { stringValue, clearCallerIdentityEnv } from "./orchestrate-spawn-options.js";
 import { failureForCall } from "./orchestrate-spawn-worktree.js";
 import { READINESS_FRAME_MAX_LINES } from "./orchestrate-spawn-readiness.js";
+import { withNextOrchestrationStep } from "../../core/orchestration-next.js";
 import { type SpawnEnvironment, type SpawnDependencies, type SpawnOptions, type RecordValue, SPAWN_ENVIRONMENT_HELP, parseArgs, dispatchId, tmuxRuntimeInstalled, parentWorkspaceId, parentTmuxChannel, shellQuote, agyLogFile, finalPrompt, validatePromptBudget, writePromptFile, agentReadyTimeoutMs } from "./orchestrate-spawn-options.js";
 import { waitForTmuxReadiness, recordFrame, recordRejectedReadinessFrame } from "./orchestrate-spawn-readiness.js";
 import { defaultResolveWorktree, defaultRemoveWorktree, createHostTerminal, existingTmuxSessionForWorktree, openWorktreeTmuxTarget, removeStaleStableSession, canonicalPath } from "./orchestrate-spawn-worktree.js";
@@ -475,7 +476,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       const output = { status: "spawned", reason: null, dispatchId: id, ...(parentContext.host === "local" ? { deliveryChannel: "hook-and-watch" } : {}), terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }), ...(viewer === undefined ? {} : { viewer }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
       const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;
-      return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${parentContext.host === "local" ? "delivery: hook-and-watch\n" : ""}${attempts}${warning}${viewer === undefined ? "" : viewerLine(viewer)}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
+      return ok(parsed.value.json ? `${JSON.stringify(withNextOrchestrationStep("spawn", output, output))}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${parentContext.host === "local" ? "delivery: hook-and-watch\n" : ""}${attempts}${warning}${viewer === undefined ? "" : viewerLine(viewer)}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
     }
     step = plan.nextStep;
   }

@@ -13,6 +13,7 @@ import { getDispatch, isDispatchArchived, listDeliveries, listDispatchEntries, l
 import { usageText } from "../../core/usage.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { callStateOwner } from "../../db/state-owner.js";
+import { withNextOrchestrationStep } from "../../core/orchestration-next.js";
 
 export type ParentQueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -124,7 +125,10 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
           }
           returned = { ...returned, status: "acknowledged" };
         }
-        return ok(report(dispatchId, returned, messages, selected.replayed, parsed.value.json, parsed.value.json));
+        const output = report(dispatchId, returned, messages, selected.replayed, parsed.value.json, parsed.value.json);
+        if (!parsed.value.json) return ok(output);
+        const receipt = JSON.parse(output) as JsonRecord;
+        return ok(`${JSON.stringify(withNextOrchestrationStep("watch", receipt, receipt), null, 2)}\n`);
       }
       const elapsed = Date.now() - started;
       if (selected.kind === "unknown" || elapsed >= parsed.value.timeout * 1000) return ok(report(dispatchId, undefined, [], false, parsed.value.json));
@@ -200,7 +204,12 @@ export async function executeOrchestrateAck(args: readonly string[], environment
     ...(ack.duplicate && typeof delivery.consumer === "string" ? { acknowledgedBy: delivery.consumer } : {}),
   };
   if (parsed.value.close !== true) {
-    if (parsed.value.json) return ok(`${JSON.stringify(acknowledgment, null, 2)}\n`);
+    if (parsed.value.json) {
+      const messages = listMessages(database.value, dispatchId);
+      const message = messages.kind === "ok" ? messages.value.find((item) => messageSeqs.includes(item.seq)) : undefined;
+      const receipt = withNextOrchestrationStep("ack", { dispatchId, messageType: message?.type }, acknowledgment);
+      return ok(`${JSON.stringify(receipt, null, 2)}\n`);
+    }
     return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.duplicate}\n${ack.duplicate && typeof delivery.acknowledgedAt === "string" ? `acknowledged at: ${delivery.acknowledgedAt}\n` : ""}${ack.duplicate && typeof delivery.consumer === "string" ? `acknowledged by: ${delivery.consumer}\n` : ""}`);
   }
   const closed = await executeOrchestrateClose([dispatchId, ...(parsed.value.json ? ["--json"] : [])], environment, process);
