@@ -4,6 +4,32 @@ import { executeWeb } from "../../src/cli/commands/web.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
 describe("planWeb", () => {
+  test.each([
+    [{ stdinIsTTY: false, stdoutIsTTY: true }, {}],
+    [{ stdinIsTTY: true, stdoutIsTTY: false }, {}],
+    [{ stdinIsTTY: true, stdoutIsTTY: true }, { MEGABRAIN_DISPATCH_ID: "dispatch-test" }],
+  ] as const)("refuses session save for terminal context %j", async (terminal, environment) => {
+    let invoked = false;
+    const processAdapter: ProcessAdapter = {
+      async run() { invoked = true; return { kind: "ok", value: { stdout: "", stderr: "", exitCode: 0 } }; },
+      async startDetached() { return { kind: "ok", value: undefined }; }, invocationCount() { return 0; },
+    };
+    const result = await executeWeb(["session", "save"], environment, processAdapter, terminal);
+    expect(result.kind).toBe("failed");
+    expect(invoked).toBe(false);
+  });
+
+  test("allows session save in an interactive terminal", async () => {
+    let invoked = false;
+    const processAdapter: ProcessAdapter = {
+      async run() { invoked = true; return { kind: "ok", value: { stdout: "", stderr: "", exitCode: 0 } }; },
+      async startDetached() { return { kind: "ok", value: undefined }; }, invocationCount() { return 0; },
+    };
+    const result = await executeWeb(["session", "save"], {}, processAdapter, { stdinIsTTY: true, stdoutIsTTY: true });
+    expect(result.kind).toBe("ok");
+    expect(invoked).toBe(true);
+  });
+
   test("refuses session save from a dispatch", async () => {
     let invoked = false;
     const processAdapter: ProcessAdapter = {
