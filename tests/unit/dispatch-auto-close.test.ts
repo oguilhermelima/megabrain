@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AUTO_CLOSE_GRACE_MS, mayAutoCloseDispatch } from "../../src/core/dispatch-auto-close.js";
+import { parseArgs } from "../../src/cli/commands/orchestrate-spawn-options.js";
 
 const candidate = (overrides: Partial<Parameters<typeof mayAutoCloseDispatch>[0]> = {}) => ({
   state: "done", runtime: "tmux", keepOpen: false, enabled: true,
@@ -8,6 +9,12 @@ const candidate = (overrides: Partial<Parameters<typeof mayAutoCloseDispatch>[0]
 });
 
 describe("dispatch auto-close policy", () => {
+  test("accepts --keep-open per spawn and defaults it off", () => {
+    const base = ["--worktree", "/work/tree", "--agent", "codex", "--prompt", "task"];
+    expect(parseArgs(base)).toMatchObject({ kind: "ok", value: { keepOpen: false } });
+    expect(parseArgs([...base, "--keep-open"])).toMatchObject({ kind: "ok", value: { keepOpen: true } });
+  });
+
   test("uses a two-minute grace period after ack", () => {
     expect(AUTO_CLOSE_GRACE_MS).toBe(120_000);
     expect(mayAutoCloseDispatch(candidate({ now: Date.parse("2026-11-03T12:01:59.999Z") }))).toBe(false);
