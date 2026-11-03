@@ -85,12 +85,15 @@ export async function changesAlreadyMerged(
     if (baseTree !== undefined && baseTree === branchTree) return true;
   }
 
-  const pull = await process.run("gh", ["pr", "list", "--state", "merged", "--head", branch, "--base", base, "--json", "state", "--limit", "1"], { cwd: repo, timeoutMs: 5_000 });
+  const tip = await run(process, "git", ["-C", repo, "rev-parse", branch]);
+  if (tip.kind !== "ok") return false;
+  const pull = await process.run("gh", ["pr", "list", "--state", "merged", "--head", branch, "--base", base, "--json", "headRefOid,state"], { cwd: repo, timeoutMs: 5_000 });
   if (pull.kind !== "ok") return false;
   try {
     const entries: unknown = JSON.parse(pull.value.stdout);
     return Array.isArray(entries) && entries.some((entry) =>
-      typeof entry === "object" && entry !== null && "state" in entry && entry.state === "MERGED",
+      typeof entry === "object" && entry !== null && "state" in entry && entry.state === "MERGED" &&
+      "headRefOid" in entry && entry.headRefOid === tip.value.stdout.trim(),
     );
   } catch {
     return false;

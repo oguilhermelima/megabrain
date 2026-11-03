@@ -106,7 +106,7 @@ export async function executeWorktreeFinish(
       "--merged",
       baseRef,
     ]);
-    const isAncestor =
+    const notAncestor =
       merged.kind !== "ok" ||
       !merged.value.stdout.split("\n").some(
         (line) =>
@@ -115,7 +115,7 @@ export async function executeWorktreeFinish(
             .replace(/^[*+]\s*/, "")
             .trim() === branch,
       );
-    if (isAncestor && !(await changesAlreadyMerged(process, repo.value, branch, baseRef))) {
+    if (notAncestor && !(await changesAlreadyMerged(process, repo.value, branch, baseRef))) {
       const message =
         "refusing to delete unmerged branch: " +
         branch +
