@@ -8,9 +8,64 @@ import type { ProcessOutput } from "../../src/adapters/proc.js";
 import { executeDeliveryWorker, resumeVerificationAndRecover, startDeliveryWorker } from "../../src/cli/commands/delivery-worker.js";
 import { openDatabase, withWrite } from "../../src/db/db.js";
 import { createDispatch } from "../../src/adapters/state/dispatches.js";
+import { appendParentReply, stateDatabase } from "../../src/adapters/state-db.js";
 import { callStateOwner, startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
 describe("deferred delivery worker lifecycle", () => {
+  test("proves a tmux child through its pane when Codex shares the wrapper shell foreground group", async () => {
+    const root = mkdtempSync(join(tmpdir(), "megabrain-delivery-tmux-owner-"));
+    const calls: string[][] = [];
+    let owner: Awaited<ReturnType<typeof startStateOwner>> | undefined;
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        calls.push([command, ...args]);
+        if (command === "tmux") {
+          if (args.includes("has-session")) return ok({ stdout: "", stderr: "", exitCode: 0 });
+          if (args.includes("list-panes")) return ok({ stdout: "%4\n", stderr: "", exitCode: 0 });
+          if (args.includes("display-message") && args.at(-1) === "#{pane_pid}") return ok({ stdout: "4240\n", stderr: "", exitCode: 0 });
+          if (args.includes("display-message") && args.at(-1) === "#{session_name}") return ok({ stdout: "session\n", stderr: "", exitCode: 0 });
+          if (args.includes("capture-pane")) return ok({ stdout: "› \n", stderr: "", exitCode: 0 });
+          return ok({ stdout: "", stderr: "", exitCode: 0 });
+        }
+        if (command === "ps" && args[0] === "-p") return ok({ stdout: "ttys004\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "eww") return ok({ stdout: "4240 1 bash -c MEGABRAIN_DISPATCH_ID=tmux-owner\n4242 4240 codex --resume child\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "-axo") return ok({ stdout: "4240 1 4240 4240 bash -c wrapper\n4242 4240 4240 4240 codex --resume child\n", stderr: "", exitCode: 0 });
+        return failed(`${command} ${args.join(" ")} was not expected`);
+      },
+      async startDetached() { return ok({ stdout: "", stderr: "", exitCode: 0 }); },
+      invocationCount() { return calls.length; },
+    };
+
+    try {
+      const seeded = stateDatabase({ MEGABRAIN_STATE_DIR: root });
+      expect(seeded.kind).toBe("ok");
+      if (seeded.kind !== "ok") throw new Error(seeded.error);
+      expect(createDispatch(seeded.value, {
+        dispatchId: "tmux-owner", state: "running", runtime: "tmux", childHost: "tmux",
+        tmuxSession: "session", tmuxSessionId: "session-id", tmuxPane: "%4", terminalId: "tmux:session:%4",
+        agent: "codex", agentPid: 4242,
+      }).kind).toBe("ok");
+      const reply = appendParentReply(seeded.value, "tmux-owner", { from: "parent", type: "reply", text: "continue", sessionId: "parent" }, {
+        supersede: false,
+        outbox: { id: "outbox-tmux-owner", targetKind: "child-delivery", target: "tmux:session:%4", payload: {
+          dispatchId: "tmux-owner", sequence: 1, fullMessage: "continue",
+          meta: { runtime: "tmux", childHost: "tmux", tmuxSession: "session", tmuxSessionId: "session-id", tmuxPane: "%4", terminalId: "tmux:session:%4", agent: "codex", agentPid: 4242 },
+        } },
+      });
+      expect(reply.kind).toBe("ok");
+      seeded.value.close();
+      owner = await startStateOwner(root);
+
+      await executeDeliveryWorker(["outbox-tmux-owner", "holder", "lease", String(Date.now() + 1_000)], { HOME: root, MEGABRAIN_STATE_DIR: root }, process, owner.handle);
+
+      expect(calls).toContainEqual(["tmux", "display-message", "-p", "-t", "%4", "#{pane_pid}"]);
+      expect(calls).not.toContainEqual(["ps", "-ww", "-p", "4242", "-o", "pid=,pgid=,tpgid=,args="]);
+    } finally {
+      if (owner !== undefined) await stopStateOwner(owner);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("recovers promptly and logs when verifier scheduling fails", async () => {
     const errors: string[] = [];
     const originalError = console.error;
