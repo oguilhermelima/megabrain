@@ -91,7 +91,7 @@ describe("supervisor dispatch auto-close", () => {
       ? ok({ stdout: "1793707190|1793707199\n", stderr: "", exitCode: 0 })
       : failed("unexpected command"));
     const result = await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
-    expect(result.open).toBe(true);
+    expect(result.open).toBe(false);
     expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
   });
 
