@@ -1,0 +1,21 @@
+ ▐▛███▛█   Claude Code v2.1.318
+▝▜██████▀  Opus 5.5 · Claude Ultra
+ ▝▝   ▝▝   /private/tmp/megabrain-claude-fixture.jf9ZUX
+
+
+
+
+
+
+
+
+
+
+
+
+                                                            ◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────
+❯ Try "refactor <filepath>"
+────────────────────────────────────────────────────────────────────────────────
+  Opus 5.5 1M (Medium) │ 0/1M ctx
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← 5 agents

@@ -4,6 +4,7 @@ import { resolveParentContext } from "../../src/core/context.js";
 import { classifyLiveness, isFirstRunDialog } from "../../src/core/liveness.js";
 import { commandLine, getAgent, interruptKey, registerAgent, submitKey, unregisterAgent, type Agent } from "../../src/agents/index.js";
 import { ok, type Result } from "../../src/core/result.js";
+import { agentReadyTimeoutMs } from "../../src/cli/commands/orchestrate-spawn-options.js";
 
 const fourthAgent: Agent = {
   id: "fourth",
@@ -156,6 +157,31 @@ describe("agent registry", () => {
     expect(classifyLiveness("claude", "❯ Try \"fix typecheck errors\"").status).toBe("idle");
     expect(classifyLiveness("claude", "❯ fix the bug").status).toBe("unknown");
     expect(classifyLiveness("claude", "❯ Try \"fix typecheck errors\"\nWorking\nesc to interrupt").status).toBe("working");
+  });
+
+  test("Claude fullscreen and classic captures both prove an idle composer", async () => {
+    const fullscreen = await readFile(new URL("../fixtures/claude-fullscreen-composer.txt", import.meta.url), "utf8");
+    const classicCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-claude-idle.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
+    expect(classifyLiveness("claude", fullscreen).status).toBe("idle");
+    expect(classifyLiveness("claude", classicCapture.result.terminal.tail.join("\n")).status).toBe("idle");
+  });
+
+  test("Codex is not ready while its header or MCP servers are still loading", async () => {
+    const loadingHeader = await readFile(new URL("../fixtures/codex-loading-header.txt", import.meta.url), "utf8");
+    const mcpStartup = await readFile(new URL("../fixtures/tmux-capture-codex-argv-brief.txt", import.meta.url), "utf8");
+    expect(classifyLiveness("codex", loadingHeader).status).not.toBe("idle");
+    expect(classifyLiveness("codex", mcpStartup).status).not.toBe("idle");
+  });
+
+  test("spawn readiness uses a bounded launch budget for each agent and keeps the override", () => {
+    // Claude's first fullscreen frame can exceed the old 10 s window; Codex follows Orca's
+    // 20 s composer budget including MCP startup. Grok's intro can animate for 10 s, and agy
+    // performs a first-launch workspace setup before painting its composer.
+    const expected = { claude: 30000, codex: 20000, grok: 20000, agy: 20000 } as const;
+    for (const [agent, timeout] of Object.entries(expected)) {
+      expect(agentReadyTimeoutMs({}, agent)).toBe(timeout);
+      expect(agentReadyTimeoutMs({ MEGABRAIN_AGENT_READY_TIMEOUT_MS: "2345" }, agent)).toBe(2345);
+    }
   });
 
   test("agy classifies captured trust, idle, and working screens", async () => {
