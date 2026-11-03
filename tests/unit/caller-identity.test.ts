@@ -29,6 +29,7 @@ import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { callerSession as installDoctorCallerSession } from "../../src/cli/commands/install-doctor.js";
 import { appendMessage, createDelivery, createDispatch, getDispatch, listDeliveries } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
+import { unhandledParentMail } from "../../src/core/check.js";
 
 // ---------------------------------------------------------------------------
 // Test doubles
@@ -413,6 +414,31 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     const result = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--json"], structuredClaudeEnvironment(root));
     expect(isOwnershipRefusal(result)).toBe(false);
     expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "outstanding" }] });
+  });
+
+  test("watch acknowledges returned mail by default and keeps it replayable with --no-ack", async () => {
+    const root = await tempStateDir();
+    await writeDispatch(root, "dispatch-1", baseMeta());
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "which option?" });
+    createDelivery(db.value, { id: "delivery-watch", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding", consumer: null, consumerGeneration: null });
+    const owner = await startStateOwner(root);
+    try {
+      const watched = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--json"], structuredClaudeEnvironment(root));
+      expect(watched.kind).toBe("ok");
+      expect(watched.kind === "ok" ? JSON.parse(watched.value) : {}).toMatchObject({ status: "acknowledged" });
+      expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [expect.objectContaining({ status: "acknowledged" })] });
+      expect(unhandledParentMail(listDeliveries(db.value, "dispatch-1").kind === "ok" ? listDeliveries(db.value, "dispatch-1").value : [], listMessages(db.value, "dispatch-1").kind === "ok" ? listMessages(db.value, "dispatch-1").value : [])).toEqual([]);
+
+      appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "another question?" });
+      createDelivery(db.value, { id: "delivery-watch-no-ack", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [2], status: "outstanding", consumer: null, consumerGeneration: null });
+      const replayable = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--no-ack", "--json"], structuredClaudeEnvironment(root));
+      expect(replayable.kind).toBe("ok");
+      expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [expect.anything(), expect.objectContaining({ status: "outstanding" })] });
+    } finally {
+      await stopStateOwner(owner);
+    }
   });
 
   test("ack", async () => {
