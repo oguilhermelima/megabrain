@@ -62,6 +62,7 @@ describe("admission queue flow", () => {
 
   test("starts the same queued dispatch when admission opens and records one notice for each transition", async () => {
     const context = await queuedSpawn("admission-flow-start", { maxPressure: "normal" });
+    expect(context.run.result.kind === "ok" ? JSON.parse(context.run.result.value).reason : "").toContain("spawn costs ~");
     const original = getTmux();
     registerTmux({
       ...original, id: "tmux", paneExists: async () => ok(true), sessionExists: async () => ok(true), panesForSession: async () => ok(["%9"]),
