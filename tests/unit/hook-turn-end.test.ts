@@ -693,7 +693,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
 
       const first = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
       expect(first).toMatchObject({ kind: "ok" });
-      expect(JSON.parse(first.kind === "ok" ? first.value : "{}")).toMatchObject({ status: "reply", text: "the complete new direction" });
+      expect(JSON.parse(first.kind === "ok" ? first.value : "{}")).toMatchObject({ status: "reply", text: "the complete new direction", messageSeqs: [1] });
       expect(listDeliveries(db.value, "d1")).toMatchObject({ kind: "ok", value: [expect.objectContaining({ status: "acknowledged", transport: "checked" })] });
 
       const second = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
