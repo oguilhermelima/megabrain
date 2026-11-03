@@ -1,7 +1,7 @@
 import type { ProcessAdapter } from "../adapters/proc.js";
 import { getHost } from "../hosts/index.js";
 
-type TerminalScope = Readonly<{ host?: unknown; terminalId?: unknown; workspaceId?: unknown }>;
+type TerminalScope = Readonly<{ host?: unknown; terminalId?: unknown; workspaceId?: unknown; tmuxPane?: unknown }>;
 
 function agentCommand(agent: string, command: string): boolean {
   if (/^(?:-?(?:zsh|bash|sh|fish))(?:\s|$)/i.test(command)) return false;
