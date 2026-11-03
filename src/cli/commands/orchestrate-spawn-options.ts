@@ -97,6 +97,7 @@ export type SpawnOptions = Readonly<{
   readonly json: boolean;
   readonly contextPolicy?: ContextPolicy;
   readonly admission: "wait" | "fail";
+  readonly keepOpen?: boolean;
 }>;
 
 export type RecordValue = Record<string, unknown>;
@@ -133,10 +134,12 @@ export function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   let loop: boolean | undefined;
   let maxIterations: number | undefined;
   let admission: "wait" | "fail" = "wait";
+  let keepOpen = false;
   const agentArgs: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") json = true;
+    else if (arg === "--keep-open") keepOpen = true;
     else if (arg === "--browser") browser = true;
     else if (arg === "--loop") loop = true;
     else if (arg === "--no-loop") loop = false;
@@ -184,7 +187,7 @@ export function parseArgs(args: readonly string[]): Result<SpawnOptions> {
       else agentArgs.push(value);
       index += 1;
     } else if (arg === "-h" || arg === "--help") {
-      return ok({ worktree: "", agent: "", model: null, effort: null, prompt: "", label: null, tmux: null, browser, agentArgs, json, admission });
+      return ok({ worktree: "", agent: "", model: null, effort: null, prompt: "", label: null, tmux: null, browser, agentArgs, json, admission, keepOpen });
     } else return failed(`unknown orchestrate spawn option: ${arg}`, 2);
   }
   if (worktree === undefined && (repo === undefined || branch === undefined)) {
@@ -198,7 +201,7 @@ export function parseArgs(args: readonly string[]): Result<SpawnOptions> {
     const valid = validateContextPolicy(contextPolicy);
     if (valid.kind !== "ok") return valid;
   }
-  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, terminal, browser, agentArgs, json, contextPolicy, admission });
+  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, terminal, browser, agentArgs, json, contextPolicy, admission, keepOpen });
 }
 
 export function dispatchId(environment: SpawnEnvironment): string {
