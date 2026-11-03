@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { executeCheck, loadMessages, loadDeliveries } from "../../src/cli/commands/check.js";
 import { createDispatch, appendMessage, setDeliveryTransport, listDeliveries } from "../../src/adapters/state-db.js";
-import { guardedStateDatabase } from "./state-db-guard.js";
+import { guardedOpenDatabase, guardedStateDatabase } from "./state-db-guard.js";
 
 const message = (seq: number, from: string, type: string, text = type): CheckMessage => ({ seq, path: `message-${seq}.json`, from, type, text });
 const delivery = (id: string, messageSeqs: number[], status = "outstanding", consumer: string | null = null): CheckDelivery => ({ id, messageSeqs, status, consumer, consumerGeneration: consumer === null ? null : 1 });
@@ -68,7 +68,7 @@ describe("check delivery lifecycle", () => {
         expect(parsed.messages[0]).toMatchObject({ alreadyTyped: true });
         expect(parsed.messages[0]?.alreadyTypedAt).toBeString();
       }
-      const afterRead = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      const afterRead = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
       if (afterRead.kind !== "ok") throw new Error(afterRead.error);
       const delivery = listDeliveries(afterRead.value, "reply-dispatch");
       expect(delivery.kind === "ok" ? delivery.value[0]?.status : "").toBe("acknowledged");
