@@ -1170,6 +1170,28 @@ describe("executeSpawn", () => {
     }
   });
 
+  test("delivers the required short preamble through executeSpawn", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-preamble-delivery-`);
+    const dispatchId = "dispatch-preamble-delivery";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
+      : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "task body", "--tmux", "false"], {
+        ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      const delivered = process.calls
+        .filter((call) => call.command === "orca" && call.args[1] === "send")
+        .map((call) => call.args[call.args.indexOf("--text") + 1] ?? "")
+        .find((text) => text.includes("Dispatch identity:"));
+      expect(delivered).toBeDefined();
+      expect(delivered).toContain("REQUIRED: Run megabrain received first.");
+      expect(delivered).toContain("CRITICAL: Never close your own dispatch.");
+      const preamble = delivered?.split("\n\nDispatch identity:")[0] ?? "";
+      expect(new TextEncoder().encode(preamble).length).toBeLessThan(440);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   test("reports cleanup failure alongside the primary host command failure", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-cleanup-failure-`);
     const dispatchId = "dispatch-cleanup-failure";
