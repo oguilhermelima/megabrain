@@ -13,7 +13,7 @@ import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { failed, ok, type Result } from "../../core/result.js";
-import { getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
+import { APP_TMUX_SERVER, DISPATCH_TMUX_SERVER, getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
 import { readDeliveryScreen } from "./delivery-screen.js";
 import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
 import { collectResources } from "./resources.js";
@@ -21,6 +21,8 @@ import { notifyAdmissionStatus } from "./admission-notify.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { classifyQueueMail } from "../../core/queue-write.js";
 import { callStateOwner } from "../../db/state-owner.js";
+import { dispatchAutoCloseEnabled, mayAutoCloseDispatch, tmuxClientsViewedSinceDone } from "../../core/dispatch-auto-close.js";
+import { executeOrchestrateClose } from "./orchestrate-close.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -28,6 +30,8 @@ const LEASE_KEY = "supervise";
 const DEFAULT_INTERVAL_SECONDS = 60;
 const LEASE_PADDING_SECONDS = 15;
 const PASTE_END_MARKER = "\u001b[201~";
+const AUTO_CLOSE_TMUX_SERVERS = [DISPATCH_TMUX_SERVER, APP_TMUX_SERVER] as const;
+const AUTO_CLOSE_CLIENT_FORMAT = "#{client_created}|#{client_activity}";
 
 function object(value: unknown): RecordValue | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as RecordValue : undefined;
@@ -342,6 +346,65 @@ async function settleImplicitChildReads(root: string, database: Parameters<typeo
   }
 }
 
+function clientListUnavailable(reason: string): boolean {
+  return /no server running|can't find session|no such session|no current client/i.test(reason);
+}
+
+async function tmuxClientViewedSinceDone(session: string, doneAt: string, process: ProcessAdapter): Promise<boolean | undefined> {
+  for (const server of AUTO_CLOSE_TMUX_SERVERS) {
+    const result = await process.run("tmux", ["-L", server, "list-clients", "-t", session, "-F", AUTO_CLOSE_CLIENT_FORMAT]);
+    if (result.kind !== "ok") {
+      const reason = result.kind === "failed" ? result.error : result.reason;
+      if (clientListUnavailable(reason)) continue;
+      return undefined;
+    }
+    const viewed = tmuxClientsViewedSinceDone(result.value.stdout, doneAt);
+    if (viewed !== false) return viewed;
+  }
+  return false;
+}
+
+async function closeUnviewedDoneTmuxDispatches(
+  root: string,
+  database: Parameters<typeof getDispatch>[0],
+  dispatches: readonly RecordValue[],
+  environment: Environment,
+  process: ProcessAdapter,
+  now: number,
+): Promise<boolean> {
+  if (!await dispatchAutoCloseEnabled({ ...environment, MEGABRAIN_STATE_DIR: root })) return false;
+  let pending = false;
+  for (const raw of dispatches) {
+    const dispatch = string(raw.dispatchId);
+    const session = string(raw.tmuxSession);
+    if (dispatch === undefined || session === undefined || raw.state !== "done" || raw.runtime !== "tmux" || raw.keepOpen === true || raw.autoCloseViewedAt !== undefined) continue;
+    const messages = listMessages(database, dispatch);
+    const deliveries = listDeliveries(database, dispatch);
+    if (messages.kind !== "ok" || deliveries.kind !== "ok") { pending = true; continue; }
+    const doneMessage = messages.value.filter((message) => message.from === "child" && message.type === "done").at(-1);
+    if (doneMessage === undefined) { pending = true; continue; }
+    const delivery = deliveries.value.find((item) => item.recipient === "parent" && Array.isArray(item.messageSeqs) && item.messageSeqs.includes(doneMessage.seq));
+    if (delivery?.status !== "acknowledged" || typeof delivery.acknowledgedAt !== "string") { pending = true; continue; }
+    const doneTime = Date.parse(doneMessage.createdAt);
+    const acknowledgedTime = Date.parse(delivery.acknowledgedAt);
+    if (!Number.isFinite(doneTime) || !Number.isFinite(acknowledgedTime) || acknowledgedTime < doneTime) { pending = true; continue; }
+    const viewed = await tmuxClientViewedSinceDone(session, doneMessage.createdAt, process);
+    if (viewed === undefined) { pending = true; continue; }
+    if (viewed) {
+      await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, expectedState: "done", patch: { autoCloseViewedAt: new Date(now).toISOString() } }).catch(() => undefined);
+      continue;
+    }
+    const mayClose = mayAutoCloseDispatch({
+      state: String(raw.state), runtime: String(raw.runtime), keepOpen: false, enabled: true,
+      acknowledgedAt: delivery.acknowledgedAt, now, viewedSinceDone: false,
+    });
+    if (!mayClose) { pending = true; continue; }
+    const closed = await executeOrchestrateClose([dispatch], { ...environment, MEGABRAIN_STATE_DIR: root }, process);
+    if (closed.kind !== "ok") pending = true;
+  }
+  return pending;
+}
+
 export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
   try { await callStateOwner(root, { operation: "settle-closed-parent-backlog" }); }
   catch { return { open: true, findings: 0 }; }
@@ -361,8 +424,9 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
   const listed = listDispatches(database);
   if (listed.kind !== "ok") return { open: false, findings: 0 };
   await sweepGrokLeaders(root, ownedGrokLeaders(listed.value), process);
+  const autoClosePending = await closeUnviewedDoneTmuxDispatches(root, database, listed.value, environment, process, now);
   const openDispatches = listed.value.filter((record) => ["queued", "spawning", "running", "waiting_for_reply", "orphaned"].includes(String(record.state)));
-  if (!hasOpenDispatches(openDispatches.map((record) => String(record.state)))) return { open: pendingPeerVerifications, findings: 0 };
+  if (!hasOpenDispatches(openDispatches.map((record) => String(record.state)))) return { open: pendingPeerVerifications || autoClosePending, findings: 0 };
   const answerState = listChildAnsweredDispatches(database, openDispatches.map((record) => String(record.dispatchId)));
   const answeredDispatches = answerState.kind === "ok" ? answerState.value : undefined;
   let findings = 0;
@@ -434,7 +498,9 @@ export async function startSupervisorWorker(root: string, environment: Environme
   if (listed.kind !== "ok") return "failed";
   const peerVerifications = listPendingOutboxPeerVerifications(database.value, { limit: 1 });
   const hasPendingPeerVerification = peerVerifications.kind === "ok" && peerVerifications.value.rows.length > 0;
-  if (!hasOpenDispatches(listed.value.map((record) => String(record.state))) && !hasPendingPeerVerification) return "no-open-dispatches";
+  const autoCloseEnabled = await dispatchAutoCloseEnabled({ ...environment, MEGABRAIN_STATE_DIR: root });
+  const hasAutoCloseCandidate = autoCloseEnabled && listed.value.some((record) => record.state === "done" && record.runtime === "tmux" && typeof record.tmuxSession === "string" && record.keepOpen !== true && record.autoCloseViewedAt === undefined);
+  if (!hasOpenDispatches(listed.value.map((record) => String(record.state))) && !hasPendingPeerVerification && !hasAutoCloseCandidate) return "no-open-dispatches";
   const holder = `${globalThis.process.pid}-${randomUUID()}`;
   const lease = await callStateOwner(root, { operation: "acquire-lease", key: LEASE_KEY, holder, seconds: leaseSeconds(intervalSeconds(environment)) }).catch(() => false) as boolean;
   if (!lease) return "already-running";
