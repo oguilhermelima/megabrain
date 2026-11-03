@@ -427,7 +427,7 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     try {
       const watched = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--json"], structuredClaudeEnvironment(root));
       expect(watched.kind).toBe("ok");
-      expect(watched.kind === "ok" ? JSON.parse(watched.value) : {}).toMatchObject({ status: "acknowledged" });
+      expect(watched.kind === "ok" ? JSON.parse(watched.value) : {}).toMatchObject({ status: "waiting_for_reply", deliveryStatus: "acknowledged" });
       expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [expect.objectContaining({ status: "acknowledged" })] });
       expect(unhandledParentMail(listDeliveries(db.value, "dispatch-1").kind === "ok" ? listDeliveries(db.value, "dispatch-1").value : [], listMessages(db.value, "dispatch-1").kind === "ok" ? listMessages(db.value, "dispatch-1").value : [])).toEqual([]);
 
