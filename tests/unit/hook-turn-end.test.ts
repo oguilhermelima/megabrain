@@ -11,7 +11,7 @@ import { appendMessage, waiterIsActive } from "../../src/cli/commands/queue-writ
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { appendMessage as appendDatabaseMessage, claimOutbox, createDispatch, finishNotification, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
+import { acknowledgeImplicitDelivery, appendMessage as appendDatabaseMessage, claimOutbox, createDispatch, finishNotification, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
 import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
@@ -673,6 +673,32 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "acknowledged" });
       const afterDone = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], childEnv(root), fp);
       expect(JSON.parse(afterDone.kind === "ok" ? afterDone.value : "{}")).toMatchObject({ status: "empty", messages: [] });
+    });
+  });
+
+  test("a queued full change direction is returned once and then stays acknowledged", async () => {
+    await withRoot("queued-full-change-direction", async (root) => {
+      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
+      const env = childEnv(root, { MEGABRAIN_CONSUMER_ID: "child-consumer" });
+      const fp = fakeProcess();
+      await appendMessage(root, "d1", "parent", "reply", "the complete new direction", "coord-term", env, fp);
+      const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const delivery = listDeliveries(db.value, "d1");
+      if (delivery.kind !== "ok" || delivery.value[0] === undefined) throw new Error("reply delivery missing");
+      const marked = setDeliveryTransport(db.value, "d1", Number(delivery.value[0].messageSeqs[0]), "queue", "full-direction");
+      if (marked.kind !== "ok") throw new Error(marked.error);
+      const acknowledged = acknowledgeImplicitDelivery(db.value, "d1", delivery.value[0].id, "child", undefined, "child-consumer");
+      if (acknowledged.kind !== "ok") throw new Error(acknowledged.error);
+
+      const first = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
+      expect(first).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(first.kind === "ok" ? first.value : "{}")).toMatchObject({ status: "reply", text: "the complete new direction" });
+      expect(listDeliveries(db.value, "d1")).toMatchObject({ kind: "ok", value: [expect.objectContaining({ status: "acknowledged", transport: "checked" })] });
+
+      const second = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
+      expect(second).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(second.kind === "ok" ? second.value : "{}")).toMatchObject({ status: "empty", messages: [] });
     });
   });
 
