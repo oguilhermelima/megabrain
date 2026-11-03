@@ -2,10 +2,19 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { createProcessAdapter } from "../../src/adapters/proc.js";
+import { createProcessAdapter, type ProcessAdapter } from "../../src/adapters/proc.js";
+import { failed } from "../../src/core/result.js";
 import { executeWorktreeFinish } from "../../src/cli/commands/worktree-write.js";
 
-const process = createProcessAdapter();
+const real = createProcessAdapter();
+const process: ProcessAdapter = {
+  async run(command, args, options) {
+    if (command === "sh" && args[0] === "-c" && (args[1] === "command -v orca" || args[1] === "command -v superset")) return failed("not found", 1);
+    return real.run(command, args, options);
+  },
+  startDetached: (command, args, options) => real.startDetached(command, args, options),
+  invocationCount: () => real.invocationCount(),
+};
 const git = async (cwd: string, ...args: string[]) => {
   const result = await process.run("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args]);
   if (result.kind !== "ok") throw new Error(result.error);
@@ -59,6 +68,9 @@ describe("worktree finish recognizes merged changes", () => {
     try {
       const path = await worktree(f, "feat/rebase");
       const commit = await git(path, "rev-parse", "HEAD");
+      await writeFile(join(f.repo, "main-only.txt"), "independent base change\n");
+      await git(f.repo, "add", "main-only.txt");
+      await git(f.repo, "commit", "-q", "-m", "advance base independently");
       await git(f.repo, "cherry-pick", commit);
       const result = await finish(f, path, "main");
       expect(result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode).toBe(0);
