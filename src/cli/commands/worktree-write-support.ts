@@ -63,6 +63,40 @@ export function removalReason(error: string): string {
   }
   return compact.length > 0 ? compact : "the remover gave no reason";
 }
+
+/**
+ * Git ancestry alone misses rebase and squash merges. Patch equivalence covers rebases and equal
+ * trees cover an exact squash result; GitHub's merged-PR record covers squash merges followed by
+ * later base commits. Forge lookup is deliberately best-effort so offline Git-only finish still
+ * works.
+ */
+export async function changesAlreadyMerged(
+  process: ProcessAdapter,
+  repo: string,
+  branch: string,
+  base: string,
+): Promise<boolean> {
+  const cherry = await run(process, "git", ["-C", repo, "cherry", base, branch]);
+  if (cherry.kind === "ok" && cherry.value.stdout.split("\n").every((line) => !line.startsWith("+"))) return true;
+
+  const trees = await run(process, "git", ["-C", repo, "rev-parse", `${base}^{tree}`, `${branch}^{tree}`]);
+  if (trees.kind === "ok") {
+    const [baseTree, branchTree] = trees.value.stdout.trim().split(/\s+/);
+    if (baseTree !== undefined && baseTree === branchTree) return true;
+  }
+
+  const pull = await process.run("gh", ["pr", "list", "--state", "merged", "--head", branch, "--base", base, "--json", "state", "--limit", "1"], { cwd: repo, timeoutMs: 5_000 });
+  if (pull.kind !== "ok") return false;
+  try {
+    const entries: unknown = JSON.parse(pull.value.stdout);
+    return Array.isArray(entries) && entries.some((entry) =>
+      typeof entry === "object" && entry !== null && "state" in entry && entry.state === "MERGED",
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveFinishBase(
   process: ProcessAdapter,
   repo: string,
