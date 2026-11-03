@@ -85,6 +85,49 @@ describe("supervisor dispatch auto-close", () => {
     expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
   });
 
+  test("keeps an idle client attached before done open", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
+    const process = adapter(async (_command, args) => args[1] === "default"
+      ? ok({ stdout: "1793707190|1793707199\n", stderr: "", exitCode: 0 })
+      : failed("unexpected command"));
+    const result = await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
+    expect(result.open).toBe(true);
+    expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
+  });
+
+  test("defers closing when tmux client listing fails unexpectedly", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
+    const process = adapter(async () => failed("permission denied"));
+    const result = await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
+    expect(result.open).toBe(true);
+    expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done" } });
+  });
+
+  test("stays alive during the acknowledgement grace and closes after it", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", paneExists: async () => ok(true), sessionExists: async () => ok(true), panesForSession: async () => ok(["%8"]), capturePane: async () => ok(""), killSession: async () => ok(undefined) });
+    const process = adapter(async (_command, args) => args[0] === "-L" ? ok({ stdout: "", stderr: "", exitCode: 0 }) : failed("unexpected command"));
+    try {
+      const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_SESSION_ID: "parent", MEGABRAIN_SESSION_HOST: "superset" };
+      expect((await superviseOnce(directory, db, environment, process, Date.parse("2026-11-03T12:01:00.000Z"))).open).toBe(true);
+      expect((await superviseOnce(directory, db, environment, process, Date.parse("2026-11-03T12:02:10.000Z"))).open).toBe(false);
+      expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "closed" } });
+    } finally { registerTmux(original); }
+  });
+
+  test("keeps a failed close pending for retry", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", paneExists: async () => ok(true), sessionExists: async () => ok(true), panesForSession: async () => ok(["%8"]), capturePane: async () => ok(""), killSession: async () => failed("busy") });
+    const process = adapter(async (_command, args) => args[0] === "-L" ? ok({ stdout: "", stderr: "", exitCode: 0 }) : failed("unexpected command"));
+    try {
+      const result = await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_SESSION_ID: "parent", MEGABRAIN_SESSION_HOST: "superset" }, process, Date.parse("2026-11-03T12:03:00.000Z"));
+      expect(result.open).toBe(true);
+      expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done" } });
+    } finally { registerTmux(original); }
+  });
+
   test("closes an unviewed tmux dispatch after the ack grace and keeps its transcript", async () => {
     const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
     const original = getTmux();
