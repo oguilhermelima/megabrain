@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { createDelivery, createDispatch, getDispatch, appendMessage } from "../../src/adapters/state-db.js";
+import { createDelivery, createDispatch, getDispatch, appendMessage, transcriptPath } from "../../src/adapters/state-db.js";
 import { listDeliveries, listMessages } from "../../src/adapters/state-db.js";
 import { startSupervisorWorker, superviseOnce } from "../../src/cli/commands/supervise.js";
 import { openDatabase } from "../../src/db/db.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { DatabaseHandle } from "../../src/db/db.js";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
+import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.js";
 
 let directory = "";
 let database: DatabaseHandle | undefined;
@@ -82,5 +83,34 @@ describe("supervisor dispatch auto-close", () => {
     expect(result.open).toBe(false);
     expect(calls).toBe(1);
     expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
+  });
+
+  test("closes an unviewed tmux dispatch after the ack grace and keeps its transcript", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
+    const original = getTmux();
+    registerTmux({
+      ...original, id: "tmux",
+      paneExists: async () => ok(true),
+      sessionExists: async () => ok(true),
+      panesForSession: async () => ok(["%8"]),
+      capturePane: async () => ok("finished transcript"),
+      killSession: async () => ok(undefined),
+    } satisfies TmuxProvider);
+    const process = adapter(async (_command, args) => args[0] === "-L"
+      ? ok({ stdout: "", stderr: "", exitCode: 0 })
+      : failed("unexpected command"));
+    try {
+      const result = await superviseOnce(directory, db, {
+        MEGABRAIN_STATE_DIR: directory, HOME: directory,
+        MEGABRAIN_SESSION_ID: "parent", MEGABRAIN_SESSION_HOST: "superset",
+      }, process, Date.parse("2026-11-03T12:02:10.000Z"));
+      expect(result.open).toBe(false);
+      expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "closed" } });
+      const transcript = transcriptPath({ MEGABRAIN_STATE_DIR: directory }, "dispatch-auto-close");
+      expect(transcript.kind).toBe("ok");
+      if (transcript.kind === "ok") expect(await Bun.file(transcript.value).text()).toBe("finished transcript");
+    } finally {
+      registerTmux(original);
+    }
   });
 });
