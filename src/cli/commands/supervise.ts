@@ -310,8 +310,16 @@ async function retryPendingChildReplies(root: string, database: Parameters<typeo
     if (delivery?.status !== "outstanding") continue;
     if (item.status === "failed") {
       const elapsed = now - Date.parse(item.updatedAt);
-      if (!Number.isFinite(elapsed) || elapsed < CHILD_DELIVERY_RETRY_INTERVAL_MS) continue;
-      const reason = screen === "idle"
+      const payload = typeof item.payload === "object" && item.payload !== null ? item.payload as Record<string, unknown> : {};
+      const retryState = typeof payload.retryState === "object" && payload.retryState !== null ? payload.retryState as Record<string, unknown> : {};
+      const nextRetryAt = typeof retryState.nextRetryAt === "number" ? retryState.nextRetryAt : undefined;
+      const idleRetryUsed = retryState.idleRetryUsed === true;
+      const idleRetry = screen === "idle" && !idleRetryUsed;
+      const intervalRetry = nextRetryAt === undefined
+        ? Number.isFinite(elapsed) && elapsed >= CHILD_DELIVERY_RETRY_INTERVAL_MS
+        : now >= nextRetryAt;
+      if (!idleRetry && !intervalRetry) continue;
+      const reason = idleRetry
         ? "pane idle after failed delivery"
         : `bounded retry interval elapsed (${CHILD_DELIVERY_RETRY_INTERVAL_MS}ms; pane ${screen ?? "unknown"})`;
       await callStateOwner(root, { operation: "retry-failed-child-outbox", id: item.id, reason }).catch(() => false);

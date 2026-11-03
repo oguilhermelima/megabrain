@@ -610,10 +610,16 @@ export function retryFailedChildOutbox(handle: DatabaseHandle, id: string, reaso
   const now = new Date().toISOString();
   const cleanReason = reason.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "scheduled retry";
   return write(handle, ({ db }) => {
-    const row = db.query<{ target_kind: string; status: string; detail: string | null }>("SELECT target_kind, status, detail FROM outbox WHERE id = ?").get(id);
+    const row = db.query<{ target_kind: string; status: string; detail: string | null; payload: string }>("SELECT target_kind, status, detail, payload FROM outbox WHERE id = ?").get(id);
     if (row === null || row.target_kind !== "child-delivery" || row.status !== "failed") return false;
     const detail = `retry reason: ${cleanReason}; previous failure: ${row.detail ?? "unspecified"}`;
-    return db.run("UPDATE outbox SET status = 'pending', detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'failed'", [detail, now, id]).changes > 0;
+    const payload = object(decode<unknown>(row.payload));
+    const previousRetry = object(payload.retryState);
+    const retryState = {
+      nextRetryAt: Date.now() + 30_000,
+      idleRetryUsed: cleanReason.includes("pane idle") || previousRetry.idleRetryUsed === true,
+    };
+    return db.run("UPDATE outbox SET status = 'pending', detail = ?, payload = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'failed'", [detail, encode({ ...payload, retryState }), now, id]).changes > 0;
   });
 }
 
