@@ -51,11 +51,44 @@ async function orcaForegroundGroup(scope: TerminalScope, pid: number, agent: str
   return false;
 }
 
+async function tmuxForegroundGroup(scope: TerminalScope, pid: number, agent: string, process: ProcessAdapter): Promise<boolean | undefined> {
+  const pane = typeof scope.tmuxPane === "string" ? scope.tmuxPane : "";
+  if (pane === "") return undefined;
+  const panePidResult = await process.run("tmux", ["display-message", "-p", "-t", pane, "#{pane_pid}"]);
+  if (panePidResult.kind !== "ok") return undefined;
+  const panePid = Number(panePidResult.value.stdout.trim());
+  if (!Number.isSafeInteger(panePid) || panePid <= 0) return undefined;
+  const tree = await process.run("ps", ["-axo", "pid=,ppid=,pgid=,tpgid=,command="]);
+  if (tree.kind !== "ok") return undefined;
+  const rows = new Map<number, { parent: number; group: number; foreground: number; command: string }>();
+  for (const line of tree.value.stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(.*)$/.exec(line);
+    if (match !== null) rows.set(Number(match[1]), { parent: Number(match[2]), group: Number(match[3]), foreground: Number(match[4]), command: match[5] ?? "" });
+  }
+  const paneRow = rows.get(panePid);
+  const agentRow = rows.get(pid);
+  if (paneRow === undefined || agentRow === undefined || !agentCommand(agent, agentRow.command) || paneRow.foreground <= 0 || agentRow.group !== paneRow.foreground) return false;
+  const seen = new Set<number>();
+  let current = pid;
+  while (!seen.has(current)) {
+    if (current === panePid) return true;
+    seen.add(current);
+    const row = rows.get(current);
+    if (row === undefined) return false;
+    current = row.parent;
+  }
+  return false;
+}
+
 /** True only when the recorded receiver is alive and belongs to the terminal's foreground group. */
 export async function agentOwnsForegroundProcess(agent: string, pid: number, process: ProcessAdapter, terminal?: TerminalScope): Promise<boolean> {
   if (!Number.isSafeInteger(pid) || pid <= 0 || !["claude", "codex", "grok", "agy"].includes(agent)) return false;
   if (terminal?.host === "orca") {
     const foreground = await orcaForegroundGroup(terminal, pid, agent, process);
+    if (foreground !== undefined) return foreground;
+  }
+  if (terminal?.host === "tmux") {
+    const foreground = await tmuxForegroundGroup(terminal, pid, agent, process);
     if (foreground !== undefined) return foreground;
   }
   const result = await process.run("ps", ["-ww", "-p", String(pid), "-o", "pid=,pgid=,tpgid=,args="]);
