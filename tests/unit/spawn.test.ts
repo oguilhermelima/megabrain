@@ -1677,14 +1677,14 @@ describe("executeSpawn", () => {
   // encoding that exact fixed text (agent "codex", worktree "/work/tree", the dispatch id the
   // test uses) with TextEncoder and is asserted here as a plain number so a change to the wrapper
   // text or to a test's dispatch id shows up as a failing byte count instead of silently drifting:
-  // "dispatch-budget-tmux-exact" / "dispatch-budget-argv-exact" -> 592 bytes of fixed wrapper text
-  // "dispatch-budget-tmux-over" / "dispatch-budget-argv-over" / "dispatch-budget-multibyte" -> 591
-  // "dispatch-budget-wrapped-overflow" -> 598
+  // "dispatch-budget-tmux-exact" / "dispatch-budget-argv-exact" -> 479 bytes of fixed wrapper text
+  // "dispatch-budget-tmux-over" / "dispatch-budget-argv-over" / "dispatch-budget-multibyte" -> 478
+  // "dispatch-budget-wrapped-overflow" -> 485
   describe("prompt byte budgets", () => {
     test("accepts a tmux prompt whose wrapped form is exactly at the 12000 byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-tmux-exact-`);
       const dispatchId = "dispatch-budget-tmux-exact";
-      const wrapperOverheadBytes = 592;
+      const wrapperOverheadBytes = 479;
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
@@ -1702,7 +1702,7 @@ describe("executeSpawn", () => {
     test("refuses a tmux prompt whose wrapped form is one byte over the 12000 byte budget without creating anything", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-tmux-over-`);
       const dispatchId = "dispatch-budget-tmux-over";
-      const wrapperOverheadBytes = 591;
+      const wrapperOverheadBytes = 478;
       let resolveCalled = false;
       const prompt = "a".repeat(12000 - wrapperOverheadBytes + 1);
       try {
@@ -1720,7 +1720,7 @@ describe("executeSpawn", () => {
     test("accepts a host prompt whose wrapped form is exactly at the 262144 byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-argv-exact-`);
       const dispatchId = "dispatch-budget-argv-exact";
-      const wrapperOverheadBytes = 592;
+      const wrapperOverheadBytes = 479;
       const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
         ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
@@ -1739,7 +1739,7 @@ describe("executeSpawn", () => {
     test("refuses a host prompt whose wrapped form is one byte over the 262144 byte budget without creating anything", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-argv-over-`);
       const dispatchId = "dispatch-budget-argv-over";
-      const wrapperOverheadBytes = 591;
+      const wrapperOverheadBytes = 478;
       let resolveCalled = false;
       const prompt = "a".repeat(262144 - wrapperOverheadBytes + 1);
       try {
@@ -1756,7 +1756,7 @@ describe("executeSpawn", () => {
     test("refuses a multibyte tmux prompt that is under the character count but over the byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-multibyte-`);
       const dispatchId = "dispatch-budget-multibyte";
-      const wrapperOverheadBytes = 591;
+      const wrapperOverheadBytes = 478;
       let resolveCalled = false;
       const prompt = "é".repeat(7000);
       expect(prompt.length).toBeLessThan(12000);
@@ -1776,7 +1776,7 @@ describe("executeSpawn", () => {
     test("refuses a raw tmux prompt under the limit whose wrapped form exceeds it, without creating anything", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-wrapped-overflow-`);
       const dispatchId = "dispatch-budget-wrapped-overflow";
-      const wrapperOverheadBytes = 598;
+      const wrapperOverheadBytes = 485;
       let resolveCalled = false;
       const prompt = "a".repeat(11900);
       expect(new TextEncoder().encode(prompt).length).toBeLessThan(12000);
