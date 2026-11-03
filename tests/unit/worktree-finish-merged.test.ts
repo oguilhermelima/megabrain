@@ -109,13 +109,57 @@ describe("worktree finish recognizes merged changes", () => {
       const runner: ProcessAdapter = {
         ...process,
         async run(command, args, options) {
-          if (command === "gh" && args[0] === "pr" && args[1] === "list") return ok({ stdout: '[{"state":"MERGED"}]', stderr: "", exitCode: 0 });
+          if (command === "gh" && args[0] === "pr" && args[1] === "list") {
+            const head = await git(f.repo, "rev-parse", "feat/remote-merge");
+            return ok({ stdout: JSON.stringify([{ state: "MERGED", headRefOid: head }]), stderr: "", exitCode: 0 });
+          }
           return process.run(command, args, options);
         },
       };
       const result = await finish(f, path, "main", runner);
       expect(result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode).toBe(0);
       expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/remote-merge")).toBe("");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  test("refuses deleting a branch with commits after its merged PR tip", async () => {
+    const f = await fixture();
+    try {
+      const path = await worktree(f, "feat/later-commit");
+      const mergedHead = await git(path, "rev-parse", "HEAD");
+      await writeFile(join(path, "later.txt"), "work after merge\n");
+      await git(path, "add", "later.txt");
+      await git(path, "commit", "-q", "-m", "work after merged PR");
+      const runner: ProcessAdapter = {
+        ...process,
+        async run(command, args, options) {
+          if (command === "gh" && args[0] === "pr" && args[1] === "list")
+            return ok({ stdout: JSON.stringify([{ state: "MERGED", headRefOid: mergedHead }]), stderr: "", exitCode: 0 });
+          return process.run(command, args, options);
+        },
+      };
+      const result = await finish(f, path, "main", runner);
+      expect(result.kind === "ok" ? result.exitCode : result.exitCode).toBe(1);
+      expect(result.kind === "ok" ? result.value : result.error).toContain("unmerged-branch");
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/later-commit")).toBe("feat/later-commit");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  test("uses Git-only checks when GitHub is unavailable", async () => {
+    const f = await fixture();
+    try {
+      const path = await worktree(f, "feat/offline");
+      const runner: ProcessAdapter = {
+        ...process,
+        async run(command, args, options) {
+          if (command === "gh" && args[0] === "pr" && args[1] === "list") return failed("gh unavailable", 1);
+          return process.run(command, args, options);
+        },
+      };
+      const result = await finish(f, path, "main", runner);
+      expect(result.kind === "ok" ? result.exitCode : result.exitCode).toBe(1);
+      expect(result.kind === "ok" ? result.value : result.error).toContain("unmerged-branch");
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/offline")).toBe("feat/offline");
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 });
