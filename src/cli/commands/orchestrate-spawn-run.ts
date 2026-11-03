@@ -33,6 +33,7 @@ import { startSupervisorWorker } from "./supervise.js";
 import { notifyAdmissionStatus } from "./admission-notify.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "./terminal-open.js";
 import { resolveGrokSessionId } from "../../core/context-meter.js";
+import { preflightWorktreeTrust } from "../../agents/worktree-trust.js";
 import { join } from "node:path";
 import { decideAdmission, DEFAULT_AGENT_COST_BYTES } from "../../core/admission.js";
 import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/state-db.js";
@@ -86,6 +87,8 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
+  const trust = await preflightWorktreeTrust(options.agent, worktree.path, environment);
+  if (trust.kind !== "ok") return trust;
   const registeredRepository = await registerMegabrainRepository(worktree.path, environment, process);
   if (registeredRepository.kind !== "ok" && !registeredRepository.error.startsWith("not a git repository:")) return registeredRepository;
   prompt = finalPrompt(options, id);
@@ -396,7 +399,6 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       }
     } else if (step === "readiness-output-validation") {
       const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process, promptFile !== undefined);
-      if (waited.trustAnswered) await updateMeta(root, id, { trustAnswered: true }, process);
       if (options.agent === "grok" && waited.result.kind === "ok" && pane !== null) {
         const panePid = await getTmux().panePid(pane, process, sessionId ?? undefined);
         if (panePid.kind === "ok") {
