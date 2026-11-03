@@ -61,7 +61,9 @@ export function tmuxClientsViewedSinceDone(output: string, doneAt: string): bool
     const created = createdRaw === undefined ? undefined : timestamp(createdRaw);
     const activity = activityRaw === undefined ? undefined : timestamp(activityRaw);
     if (created === undefined || activity === undefined) return undefined;
-    if (created > done || activity > done) return true;
+    // A client attached to this session is viewing the dispatch even if it has been idle
+    // since before the done message. Timestamps only matter for clients that attach later.
+    if (created >= 0 && activity >= 0) return true;
   }
   return false;
 }
