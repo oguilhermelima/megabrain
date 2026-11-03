@@ -3,7 +3,7 @@ import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type Check
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { executeCheck } from "../../src/cli/commands/check.js";
+import { executeCheck, loadMessages, loadDeliveries } from "../../src/cli/commands/check.js";
 import { createDispatch, appendMessage, setDeliveryTransport, listDeliveries } from "../../src/adapters/state-db.js";
 import { guardedStateDatabase } from "./state-db-guard.js";
 
@@ -50,14 +50,16 @@ describe("check delivery lifecycle", () => {
     try {
       const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (opened.kind !== "ok") throw new Error(opened.error);
-      createDispatch(opened.value, { dispatchId: "reply-dispatch", state: "running", agent: "codex", agentThreadId: "thread-1" });
+      createDispatch(opened.value, { dispatchId: "reply-dispatch", state: "running", childHost: "local", terminalId: "child-session" });
       const now = new Date().toISOString();
       const appended = appendMessage(opened.value, "reply-dispatch", { from: "parent", type: "reply", text: "continue safely" }, { delivery: { id: "reply-delivery", recipient: "child", status: "outstanding", createdAt: now, updatedAt: now } });
       if (appended.kind !== "ok") throw new Error(appended.error);
       setDeliveryTransport(opened.value, "reply-dispatch", appended.value.seq, transport, "full-direction");
       opened.value.close();
 
-      const env = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "reply-dispatch", CODEX_THREAD_ID: "thread-1", MEGABRAIN_CONSUMER_ID: "child" };
+      const env = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "reply-dispatch", MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "child-session", MEGABRAIN_CONSUMER_ID: "child" };
+      const loadedDeliveries = await loadDeliveries(root, "reply-dispatch"); const loadedMessages = await loadMessages(root, "reply-dispatch");
+      expect(selectDelivery("child", false, loadedDeliveries, loadedMessages, "child").kind).toBe("selected");
       const first = await executeCheck(["--timeout", "0", "--json"], env);
       expect(first.kind).toBe("ok");
       expect(first.kind === "ok" ? JSON.parse(first.value).text : "").toBe("continue safely");
