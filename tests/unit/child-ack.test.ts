@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { executeChildAck } from "../../src/cli/commands/child-ack.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { createDispatch } from "../../src/adapters/state-db.js";
+import { createDelivery, createDispatch } from "../../src/adapters/state-db.js";
 
 function fakeProcess(behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = () => ok({ stdout: "", stderr: "", exitCode: 0 })): ProcessAdapter {
   return {
@@ -70,6 +70,19 @@ describe("executeChildAck: tmux-runtime records", () => {
       expect(result.kind).toBe("failed");
       if (result.kind !== "failed") return;
       expect(result.error).toBe("delivery delivery-1 refused: it was never recorded");
+    });
+  });
+
+  test("explains when a delivery belongs to a different dispatch", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "current-child", { runtime: "host", terminalId: "child-orca-term", childHost: "orca" });
+      await writeDispatch(root, "other-child", { runtime: "host", terminalId: "other-term", childHost: "orca" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const created = createDelivery(database.value, { id: "foreign-delivery", dispatchId: "other-child", messageSeqs: [1], status: "outstanding" });
+      if (created.kind !== "ok") throw new Error(created.error);
+      const result = await executeChildAck(["foreign-delivery"], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "child-orca-term" }, fakeProcess());
+      expect(result).toMatchObject({ kind: "failed", error: "delivery foreign-delivery refused: delivery was recorded for dispatch other-child, not current-child" });
     });
   });
 });
