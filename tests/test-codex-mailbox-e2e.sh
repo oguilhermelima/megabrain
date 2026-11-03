@@ -37,7 +37,7 @@ for name in $(compgen -e); do
 done
 export HOME="$real_home" MEGABRAIN_STATE_DIR="$state"
 
-mkdir -p "$work/repo" "$work/legacy/dispatches/codex-mailbox" "$work/bin"
+mkdir -p "$work/repo" "$work/legacy/dispatches/codex-mailbox" "$work/bin" "$work/codex-home"
 cd "$work/repo"
 "$real_git" init -q
 "$real_git" config user.name 'Megabrain E2E'
@@ -52,9 +52,18 @@ exec "$real_tmux" -L "$server" "\$@"
 EOF
 chmod +x "$work/bin/tmux"
 export PATH="$work/bin:$PATH"
+if [ -f "$real_home/.codex/auth.json" ]; then ln -s "$real_home/.codex/auth.json" "$work/codex-home/auth.json"; fi
+cat >"$work/codex-home/config.toml" <<EOF
+approval_policy = "never"
+sandbox_mode = "read-only"
+
+[projects."$work/repo"]
+trust_level = "trusted"
+EOF
+export CODEX_HOME="$work/codex-home"
 
 dispatch="codex-mailbox"
-codex_command="cd '$work/repo' && export MEGABRAIN_DISPATCH_ID='$dispatch' && exec '$real_codex' -c 'approval_policy=\"never\"' -c 'sandbox_mode=\"read-only\"' 'Run sleep 90 in the shell and wait for it to finish before responding. Then say TASK_FINISHED. Do not modify files.'"
+codex_command="cd '$work/repo' && export MEGABRAIN_DISPATCH_ID='$dispatch' CODEX_HOME='$CODEX_HOME' && exec '$real_codex' 'Run sleep 90 in the shell and wait for it to finish before responding. Then say TASK_FINISHED. Do not modify files.'"
 pane="$(tmux new-session -d -s test -P -F '#{pane_id}' "$codex_command")"
 session_id="$(tmux display-message -p -t "$pane" '#{session_id}')"
 pane_pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')"
