@@ -3,6 +3,8 @@ import { ok } from "../core/result.js";
 
 const markers: readonly AgentMarker[] = [
   { status: "blocked", first: /Update available/, second: /Skip until next version/, reason: "codex update dialog" },
+  { status: "working", first: /OpenAI Codex[\s\S]{0,120}\bloading\b/i, reason: "Codex is still drawing its startup header" },
+  { status: "working", first: /Starting MCP servers(?:\s+\(\d+\/\d+\))?/i, reason: "Codex is still starting MCP servers" },
   { status: "pending-check", first: /Messages to be submitted after next tool call/, second: /press esc to interrupt and send immediately/, reason: "terminal is waiting to submit queued messages" },
   { status: "working", first: /Working \(/, second: /esc to interrupt/, reason: "terminal shows the working indicator" },
   { status: "idle", first: /^\s*›(?: Ask Codex to do anything)?\s*$/m, reason: "terminal shows an empty Codex composer" },

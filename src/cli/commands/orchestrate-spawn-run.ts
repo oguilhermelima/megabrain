@@ -155,7 +155,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const promptFile = promptFlag === undefined ? undefined : await writePromptFile(root, id, prompt);
   if (promptFile !== undefined) trace.promptFile = promptFile;
   const launch = promptFile === undefined ? command : `${command} ${promptFlag} "$(cat ${shellQuote(promptFile)})"`;
-  const readinessTimeoutMs = agentReadyTimeoutMs(environment);
+  const readinessTimeoutMs = agentReadyTimeoutMs(environment, options.agent);
 
   // Admission runs after option/worktree validation but before any terminal or agent is created.
   // The fixed fallback is deliberately conservative and applies when resource history is off or
