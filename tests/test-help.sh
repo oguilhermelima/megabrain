@@ -18,6 +18,7 @@ trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
 export HOME="$state_dir/home"
+unset MEGABRAIN_DISPATCH_ID
 mkdir -p "$HOME"
 
 fail() {
