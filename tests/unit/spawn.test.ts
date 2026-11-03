@@ -713,6 +713,65 @@ describe("executeSpawn", () => {
     }
   });
 
+  test("preflights exact Claude and Codex worktree trust before their launch", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-trust-preflight-`);
+    const home = join(root, "home");
+    const parentPath = join(root, "workspace");
+    const canonicalWorktrees: Record<string, string> = {};
+    const codexConfig = join(home, ".codex", "config.toml");
+    const claudeConfig = join(home, ".claude.json");
+    await mkdir(join(home, ".codex"), { recursive: true });
+    await writeFile(codexConfig, `model = "gpt-6-luna" # preserve this\n\n[projects."${parentPath}"]\ntrust_level = "trusted"\n\n[projects."/keep-me"]\ntrust_level = "trusted"\n`, { mode: 0o600 });
+    await writeFile(claudeConfig, `${JSON.stringify({ retained: { value: 42 }, projects: { [parentPath]: { hasTrustDialogAccepted: true }, "/keep-me": { allowedTools: ["Read"] } } }, null, 2)}\n`, { mode: 0o600 });
+
+    const original = getTmux();
+    try {
+      for (const agent of ["claude", "codex"] as const) {
+        const worktreePath = join(parentPath, agent);
+        await mkdir(worktreePath, { recursive: true });
+        canonicalWorktrees[agent] = await realpath(worktreePath);
+        const dispatchId = `dispatch-trust-${agent}`;
+        const process = processFor([], (command, args) => command === "tmux" && args[0] === "list-panes"
+          ? ok({ stdout: "%9\n", stderr: "", exitCode: 0 })
+          : ok({ stdout: "", stderr: "", exitCode: 0 }));
+        const fake: TmuxProvider = {
+          ...original,
+          id: "tmux",
+          sendText: async (_pane, text) => {
+            if (text.startsWith("[megabrain dispatch")) appendReceived(root, dispatchId);
+            return ok(undefined);
+          },
+          sendKey: async () => ok(undefined),
+          capturePane: async () => ok(agent === "claude" ? claudeIdleOutput : codexIdleOutput),
+        };
+        registerTmux(withComposer(fake, agent));
+        const result = await executeSpawn(["--worktree", worktreePath, "--agent", agent, "--prompt", "do it", "--tmux", "true"], {
+          ...environment(root, dispatchId),
+          HOME: home,
+        }, process, options(worktree("existing", worktreePath)));
+        if (result.kind !== "ok") throw new Error(result.error);
+        expect(result.kind).toBe("ok");
+      }
+
+      const codexText = await readFile(codexConfig, "utf8");
+      expect(codexText).toContain(`[projects."${canonicalWorktrees.codex}"]`);
+      expect(codexText).toContain(`trust_level = "trusted"`);
+      expect(codexText).toContain(`model = "gpt-6-luna" # preserve this`);
+      expect(codexText).toContain(`[projects."${parentPath}"]`);
+      expect((await stat(codexConfig)).mode & 0o777).toBe(0o600);
+
+      const claudeValue = JSON.parse(await readFile(claudeConfig, "utf8")) as { retained: { value: number }; projects: Record<string, { hasTrustDialogAccepted?: boolean; allowedTools?: string[] }> };
+      expect(claudeValue.retained.value).toBe(42);
+      expect(claudeValue.projects[canonicalWorktrees.claude]?.hasTrustDialogAccepted).toBe(true);
+      expect(claudeValue.projects[parentPath]?.hasTrustDialogAccepted).toBe(true);
+      expect(claudeValue.projects["/keep-me"]?.allowedTools).toEqual(["Read"]);
+      expect((await stat(claudeConfig)).mode & 0o777).toBe(0o600);
+    } finally {
+      registerTmux(original);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   // A tmux dispatch's own identity (childHost/terminalId) must describe the CHILD's pane, never
   // the caller that spawned it. Before this fix, terminalId was parentContext.id and childHost
   // was parentContext.host unconditionally — so a caller that later ran findChild (the turn-end
