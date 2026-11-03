@@ -58,7 +58,7 @@ describe("grok agent", () => {
   test("the trust dialog blocks readiness without a configured answer key", async () => {
     const trust = await fixture("trust");
     expect(startupDialogCause("grok", trust)).toBe("workspace-trust-dialog");
-    expect(getAgent("grok")?.firstRunDialogKey).toBeUndefined();
+    expect(Object.hasOwn(getAgent("grok") ?? {}, "firstRunDialogKey")).toBe(false);
     expect(classifyLiveness("grok", trust).status).toBe("unknown");
     expect(startupDialogCause("grok", await fixture("idle"))).toBeUndefined();
     expect(startupDialogCause("grok", trust.replace("Yes, proceed", "Maybe"))).toBe("workspace-trust-dialog");
