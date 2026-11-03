@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import { readLimit } from "../../src/core/chain-limits.js";
+import { executeChain } from "../../src/cli/commands/chain.js";
 import type { ChainConfig } from "../../src/core/chain.js";
 
 type Call = Readonly<{ command: string; args: readonly string[] }>;
@@ -116,6 +117,31 @@ describe("agy usage limits", () => {
 });
 
 describe("codex rollout freshness", () => {
+  test("chain limits JSON reports stale age and treats the 15-minute boundary and future mtimes as current", async () => {
+    await withDirectory(async (state) => {
+      const sessions = join(state, "sessions", "2026", "11", "03");
+      mkdirSync(sessions, { recursive: true });
+      const rollout = join(sessions, "rollout-test.jsonl");
+      const writeAt = async (ageSeconds: number) => {
+        const now = Math.floor(Date.now() / 1000);
+        writeFileSync(rollout, JSON.stringify({ rate_limits: { primary: { window_minutes: 10080, used_percent: 70, resets_at: now + 86400 } } }));
+        const timestamp = now - ageSeconds;
+        utimesSync(rollout, timestamp, timestamp);
+      };
+      const read = async () => {
+        const result = await executeChain(["limits", "--json"], { MEGABRAIN_STATE_DIR: state, MEGABRAIN_CODEX_SESSIONS_DIR: join(state, "sessions"), MEGABRAIN_ROOT: process.cwd(), HOME: state }, fakeProcess(() => failed("unused")));
+        if (result.kind !== "ok") throw new Error(result.kind === "failed" ? result.error : result.reason);
+        return JSON.parse(result.value).find((row: { provider: string; window: string }) => row.provider === "codex" && row.window === "weekly");
+      };
+      await writeAt(901);
+      expect(await read()).toMatchObject({ status: "stale", reason: expect.stringContaining("15 minutes old") });
+      await writeAt(899);
+      expect(await read()).toMatchObject({ status: "current" });
+      await writeAt(-60);
+      expect(await read()).toMatchObject({ status: "current" });
+    });
+  });
+
   test("marks an old weekly snapshot stale and reports its age", async () => {
     await withDirectory(async (state) => {
       const sessions = join(state, "sessions", "2026", "11", "03");
