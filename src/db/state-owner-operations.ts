@@ -318,6 +318,11 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
   }
   if (request.operation === "append-message") {
     const result = withWrite(owner.handle, (db) => {
+      const idempotencyKey = typeof request.message.idempotencyKey === "string" ? request.message.idempotencyKey : undefined;
+      if (idempotencyKey !== undefined) {
+        const existing = db.query<{ seq: number }>("SELECT seq FROM messages WHERE idempotency_key = ?").get(idempotencyKey);
+        if (existing !== null) return { sequence: existing.seq, duplicate: true };
+      }
       const sequence = (db.query<{ seq: number | null }>("SELECT max(seq) AS seq FROM messages WHERE dispatch_id = ?").get(request.dispatchId)?.seq ?? 0) + 1;
       const message = { ...request.message, seq: sequence, createdAt: typeof request.message.createdAt === "string" ? request.message.createdAt : new Date().toISOString() };
       insertMessage(db, request.dispatchId, message);
@@ -329,11 +334,11 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
         const now = new Date().toISOString();
         db.run("INSERT INTO outbox (id, dispatch_id, target_kind, target, payload, status, attempts, lease_until, transport, created_at, updated_at, lease_holder, detail) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, ?, NULL, NULL)", [request.outbox.id, request.dispatchId, request.outbox.targetKind, request.outbox.target, encode(request.outbox.payload), now, now]);
       }
-      return { sequence };
+      return { sequence, duplicate: false };
     });
     if (result.kind !== "ok") throw new Error(result.error);
-    if (request.outbox !== undefined) scheduleOutbox(request.outbox.id);
-    return result.value;
+    if (request.outbox !== undefined && !result.value.duplicate) scheduleOutbox(request.outbox.id);
+    return { sequence: result.value.sequence };
   }
   if (request.operation === "append-queue-message") {
     const result = withWrite(owner.handle, (db) => {
