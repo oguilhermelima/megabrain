@@ -20,6 +20,7 @@ import { defaultKnowledgeSettings, parseKnowledgeSettings, readKnowledgeSettings
 import { emptyModelSettings, modelEnabled, modelSettingsFile, parseModelSettings, type ModelSettings } from "../../core/model-settings.js";
 import { agentUpdateStatus, readAgentAutoUpdateSettings, writeAgentAutoUpdateSettings } from "../../core/agent-update.js";
 import { loadAndPersistModelRegistry, type Model } from "../../core/model.js";
+import { dispatchAutoCloseEnabled, setDispatchAutoCloseEnabled } from "../../core/dispatch-auto-close.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -42,7 +43,12 @@ async function writeTerminalEngine(environment: Environment, engine: "native" | 
   const file = terminalEngineFile(environment);
   await mkdir(dirname(file), { recursive: true, mode: 0o700 });
   const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temporary, `${JSON.stringify({ terminalEngine: engine })}\n`, { mode: 0o600 });
+  let existing: Record<string, unknown> = {};
+  try {
+    const value: unknown = JSON.parse(await readFile(file, "utf8"));
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) existing = value as Record<string, unknown>;
+  } catch { /* A missing or malformed settings file reads as defaults. */ }
+  await writeFile(temporary, `${JSON.stringify({ ...existing, terminalEngine: engine })}\n`, { mode: 0o600 });
   await rename(temporary, file);
 }
 
@@ -354,6 +360,14 @@ async function readSettings(environment: Environment, processAdapter: ProcessAda
 }
 
 export async function executeSettings(args: readonly string[], environment: Environment, processAdapter: ProcessAdapter): Promise<Result<string>> {
+  if (args[0] === "get" && args[1] === "auto-close" && (args.length === 2 || args.length === 3 && args[2] === "--json")) {
+    return ok(`${JSON.stringify({ enabled: await dispatchAutoCloseEnabled(environment) })}\n`);
+  }
+  if (args[0] === "set" && args[1] === "auto-close") {
+    if (args.length !== 3 || (args[2] !== "on" && args[2] !== "off")) return failed("Usage: megabrain settings set auto-close on|off", 2);
+    await setDispatchAutoCloseEnabled(environment, args[2] === "on");
+    return ok(`dispatch auto-close: ${args[2]}\n`);
+  }
   if (args[0] === "get" && args[1] === "project-appearance") {
     if (args.slice(2).some((arg) => arg !== "--json")) return failed("Usage: megabrain settings get project-appearance [--json]", 2);
     return ok(`${JSON.stringify(await readProjectAppearance(environment))}\n`);
