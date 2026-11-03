@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolveParentContext } from "../../src/core/context.js";
-import { classifyLiveness, isFirstRunDialog } from "../../src/core/liveness.js";
+import { classifyLiveness, startupDialogCause } from "../../src/core/liveness.js";
 import { composerHoldsText } from "../../src/core/composer-proof.js";
 import { commandLine, getAgent, interruptKey, resolveAgentDescriptor, submitKey } from "../../src/agents/index.js";
 
@@ -55,13 +55,13 @@ describe("grok agent", () => {
     expect(classifyLiveness("grok", queued).status).toBe("working");
   });
 
-  test("the trust dialog is a first-run dialog answered with y, and is never idle", async () => {
+  test("the trust dialog blocks readiness without a configured answer key", async () => {
     const trust = await fixture("trust");
-    expect(isFirstRunDialog("grok", trust)).toBe(true);
-    expect(getAgent("grok")?.firstRunDialogKey).toBe("y");
+    expect(startupDialogCause("grok", trust)).toBe("workspace-trust-dialog");
+    expect(getAgent("grok")?.firstRunDialogKey).toBeUndefined();
     expect(classifyLiveness("grok", trust).status).toBe("unknown");
-    expect(isFirstRunDialog("grok", await fixture("idle"))).toBe(false);
-    expect(isFirstRunDialog("grok", trust.replace("Yes, proceed", "Maybe"))).toBe(false);
+    expect(startupDialogCause("grok", await fixture("idle"))).toBeUndefined();
+    expect(startupDialogCause("grok", trust.replace("Yes, proceed", "Maybe"))).toBe("workspace-trust-dialog");
   });
 
   test("an unrecognised screen is unknown", () => {
