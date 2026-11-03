@@ -34,7 +34,7 @@ export function decideAdmission(request: AdmissionRequest, policy: AdmissionPoli
   if (policy.minAvailableMiB != null) {
     if (machine === undefined) reasons.push("available memory unavailable");
     else if (machine.availableMemoryBytes - cost < policy.minAvailableMiB * 1024 ** 2) {
-      reasons.push(`${Math.floor(machine.availableMemoryBytes / 1024 ** 2)} MiB available, needs ${policy.minAvailableMiB} MiB free`);
+      reasons.push(`${Math.floor(machine.availableMemoryBytes / 1024 ** 2)} MiB available, spawn costs ~${Math.ceil(cost / 1024 ** 2)} MiB, must leave ${policy.minAvailableMiB} MiB free`);
     }
   }
   if (policy.maxPressure != null) {
