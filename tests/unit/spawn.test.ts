@@ -1567,8 +1567,8 @@ describe("executeSpawn", () => {
       ...original,
       id: "tmux",
       pasteText: async () => ok(undefined),
-      sendText: async () => ok(undefined),
-      sendKey: async (_pane, key) => key === "y" ? failed("tmux send failed") : ok(undefined),
+      sendText: async (_pane, text) => { events.push(`text:${text}`); return ok(undefined); },
+      sendKey: async (_pane, key) => { events.push(`key:${key}`); return key === "y" ? failed("tmux send failed") : ok(undefined); },
       capturePane: async () => ok(trust),
     };
     registerTmux(fake);
@@ -1579,7 +1579,7 @@ describe("executeSpawn", () => {
       }, process, options(worktree("existing")));
       expect(result.kind).toBe("failed");
       if (result.kind === "failed") expect(result.error).toContain("workspace-trust-dialog");
-      expect(events).toEqual([]);
+      expect(events.some((event) => event.startsWith("key:") || event.startsWith("text:"))).toBe(false);
       expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
     } finally {
       registerTmux(original);
