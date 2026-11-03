@@ -738,6 +738,7 @@ describe("executeSpawn", () => {
         const fake: TmuxProvider = {
           ...original,
           id: "tmux",
+          pasteText: async () => ok(undefined),
           sendText: async (_pane, text) => {
             if (text.startsWith("[megabrain dispatch")) appendReceived(root, dispatchId);
             return ok(undefined);
@@ -745,7 +746,9 @@ describe("executeSpawn", () => {
           sendKey: async () => ok(undefined),
           capturePane: async () => ok(agent === "claude" ? claudeIdleOutput : codexIdleOutput),
         };
-        registerTmux(withComposer(fake, agent));
+        // This test verifies trust config writes; a static idle frame keeps the launch command
+        // from being mistaken for text typed into the simulated composer.
+        registerTmux(fake);
         const result = await executeSpawn(["--worktree", worktreePath, "--agent", agent, "--prompt", "do it", "--tmux", "true"], {
           ...environment(root, dispatchId),
           HOME: home,
@@ -1392,7 +1395,7 @@ describe("executeSpawn", () => {
     }
   });
 
-  test("tmux readiness answers agy's captured trust dialog once, then reaches idle", async () => {
+  test("tmux readiness blocks agy's captured trust dialog without input", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-agy-trust-`);
     const events: string[] = [];
     const dispatchId = "dispatch-tmux-agy-trust";
@@ -1407,6 +1410,7 @@ describe("executeSpawn", () => {
     const fake: TmuxProvider = {
       ...original,
       id: "tmux",
+      pasteText: async () => ok(undefined),
       sendText: async (_pane, text) => {
         events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
         if (text.startsWith("[megabrain dispatch")) {
@@ -1420,21 +1424,18 @@ describe("executeSpawn", () => {
         return ok(captureCalls === 1 ? trust : idle);
       },
     };
-    registerTmux(withComposer(fake, "codex"));
+    registerTmux(fake);
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "agy", "--prompt", "do it", "--tmux", "true"], {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
       }, process, options(worktree("existing")));
 
-      expect(result.kind).toBe("ok");
-      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:"))).toEqual([
-        "key:Enter", // answer the trust dialog once
-        "text:prompt",
-        "key:Enter", // submit the prompt after readiness
-      ]);
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toContain("workspace-trust-dialog");
+      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:"))).toEqual([]);
       expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
-      expect(captureCalls).toBeGreaterThan(1);
+      expect(captureCalls).toBe(1);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -1512,7 +1513,7 @@ describe("executeSpawn", () => {
     }
   });
 
-  test("tmux readiness records Grok trust only after its y answer succeeds", async () => {
+  test("tmux readiness blocks Grok trust without sending y", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-grok-trust-`);
     const events: string[] = [];
     const dispatchId = "dispatch-tmux-grok-trust";
@@ -1525,6 +1526,7 @@ describe("executeSpawn", () => {
     const fake: TmuxProvider = {
       ...original,
       id: "tmux",
+      pasteText: async () => ok(undefined),
       sendText: async (_pane, text) => {
         events.push(`text:${text.startsWith("[megabrain dispatch") ? "prompt" : "command"}`);
         if (text.startsWith("[megabrain dispatch")) appendReceived(root, dispatchId);
@@ -1536,22 +1538,23 @@ describe("executeSpawn", () => {
         return ok(captureCalls === 1 ? trust : "╭──────╮\n│ ❯    │\n╰──────╯");
       },
     };
-    registerTmux(withComposer(fake, "grok"));
+    registerTmux(fake);
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "grok", "--prompt", "do it", "--tmux", "true"], {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
       }, process, options(worktree("existing")));
-      expect(result.kind).toBe("ok");
-      expect(events).toContain("key:y");
-      expect(readMeta(root, dispatchId)).toMatchObject({ trustAnswered: true });
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toContain("workspace-trust-dialog");
+      expect(events).not.toContain("key:y");
+      expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("tmux readiness does not record Grok trust when sending y fails", async () => {
+  test("tmux readiness does not send y to Grok trust dialogs", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-grok-trust-failed-`);
     const events: string[] = [];
     const dispatchId = "dispatch-tmux-grok-trust-failed";
@@ -1563,17 +1566,20 @@ describe("executeSpawn", () => {
     const fake: TmuxProvider = {
       ...original,
       id: "tmux",
+      pasteText: async () => ok(undefined),
       sendText: async () => ok(undefined),
       sendKey: async (_pane, key) => key === "y" ? failed("tmux send failed") : ok(undefined),
       capturePane: async () => ok(trust),
     };
-    registerTmux(withComposer(fake, "grok"));
+    registerTmux(fake);
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "grok", "--prompt", "do it", "--tmux", "true"], {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
       }, process, options(worktree("existing")));
       expect(result.kind).toBe("failed");
+      if (result.kind === "failed") expect(result.error).toContain("workspace-trust-dialog");
+      expect(events).toEqual([]);
       expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
     } finally {
       registerTmux(original);
