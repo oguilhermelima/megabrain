@@ -11,7 +11,7 @@ import { appendMessage, waiterIsActive } from "../../src/cli/commands/queue-writ
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { acknowledgeImplicitDelivery, appendMessage as appendDatabaseMessage, claimOutbox, createDispatch, finishNotification, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
+import { acknowledgeImplicitDelivery, appendMessage as appendDatabaseMessage, claimOutbox, createDispatch, finishNotification, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport, createDelivery } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
 import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
@@ -848,6 +848,36 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       await executeHookTurnEnd(["waiting"], environment(root, { TMUX: "t", TMUX_PANE: "%3" }), tmuxChildProcess("✻ Brewed for 9m 47s\n\n❯ \n"), noStdin);
       expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(1);
       expect((await readMeta(root, "d1")).backgroundTasks ?? null).toBeNull();
+    });
+  });
+
+  test("suppresses acknowledged stalled notices during cooldown and allows one after expiry", async () => {
+    await withRoot("stalled-cooldown-acknowledged", async (root) => {
+      await writeMeta(root, "d1", tmuxChild);
+      const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const oldTime = Date.now();
+      const previous = appendDatabaseMessage(db.value, "d1", { from: "child", type: "stalled", text: "waiting", sessionId: "work:%3", createdAt: new Date(oldTime).toISOString() });
+      if (previous.kind !== "ok") throw new Error(previous.error);
+      const delivery = createDelivery(db.value, { id: "old-stalled", dispatchId: "d1", recipient: "parent", messageSeqs: [previous.value.seq], status: "outstanding" });
+      if (delivery.kind !== "ok") throw new Error(delivery.error);
+      const acknowledged = acknowledgeImplicitDelivery(db.value, "d1", "old-stalled", "parent", new Date(oldTime).toISOString());
+      if (acknowledged.kind !== "ok" || !acknowledged.value) throw new Error("could not acknowledge fixture delivery");
+
+      const env = environment(root, { TMUX: "t", TMUX_PANE: "%3" });
+      const process = tmuxChildProcess("✻ Brewed for 9m 47s\n\n❯ \n");
+      const now = Date.now;
+      let clock = oldTime + 60_000;
+      Date.now = () => clock;
+      try {
+        await executeHookTurnEnd(["waiting"], env, process, noStdin);
+        expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(1);
+        clock = oldTime + 6 * 60 * 1000;
+        await executeHookTurnEnd(["waiting"], env, process, noStdin);
+        expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(2);
+      } finally {
+        Date.now = now;
+      }
     });
   });
 
