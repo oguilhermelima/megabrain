@@ -36,12 +36,12 @@ describe("dispatch auto-close policy", () => {
     expect(mayAutoCloseDispatch(candidate({ state: "running" }))).toBe(false);
   });
 
-  test("treats a client attached or active after done as viewed, but ignores pane output", () => {
+  test("treats every attached client as viewed and ignores pane output", () => {
     const doneAt = "2026-11-03T12:00:00.000Z";
     expect(tmuxClientsViewedSinceDone("", doneAt)).toBe(false);
     expect(tmuxClientsViewedSinceDone("1793707201|1793707201", doneAt)).toBe(true);
     expect(tmuxClientsViewedSinceDone("1793707190|1793707201", doneAt)).toBe(true);
-    expect(tmuxClientsViewedSinceDone("1793707190|1793707199", doneAt)).toBe(false);
+    expect(tmuxClientsViewedSinceDone("1793707190|1793707199", doneAt)).toBe(true);
     expect(tmuxClientsViewedSinceDone("malformed", doneAt)).toBeUndefined();
   });
 });
