@@ -24,16 +24,16 @@ export function hasLivenessClassifier(agent: string): boolean {
   return result.kind !== "unknown" || !result.reason.startsWith(`${LIVENESS_UNAVAILABLE}:`);
 }
 
-export function isFirstRunDialog(agentId: string, output: string): boolean {
-  const dialog = getAgent(agentId)?.firstRunDialog;
-  return dialog?.test(output) ?? false;
-}
-
-/** Startup dialogs that prevent the composer from becoming ready and must never be auto-answered. */
-export function startupDialogCause(agentId: string, output: string): "codex-update" | undefined {
-  return agentId === "codex" && /Update available/.test(output) && /Skip until next version/.test(output)
-    ? "codex-update"
-    : undefined;
+/** Startup dialogs block readiness until a person resolves them. */
+export function startupDialogCause(_agentId: string, output: string): string | undefined {
+  const checks: readonly [RegExp, string][] = [
+    [/do you trust[\s\S]{0,500}(?:workspace|folder|directory|project|repo)|trust this (?:workspace|folder|directory|project|repo)|trusted workspace/i, "workspace-trust-dialog"],
+    [/(?:hooks need review|review (?:the )?hooks?|hooks? (?:require|need) approval)/i, "hook-review-dialog"],
+    [/update available[\s\S]{0,300}(?:skip|install|update)|codex just got an upgrade/i, "update-dialog"],
+    [/(?:permission required|requires permission|allow once[\s\S]{0,250}(?:allow always|reject|deny)|do you want to allow)/i, "permission-dialog"],
+    [/(?:would you like to (?:continue|proceed|allow|choose)|select an option[\s\S]{0,250}(?:\b1\.|\byes\b|\bno\b))/i, "question-dialog"],
+  ];
+  return checks.find(([pattern]) => pattern.test(output))?.[1];
 }
 
 export async function waitForStableIdle(
@@ -41,23 +41,18 @@ export async function waitForStableIdle(
   timeoutMs: number,
   read: () => Promise<Result<string>>,
   timeoutError: string,
-  answerFirstRunDialog?: () => Promise<Result<void>>,
+  _answerFirstRunDialog?: () => Promise<Result<void>>,
   // A frame this accepts ends the wait at once: the agent already took a prompt from its argv.
   turnStarted?: (frame: string) => boolean,
 ): Promise<Result<void>> {
   const started = Date.now();
   let stableSince: number | null = null;
-  let firstRunDialogAnswered = false;
   while (true) {
     const captured = await read();
-    const dialog = captured.kind === "ok" && isFirstRunDialog(agentId, captured.value);
-    if (dialog && answerFirstRunDialog !== undefined && !firstRunDialogAnswered) {
-      firstRunDialogAnswered = true;
-      const answered = await answerFirstRunDialog();
-      if (answered.kind !== "ok") return answered;
-    }
-    if (captured.kind === "ok" && !dialog && turnStarted?.(captured.value) === true) return ok(undefined);
-    const idle = captured.kind === "ok" && !dialog && classifyLiveness(agentId, captured.value).status === "idle";
+    const dialog = captured.kind === "ok" ? startupDialogCause(agentId, captured.value) : undefined;
+    if (captured.kind === "ok" && dialog !== undefined) return failed(`startup ${dialog} blocks readiness; captured frame:\n${captured.value}`);
+    if (captured.kind === "ok" && turnStarted?.(captured.value) === true) return ok(undefined);
+    const idle = captured.kind === "ok" && classifyLiveness(agentId, captured.value).status === "idle";
     if (idle) {
       if (stableSince === null) stableSince = Date.now();
       else if (Date.now() - stableSince >= TMUX_READINESS_STABLE_MS) return ok(undefined);

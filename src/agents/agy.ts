@@ -11,8 +11,6 @@ const markers: readonly AgentMarker[] = [
   { status: "idle", first: /^>\s*$/m, reason: "terminal shows an empty Antigravity composer" },
 ];
 
-const trustDialog = /^[ \t]*Do you trust the contents of this project\?[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*Antigravity CLI requires permission to read, edit, and execute files here\.[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*> Yes, I trust this folder[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*No, exit[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*↑\/↓ Navigate · enter Confirm[ \t]*$/m;
-
 export const agyFlags: AgentFlags = {
   executable: "agy",
   permission: ["--dangerously-skip-permissions"],
@@ -29,7 +27,6 @@ export const agy: Agent = {
   id: "agy",
   matchesDescriptor: (descriptor) => descriptor === "agy" || /^agy_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
-  firstRunDialog: trustDialog,
   initialPromptFlag: "-i",
   flags: agyFlags,
   commandLine: ({ model, effort, agentArgs }) => {

@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
-import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
 import { classifyLiveness, startupDialogCause, waitForStableIdle } from "../../core/liveness.js";
@@ -37,9 +36,8 @@ import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/s
 import { readMachineResources } from "../../core/resources.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
 
-export async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter, argvBrief: boolean): Promise<Readonly<{ result: Result<void>; lastFrame: string; trustAnswered: boolean }>> {
+export async function waitForTmuxReadiness(agentId: string, pane: string, timeoutMs: number, process: ProcessAdapter, argvBrief: boolean): Promise<Readonly<{ result: Result<void>; lastFrame: string }>> {
   let lastFrame = "";
-  let trustAnswered = false;
   const result = await waitForStableIdle(
     agentId,
     timeoutMs,
@@ -49,16 +47,11 @@ export async function waitForTmuxReadiness(agentId: string, pane: string, timeou
       return captured;
     },
     `tmux pane ${pane} did not become ready within ${timeoutMs}ms`,
-    () => {
-      return getTmux().sendKey(pane, getAgent(agentId)?.firstRunDialogKey ?? "Enter", process).then((answer) => {
-        if (agentId === "grok" && answer.kind === "ok") trustAnswered = true;
-        return answer;
-      });
-    },
+    undefined,
     // An agent launched with its brief may be working on it before its composer ever idles.
     argvBrief ? (frame) => argvBriefStarted(agentId, frame) : undefined,
   );
-  return { result, lastFrame, trustAnswered };
+  return { result, lastFrame };
 }
 
 export const READINESS_FRAME_MAX_LINES = 60;
