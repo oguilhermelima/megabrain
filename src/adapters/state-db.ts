@@ -43,6 +43,7 @@ export {
   schedulePeerVerificationResume,
   supersedeClosedParentDeliveries,
   requeueOutboxPeerFallback,
+  retryFailedChildOutbox,
   setDeliveryTransport,
   listMessages,
   listNudges,

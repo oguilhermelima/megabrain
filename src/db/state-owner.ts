@@ -82,6 +82,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "finish-outbox"; id: string; holder?: string; status: "sent" | "failed" | "suppressed"; detail?: string | null }
   | { operation: "finish-notification"; id: string; holder: string; status: "sent" | "failed" | "suppressed"; event: Readonly<Record<string, unknown>> }
   | { operation: "resume-outbox"; id: string }
+  | { operation: "retry-failed-child-outbox"; id: string; reason: string }
   | { operation: "dispatch-patch"; dispatchId: string; patch: Readonly<Record<string, unknown>>; expectedState?: string | readonly string[] }
   | { operation: "dispatch-prune"; action: "archive" | "delete"; dispatchId: string; archivedAt?: string }
   | { operation: "dispatch-create"; dispatch: Readonly<Record<string, unknown>> }

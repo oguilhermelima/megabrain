@@ -606,6 +606,17 @@ export function requeueOutboxPeerFallback(handle: DatabaseHandle, id: string): R
   });
 }
 
+export function retryFailedChildOutbox(handle: DatabaseHandle, id: string, reason: string): Result<boolean> {
+  const now = new Date().toISOString();
+  const cleanReason = reason.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "scheduled retry";
+  return write(handle, ({ db }) => {
+    const row = db.query<{ target_kind: string; status: string; detail: string | null }>("SELECT target_kind, status, detail FROM outbox WHERE id = ?").get(id);
+    if (row === null || row.target_kind !== "child-delivery" || row.status !== "failed") return false;
+    const detail = `retry reason: ${cleanReason}; previous failure: ${row.detail ?? "unspecified"}`;
+    return db.run("UPDATE outbox SET status = 'pending', detail = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'failed'", [detail, now, id]).changes > 0;
+  });
+}
+
 export function finishOutbox(handle: DatabaseHandle, id: string, status: "sent" | "failed" | "suppressed", detail: string | null = null, holder?: string): Result<boolean> {
   if (holder === "") return failed("outbox holder must be non-empty");
   const now = new Date().toISOString();

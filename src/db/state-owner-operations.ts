@@ -17,7 +17,7 @@ import { encode } from "./queries/types.js";
 import { classifyQueueMail, recipientForQueueMessage } from "../core/queue-write.js";
 import { formatDispatchMessage } from "../core/chat-message-format.js";
 import { randomUUID } from "node:crypto";
-import { acquireLease as acquireMailLease, ackDelivery as claimAndAckDelivery, acknowledgeImplicitDelivery as acknowledgeMail, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, putWaiter as putMailWaiter, releaseLease as releaseMailLease, renewOutboxLease as renewMailOutboxLease, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
+import { acquireLease as acquireMailLease, ackDelivery as claimAndAckDelivery, acknowledgeImplicitDelivery as acknowledgeMail, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, putWaiter as putMailWaiter, releaseLease as releaseMailLease, renewOutboxLease as renewMailOutboxLease, retryFailedChildOutbox, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
 import { createDispatch as createDispatchState, mutateDispatch as mutateDispatchState, noDispatchChange } from "../adapters/state/dispatches.js";
 import { putInstallModule as putInstallState, deleteInstallModule, mutateInstallModule, putTerminal, deleteTerminal, putTmuxSession, deleteTmuxSession, saveModels, type ModelRegistry } from "../adapters/state/machine.js";
 import { recordChannelResult as recordChannelState, type ChannelResult } from "../adapters/state/channels.js";
@@ -194,6 +194,11 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
     return result.value;
   }
   if (request.operation === "resume-outbox") return { scheduled: scheduleOutbox(request.id) };
+  if (request.operation === "retry-failed-child-outbox") {
+    const retried = retryFailedChildOutbox(owner.handle, request.id, request.reason);
+    if (retried.kind !== "ok") throw new Error(retried.error);
+    return { retried: retried.value, scheduled: retried.value && scheduleOutbox(request.id) };
+  }
   if (request.operation === "dispatch-patch") {
     if (request.patch.dispatchId !== undefined && request.patch.dispatchId !== request.dispatchId) throw new Error("dispatch patch cannot change dispatchId");
     let refusal: string | undefined;

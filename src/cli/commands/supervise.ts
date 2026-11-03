@@ -292,12 +292,14 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   return blocked.cause === "dialog-waiting" ? blocked : { cause: "unknown" };
 }
 
-async function retryPendingChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
+const CHILD_DELIVERY_RETRY_INTERVAL_MS = 30_000;
+
+async function retryPendingChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, screen: string | undefined, now: number): Promise<void> {
   const outbox = listOutboxForDispatch(database, dispatch);
   const deliveries = listDeliveries(database, dispatch);
   const messages = listMessages(database, dispatch);
   if (outbox.kind !== "ok" || deliveries.kind !== "ok" || messages.kind !== "ok") return;
-  const pendingReplies = outbox.value.filter((item) => item.targetKind === "child-delivery" && item.status === "pending");
+  const pendingReplies = outbox.value.filter((item) => item.targetKind === "child-delivery" && (item.status === "pending" || item.status === "failed"));
   for (const item of pendingReplies) {
     const payload = object(item.payload);
     const sequence = Number(payload?.sequence);
@@ -306,7 +308,16 @@ async function retryPendingChildReplies(root: string, database: Parameters<typeo
     if (message?.from !== "parent" || message.type !== "reply") continue;
     const delivery = deliveries.value.find((candidate) => Array.isArray(candidate.messageSeqs) && candidate.messageSeqs.includes(sequence));
     if (delivery?.status !== "outstanding") continue;
-    await callStateOwner(root, { operation: "resume-outbox", id: item.id }).catch(() => false);
+    if (item.status === "failed") {
+      const elapsed = now - Date.parse(item.updatedAt);
+      if (!Number.isFinite(elapsed) || elapsed < CHILD_DELIVERY_RETRY_INTERVAL_MS) continue;
+      const reason = screen === "idle"
+        ? "pane idle after failed delivery"
+        : `bounded retry interval elapsed (${CHILD_DELIVERY_RETRY_INTERVAL_MS}ms; pane ${screen ?? "unknown"})`;
+      await callStateOwner(root, { operation: "retry-failed-child-outbox", id: item.id, reason }).catch(() => false);
+    } else {
+      await callStateOwner(root, { operation: "resume-outbox", id: item.id }).catch(() => false);
+    }
   }
 }
 
@@ -381,9 +392,9 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const meta = current.value as RecordValue;
     await retryPendingParentPointers(root, database, dispatch);
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now, answeredDispatches);
-    const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
+    const screen = await readDeliveryScreen(meta, process);
     const running = screen?.kind === "ok" ? backgroundTasks(screen.value) : undefined;
-    if (screen?.kind === "ok") await retryPendingChildReplies(root, database, dispatch);
+    await retryPendingChildReplies(root, database, dispatch, screen?.kind === "ok" ? classifyLiveness(String(meta.agent ?? "unknown"), screen.value).status : undefined, now);
     const recordedPrevious = previousFinding(meta);
     const recovered = recordedPrevious !== undefined && await recoveredSince(database, dispatch, meta, environment, recordedPrevious.notifiedAt);
     const previous = recovered ? undefined : recordedPrevious;
