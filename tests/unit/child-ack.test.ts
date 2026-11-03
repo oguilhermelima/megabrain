@@ -58,7 +58,7 @@ describe("executeChildAck: tmux-runtime records", () => {
       const result = await executeChildAck(["delivery-1"], environment, process);
       expect(result.kind).toBe("failed");
       if (result.kind !== "failed") return;
-      expect(result.error).toBe("delivery delivery-1 refused: delivery is unknown");
+      expect(result.error).toBe("delivery delivery-1 refused: it was never recorded");
     });
   });
 

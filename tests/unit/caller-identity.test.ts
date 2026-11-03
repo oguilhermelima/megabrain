@@ -454,6 +454,19 @@ describe("parent verbs accept the structured-session caller that spawned the dis
       expect(getDispatch(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: { state: "closed", terminalState: "released" } });
     } finally { await stopStateOwner(owner); }
   });
+
+  test("ack --close refuses a waiting question before changing its delivery", async () => {
+    const root = await tempStateDir();
+    await writeDispatch(root, "dispatch-1", baseMeta({ state: "waiting_for_reply" }));
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "which option?" });
+    const created = createDelivery(db.value, { id: "delivery-question", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding" });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const result = await executeOrchestrateAck(["dispatch-1", "delivery-question", "--close", "--json"], structuredClaudeEnvironment(root), orcaHostProcess("child-term-1"));
+    expect(result).toMatchObject({ kind: "failed", error: "dispatch dispatch-1 is waiting for a reply; reply to the question before acknowledging with --close" });
+    expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ id: "delivery-question", status: "outstanding" }] });
+  });
 });
 
 describe("a legacy record owned by a terminal handle is still accepted from that terminal", () => {
