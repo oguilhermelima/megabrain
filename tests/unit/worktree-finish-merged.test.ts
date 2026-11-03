@@ -145,6 +145,47 @@ describe("worktree finish recognizes merged changes", () => {
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 
+  test("refuses a reused branch name with new commits after its old PR was merged", async () => {
+    const f = await fixture();
+    try {
+      const oldPath = await worktree(f, "feat/reused");
+      const mergedHead = await git(oldPath, "rev-parse", "HEAD");
+      await git(f.repo, "merge", "--squash", "feat/reused");
+      await git(f.repo, "commit", "-q", "-m", "squash old feat/reused");
+      await rm(join(f.repo, "reused.txt"));
+      await git(f.repo, "add", "-A");
+      await git(f.repo, "commit", "-q", "-m", "clear old feature before reusing branch name");
+      await git(f.repo, "worktree", "remove", "--force", oldPath);
+      await git(f.repo, "branch", "-D", "feat/reused");
+      await rm(oldPath, { recursive: true, force: true });
+      const path = await worktree(f, "feat/reused", "main");
+      const runner: ProcessAdapter = {
+        ...process,
+        async run(command, args, options) {
+          if (command === "gh" && args[0] === "pr" && args[1] === "list") return ok({ stdout: JSON.stringify([{ state: "MERGED", headRefOid: mergedHead }]), stderr: "", exitCode: 0 });
+          return process.run(command, args, options);
+        },
+      };
+      const result = await finish(f, path, "main", runner);
+      expect(result.kind === "ok" ? result.exitCode : result.exitCode).toBe(1);
+      expect(result.kind === "ok" ? result.value : result.error).toContain("unmerged-branch");
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/reused")).toBe("feat/reused");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  test("accepts origin/main as the base for a squash-merged branch", async () => {
+    const f = await fixture();
+    try {
+      const path = await worktree(f, "feat/origin-base");
+      await git(f.repo, "merge", "--squash", "feat/origin-base");
+      await git(f.repo, "commit", "-q", "-m", "squash origin-base");
+      await git(f.repo, "update-ref", "refs/remotes/origin/main", "main");
+      const result = await finish(f, path, "origin/main");
+      expect(result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode).toBe(0);
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/origin-base")).toBe("");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
   test("uses Git-only checks when GitHub is unavailable", async () => {
     const f = await fixture();
     try {
