@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createProcessAdapter, type ProcessAdapter } from "../../src/adapters/proc.js";
-import { failed } from "../../src/core/result.js";
+import { failed, ok } from "../../src/core/result.js";
 import { executeWorktreeFinish } from "../../src/cli/commands/worktree-write.js";
 
 const real = createProcessAdapter();
@@ -46,8 +46,8 @@ async function worktree(f: Awaited<ReturnType<typeof fixture>>, branch: string, 
   return path;
 }
 
-async function finish(f: Awaited<ReturnType<typeof fixture>>, path: string, base: string) {
-  return executeWorktreeFinish([path, "--delete-branch", "--base", base, "--json"], { MEGABRAIN_STATE_DIR: f.state }, process);
+async function finish(f: Awaited<ReturnType<typeof fixture>>, path: string, base: string, runner = process) {
+  return executeWorktreeFinish([path, "--delete-branch", "--base", base, "--json"], { MEGABRAIN_STATE_DIR: f.state }, runner);
 }
 
 describe("worktree finish recognizes merged changes", () => {
@@ -99,6 +99,23 @@ describe("worktree finish recognizes merged changes", () => {
       expect(result.kind === "ok" ? result.exitCode : result.exitCode).toBe(1);
       expect(result.kind === "ok" ? result.value : result.error).toContain("unmerged-branch");
       expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/unmerged")).toBe("feat/unmerged");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+
+  test("allows deleting a branch when GitHub reports its PR merged into the base", async () => {
+    const f = await fixture();
+    try {
+      const path = await worktree(f, "feat/remote-merge");
+      const runner: ProcessAdapter = {
+        ...process,
+        async run(command, args, options) {
+          if (command === "gh" && args[0] === "pr" && args[1] === "list") return ok({ stdout: '[{"state":"MERGED"}]', stderr: "", exitCode: 0 });
+          return process.run(command, args, options);
+        },
+      };
+      const result = await finish(f, path, "main", runner);
+      expect(result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode).toBe(0);
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/remote-merge")).toBe("");
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 });
