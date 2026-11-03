@@ -7,15 +7,14 @@ const options = (agent: string): SpawnOptions => ({
 });
 
 describe("dispatch worker preamble", () => {
-  test("keeps the current worker contract under 300 UTF-8 bytes for every agent", () => {
+  test("keeps the current worker contract under 440 UTF-8 bytes for every agent", () => {
     for (const agent of ["claude", "codex", "grok", "agy"]) {
       const preamble = finalPrompt(options(agent), "dispatch-preamble-test").split("\n\nDispatch identity:")[0];
-      expect(preamble).toContain("megabrain received");
-      expect(preamble).toContain("megabrain ask");
-      expect(preamble).toContain("megabrain check --timeout");
-      expect(preamble).toContain("megabrain done");
-      expect(preamble).toContain("Do not close your own dispatch");
-      expect(Buffer.byteLength(preamble)).toBeLessThanOrEqual(300);
+      expect(preamble).toContain("REQUIRED: Run megabrain received first.");
+      expect(preamble).toContain("REQUIRED: Ask with megabrain ask; poll megabrain check --timeout until answered. Never proceed on a default.");
+      expect(preamble).toContain("REQUIRED: Finish with megabrain done, including outcome and evidence.");
+      expect(preamble).toContain("CRITICAL: Never close your own dispatch.");
+      expect(Buffer.byteLength(preamble)).toBeLessThanOrEqual(440);
     }
   });
 });

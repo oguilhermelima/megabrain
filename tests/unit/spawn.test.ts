@@ -356,7 +356,7 @@ describe("executeSpawn", () => {
 
       expect(result.kind).toBe("ok");
       expect(readMeta(root, dispatchId)).toMatchObject({ chatName: expectedChatName });
-      expect(deliveredPrompt).toContain("For megabrain done and ask, start with one plain-language sentence a non-technical person understands: what changed, or what you need. Use no file names, commands, or test counts in that sentence; put technical detail after it.");
+      expect(deliveredPrompt).toContain("For megabrain done and ask, start with one plain-language sentence a non-technical person understands: what changed, or what you need. Use no file names, commands, or test counts in that sentence.");
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
