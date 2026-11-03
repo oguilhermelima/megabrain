@@ -62,6 +62,14 @@ async function settings(env: ReturnType<typeof sandbox>): Promise<Record<string,
 }
 
 describe("megabrain settings", () => {
+  test("stores and reads the dispatch auto-close switch", async () => {
+    const env = sandbox();
+    expect(await run(["settings", "get", "auto-close"], env)).toMatchObject({ kind: "ok", value: '{"enabled":true}\n' });
+    expect(await run(["settings", "set", "auto-close", "off"], env)).toMatchObject({ kind: "ok" });
+    expect(await run(["settings", "get", "auto-close"], env)).toMatchObject({ kind: "ok", value: '{"enabled":false}\n' });
+    expect(await run(["settings", "set", "auto-close", "maybe"], env)).toMatchObject({ kind: "failed", exitCode: 2 });
+  });
+
   test("rejects --only without --json before reading settings", async () => {
     const env = sandbox();
     const result = await run(["settings", "--only", "models"], env);
