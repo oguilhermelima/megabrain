@@ -87,15 +87,6 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
     if (inserted === undefined) throw new Error("appended message was not visible");
     return inserted;
   });
-  if (appended.kind === "ok" && message.from === "child") {
-    const deliveries = queryDeliveries(handle.db, dispatchId);
-    for (const delivery of deliveries) {
-      if (delivery.recipient !== "child" || !Array.isArray(delivery.messageSeqs) || !delivery.messageSeqs.some((sequence) => sequence < appended.value.seq)) continue;
-      const transport = String(delivery.transport ?? "");
-      if (transport !== "checked" && delivery.transportReason !== "full-direction") continue;
-      acknowledgeImplicitDelivery(handle, dispatchId, delivery.id, "child", String(appended.value.createdAt));
-    }
-  }
   return appended;
 }
 
@@ -232,7 +223,8 @@ export function setDeliveryTransport(handle: DatabaseHandle, dispatchId: string,
   return write(handle, ({ db }) => {
     const row = db.query<{ id: string; extra: string }>("SELECT id, extra FROM deliveries WHERE dispatch_id = ? AND message_seq = ?").get(dispatchId, sequence);
     if (row === null) return;
-    db.run("UPDATE deliveries SET extra = ? WHERE id = ?", [encode({ ...object(decode<unknown>(row.extra)), transport, ...(reason === undefined ? {} : { transportReason: reason }) }), row.id]);
+    const transportAt = new Date().toISOString();
+    db.run("UPDATE deliveries SET extra = ? WHERE id = ?", [encode({ ...object(decode<unknown>(row.extra)), transport, transportAt, ...(reason === undefined ? {} : { transportReason: reason }) }), row.id]);
   });
 }
 

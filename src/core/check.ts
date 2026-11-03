@@ -69,8 +69,7 @@ function matchesMailbox(mailbox: "parent" | "child", full: boolean, delivery: Ch
       if (full ? (typeof classification === "string" || classification.kind !== "unknown") : classification === "actionable") return true;
     }
     if (mailbox === "child" && message.from === "parent") {
-      const transported = delivery.status !== "acknowledged" && (delivery.transport === "typed" || delivery.transport === "queue") && delivery.transportReason === "full-direction";
-      if (message.type === "reply" && !transported) return true;
+      if (message.type === "reply") return true;
     }
   }
   return false;
@@ -85,16 +84,11 @@ export function selectDelivery(
   generation = 1,
   excludedTransports: readonly string[] = [],
 ): CheckSelection {
-  const mailboxDirection = (delivery: CheckDelivery): boolean => mailbox === "child"
-    && delivery.recipient === "child"
-    && delivery.transport === "queue"
-    && delivery.transportReason === "full-direction"
-    && messageFor(delivery, messages).some((message) => message.from === "parent" && message.type === "reply");
   const candidates = deliveries
-    .filter((delivery) => delivery.status === "outstanding" || (full && delivery.status === "superseded") || (delivery.status === "acknowledged" && mailboxDirection(delivery)))
+    .filter((delivery) => delivery.status === "outstanding" || (full && delivery.status === "superseded"))
     .filter((delivery) => !excludedTransports.includes(String(delivery.transport ?? "")))
     .filter((delivery) => full || delivery.superseded !== true)
-    .filter((delivery) => delivery.consumer === null || delivery.consumer === consumer)
+    .filter((delivery) => delivery.consumer === null || delivery.consumer === undefined || delivery.consumer === consumer)
     .filter((delivery) => matchesMailbox(mailbox, full, delivery, messages))
     .sort((left, right) => {
       const priority = (delivery: CheckDelivery): number => {

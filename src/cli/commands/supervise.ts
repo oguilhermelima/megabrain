@@ -329,19 +329,6 @@ async function retryPendingParentPointers(root: string, database: Parameters<typ
   }
 }
 
-async function settleImplicitChildReads(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
-  const deliveries = listDeliveries(database, dispatch);
-  const messages = listMessages(database, dispatch);
-  if (deliveries.kind !== "ok" || messages.kind !== "ok") return;
-  for (const delivery of deliveries.value) {
-    if (delivery.recipient !== "child" || !Array.isArray(delivery.messageSeqs)) continue;
-    if (delivery.transport !== "checked" && delivery.transportReason !== "full-direction") continue;
-    const lastSequence = Math.max(0, ...delivery.messageSeqs);
-    if (!messages.value.some((message) => message.from === "child" && message.seq > lastSequence)) continue;
-    await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: "child" });
-  }
-}
-
 export async function superviseOnce(root: string, database: Parameters<typeof getDispatch>[0], environment: Environment, process: ProcessAdapter, now = Date.now()): Promise<{ open: boolean; findings: number }> {
   try { await callStateOwner(root, { operation: "settle-closed-parent-backlog" }); }
   catch { return { open: true, findings: 0 }; }
@@ -392,7 +379,6 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const current = getDispatch(database, dispatch);
     if (current.kind !== "ok" || current.value === undefined) continue;
     const meta = current.value as RecordValue;
-    await settleImplicitChildReads(root, database, dispatch);
     await retryPendingParentPointers(root, database, dispatch);
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now, answeredDispatches);
     const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
