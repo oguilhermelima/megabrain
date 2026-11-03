@@ -17,6 +17,47 @@ function processFor(stdout: string): ProcessAdapter {
 }
 
 describe("terminal foreground process proof", () => {
+  test("accepts Codex under a shell wrapper in the pane foreground group", async () => {
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command === "tmux") return ok<ProcessOutput>({ stdout: "42000\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "-axo") return ok<ProcessOutput>({ stdout: "42000 1 42000 42000 bash -lc 'codex -- prompt'\n42014 42000 42000 42000 codex -- prompt\n", stderr: "", exitCode: 0 });
+        return failed(`unexpected ${command} ${args.join(" ")}`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return 2; },
+    };
+    const check = agentOwnsForegroundProcess as unknown as (agent: string, pid: number, process: ProcessAdapter, terminal: { host: string; tmuxPane: string }) => Promise<boolean>;
+    expect(await check("codex", 42014, process, { host: "tmux", tmuxPane: "%4" })).toBe(true);
+  });
+
+  test("rejects Codex when the pane wrapper remains after the agent exits", async () => {
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command === "tmux") return ok<ProcessOutput>({ stdout: "42000\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "-axo") return ok<ProcessOutput>({ stdout: "42000 1 42000 42000 bash -lc 'codex -- prompt'\n", stderr: "", exitCode: 0 });
+        return failed(`unexpected ${command} ${args.join(" ")}`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return 2; },
+    };
+    const check = agentOwnsForegroundProcess as unknown as (agent: string, pid: number, process: ProcessAdapter, terminal: { host: string; tmuxPane: string }) => Promise<boolean>;
+    expect(await check("codex", 42014, process, { host: "tmux", tmuxPane: "%4" })).toBe(false);
+  });
+
+  test("rejects a Codex descendant in a background process group", async () => {
+    const process: ProcessAdapter = {
+      async run(command, args) {
+        if (command === "tmux") return ok<ProcessOutput>({ stdout: "42000\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "-axo") return ok<ProcessOutput>({ stdout: "42000 1 42000 42000 bash -lc 'codex -- prompt'\n42014 42000 42014 42000 codex -- prompt\n", stderr: "", exitCode: 0 });
+        return failed(`unexpected ${command} ${args.join(" ")}`);
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return 2; },
+    };
+    const check = agentOwnsForegroundProcess as unknown as (agent: string, pid: number, process: ProcessAdapter, terminal: { host: string; tmuxPane: string }) => Promise<boolean>;
+    expect(await check("codex", 42014, process, { host: "tmux", tmuxPane: "%4" })).toBe(false);
+  });
   test("accepts a live agent process in the foreground process group", async () => {
     expect(await agentOwnsForegroundProcess("claude", 41414, processFor("41414 41414 41414 /opt/claude/bin/claude --resume session\n"))).toBe(true);
   });
