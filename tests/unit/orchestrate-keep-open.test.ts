@@ -26,7 +26,7 @@ describe("orchestrate keep-open", () => {
     database = opened.value;
     const created = createDispatch(database, { dispatchId: "dispatch-keep", state: "done", runtime: "tmux" });
     if (created.kind !== "ok") throw new Error(created.error);
-    const result = await executeOrchestrateKeepOpen(["keep"], { MEGABRAIN_STATE_DIR: root }, process);
+    const result = await executeOrchestrateKeepOpen(["dispatch-keep"], { MEGABRAIN_STATE_DIR: root }, process);
     expect(result).toMatchObject({ kind: "ok" });
     expect(getDispatch(database, "dispatch-keep")).toMatchObject({ kind: "ok", value: { keepOpen: true } });
   });
