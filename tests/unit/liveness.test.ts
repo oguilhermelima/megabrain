@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { classifyLiveness } from "../../src/core/liveness.js";
+import { classifyLiveness, startupDialogCause, waitForStableIdle } from "../../src/core/liveness.js";
 
 describe("classifyLiveness", () => {
   test("recognizes each Codex frame", () => {
@@ -33,5 +33,29 @@ describe("classifyLiveness", () => {
     expect(classifyLiveness("codex", "").status).toBe("unknown");
     expect(classifyLiveness("codex", "quoted: You've hit your usage limit for\nSwitch to another model now,").status).toBe("unknown");
     expect(classifyLiveness("other", "Working (1s)\nesc to interrupt").status).toBe("unknown");
+  });
+
+  test("blocks startup dialogs with their captured frame and never answers them", async () => {
+    const frames = [
+      ["claude", "Do you trust the files in this folder?\nTrust folder 1\nNo, exit"],
+      ["codex", "Hooks need review\nPress Enter to review hooks"],
+      ["codex", "Update available\nSkip until next version"],
+      ["claude", "Permission required\nAllow once\nAllow always\nReject"],
+      ["claude", "Would you like to continue?\n1. Yes\n2. No"],
+    ] as const;
+    for (const [agent, frame] of frames) {
+      expect(startupDialogCause(agent, frame)).not.toBeUndefined();
+      let answered = false;
+      const result = await waitForStableIdle(agent, 2000, async () => ({ kind: "ok", value: frame }), "timeout", async () => {
+        answered = true;
+        return { kind: "ok", value: undefined };
+      });
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") {
+        expect(result.error.toLowerCase()).toContain("dialog");
+        expect(result.error).toContain(frame);
+      }
+      expect(answered).toBe(false);
+    }
   });
 });
