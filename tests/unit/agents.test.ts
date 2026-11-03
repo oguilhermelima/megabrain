@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolveParentContext } from "../../src/core/context.js";
-import { classifyLiveness, isFirstRunDialog } from "../../src/core/liveness.js";
+import { classifyLiveness, startupDialogCause } from "../../src/core/liveness.js";
 import { commandLine, getAgent, interruptKey, registerAgent, submitKey, unregisterAgent, type Agent } from "../../src/agents/index.js";
 import { ok, type Result } from "../../src/core/result.js";
 import { agentReadyTimeoutMs } from "../../src/cli/commands/orchestrate-spawn-options.js";
@@ -191,7 +191,7 @@ describe("agent registry", () => {
     };
     const trust = await screen("trust");
     expect(classifyLiveness("agy", trust).status).toBe("unknown");
-    expect(isFirstRunDialog("agy", trust)).toBe(true);
+    expect(startupDialogCause("agy", trust)).toBe("workspace-trust-dialog");
     expect(classifyLiveness("agy", await screen("idle")).status).toBe("idle");
     for (const name of ["working-1", "working-2", "working-3"]) {
       const captured = await screen(name);
@@ -199,18 +199,18 @@ describe("agent registry", () => {
     }
   });
 
-  test("agy recognises the trust dialog in a real tmux capture and the Orca capture", async () => {
+  test("agy blocks trust in real tmux and Orca captures", async () => {
     const tmuxTrust = await readFile(new URL("../fixtures/tmux-capture-agy-trust.txt", import.meta.url), "utf8");
     const orcaCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
 
-    expect(isFirstRunDialog("agy", tmuxTrust)).toBe(true);
-    expect(isFirstRunDialog("agy", orcaCapture.result.terminal.tail.join("\n"))).toBe(true);
+    expect(startupDialogCause("agy", tmuxTrust)).toBe("workspace-trust-dialog");
+    expect(startupDialogCause("agy", orcaCapture.result.terminal.tail.join("\n"))).toBe("workspace-trust-dialog");
   });
 
-  test("agy only declares the exact preselected trust dialog", async () => {
+  test("agy trust detection does not require the exact preset wording", async () => {
     const capture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
     const trust = capture.result.terminal.tail.join("\n");
-    expect(isFirstRunDialog("agy", trust.replace("> Yes, I trust this folder", "> No, exit"))).toBe(false);
-    expect(isFirstRunDialog("agy", "Do you trust the contents of this project?\n> Yes, I trust this folder")).toBe(false);
+    expect(startupDialogCause("agy", trust.replace("> Yes, I trust this folder", "> No, exit"))).toBe("workspace-trust-dialog");
+    expect(startupDialogCause("agy", "Do you trust the contents of this project?\n> Yes, I trust this folder")).toBe("workspace-trust-dialog");
   });
 });
