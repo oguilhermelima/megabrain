@@ -13,7 +13,7 @@ describe("resource admission", () => {
     const policy: AdmissionPolicy = { maxPressure: "normal" };
     expect(decideAdmission(request, policy, {
       machine: { ...machine, pressure: "elevated" }, runningAgents: 1, runningContainerSuites: 0,
-    })).toEqual({ status: "queued", reason: "memory pressure elevated" });
+    })).toEqual({ status: "queued", reason: "memory pressure elevated; spawn costs ~2048 MiB" });
   });
 
   test("queues when the agent limit is reached", () => {
