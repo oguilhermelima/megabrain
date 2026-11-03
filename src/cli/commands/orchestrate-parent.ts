@@ -28,10 +28,10 @@ async function requireParent(root: string, dispatch: string, caller: Awaited<Ret
   return ok({ ...meta, dispatchId: resolved.value });
 }
 
-function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): Result<{ readonly dispatch: string; readonly timeout: number; readonly pollInterval: number; readonly waitMode: "nudge" | "poll"; readonly consumer?: string; readonly generation: number; readonly full: boolean; readonly json: boolean }> {
+function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): Result<{ readonly dispatch: string; readonly timeout: number; readonly pollInterval: number; readonly waitMode: "nudge" | "poll"; readonly consumer?: string; readonly generation: number; readonly full: boolean; readonly acknowledge: boolean; readonly json: boolean }> {
   const dispatch = args[0] ?? "";
   if (dispatch === "") return failed(usageText("orchestrate-watch"), 2);
-  let timeout = 120; let pollInterval = 3; let waitMode: "nudge" | "poll" = "nudge"; let consumer: string | undefined; let generation = Number(environmentGeneration); let full = false; let json = false;
+  let timeout = 120; let pollInterval = 3; let waitMode: "nudge" | "poll" = "nudge"; let consumer: string | undefined; let generation = Number(environmentGeneration); let full = false; let acknowledge = true; let json = false;
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--timeout") timeout = Number(args[++index]);
@@ -41,13 +41,14 @@ function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): R
     else if (arg === "--consumer") consumer = args[++index];
     else if (arg === "--generation") generation = Number(args[++index]);
     else if (arg === "--full") full = true;
+    else if (arg === "--no-ack") acknowledge = false;
     else if (arg === "--json") json = true;
     else return failed(`unknown orchestrate watch option: ${arg}`, 2);
   }
   if (!Number.isInteger(timeout) || timeout < 0) return failed("--timeout must be a non-negative number of seconds", 2);
   if (!Number.isInteger(pollInterval) || pollInterval < 0) return failed("--poll-interval must be a non-negative number of seconds", 2);
   if (!Number.isInteger(generation) || generation < 1) return failed("--generation must be a positive number", 2);
-  return ok({ dispatch, timeout, pollInterval, waitMode, consumer, generation, full, json });
+  return ok({ dispatch, timeout, pollInterval, waitMode, consumer, generation, full, acknowledge, json });
 }
 
 function consumerSession(caller: Awaited<ReturnType<typeof resolveCallerIdentity>>): { readonly sessionHost?: string; readonly sessionId?: string } {
@@ -114,7 +115,16 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
         try { claimed = await callStateOwner(root, { operation: "claim-delivery", id: selected.delivery.id, consumer: identity.value, generation: parsed.value.generation }); }
         catch (cause: unknown) { return failed(`state owner delivery claim failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
         if (typeof claimed !== "object" || claimed === null || !("status" in claimed) || (claimed.status !== "outstanding" && claimed.status !== "superseded")) continue;
-        return ok(report(dispatchId, claimed as CheckDelivery, messages, selected.replayed, parsed.value.json));
+        let returned = claimed as CheckDelivery;
+        if (parsed.value.acknowledge) {
+          try {
+            await callStateOwner(root, { operation: "ack-delivery", id: returned.id, consumer: identity.value, generation: parsed.value.generation });
+          } catch (cause: unknown) {
+            return failed(`state owner delivery acknowledgement failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+          }
+          returned = { ...returned, status: "acknowledged" };
+        }
+        return ok(report(dispatchId, returned, messages, selected.replayed, parsed.value.json, parsed.value.json));
       }
       const elapsed = Date.now() - started;
       if (selected.kind === "unknown" || elapsed >= parsed.value.timeout * 1000) return ok(report(dispatchId, undefined, [], false, parsed.value.json));
