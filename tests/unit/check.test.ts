@@ -32,9 +32,9 @@ describe("selectDelivery", () => {
     const reply = { ...delivery("reply", [3]), recipient: "child", transport };
     expect(selectDelivery("child", false, [reply], messages)).toMatchObject({ kind: "selected", delivery: reply });
   });
-  test("keeps a full typed change direction acknowledged", () => {
+  test("returns a typed full direction until the child checks it", () => {
     const change = { ...delivery("change", [4]), recipient: "child", transport: "typed", transportReason: "full-direction" };
-    expect(selectDelivery("child", false, [change], [...messages, message(4, "parent", "reply")])).toEqual({ kind: "none" });
+    expect(selectDelivery("child", false, [change], [...messages, message(4, "parent", "reply")])).toMatchObject({ kind: "selected", delivery: change });
   });
   test("does not return transport-acknowledged directions", () => {
     const queuedChange = { ...delivery("queued-change", [4], "acknowledged", "child-consumer"), recipient: "child", transport: "queue", transportReason: "full-direction" };
@@ -45,7 +45,7 @@ describe("selectDelivery", () => {
 });
 
 describe("check delivery lifecycle", () => {
-  test.each(["failed", "queue"] as const)("returns a %s transported reply until the child checks it", async (transport) => {
+  test.each(["failed", "queue", "typed"] as const)("returns a %s transported reply until the child checks it", async (transport) => {
     const root = await mkdtemp(join(tmpdir(), "megabrain-check-mailbox-"));
     try {
       const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -57,10 +57,15 @@ describe("check delivery lifecycle", () => {
       setDeliveryTransport(opened.value, "reply-dispatch", appended.value.seq, transport, "full-direction");
       opened.value.close();
 
-      const env = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "reply-dispatch", CODEX_THREAD_ID: "thread-1", MEGABRAIN_CONSUMER_ID: "child" };
+      const env = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "reply-dispatch", CODEX_THREAD_ID: "thread-1", MEGABRAIN_CONSUMER_ID: "child" };
       const first = await executeCheck(["--timeout", "0", "--json"], env);
       expect(first.kind).toBe("ok");
       expect(first.kind === "ok" ? JSON.parse(first.value).text : "").toBe("continue safely");
+      if (transport === "typed") {
+        const parsed = first.kind === "ok" ? JSON.parse(first.value) as { messages: Array<Record<string, unknown>> } : { messages: [] };
+        expect(parsed.messages[0]).toMatchObject({ alreadyTyped: true });
+        expect(parsed.messages[0]?.alreadyTypedAt).toBeString();
+      }
       const afterRead = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
       if (afterRead.kind !== "ok") throw new Error(afterRead.error);
       const delivery = listDeliveries(afterRead.value, "reply-dispatch");
