@@ -11,8 +11,15 @@ import { createDispatch } from "../../src/adapters/state/dispatches.js";
 import { appendParentReply, stateDatabase } from "../../src/adapters/state-db.js";
 import { callStateOwner, startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
+const codexWorkingScreen = readFileSync(new URL("../fixtures/agent-liveness/codex-tmux-working.txt", import.meta.url), "utf8");
+
 describe("deferred delivery worker lifecycle", () => {
-  test.each([["wrapper foreground", 4240, "4240", true], ["suspended agent", 4241, "4240", false], ["vanished pane", 4240, "", false]] as const)("handles Codex delivery when %s", async (_scenario, paneForeground, panePid, shouldDeliver) => {
+  test.each([
+    ["wrapper foreground", 4240, "4240", true, "› \n", "continue", "typed"],
+    ["suspended agent", 4241, "4240", false, "› \n", "", "receiver-gone"],
+    ["vanished pane", 4240, "", false, "› \n", "", "receiver-gone"],
+    ["Codex is busy", 4240, "4240", true, codexWorkingScreen, "You have 1 megabrain message; run megabrain check", "pointer"],
+  ] as const)("handles Codex delivery when %s", async (_scenario, paneForeground, panePid, shouldDeliver, screenText, expectedText, expectedTransport) => {
     const root = mkdtempSync(join(tmpdir(), "megabrain-delivery-tmux-owner-"));
     const calls: string[][] = [];
     let pastedText = "";
@@ -26,7 +33,7 @@ describe("deferred delivery worker lifecycle", () => {
           if (args.includes("list-panes")) return ok({ stdout: "%4\n", stderr: "", exitCode: 0 });
           if (args.includes("display-message") && args.at(-1) === "#{pane_pid}") return ok({ stdout: panePid === "" ? "\n" : `${panePid}\n`, stderr: "", exitCode: 0 });
           if (args.includes("display-message") && args.at(-1) === "#{session_name}") return ok({ stdout: "session\n", stderr: "", exitCode: 0 });
-          if (args.includes("capture-pane")) return ok({ stdout: "› \n", stderr: "", exitCode: 0 });
+          if (args.includes("capture-pane")) return ok({ stdout: screenText, stderr: "", exitCode: 0 });
           if (args.includes("load-buffer")) pastedText = readFileSync(args.at(-1) ?? "", "utf8");
           return ok({ stdout: "", stderr: "", exitCode: 0 });
         }
@@ -51,7 +58,7 @@ describe("deferred delivery worker lifecycle", () => {
       const reply = appendParentReply(seeded.value, "tmux-owner", { from: "parent", type: "reply", text: "continue", sessionId: "parent" }, {
         supersede: false,
         outbox: { id: "outbox-tmux-owner", targetKind: "child-delivery", target: "tmux:session:%4", payload: {
-          dispatchId: "tmux-owner", sequence: 1, fullMessage: "continue",
+          dispatchId: "tmux-owner", sequence: 1, fullMessage: "continue", fullDirection: true,
           meta: { runtime: "tmux", childHost: "tmux", tmuxSession: "session", tmuxSessionId: "session-id", tmuxPane: "%4", terminalId: "tmux:session:%4", agent: "codex", agentPid: 4242 },
         } },
       });
@@ -60,16 +67,17 @@ describe("deferred delivery worker lifecycle", () => {
       owner = await startStateOwner(root);
 
       const result = await executeDeliveryWorker(["outbox-tmux-owner", "holder", "lease", String(Date.now() + 3_000)], { HOME: root, MEGABRAIN_STATE_DIR: root }, process, owner.handle);
-      const expectedResult = shouldDeliver ? "delivery typed\n" : "delivery receiver-gone\n";
+      const expectedResult = shouldDeliver ? `delivery ${expectedTransport}\n` : "delivery receiver-gone\n";
       expect(result).toMatchObject({ kind: "ok", value: expectedResult });
-      if (shouldDeliver) expect(pastedText).toContain("continue");
+      if (shouldDeliver) expect(pastedText).toContain(expectedText);
       else expect(pastedText).toBe("");
       const observed = openDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
       expect(observed.kind).toBe("ok");
       if (observed.kind === "ok") {
         expect(observed.value.db.query<{ status: string }>("SELECT status FROM outbox WHERE id = ?").get("outbox-tmux-owner")).toMatchObject({ status: shouldDeliver ? "sent" : "failed" });
+        expect(observed.value.db.query<{ status: string }>("SELECT status FROM deliveries WHERE dispatch_id = ?").get("tmux-owner")).toMatchObject({ status: "outstanding" });
         const extra = observed.value.db.query<{ extra: string }>("SELECT extra FROM deliveries WHERE dispatch_id = ?").get("tmux-owner")?.extra ?? "";
-        expect(extra).toContain(shouldDeliver ? '"transport":"typed"' : '"transport":"receiver-gone"');
+        expect(extra).toContain(shouldDeliver ? `"transport":"${expectedTransport}"` : '"transport":"receiver-gone"');
         observed.value.close();
       }
 
