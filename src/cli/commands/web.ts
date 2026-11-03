@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { executeWebDevice } from "../../core/web-device.js";
 
 export type WebEnvironment = Readonly<Record<string, string | undefined>>;
+export type WebTerminal = Readonly<{ stdinIsTTY: boolean; stdoutIsTTY: boolean }>;
 
 function usage(): string {
   return usageText("web");
@@ -44,12 +45,13 @@ export async function executeWeb(
   args: readonly string[],
   environment: WebEnvironment,
   processAdapter: ProcessAdapter = createProcessAdapter(),
+  terminal: WebTerminal = { stdinIsTTY: process.stdin.isTTY === true, stdoutIsTTY: process.stdout.isTTY === true },
 ): Promise<Result<string>> {
   if (args[0] === "device") return executeWebDevice(args.slice(1), environment, processAdapter);
   const plan = planWeb(args);
   if (plan.kind === "help") return ok(helpFor(args));
   if (plan.kind === "usage") return failed(plan.message, 2);
-  if (plan.kind === "run" && plan.command === "session-save" && (environment.MEGABRAIN_DISPATCH_ID !== undefined || process.stdin.isTTY !== true)) {
+  if (plan.kind === "run" && plan.command === "session-save" && (environment.MEGABRAIN_DISPATCH_ID !== undefined || !terminal.stdinIsTTY || !terminal.stdoutIsTTY)) {
     return failed("web session save requires an interactive terminal; use web capture/measure --storage-state for headless sessions");
   }
   const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? join(resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT), "scripts/playwright-web.mjs");
