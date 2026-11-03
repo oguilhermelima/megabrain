@@ -42,6 +42,7 @@ describe("classifyLiveness", () => {
       ["codex", "Update available\nSkip until next version"],
       ["claude", "Permission required\nAllow once\nAllow always\nReject"],
       ["claude", "Would you like to continue?\n1. Yes\n2. No"],
+      ["claude", "What would you like to do?\n1. Continue\n2. Stop"],
     ] as const;
     for (const [agent, frame] of frames) {
       expect(startupDialogCause(agent, frame)).not.toBeUndefined();
