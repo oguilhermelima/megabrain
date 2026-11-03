@@ -1,5 +1,5 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
-import { getDispatch, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { getDispatch, isDispatchArchived, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
 import { callStateOwner } from "../../db/state-owner.js";
@@ -18,6 +18,9 @@ export async function executeOrchestrateKeepOpen(args: readonly string[], enviro
   const stored = getDispatch(database.value, resolved.value);
   if (stored.kind !== "ok") return stored;
   if (stored.value === undefined) return failed(`dispatch not found: ${resolved.value}`);
+  const archived = isDispatchArchived(database.value, resolved.value);
+  if (archived.kind !== "ok") return archived;
+  if (archived.value) return failed(`dispatch ${resolved.value} is archived; refusing to keep it open`);
   if (stored.value.state === "closed") return failed(`dispatch ${resolved.value} is already closed`);
   try {
     await callStateOwner(resolveStateDirectory(environment), {
