@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createDelivery, createDispatch, getDispatch, appendMessage } from "../../src/adapters/state-db.js";
 import { listDeliveries, listMessages } from "../../src/adapters/state-db.js";
-import { superviseOnce } from "../../src/cli/commands/supervise.js";
+import { startSupervisorWorker, superviseOnce } from "../../src/cli/commands/supervise.js";
 import { openDatabase } from "../../src/db/db.js";
 import { failed, ok } from "../../src/core/result.js";
 import type { DatabaseHandle } from "../../src/db/db.js";
@@ -53,6 +53,21 @@ describe("supervisor dispatch auto-close", () => {
     expect(result.open).toBe(true);
     expect(tmuxCalls).toBe(0);
     expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done" } });
+  });
+
+  test("starts the supervisor for a completed tmux dispatch awaiting ack", async () => {
+    const db = await setup("outstanding", null);
+    db.close();
+    database = undefined;
+    let started = 0;
+    const process: ProcessAdapter = {
+      run: async () => failed("unexpected command"),
+      startDetached: async () => { started += 1; return ok({ pid: 100 }); },
+      invocationCount: () => 0,
+    };
+    const result = await startSupervisorWorker(directory, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process);
+    expect(result).toBe("started");
+    expect(started).toBe(1);
   });
 
   test("holds the dispatch through grace and records a human client viewing it", async () => {
