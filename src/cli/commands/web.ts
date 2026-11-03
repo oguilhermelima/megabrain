@@ -49,6 +49,9 @@ export async function executeWeb(
   const plan = planWeb(args);
   if (plan.kind === "help") return ok(helpFor(args));
   if (plan.kind === "usage") return failed(plan.message, 2);
+  if (plan.kind === "run" && plan.command === "session-save" && (environment.MEGABRAIN_DISPATCH_ID !== undefined || process.stdin.isTTY !== true)) {
+    return failed("web session save requires an interactive terminal; use web capture/measure --storage-state for headless sessions");
+  }
   const script = environment.MEGABRAIN_PLAYWRIGHT_SCRIPT ?? join(resolvePackageRoot(import.meta.url, environment.MEGABRAIN_ROOT), "scripts/playwright-web.mjs");
   const playwrightRoot = environment.MEGABRAIN_PLAYWRIGHT_ROOT ?? `${environment.HOME ?? ""}/.megabrain/playwright`;
   const userscriptsRoot = `${environment.HOME ?? ""}/.megabrain/userscripts`;
