@@ -128,6 +128,37 @@ describe("supervisor dispatch auto-close", () => {
     } finally { registerTmux(original); }
   });
 
+  test("closes only each done dispatch pane in a shared tmux session", async () => {
+    directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-shared-close-`);
+    const opened = openDatabase({ MEGABRAIN_STATE_DIR: directory, HOME: directory });
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    database = opened.value;
+    for (const [id, pane] of [["dispatch-shared-a", "%18"], ["dispatch-shared-b", "%19"]] as const) {
+      const created = createDispatch(database, {
+        dispatchId: id, state: "done", runtime: "tmux", tmuxSession: "shared-session", tmuxPane: pane,
+        parentTmuxSession: "shared-session", tmuxSessionOwned: false, terminalId: pane, parentSessionId: "parent",
+      });
+      if (created.kind !== "ok") throw new Error(created.error);
+      const message = appendMessage(database, id, { from: "child", type: "done", text: "finished", sessionId: pane, createdAt: doneAt });
+      if (message.kind !== "ok") throw new Error(message.error);
+      const delivery = createDelivery(database, { id: `${id}-delivery`, dispatchId: id, recipient: "parent", messageSeqs: [message.value.seq], status: "acknowledged", acknowledgedAt: "2026-11-03T12:00:10.000Z" });
+      if (delivery.kind !== "ok") throw new Error(delivery.error);
+    }
+    const panes = new Set(["%18", "%19"]);
+    const killedPanes: string[] = [];
+    const killedSessions: string[] = [];
+    const original = getTmux();
+    registerTmux({ ...original, id: "tmux", sessionExists: async () => ok(true), paneExists: async (pane) => ok(panes.has(pane)), panesForSession: async () => ok([...panes]), capturePane: async () => ok(""), killPane: async (pane) => { killedPanes.push(pane); panes.delete(pane); return ok(undefined); }, killSession: async (session) => { killedSessions.push(session); return ok(undefined); } });
+    const process = adapter(async (_command, args) => args[0] === "-L" ? ok({ stdout: "", stderr: "", exitCode: 0 }) : failed("unexpected command"));
+    try {
+      const result = await superviseOnce(directory, database, { MEGABRAIN_STATE_DIR: directory, HOME: directory, MEGABRAIN_SESSION_ID: "parent", MEGABRAIN_SESSION_HOST: "superset" }, process, Date.parse("2026-11-03T12:03:00.000Z"));
+      expect(result.open).toBe(false);
+      expect(killedPanes).toEqual(["%18", "%19"]);
+      expect(killedSessions).toEqual([]);
+      expect(panes.size).toBe(0);
+    } finally { registerTmux(original); }
+  });
+
   test("closes an unviewed tmux dispatch after the ack grace and keeps its transcript", async () => {
     const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
     const original = getTmux();
