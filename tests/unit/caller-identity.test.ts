@@ -384,6 +384,7 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     const deliveries = listDeliveries(db.value, "dispatch-1");
     expect(deliveries.kind).toBe("ok");
     if (deliveries.kind === "ok") expect(deliveries.value.find((delivery) => delivery.id === "delivery-reply")).toMatchObject({ status: "acknowledged" });
+    expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivery: { status: "queued-for-check" }, next: "Wait for the child to read the reply and report back." });
   });
 
   test("stop", async () => {
@@ -427,13 +428,13 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     try {
       const watched = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--json"], structuredClaudeEnvironment(root));
       expect(watched.kind).toBe("ok");
-      expect(watched.kind === "ok" ? JSON.parse(watched.value) : {}).toMatchObject({ status: "waiting_for_reply", deliveryStatus: "acknowledged" });
+      expect(watched.kind === "ok" ? JSON.parse(watched.value) : {}).toMatchObject({ status: "waiting_for_reply", deliveryStatus: "acknowledged", next: "Answer the child's question with orchestrate reply dispatch-1." });
       expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [expect.objectContaining({ status: "acknowledged" })] });
       expect(unhandledParentMail(listDeliveries(db.value, "dispatch-1").kind === "ok" ? listDeliveries(db.value, "dispatch-1").value : [], listMessages(db.value, "dispatch-1").kind === "ok" ? listMessages(db.value, "dispatch-1").value : [])).toEqual([]);
       const repeated = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--json"], structuredClaudeEnvironment(root));
       expect(repeated.kind).toBe("ok");
       expect(JSON.parse(repeated.kind === "ok" ? repeated.value : "{}")).toMatchObject({ status: "empty", messages: [] });
-
+      expect(JSON.parse(repeated.kind === "ok" ? repeated.value : "{}")).not.toHaveProperty("next");
       appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "another question?" });
       createDelivery(db.value, { id: "delivery-watch-no-ack", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [2], status: "outstanding", consumer: null, consumerGeneration: null });
       const replayable = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--no-ack", "--json"], structuredClaudeEnvironment(root));
@@ -443,6 +444,7 @@ describe("parent verbs accept the structured-session caller that spawned the dis
       expect(explicitAck.kind).toBe("ok");
       expect(JSON.parse(explicitAck.kind === "ok" ? explicitAck.value : "{}")).toMatchObject({ acknowledged: true, deliveryId: "delivery-watch-no-ack" });
       expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [expect.anything(), expect.objectContaining({ status: "acknowledged" })] });
+
     } finally {
       await stopStateOwner(owner);
     }
@@ -455,6 +457,21 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     // No delivery exists yet; the point is that ownership is accepted before that check runs.
     const result = await executeOrchestrateAck(["dispatch-1", "delivery-1", "--json"], structuredClaudeEnvironment(root), process);
     expect(isOwnershipRefusal(result)).toBe(false);
+  });
+
+  test.each([["ask", "waiting_for_reply", "Answer the child's question with orchestrate reply dispatch-1."], ["done", "done", "Close the completed dispatch with orchestrate close dispatch-1."]] as const)("ack receipt suggests the next step for %s", async (type, state, next) => {
+    const root = await tempStateDir();
+    await writeDispatch(root, "dispatch-1", baseMeta({ state }));
+    const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+    if (db.kind !== "ok") throw new Error(db.error);
+    appendMessage(db.value, "dispatch-1", { from: "child", type, text: type === "ask" ? "which option?" : "finished" });
+    createDelivery(db.value, { id: `delivery-${type}`, dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding" });
+    const owner = await startStateOwner(root);
+    try {
+      const result = await executeOrchestrateAck(["dispatch-1", `delivery-${type}`, "--json"], structuredClaudeEnvironment(root), fakeProcess());
+      expect(result.kind).toBe("ok");
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ acknowledged: true, next });
+    } finally { await stopStateOwner(owner); }
   });
 
   test("ack on the printed line counts as reading the delivery", async () => {
@@ -795,6 +812,7 @@ describe("megabrain done from the parent that spawned a tmux dispatch is not att
       });
       const spawnResult = await executeSpawn(["--worktree", worktreeDir, "--agent", "codex", "--prompt", "keep going", "--tmux", "true", "--json"], environment, process);
       expect(spawnResult.kind).toBe("ok");
+      expect(JSON.parse(spawnResult.kind === "ok" ? spawnResult.value : "{}")).toMatchObject({ next: "Megabrain notifies you when the child reports back; end your turn." });
       // The coordinator (still the same ORCA_TERMINAL_HANDLE, having spawned but never having run
       // inside the child's own tmux pane) must not be able to call itself done on that dispatch.
       const doneResult = await executeQueueWrite("done", ["finished"], environment, process);

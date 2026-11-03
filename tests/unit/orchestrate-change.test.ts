@@ -172,7 +172,7 @@ describe("orchestrate change delivery", () => {
       await writeDispatch(root, {}, processAdapter(true));
       const result = await executeOrchestrateChange(["change", "--text", direction, "--json"], environment(root), processAdapter(true));
       expect(result.kind).toBe("ok");
-      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: false, status: "queued" });
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: false, status: "queued", next: "The direction is queued; wait for the child to check its messages." });
     } finally { await removeStateDir(root); }
   });
 
@@ -343,7 +343,7 @@ describe("orchestrate change delivery", () => {
       await writeDispatch(root);
       const result = await executeOrchestrateChange(["change", "--text", direction, "--idle-timeout", "2", "--json"], environment(root), processAdapter());
       expect(result.kind).toBe("ok");
-      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: true, confirmed: false });
+      expect(JSON.parse(result.kind === "ok" ? result.value : "{}")).toMatchObject({ delivered: true, confirmed: false, status: "delivered-unconfirmed", next: "Check the child's pane to confirm the new direction arrived." });
     } finally {
       harness.restore();
       await removeStateDir(root);
