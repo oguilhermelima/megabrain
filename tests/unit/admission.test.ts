@@ -35,4 +35,10 @@ describe("resource admission", () => {
       machine, runningAgents: 0, runningContainerSuites: 0,
     })).toMatchObject({ status: "refused", reason: expect.stringContaining("total memory") });
   });
+
+  test("explains the estimated spawn cost in the memory refusal", () => {
+    expect(decideAdmission(request, { minAvailableMiB: 1024 }, {
+      machine: { ...machine, availableMemoryBytes: 2669 * 1024 ** 2 }, runningAgents: 0, runningContainerSuites: 0,
+    })).toMatchObject({ status: "queued", reason: "2669 MiB available, spawn costs ~2048 MiB, must leave 1024 MiB free" });
+  });
 });
