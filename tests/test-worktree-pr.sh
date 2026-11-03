@@ -7,6 +7,7 @@ work_dir="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-worktree-pr.XXXXXX")"
 source "$root/tests/support/state-dir-guard.bash"
 export MEGABRAIN_STATE_DIR="$work_dir/.megabrain-test-state"
 require_megabrain_test_state
+unset MEGABRAIN_DISPATCH_ID
 
 
 cleanup() {
@@ -168,6 +169,20 @@ scenario_explicit_base_wins() {
   printf 'an explicit PR base overrides stack and repository defaults\n'
 }
 
+scenario_persistent_draft_default_and_ready_override() {
+  setup_fixture
+  make_stacked_worktrees
+  write_gh
+  run_binary settings set pr-defaults '{"draft":true}' >/dev/null
+  : >"$GH_LOG"
+  run_binary worktree pr "$fixture_shared_root/child" --json >/dev/null
+  assert_contains "$(cat "$GH_LOG")" '--draft'
+  : >"$GH_LOG"
+  run_binary worktree pr "$fixture_shared_root/child" --ready --json >/dev/null
+  assert_not_contains "$(cat "$GH_LOG")" '--draft'
+  printf 'worktree PRs use the saved draft default and --ready opens reviewable PRs\n'
+}
+
 scenario_gh_failures_are_distinct() {
   local output
   setup_fixture
@@ -249,6 +264,7 @@ scenario_tree_listing_has_no_orchestrator_dependency() {
 
 scenario_parent_and_default_bases
 scenario_explicit_base_wins
+scenario_persistent_draft_default_and_ready_override
 scenario_gh_failures_are_distinct
 scenario_no_commits_ahead_is_refused
 scenario_issue_links_are_non_fatal

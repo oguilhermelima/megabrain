@@ -7,6 +7,7 @@ work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-stack-github.XXXXXX")"
 source "$root/tests/support/state-dir-guard.bash"
 export MEGABRAIN_STATE_DIR="$work/state"
 require_megabrain_test_state
+unset MEGABRAIN_DISPATCH_ID
 trap 'remove_test_dir "$work"' EXIT
 
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
@@ -103,6 +104,16 @@ contains "$(cat "$GH_LOG")" '--base stack/base'
 contains "$(cat "$GH_LOG")" 'Stack: 2/'
 not_contains "$(cat "$GH_LOG")" 'POST /repos/owner/repo/stacks'
 printf 'GitHub falls back to chained PRs when the stack API is unavailable\n'
+
+# Scenario: stack PRs use the saved draft preference and --ready overrides it for this call.
+run settings set pr-defaults '{"draft":true}' >/dev/null
+: >"$GH_LOG"
+run stack pr >/dev/null
+contains "$(cat "$GH_LOG")" '--draft'
+: >"$GH_LOG"
+run stack pr --ready >/dev/null
+not_contains "$(cat "$GH_LOG")" '--draft'
+printf 'GitHub stack PRs use the saved draft default and --ready opens reviewable PRs\n'
 
 # Scenario: sync and merge require explicit confirmation before any mutation.
 : >"$GH_LOG"
