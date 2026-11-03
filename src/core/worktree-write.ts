@@ -27,6 +27,7 @@ export type PullRequestOptions = {
   readonly base?: string;
   readonly title?: string;
   readonly body?: string;
+  readonly draft?: boolean;
   readonly json: boolean;
 };
 export function parseCreateOptions(
@@ -140,10 +141,15 @@ export function parsePullRequestOptions(
 ): Result<PullRequestOptions> {
   let title: string | undefined;
   let body: string | undefined;
+  let draft: boolean | undefined;
   const commonArgs: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--title" || arg === "--body") {
+    if (arg === "--draft" || arg === "--ready") {
+      if (draft !== undefined) return failed("--draft and --ready can only be given once", 2);
+      draft = arg === "--draft";
+    }
+    else if (arg === "--title" || arg === "--body") {
       const next = args[index + 1];
       if (next === undefined)
         return failed(`${arg} requires a non-empty value`, 2);
@@ -153,7 +159,7 @@ export function parsePullRequestOptions(
     } else commonArgs.push(arg);
   }
   const common = parseCommon(commonArgs, "pr");
-  return common.kind === "ok" ? ok({ ...common.value, title, body }) : common;
+  return common.kind === "ok" ? ok({ ...common.value, title, body, ...(draft === undefined ? {} : { draft }) }) : common;
 }
 export function createName(branch: string): string | undefined {
   const name = branch.replaceAll("/", "-");

@@ -41,6 +41,7 @@ import {
   type WorktreeLocation,
 } from "../../core/worktree-location.js";
 import { registerMegabrainRepository } from "../../core/project-registry.js";
+import { readPrDefaults } from "../../core/pr-defaults.js";
 
 import { defaultBase, parentBranch, pathFor, root, run, type Environment } from "./worktree-write-base.js";
 export async function executeWorktreePr(
@@ -51,6 +52,7 @@ export async function executeWorktreePr(
   const parsed = parsePullRequestOptions(args);
   if (parsed.kind !== "ok") return parsed;
   const value: PullRequestOptions = parsed.value;
+  const draft = value.draft ?? (await readPrDefaults(environment)).draft;
   if (!value.target)
     return failed(
       usageMessage("worktree-pr"),
@@ -121,6 +123,7 @@ export async function executeWorktreePr(
     title,
     "--body",
     value.body ?? "",
+    ...(draft ? ["--draft"] : []),
   ]);
   if (created.kind !== "ok")
     return failed(`could not open a pull request: ${created.error}`);
