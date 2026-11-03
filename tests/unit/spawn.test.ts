@@ -1184,11 +1184,10 @@ describe("executeSpawn", () => {
         .filter((call) => call.command === "orca" && call.args[1] === "send")
         .map((call) => call.args[call.args.indexOf("--text") + 1] ?? "")
         .find((text) => text.includes("Dispatch identity:"));
-      console.log(JSON.stringify(delivered));
       expect(delivered).toBeDefined();
       expect(delivered).toContain("REQUIRED: Run megabrain received first.");
       expect(delivered).toContain("CRITICAL: Never close your own dispatch.");
-      const prompt = delivered?.slice(delivered.indexOf("[megabrain dispatch:")) ?? "";
+      const prompt = (delivered?.slice(delivered.indexOf("[megabrain dispatch:")) ?? "").replaceAll(" — ", "\n");
       const preamble = prompt.split("\n\nDispatch identity:")[0];
       expect(new TextEncoder().encode(preamble).length).toBeLessThan(440);
     } finally { await rm(root, { recursive: true, force: true }); }
