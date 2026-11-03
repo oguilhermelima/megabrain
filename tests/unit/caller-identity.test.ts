@@ -27,7 +27,7 @@ import { callerFromEnvironment } from "../../src/cli/commands/orchestrate-list.j
 import { decorateDispatchRecord, parseDispatchRecord } from "../../src/core/dispatch.js";
 import { tmuxCallerSession } from "../../src/cli/commands/orchestrate-prune.js";
 import { callerSession as installDoctorCallerSession } from "../../src/cli/commands/install-doctor.js";
-import { appendMessage, createDelivery, createDispatch, getDispatch, listDeliveries } from "../../src/adapters/state-db.js";
+import { appendMessage, createDelivery, createDispatch, getDispatch, listDeliveries, listMessages } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
 import { unhandledParentMail } from "../../src/core/check.js";
 
@@ -411,7 +411,7 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     if (db.kind !== "ok") throw new Error(db.error);
     appendMessage(db.value, "dispatch-1", { from: "child", type: "ask", text: "which option?" });
     createDelivery(db.value, { id: "delivery-watch", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding", consumer: null, consumerGeneration: null });
-    const result = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--json"], structuredClaudeEnvironment(root));
+    const result = await executeOrchestrateWatch(["dispatch-1", "--timeout", "0", "--no-ack", "--json"], structuredClaudeEnvironment(root));
     expect(isOwnershipRefusal(result)).toBe(false);
     expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ status: "outstanding" }] });
   });
