@@ -31,7 +31,7 @@ export function startupDialogCause(_agentId: string, output: string): string | u
     [/(?:hooks need review|review (?:the )?hooks?|hooks? (?:require|need) approval)/i, "hook-review-dialog"],
     [/update available[\s\S]{0,300}(?:skip|install|update)|codex just got an upgrade/i, "update-dialog"],
     [/(?:permission required|requires permission|allow once[\s\S]{0,250}(?:allow always|reject|deny)|do you want to allow)/i, "permission-dialog"],
-    [/(?:would you like to (?:continue|proceed|allow|choose)|select an option[\s\S]{0,250}(?:\b1\.|\byes\b|\bno\b))/i, "question-dialog"],
+    [/(?:would you like to (?:continue|proceed|allow|choose)|what would you like to|which (?:option|one|approach)|select an option)[\s\S]{0,300}(?:\?|\b1\.|\b2\.|\byes\b|\bno\b)/i, "question-dialog"],
   ];
   return checks.find(([pattern]) => pattern.test(output))?.[1];
 }
