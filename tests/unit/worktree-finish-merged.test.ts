@@ -1,0 +1,92 @@
+import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createProcessAdapter } from "../../src/adapters/proc.js";
+import { executeWorktreeFinish } from "../../src/cli/commands/worktree-write.js";
+
+const process = createProcessAdapter();
+const git = async (cwd: string, ...args: string[]) => {
+  const result = await process.run("git", ["-C", cwd, "-c", "user.name=Test", "-c", "user.email=test@example.com", ...args]);
+  if (result.kind !== "ok") throw new Error(result.error);
+  return result.value.stdout.trim();
+};
+
+async function fixture() {
+  const root = await mkdtemp(join(tmpdir(), "megabrain-finish-merged-"));
+  const repo = join(root, "repo");
+  const state = join(root, "state");
+  const shared = join(root, "worktrees");
+  await mkdir(repo, { recursive: true });
+  await mkdir(state, { recursive: true });
+  await mkdir(shared, { recursive: true });
+  await writeFile(join(state, "worktree-root"), `${shared}\n`);
+  await git(repo, "init", "-q", "-b", "main");
+  await writeFile(join(repo, "base.txt"), "base\n");
+  await git(repo, "add", "base.txt");
+  await git(repo, "commit", "-q", "-m", "base");
+  return { root, repo, state, shared };
+}
+
+async function worktree(f: Awaited<ReturnType<typeof fixture>>, branch: string, base = "main") {
+  const path = join(f.shared, branch.replaceAll("/", "-"));
+  await git(f.repo, "worktree", "add", "-q", path, "-b", branch, base);
+  await writeFile(join(path, `${branch.split("/").at(-1)}.txt`), `${branch}\n`);
+  await git(path, "add", ".");
+  await git(path, "commit", "-q", "-m", branch);
+  return path;
+}
+
+async function finish(f: Awaited<ReturnType<typeof fixture>>, path: string, base: string) {
+  return executeWorktreeFinish([path, "--delete-branch", "--base", base, "--json"], { MEGABRAIN_STATE_DIR: f.state }, process);
+}
+
+describe("worktree finish recognizes merged changes", () => {
+  test("allows deleting a branch whose change was squash-merged", async () => {
+    const f = await fixture();
+    try {
+      const path = await worktree(f, "feat/squash");
+      await git(f.repo, "merge", "--squash", "feat/squash");
+      await git(f.repo, "commit", "-q", "-m", "squash feat/squash");
+      const result = await finish(f, path, "main");
+      expect(result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode).toBe(0);
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/squash")).toBe("");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }, 15000);
+
+  test("allows deleting a branch whose change was rebase-merged", async () => {
+    const f = await fixture();
+    try {
+      const path = await worktree(f, "feat/rebase");
+      const commit = await git(path, "rev-parse", "HEAD");
+      await git(f.repo, "cherry-pick", commit);
+      const result = await finish(f, path, "main");
+      expect(result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode).toBe(0);
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/rebase")).toBe("");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }, 15000);
+
+  test("judges a squash merge against the explicitly selected epic base", async () => {
+    const f = await fixture();
+    try {
+      await git(f.repo, "switch", "-q", "-c", "epic");
+      const path = await worktree(f, "feat/epic-child", "epic");
+      await git(f.repo, "merge", "--squash", "feat/epic-child");
+      await git(f.repo, "commit", "-q", "-m", "squash child into epic");
+      const result = await finish(f, path, "epic");
+      expect(result.kind === "ok" ? result.exitCode ?? 0 : result.exitCode).toBe(0);
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/epic-child")).toBe("");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  }, 15000);
+
+  test("refuses deleting a branch with changes absent from the base", async () => {
+    const f = await fixture();
+    try {
+      const path = await worktree(f, "feat/unmerged");
+      const result = await finish(f, path, "main");
+      expect(result.kind === "ok" ? result.exitCode : result.exitCode).toBe(1);
+      expect(result.kind === "ok" ? result.value : result.error).toContain("unmerged-branch");
+      expect(await git(f.repo, "branch", "--format=%(refname:short)", "--list", "feat/unmerged")).toBe("feat/unmerged");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
+});
