@@ -30,6 +30,10 @@ describe("selectDelivery", () => {
     const change = { ...delivery("change", [4]), recipient: "child", transport: "typed", transportReason: "full-direction" };
     expect(selectDelivery("child", false, [change], [...messages, message(4, "parent", "reply")])).toEqual({ kind: "none" });
   });
+  test("keeps an acknowledged queued full direction visible to check", () => {
+    const queuedChange = { ...delivery("queued-change", [4], "acknowledged", "child-consumer"), recipient: "child", transport: "queue", transportReason: "full-direction" };
+    expect(selectDelivery("child", false, [queuedChange], [...messages, message(4, "parent", "reply")], "child-consumer", 1)).toMatchObject({ kind: "selected", delivery: queuedChange });
+  });
   test("replays a delivery owned by the same consumer and generation", () => { expect(selectDelivery("parent", false, [delivery("owned", [2], "outstanding", "consumer")], messages, "consumer", 1)).toEqual({ kind: "selected", delivery: delivery("owned", [2], "outstanding", "consumer"), replayed: true }); });
   test("returns unknown when no candidate has a valid first sequence", () => { expect(selectDelivery("parent", false, [{ ...delivery("bad", []), messageSeqs: [] }], messages)).toEqual({ kind: "unknown" }); });
 });
