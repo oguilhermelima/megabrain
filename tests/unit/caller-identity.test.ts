@@ -464,7 +464,8 @@ describe("parent verbs accept the structured-session caller that spawned the dis
     const created = createDelivery(db.value, { id: "delivery-question", dispatchId: "dispatch-1", recipient: "parent", messageSeqs: [1], status: "outstanding" });
     if (created.kind !== "ok") throw new Error(created.error);
     const result = await executeOrchestrateAck(["dispatch-1", "delivery-question", "--close", "--json"], structuredClaudeEnvironment(root), orcaHostProcess("child-term-1"));
-    expect(result).toMatchObject({ kind: "failed", error: "dispatch dispatch-1 is waiting for a reply; reply to the question before acknowledging with --close" });
+    expect(result).toMatchObject({ kind: "ok", exitCode: 1, value: expect.stringContaining('"refusal"') });
+    if (result.kind === "ok") expect(JSON.parse(result.value)).toMatchObject({ refusal: { code: "dispatch-not-done", message: "dispatch dispatch-1 is waiting for a reply; reply to the question before acknowledging with --close" } });
     expect(listDeliveries(db.value, "dispatch-1")).toMatchObject({ kind: "ok", value: [{ id: "delivery-question", status: "outstanding" }] });
   });
 });
