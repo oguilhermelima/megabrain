@@ -277,8 +277,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
     if (localParent || text === "" || dispatch === "" || sequence < 1) return false;
     const terminal = targetKind === "parent-pointer"
-      ? { host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId, workspaceId: meta.parentWorkspaceId }
-      : { host: meta.childHost, terminalId: meta.terminalId, workspaceId: meta.workspaceId };
+      ? { host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId, workspaceId: meta.parentWorkspaceId, tmuxPane: meta.parentTmuxPane }
+      : { host: meta.childHost, terminalId: meta.terminalId, workspaceId: meta.workspaceId, tmuxPane: meta.tmuxPane };
     if (!(await agentOwnsForegroundProcess(String(meta.agent ?? ""), Number(meta.agentPid), process, terminal))) {
       receiverGone = true;
       outcome = "receiver-gone";
