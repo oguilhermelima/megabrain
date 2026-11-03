@@ -47,5 +47,8 @@ export function decideAdmission(request: AdmissionRequest, policy: AdmissionPoli
   if (request.kind === "container-suite" && policy.maxContainerSuites != null && snapshot.runningContainerSuites >= policy.maxContainerSuites) {
     reasons.push(`${snapshot.runningContainerSuites} container suites running, limit ${policy.maxContainerSuites}`);
   }
-  return reasons.length === 0 ? { status: "admitted" } : { status: "queued", reason: reasons.join("; ") };
+  if (reasons.length === 0) return { status: "admitted" };
+  const estimatedCost = `spawn costs ~${Math.ceil(cost / 1024 ** 2)} MiB`;
+  const reason = reasons.join("; ");
+  return { status: "queued", reason: reason.includes("spawn costs ~") ? reason : `${reason}; ${estimatedCost}` };
 }
