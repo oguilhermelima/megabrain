@@ -61,4 +61,17 @@ describe("worktree PR draft preference", () => {
       expect(ready.calls.find((args) => args[0] === "pr" && args[1] === "create")).not.toContain("--draft");
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
+
+  test("rejects conflicting draft flags and falls back to ready for malformed defaults", async () => {
+    const f = await fixture();
+    try {
+      const conflicting = await open(f, ["--draft", "--ready"]);
+      expect(conflicting.result).toMatchObject({ kind: "failed", exitCode: 2 });
+      expect(conflicting.calls).toEqual([]);
+      await writeFile(join(f.state, "pr-defaults.json"), "{ malformed");
+      const fallback = await open(f, []);
+      expect(fallback.result.kind).toBe("ok");
+      expect(fallback.calls.find((args) => args[0] === "pr" && args[1] === "create")).not.toContain("--draft");
+    } finally { await rm(f.root, { recursive: true, force: true }); }
+  });
 });
