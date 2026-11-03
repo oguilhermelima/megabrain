@@ -825,6 +825,17 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     });
   });
 
+  test("does not append identical stalled notices repeatedly inside the cooldown", async () => {
+    await withRoot("stalled-cooldown", async (root) => {
+      await writeMeta(root, "d1", tmuxChild);
+      const env = environment(root, { TMUX: "t", TMUX_PANE: "%3" });
+      const process = tmuxChildProcess("✻ Brewed for 9m 47s\n\n❯ \n");
+      await executeHookTurnEnd(["waiting"], env, process, noStdin);
+      await executeHookTurnEnd(["waiting"], env, process, noStdin);
+      expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(1);
+    });
+  });
+
   test("appends the fallback stalled text when the terminal is missing and no payload text is given", async () => {
     await withRoot("stalled-missing-terminal", async (root) => {
       await writeMeta(root, "d1", { ...childBase, workspaceId: "workspace-child", state: "running", processState: "running" });
