@@ -1,7 +1,19 @@
 import { describe, expect, test } from "bun:test";
 import { planWeb } from "../../src/core/web.js";
+import { executeWeb } from "../../src/cli/commands/web.js";
+import type { ProcessAdapter } from "../../src/adapters/proc.js";
 
 describe("planWeb", () => {
+  test("refuses session save from a dispatch", async () => {
+    let invoked = false;
+    const processAdapter: ProcessAdapter = {
+      async run() { invoked = true; return { kind: "ok", value: { stdout: "", stderr: "", exitCode: 0 } }; },
+      async startDetached() { return { kind: "ok", value: undefined }; }, invocationCount() { return 0; },
+    };
+    const result = await executeWeb(["session", "save"], { MEGABRAIN_DISPATCH_ID: "dispatch-test" }, processAdapter);
+    expect(result).toMatchObject({ kind: "failed", error: expect.stringContaining("web capture/measure --storage-state") });
+    expect(invoked).toBe(false);
+  });
   test.each([
     [["devices", "list"], { command: "device-list", args: ["--filter", ""] }],
     [["devices", "list", "--json"], { command: "device-list", args: ["--filter", "", "--json"] }],
