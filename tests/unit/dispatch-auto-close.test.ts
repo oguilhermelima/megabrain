@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AUTO_CLOSE_GRACE_MS, mayAutoCloseDispatch } from "../../src/core/dispatch-auto-close.js";
+import { AUTO_CLOSE_GRACE_MS, mayAutoCloseDispatch, tmuxClientsViewedSinceDone } from "../../src/core/dispatch-auto-close.js";
 import { parseArgs } from "../../src/cli/commands/orchestrate-spawn-options.js";
 
 const candidate = (overrides: Partial<Parameters<typeof mayAutoCloseDispatch>[0]> = {}) => ({
@@ -34,5 +34,14 @@ describe("dispatch auto-close policy", () => {
   test("does not auto-close non-tmux runtimes or dispatches not done", () => {
     expect(mayAutoCloseDispatch(candidate({ runtime: "host" }))).toBe(false);
     expect(mayAutoCloseDispatch(candidate({ state: "running" }))).toBe(false);
+  });
+
+  test("treats a client attached or active after done as viewed, but ignores pane output", () => {
+    const doneAt = "2026-11-03T12:00:00.000Z";
+    expect(tmuxClientsViewedSinceDone("", doneAt)).toBe(false);
+    expect(tmuxClientsViewedSinceDone("1793707201|1793707201", doneAt)).toBe(true);
+    expect(tmuxClientsViewedSinceDone("1793707190|1793707201", doneAt)).toBe(true);
+    expect(tmuxClientsViewedSinceDone("1793707190|1793707199", doneAt)).toBe(false);
+    expect(tmuxClientsViewedSinceDone("malformed", doneAt)).toBeUndefined();
   });
 });
