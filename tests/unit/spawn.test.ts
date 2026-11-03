@@ -62,6 +62,7 @@ async function tmuxLaunchScript(process: { readonly calls: readonly Call[] }): P
 
 function environment(root: string, dispatchId: string): Record<string, string> {
   return {
+    HOME: root,
     MEGABRAIN_STATE_DIR: root,
     MEGABRAIN_SESSION_ID: "parent-terminal",
     MEGABRAIN_SESSION_HOST: "tmux",
