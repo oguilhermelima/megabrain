@@ -363,7 +363,7 @@ describe("supervisor and a prompt still in transport", () => {
         outbox: { id: "retry-outbox", targetKind: "child-delivery", target: "tmux:s:%9", payload: { dispatchId: "retry-child", sequence: 2, fullMessage: "continue", fullDirection: true, meta: { runtime: "tmux", tmuxSession: "s", tmuxPane: "%9", agent: "codex" } } },
       });
       if (appended.kind !== "ok") throw new Error(appended.error);
-      fixture.database.db.run("UPDATE outbox SET status = 'failed', detail = 'typed submission failed', updated_at = ? WHERE id = ?", [new Date(Date.now() - 60_000).toISOString(), "retry-outbox"]);
+      fixture.database.db.run("UPDATE outbox SET status = 'failed', detail = 'typed submission failed', updated_at = ? WHERE id = ?", [new Date().toISOString(), "retry-outbox"]);
 
       await superviseOnce(fixture.directory, fixture.database, fixture.environment, fixture.process, Date.now());
 
