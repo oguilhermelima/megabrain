@@ -354,6 +354,28 @@ describe("supervisor and a prompt still in transport", () => {
     };
   }
 
+  test("retries a failed child direction when the pane is idle and records why", async () => {
+    const fixture = await idleFixture("retry-child", { state: "running", promptTransport: "transported" }, "agent-liveness/codex-tmux-idle.txt");
+    try {
+      const now = new Date().toISOString();
+      const appended = appendMessage(fixture.database, "retry-child", { from: "parent", type: "reply", text: "continue", sessionId: "parent", createdAt: now }, {
+        delivery: { id: "retry-delivery", recipient: "child", status: "outstanding", createdAt: now, updatedAt: now },
+        outbox: { id: "retry-outbox", targetKind: "child-delivery", target: "tmux:s:%9", payload: { dispatchId: "retry-child", sequence: 2, fullMessage: "continue", fullDirection: true, meta: { runtime: "tmux", tmuxSession: "s", tmuxPane: "%9", agent: "codex" } } },
+      });
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      fixture.database.db.run("UPDATE outbox SET status = 'failed', detail = 'typed submission failed', updated_at = ? WHERE id = ?", [new Date(Date.now() - 60_000).toISOString(), "retry-outbox"]);
+
+      await superviseOnce(fixture.directory, fixture.database, fixture.environment, fixture.process, Date.now());
+
+      const item = listOutbox(fixture.database, "retry-child");
+      if (item.kind !== "ok") throw new Error(item.error);
+      expect(item.value.find((row) => row.id === "retry-outbox")?.detail).toContain("retry reason: pane idle");
+      expect(item.value.find((row) => row.id === "retry-outbox")?.status).toBe("pending");
+      const deliveries = listDeliveries(fixture.database, "retry-child");
+      expect(deliveries.kind === "ok" ? deliveries.value.find((row) => row.id === "retry-delivery")?.status : "").toBe("outstanding");
+    } finally { await fixture.close(); }
+  });
+
   test("a settled dispatch idle at an empty composer without its prompt is reported lost", async () => {
     const fixture = await idleFixture("settled-idle", { state: "running", promptTransport: "transported" });
     try {
