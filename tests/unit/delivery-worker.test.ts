@@ -52,14 +52,14 @@ describe("deferred delivery worker lifecycle", () => {
       if (seeded.kind !== "ok") throw new Error(seeded.error);
       expect(createDispatch(seeded.value, {
         dispatchId: "tmux-owner", state: "running", runtime: "tmux", childHost: "tmux",
-        tmuxSession: "session", tmuxSessionId: "session-id", tmuxPane: "%4", terminalId: "tmux:session:%4",
+        tmuxSession: "session", tmuxSessionId: "session", tmuxPane: "%4", terminalId: "tmux:session:%4",
         agent: "codex", agentPid: 4242,
       }).kind).toBe("ok");
       const reply = appendParentReply(seeded.value, "tmux-owner", { from: "parent", type: "reply", text: "continue", sessionId: "parent" }, {
         supersede: false,
         outbox: { id: "outbox-tmux-owner", targetKind: "child-delivery", target: "tmux:session:%4", payload: {
           dispatchId: "tmux-owner", sequence: 1, fullMessage: "continue", fullDirection: true,
-          meta: { runtime: "tmux", childHost: "tmux", tmuxSession: "session", tmuxSessionId: "session-id", tmuxPane: "%4", terminalId: "tmux:session:%4", agent: "codex", agentPid: 4242 },
+          meta: { runtime: "tmux", childHost: "tmux", tmuxSession: "session", tmuxSessionId: "session", tmuxPane: "%4", terminalId: "tmux:session:%4", agent: "codex", agentPid: 4242 },
         } },
       });
       expect(reply.kind).toBe("ok");
