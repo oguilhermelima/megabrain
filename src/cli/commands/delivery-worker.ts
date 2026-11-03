@@ -226,6 +226,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const ackInstruction = acknowledgment === "" ? "" : `\n${acknowledgment}`;
   const text = rawText;
   const typedText = `${rawText}${ackInstruction}`;
+  const childPointer = "You have 1 megabrain message; run megabrain check";
   const priorVerification = getOutboxPeerVerification(database.value, outboxId);
   const fallbackOnly = priorVerification.kind === "ok" && priorVerification.value?.state === "fallback-queued";
   const queueVerification = async (channel: string, messageId: string, agentVersion: string, transcript?: string, transcriptOffset?: number): Promise<void> => {
@@ -253,6 +254,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let lastDecision: string | undefined;
   let sendError: string | undefined;
   let composerReadbackAfterSubmit: Readonly<{ region?: string; orcaDraft?: string }> | undefined;
+  let pointerSent = false;
   let screenDownSince: number | undefined;
   let screenError = "";
   const unavailableMs = Number(environment.MEGABRAIN_PROOF_UNAVAILABLE_MS);
@@ -321,7 +323,14 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           return screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
         },
         clear: async () => clearOwnComposer(root, meta, process),
-        send: async () => sendTyped(meta, typedText, process, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; }),
+        send: async () => {
+          const currentScreen = await readDeliveryScreen(meta, process);
+          const currentStatus = currentScreen.kind === "ok"
+            ? deliveryStatus(classifyLiveness(String(meta.agent ?? ""), currentScreen.value).status)
+            : "unknown";
+          pointerSent = targetKind === "child-delivery" && currentStatus === "busy" && payload.fullDirection === true;
+          return sendTyped(meta, pointerSent ? childPointer : typedText, process, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; });
+        },
         sendError: () => sendError,
         isRead: async () => readWasPulled(root, dispatch, sequence),
         attempt: async (details) => {
@@ -341,7 +350,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       result = "failed";
     }
     outcome = result;
-    transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
+    transport = result === "delivered" ? payload.pointerOnly === true || pointerSent ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
     if (fallbackOnly && result === "delivered") finishOutboxPeerVerification(database.value, outboxId, "fallback-delivered");
     return result === "delivered" ? true : result === "cancelled" ? { delivered: false, stop: true } : false;
   };
@@ -397,6 +406,10 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       "codex-queue": async () => {
         if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || typeof threadId !== "string" || threadId === "" || text === "") return false;
+        if (targetKind === "child-delivery") {
+          peer = { kind: "fallback", reason: "child reads are acknowledged by check; use a busy-pane pointer" };
+          return false;
+        }
         const found = await findCodexProcessByThread(threadId, process);
         if (!("pid" in found)) { peer = { kind: "fallback", reason: found.reason }; return false; }
         if (targetKind === "child-delivery") {
@@ -432,7 +445,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const unavailable = outcome === "unavailable";
   const untypable = localParent && peer?.kind !== "delivered" && peer?.kind !== "accepted" && peer?.kind !== "read" && peer?.kind !== "aborted";
   const reason = receiverGone ? "receiver-gone: receiver is no longer the terminal's foreground agent process" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
-  await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && !["failed", "deferred"].includes(transport) ? "full-direction" : undefined });
+  await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined });
   const finished = targetKind === "parent-pointer"
     ? await callStateOwner(root, { operation: "finish-notification", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", event: { dispatchId: dispatch, pointer, outcome, reason } })
     : await callStateOwner(root, { operation: "finish-outbox", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", detail: reason });
