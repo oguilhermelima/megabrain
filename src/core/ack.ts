@@ -19,3 +19,11 @@ export function acknowledgeDelivery(
   }
   return ok({ duplicate: false });
 }
+
+export function unknownDeliveryReason(deliveryId: string, dispatchId: string, records: readonly Readonly<{ dispatchId: string; archived: boolean; deliveryIds: readonly string[] }>[]): string {
+  const record = records.find((candidate) => candidate.dispatchId !== dispatchId && candidate.archived === true && candidate.deliveryIds.includes(deliveryId));
+  if (record !== undefined) return `delivery was recorded for archived dispatch ${record.dispatchId}`;
+  const other = records.find((candidate) => candidate.dispatchId !== dispatchId && candidate.deliveryIds.includes(deliveryId));
+  if (other !== undefined) return `delivery was recorded for dispatch ${other.dispatchId}, not ${dispatchId}`;
+  return "it was never recorded";
+}

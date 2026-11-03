@@ -1,5 +1,6 @@
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { unknownDeliveryReason } from "../../core/ack.js";
 import { resolveConsumerIdentity } from "../../core/identity.js";
 import { resolveCallerIdentity } from "../../core/context.js";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
@@ -8,7 +9,7 @@ import { loadDeliveries, loadMessages, migrateDeliveries, report } from "./check
 import { ackCloseRefusal, parseParentAckArgs } from "../../core/parent-queue.js";
 import { resolveCaller } from "./queue-write.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
-import { getDispatch, isDispatchArchived, listDeliveries, listMessages, nudgeCursor, readOnlyStateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
+import { getDispatch, isDispatchArchived, listDeliveries, listDispatchEntries, listMessages, nudgeCursor, readOnlyStateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
 import { usageText } from "../../core/usage.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { callStateOwner } from "../../db/state-owner.js";
@@ -158,7 +159,15 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   if (identity.kind !== "known") return failed(identity.reason);
   const deliveries = listDeliveries(database.value, dispatchId); if (deliveries.kind !== "ok") return deliveries;
   let delivery = deliveries.value.find((item) => item.id === parsed.value.deliveryId);
-  if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);
+  if (delivery === undefined) {
+    const entries = listDispatchEntries(database.value, { includeArchived: true });
+    if (entries.kind !== "ok") return entries;
+    const records = entries.value.map((entry) => {
+      const all = listDeliveries(database.value, entry.record.dispatchId);
+      return { dispatchId: entry.record.dispatchId, archived: entry.archived, deliveryIds: all.kind === "ok" ? all.value.map((item) => item.id) : [] };
+    });
+    return failed(`delivery ${parsed.value.deliveryId} refused: ${unknownDeliveryReason(parsed.value.deliveryId, dispatchId, records)}`);
+  }
   // The command is printed inside the delivered message. Reaching it proves that this consumer
   // received the message, so an unclaimed delivery can be claimed here before it is acknowledged.
   if (delivery.consumer === null || delivery.consumer === undefined) {
