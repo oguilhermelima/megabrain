@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { executeChildAck } from "../../src/cli/commands/child-ack.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
-import { createDelivery, createDispatch } from "../../src/adapters/state-db.js";
+import { archiveDispatch, createDelivery, createDispatch } from "../../src/adapters/state-db.js";
 
 function fakeProcess(behavior: (command: string, args: readonly string[]) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = () => ok({ stdout: "", stderr: "", exitCode: 0 })): ProcessAdapter {
   return {
@@ -85,4 +85,19 @@ describe("executeChildAck: tmux-runtime records", () => {
       expect(result).toMatchObject({ kind: "failed", error: "delivery foreign-delivery refused: delivery was recorded for dispatch other-child, not current-child" });
     });
   });
+  test.each([["text", []], ["JSON", ["--json"]]] as const)("identifies a delivery from an archived dispatch in %s errors", async (_format, suffix) => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "current-child", { runtime: "host", terminalId: "child-orca-term", childHost: "orca" });
+      await writeDispatch(root, "archived-child", { runtime: "host", terminalId: "old-term", childHost: "orca" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const delivery = createDelivery(database.value, { id: "archived-delivery", dispatchId: "archived-child", messageSeqs: [1], status: "outstanding" });
+      if (delivery.kind !== "ok") throw new Error(delivery.error);
+      const archived = archiveDispatch(database.value, "archived-child");
+      if (archived.kind !== "ok") throw new Error(archived.error);
+      const result = await executeChildAck(["archived-delivery", ...suffix], { MEGABRAIN_STATE_DIR: root, ORCA_TERMINAL_HANDLE: "child-orca-term" }, fakeProcess());
+      expect(result).toEqual({ kind: "failed", error: "delivery archived-delivery refused: delivery was recorded for archived dispatch archived-child", exitCode: 1 });
+    });
+  });
+
 });
