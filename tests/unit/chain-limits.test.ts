@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
@@ -111,6 +111,22 @@ describe("agy usage limits", () => {
       expect(await readLimit("agy", "weekly", config, {}, signedOut, state, "claude-sonnet-5-5")).toMatchObject({
         status: "stale", stale: true, staleReason: expect.any(String), usedPercent: 100, bucket: "Claude and GPT models", fetchedAt: expect.any(Number),
       });
+    });
+  });
+});
+
+describe("codex rollout freshness", () => {
+  test("marks an old weekly snapshot stale and reports its age", async () => {
+    await withDirectory(async (state) => {
+      const sessions = join(state, "sessions", "2026", "11", "03");
+      mkdirSync(sessions, { recursive: true });
+      const rollout = join(sessions, "rollout-test.jsonl");
+      const now = Math.floor(Date.now() / 1000);
+      writeFileSync(rollout, JSON.stringify({ rate_limits: { primary: { window_minutes: 10080, used_percent: 70, resets_at: now + 86400 } } }));
+      const fetchedAt = now - 20 * 60;
+      utimesSync(rollout, fetchedAt, fetchedAt);
+      const reading = await readLimit("codex", "weekly", live(), { MEGABRAIN_CODEX_SESSIONS_DIR: join(state, "sessions") }, fakeProcess(() => failed("unused")), state);
+      expect(reading).toMatchObject({ status: "stale", stale: true, ageSeconds: expect.any(Number) });
     });
   });
 });
