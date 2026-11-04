@@ -83,10 +83,12 @@ export function selectDelivery(
   consumer = "",
   generation = 1,
   excludedTransports: readonly string[] = [],
+  excludedDeliveryIds: readonly string[] = [],
 ): CheckSelection {
   const candidates = deliveries
     .filter((delivery) => delivery.status === "outstanding" || (full && delivery.status === "superseded"))
     .filter((delivery) => !excludedTransports.includes(String(delivery.transport ?? "")))
+    .filter((delivery) => !excludedDeliveryIds.includes(delivery.id))
     .filter((delivery) => full || delivery.superseded !== true)
     .filter((delivery) => delivery.consumer === null || delivery.consumer === undefined || delivery.consumer === consumer)
     .filter((delivery) => matchesMailbox(mailbox, full, delivery, messages))

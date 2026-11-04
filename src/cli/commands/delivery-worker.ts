@@ -328,7 +328,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           const currentStatus = currentScreen.kind === "ok"
             ? deliveryStatus(classifyLiveness(String(meta.agent ?? ""), currentScreen.value).status)
             : "unknown";
-          pointerSent = targetKind === "child-delivery" && currentStatus === "busy" && payload.fullDirection === true;
+          pointerSent = targetKind === "child-delivery" && currentStatus === "busy" && payload.fullDirection !== true && payload.pointerOnly !== true;
           return sendTyped(meta, pointerSent ? childPointer : typedText, process, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; });
         },
         sendError: () => sendError,
