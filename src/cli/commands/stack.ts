@@ -9,7 +9,8 @@ import { executeWorktreeCreate } from "./worktree-write.js";
 type Environment = Readonly<Record<string, string | undefined>>;
 type Provider = "github" | "gitlab";
 type Worktree = ReturnType<typeof listWorktrees>[number];
-type GitHubPull = { number: number; headRefName: string; baseRefName: string; url?: string; state?: string; reviewDecision?: string; statusCheckRollup?: unknown[] };
+type GitHubPull = { number: number; headRefName: string; baseRefName: string; url?: string; state?: string; title?: string; reviewDecision?: string; statusCheckRollup?: unknown[] };
+type GitHubPullRequest = { number: number; title: string; body: string | null; state: string; mergeable: boolean | null; head: { ref: string; sha: string }; base: { ref: string } };
 type GitHubStack = { number: number; pull_requests: Array<{ number: number; head?: { ref?: string } }> };
 type StackData = { repo: string; slug: string; defaultBranch: string; branches: Worktree[]; forks: Fork[] };
 type GitLabMR = { iid: number; source_branch: string; target_branch: string; state: string; web_url?: string; detailed_merge_status?: string; head_pipeline?: { status?: string } };
@@ -312,10 +313,54 @@ async function nativeStacks(process: ProcessAdapter, repo: string, slug: string)
 }
 
 async function listPulls(process: ProcessAdapter, repo: string): Promise<Result<GitHubPull[]>> {
-  const result = await gh(process, repo, ["pr", "list", "--state", "all", "--json", "number,headRefName,baseRefName,url,state,reviewDecision,statusCheckRollup", "--limit", "100"]);
+  const result = await gh(process, repo, ["pr", "list", "--state", "all", "--json", "number,headRefName,baseRefName,url,state,title,reviewDecision,statusCheckRollup", "--limit", "100"]);
   if (result.kind !== "ok") return failed(result.error);
   try { return ok(JSON.parse(result.value.stdout) as GitHubPull[]); }
   catch { return failed("gh pr list returned invalid JSON"); }
+}
+
+async function getPullRequest(process: ProcessAdapter, repo: string, slug: string, number: number): Promise<Result<GitHubPullRequest>> {
+  const result = await gh(process, repo, ["api", `repos/${slug}/pulls/${number}`]);
+  if (result.kind !== "ok") return failed(result.error);
+  try {
+    const pull = JSON.parse(result.value.stdout) as GitHubPullRequest;
+    if (pull.number !== number || typeof pull.title !== "string" || typeof pull.head?.ref !== "string" || typeof pull.head.sha !== "string" || typeof pull.base?.ref !== "string") {
+      return failed(`GitHub returned an invalid pull request #${number}`);
+    }
+    return ok(pull);
+  } catch { return failed(`GitHub returned invalid JSON for pull request #${number}`); }
+}
+
+async function waitForPullMergeable(process: ProcessAdapter, environment: Environment, data: StackData, number: number): Promise<Result<GitHubPullRequest>> {
+  const timeout = Number(environment.MEGABRAIN_STACK_MERGE_TIMEOUT_MS ?? 120_000);
+  const deadline = Date.now() + Math.max(1_000, timeout);
+  let pull: GitHubPullRequest | undefined;
+  while (Date.now() < deadline) {
+    const fetched = await getPullRequest(process, data.repo, data.slug, number);
+    if (fetched.kind !== "ok") return fetched;
+    pull = fetched.value;
+    if (pull.state !== "open") return failed(`pull request #${number} is ${pull.state}, not open`);
+    if (pull.mergeable === true) return ok(pull);
+    await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+  }
+  return failed(`pull request #${number} did not become mergeable${pull === undefined ? "" : ` (mergeable: ${pull.mergeable})`}`);
+}
+
+async function mergeGitHubPull(process: ProcessAdapter, environment: Environment, data: StackData, pull: GitHubPull, merged: number[]): Promise<Result<null>> {
+  const ready = await waitForPullMergeable(process, environment, data, pull.number);
+  if (ready.kind !== "ok") return failed(`could not merge PR #${pull.number}${merged.length ? ` after merging ${merged.map((number) => `#${number}`).join(", ")}` : ""}: ${ready.error}`);
+  const branch = data.branches.find((item) => item.branch === pull.headRefName);
+  if (branch === undefined || ready.value.head.ref !== branch.branch) return failed(`could not merge PR #${pull.number}: its head branch changed`);
+  if (ready.value.base.ref !== data.defaultBranch) {
+    const retargeted = await gh(process, data.repo, ["api", "--method", "PATCH", `repos/${data.slug}/pulls/${pull.number}`, `--field=base=${data.defaultBranch}`]);
+    if (retargeted.kind !== "ok") return failed(`PR #${pull.number} is ready after merging ${merged.map((number) => `#${number}`).join(", ") || "none"}, but could not retarget it: ${retargeted.error}`);
+  }
+  const title = `${ready.value.title} (#${pull.number})`;
+  const args = ["api", "--method", "PUT", `repos/${data.slug}/pulls/${pull.number}/merge`, "--field=merge_method=squash", `--field=commit_title=${title}`, `--field=commit_message=${ready.value.body ?? ""}`, `--field=sha=${ready.value.head.sha}`];
+  const result = await gh(process, data.repo, args);
+  if (result.kind !== "ok") return failed(`could not merge PR #${pull.number}${merged.length ? ` after merging ${merged.map((number) => `#${number}`).join(", ")}` : ""}: ${result.error}`);
+  merged.push(pull.number);
+  return ok(null);
 }
 
 async function createPulls(process: ProcessAdapter, data: StackData, draft: boolean, pulls: GitHubPull[]): Promise<Result<GitHubPull[]>> {
@@ -559,7 +604,7 @@ async function merge(process: ProcessAdapter, environment: Environment, repoOpti
     for (const branch of data.value.branches) {
       const current = pulls.value.find((item) => item.headRefName === branch.branch);
       if (!current) return failed(`no pull request found for ${branch.branch}`);
-      const merged = await gh(process, data.value.repo, ["pr", "merge", String(current.number), "--squash"]);
+      const merged = await gh(process, data.value.repo, ["pr", "merge", String(current.number), "--squash", "--subject", `${current.title ?? branch.branch} (#${current.number})`]);
       if (merged.kind !== "ok") return failed(`could not merge ${branch.branch}: ${merged.error}`);
       const next = data.value.branches[data.value.branches.indexOf(branch) + 1];
       if (next) {
@@ -569,28 +614,14 @@ async function merge(process: ProcessAdapter, environment: Environment, repoOpti
     }
     return ok(`${shown.value}Stack merged bottom-up.\n`);
   }
-  const requested = await gh(process, data.value.repo, ["api", "--method", "PUT", `repos/${data.value.slug}/pulls/${pull.number}/merge-async`, "--field=merge_method=squash"]);
-  if (requested.kind !== "ok") return failed(`could not start asynchronous stack merge: ${requested.error}`);
-  let response: { status?: string; details?: { uuid?: string; message?: string } };
-  try { response = JSON.parse(requested.value.stdout) as typeof response; }
-  catch { return failed("GitHub returned invalid asynchronous merge status"); }
-  if (response.status === "merged" || response.status === "enqueued") return ok(`${shown.value}GitHub stack merge status: ${response.status}.\n`);
-  const uuid = response.details?.uuid;
-  if (!uuid) return failed(`GitHub accepted the stack merge without a status UUID; inspect PR #${pull.number}`);
-  const timeout = Number(environment.MEGABRAIN_STACK_MERGE_TIMEOUT_MS ?? 120_000);
-  const deadline = Date.now() + Math.max(1_000, timeout);
-  while (Date.now() < deadline) {
-    await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
-    const polled = await gh(process, data.value.repo, ["api", `repos/${data.value.slug}/pulls/${pull.number}/merge-async/${uuid}`]);
-    if (polled.kind !== "ok") return failed(`could not poll GitHub stack merge ${uuid}: ${polled.error}`);
-    try { response = JSON.parse(polled.value.stdout) as typeof response; }
-    catch { return failed("GitHub returned invalid asynchronous merge status"); }
-    if (response.status === "merged") return ok(`${shown.value}GitHub stack merge completed.\n`);
-    if (response.status === "enqueued") return ok(`${shown.value}GitHub stack was added to the merge queue.\n`);
-    if (response.status === "failed") return failed(`GitHub stack merge failed: ${response.details?.message ?? "check the pull request"}`);
-    globalThis.process.stderr.write(`GitHub stack merge is pending (PR #${pull.number}).\n`);
+  const merged: number[] = [];
+  for (const branch of data.value.branches) {
+    const current = pulls.value.find((item) => item.headRefName === branch.branch);
+    if (current === undefined) return failed(`no pull request found for ${branch.branch}${merged.length ? ` after merging ${merged.map((number) => `#${number}`).join(", ")}` : ""}`);
+    const result = await mergeGitHubPull(process, environment, data.value, current, merged);
+    if (result.kind !== "ok") return result;
   }
-  return failed(`GitHub stack merge is still pending; inspect PR #${pull.number} (request ${uuid})`);
+  return ok(`${shown.value}GitHub stack merged bottom-up (${merged.map((number) => `#${number}`).join(", ")}).\n`);
 }
 
 export async function executeStack(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
