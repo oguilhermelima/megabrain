@@ -4,12 +4,13 @@ import { basename, dirname, join, normalize } from "node:path";
 import { failed, ok, type Result } from "../core/result.js";
 
 type TrustEnvironment = Readonly<Record<string, string | undefined>>;
+export type TrustPreflightHooks = Readonly<{ beforeConfigCommit?: (configPath: string) => Promise<void> }>;
 const LOCK_WAIT_MS = 10_000;
 const LOCK_STALE_MS = 60_000;
 const CONFIG_WRITE_ATTEMPTS = 3;
 
 /** Pre-seed only the exact workspace keys Claude Code and Codex use for their trust prompt. */
-export async function preflightWorktreeTrust(agent: string, worktreePath: string, environment: TrustEnvironment): Promise<Result<void>> {
+export async function preflightWorktreeTrust(agent: string, worktreePath: string, environment: TrustEnvironment, hooks: TrustPreflightHooks = {}): Promise<Result<void>> {
   if (agent !== "codex") return ok(undefined);
   try {
     let canonicalPath: string;
@@ -26,7 +27,7 @@ export async function preflightWorktreeTrust(agent: string, worktreePath: string
     if (home === undefined || home === "") return failed(`cannot preflight ${agent} worktree trust without HOME`);
     if (agent === "codex") {
       const config = join(environment.CODEX_HOME ?? join(home, ".codex"), "config.toml");
-      await updateConfig(config, (raw) => upsertCodexTrust(raw, canonical));
+      await updateConfig(config, (raw) => upsertCodexTrust(raw, canonical), hooks);
     } else {
       const config = await claudeConfigPath(home, environment);
       await updateConfig(config, (raw) => upsertClaudeTrust(raw, canonical));
@@ -54,7 +55,7 @@ function isMissing(cause: unknown): boolean {
   return typeof cause === "object" && cause !== null && "code" in cause && (cause.code === "ENOENT" || cause.code === "ENOTDIR");
 }
 
-async function updateConfig(path: string, change: (raw: string) => string): Promise<void> {
+async function updateConfig(path: string, change: (raw: string) => string, hooks: TrustPreflightHooks = {}): Promise<void> {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const target = await existingTarget(path);
   await withFileLock(target, async () => {
@@ -62,7 +63,10 @@ async function updateConfig(path: string, change: (raw: string) => string): Prom
       const before = await readConfigSnapshot(target);
       const next = change(before.raw);
       if (next === before.raw) return;
-      const written = await atomicWrite(target, next, before.mode, async () => sameSnapshot(before, await readConfigSnapshot(target)));
+      const written = await atomicWrite(target, next, before.mode, async () => {
+        await hooks.beforeConfigCommit?.(target);
+        return sameSnapshot(before, await readConfigSnapshot(target));
+      });
       if (written) return;
     }
     throw new Error(`trust config changed repeatedly while being updated: ${basename(target)}`);

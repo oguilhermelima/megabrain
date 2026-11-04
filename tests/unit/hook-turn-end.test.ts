@@ -745,6 +745,26 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     }
   });
 
+  test("surfaces verified Codex queue replies at turn end until check", async () => {
+    await withRoot("codex-queue-verified", async (root) => {
+      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running", agent: "codex" });
+      const env = childEnv(root);
+      const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const reply = appendDatabaseMessage(db.value, "d1", { from: "parent", type: "reply", text: "continue from queue" }, {
+        delivery: { id: "codex-queue-delivery", recipient: "child", status: "outstanding" },
+      });
+      if (reply.kind !== "ok") throw new Error(reply.error);
+      const marked = setDeliveryTransport(db.value, "d1", reply.value.seq, "ack-verifying", "peer-socket-verified");
+      if (marked.kind !== "ok") throw new Error(marked.error);
+      const extra = db.value.db.query<{ extra: string }>("SELECT extra FROM deliveries WHERE id = ?").get("codex-queue-delivery")?.extra ?? "{}";
+      db.value.db.query("UPDATE deliveries SET extra = ? WHERE id = ?").run(JSON.stringify({ ...JSON.parse(extra), transportChannel: "codex-queue" }), "codex-queue-delivery");
+
+      const result = await executeHookTurnEnd([], env, fakeProcess(), noStdin);
+      expect(result).toEqual({ kind: "ok", value: '{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}\n' });
+    });
+  });
+
   test("keeps queued and typed summaries unread until check shows them", async () => {
     for (const transport of ["queue", "typed"]) {
       await withRoot(`summary-${transport}`, async (root) => {

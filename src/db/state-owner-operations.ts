@@ -252,7 +252,7 @@ export function ownerOperation(owner: Pick<StateOwner, "handle" | "stateDir">, r
     return result.value;
   }
   if (request.operation === "set-delivery-transport") {
-    const result = setMailDeliveryTransport(owner.handle, request.dispatchId, request.sequence, request.transport, request.reason);
+    const result = setMailDeliveryTransport(owner.handle, request.dispatchId, request.sequence, request.transport, request.reason, request.channel);
     if (result.kind !== "ok") throw new Error(result.error);
     return result.value;
   }

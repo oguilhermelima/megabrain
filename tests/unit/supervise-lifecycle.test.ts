@@ -124,6 +124,46 @@ describe("supervisor lifecycle decisions", () => {
     }
   });
 
+  test("recovers a persisted starting dispatch after a supervisor restart and notices readiness once", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-readiness-restart-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+    const first = openDatabase(environment);
+    if (first.kind !== "ok") throw new Error(first.error);
+    const id = "readiness-restart";
+    const created = createDispatch(first.value, {
+      dispatchId: id, state: "running", runtime: "tmux", tmuxSession: "s", tmuxPane: "%9",
+      worktreePath: "/shared/worktree", agent: "codex", terminalId: "worker", parentSessionId: "parent",
+      parentHost: "unknown", parentTerminalId: "parent-terminal", chatName: id,
+      readinessState: "starting", readinessDueAt: 1, promptChannel: "argv", promptReceipt: "pending",
+    });
+    if (created.kind !== "ok") throw new Error(created.error);
+    first.value.close();
+
+    const resumed = openDatabase(environment);
+    if (resumed.kind !== "ok") throw new Error(resumed.error);
+    const process = {
+      async run(command: string, args: readonly string[]) {
+        if (command === "tmux" && args[0] === "list-panes") return ok({ stdout: "%9\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args[0] === "capture-pane") return ok({ stdout: "OpenAI Codex\n[megabrain dispatch: codex /shared/worktree]\n› Ask Codex to do anything\n", stderr: "", exitCode: 0 });
+        if (command === "tmux" && args.includes("#{pane_pid}")) return ok({ stdout: "4242\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args.includes("tty=")) return ok({ stdout: "ttys009\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "eww") return ok({ stdout: `4242 1 -zsh MEGABRAIN_DISPATCH_ID=${id}\n`, stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return ok({ pid: 123 }); },
+      invocationCount() { return 0; },
+    };
+    try {
+      await superviseOnce(directory, resumed.value, environment, process, 2);
+      await superviseOnce(directory, resumed.value, environment, process, 3);
+      expect(getDispatch(resumed.value, id)).toMatchObject({ kind: "ok", value: { state: "running", readinessState: "running" } });
+      expect(superviseMessages(resumed.value, id)).toHaveLength(1);
+    } finally {
+      resumed.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("notifies once for stable evidence, then again only when the finding changes or recurs", () => {
     const paneGone = { cause: "pane-gone" as const, paneId: "%7", worktreePath: "/repo", dirtyFiles: [] };
     const previousPaneGone = { ...paneGone, notifiedAt: 1_000 };

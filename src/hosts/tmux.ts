@@ -67,6 +67,22 @@ export async function verifyTmuxPane(pane: string, process: ProcessAdapter, expe
   return (await getTmux().paneExists?.(pane, process, expectedSessionId)) ?? verifyPane(pane, process, expectedSessionId);
 }
 
+export async function resolveTmuxSessionId(pane: string, expectedSessionName: string, process: ProcessAdapter): Promise<Result<string | undefined>> {
+  const result = await tmuxRun(process, ["display-message", "-p", "-t", pane, "#{session_id}|#{session_name}"]);
+  if (result.kind === "ok") {
+    const [sessionId, sessionName] = result.value.stdout.trim().split("|");
+    if (sessionId !== undefined && sessionId !== "" && sessionName !== undefined) {
+      if (sessionName !== expectedSessionName) return failed(`tmux pane ${pane} does not belong to session ${expectedSessionName}`);
+      return ok(sessionId);
+    }
+  }
+  const panes = await getTmux().panesForSession(expectedSessionName, process);
+  if (panes.kind !== "ok") return unavailable(`session identity for pane ${pane}`);
+  return panes.value.includes(pane)
+    ? ok(undefined)
+    : failed(`tmux pane ${pane} does not belong to session ${expectedSessionName}`);
+}
+
 async function runAction(args: readonly string[], process: ProcessAdapter): Promise<Result<void>> {
   const result = await tmuxRun(process, args);
   return result.kind === "ok" ? ok(undefined) : failed(result.error);

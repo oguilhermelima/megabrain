@@ -19,8 +19,11 @@ describe("deferred delivery worker lifecycle", () => {
     ["suspended agent", 4241, "4240", false, "› \n", "", "receiver-gone"],
     ["vanished pane", 4240, "", false, "› \n", "", "receiver-gone"],
     ["Codex is busy", 4240, "4240", true, codexWorkingScreen, "You have 1 megabrain message; run megabrain check", "pointer"],
+    ["busy Codex queue", 4240, "4240", true, codexWorkingScreen, "", "ack-verifying"],
   ] as const)("handles Codex delivery when %s", async (_scenario, paneForeground, panePid, shouldDeliver, screenText, expectedText, expectedTransport) => {
     const root = mkdtempSync(join(tmpdir(), "megabrain-delivery-tmux-owner-"));
+    const sessionName = "megabrain-wt-codex-child";
+    const sessionId = "$6";
     const calls: string[][] = [];
     let pastedText = "";
     let owner: Awaited<ReturnType<typeof startStateOwner>> | undefined;
@@ -29,17 +32,20 @@ describe("deferred delivery worker lifecycle", () => {
         calls.push([command, ...args]);
         if (command === "tmux") {
           if (args.includes("has-session")) return ok({ stdout: "", stderr: "", exitCode: 0 });
-          if (args.includes("-a") && args.includes("list-panes")) return ok({ stdout: "%4|session\n", stderr: "", exitCode: 0 });
+          if (args.includes("-a") && args.includes("list-panes")) return ok({ stdout: `%4|${sessionId}\n`, stderr: "", exitCode: 0 });
           if (args.includes("list-panes")) return ok({ stdout: "%4\n", stderr: "", exitCode: 0 });
           if (args.includes("display-message") && args.at(-1) === "#{pane_pid}") return ok({ stdout: panePid === "" ? "\n" : `${panePid}\n`, stderr: "", exitCode: 0 });
-          if (args.includes("display-message") && args.at(-1) === "#{session_name}") return ok({ stdout: "session\n", stderr: "", exitCode: 0 });
+          if (args.includes("display-message") && args.at(-1) === "#{session_name}") return ok({ stdout: `${sessionName}\n`, stderr: "", exitCode: 0 });
           if (args.includes("capture-pane")) return ok({ stdout: screenText, stderr: "", exitCode: 0 });
           if (args.includes("load-buffer")) pastedText = readFileSync(args.at(-1) ?? "", "utf8");
           return ok({ stdout: "", stderr: "", exitCode: 0 });
         }
         if (command === "ps" && args[0] === "-p") return ok({ stdout: "ttys004\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args[0] === "-ax") return ok({ stdout: "4242 /usr/local/bin/codex --thread-id child-thread\n", stderr: "", exitCode: 0 });
         if (command === "ps" && args[0] === "eww") return ok({ stdout: "4240 1 bash -c MEGABRAIN_DISPATCH_ID=tmux-owner\n4242 4240 codex --resume child\n", stderr: "", exitCode: 0 });
         if (command === "ps" && args[0] === "-axo") return ok({ stdout: `4240 1 4240 ${paneForeground} bash -c wrapper\n4242 4240 4240 4240 codex --resume child\n`, stderr: "", exitCode: 0 });
+        if (command === "lsof") return ok({ stdout: "n/rollouts/rollout-child-thread.jsonl\n", stderr: "", exitCode: 0 });
+        if (command === "codex" && args[0] === "queue") return ok({ stdout: "queued\n", stderr: "", exitCode: 0 });
         return failed(`${command} ${args.join(" ")} was not expected`);
       },
       async startDetached() { return ok({ stdout: "", stderr: "", exitCode: 0 }); },
@@ -52,14 +58,15 @@ describe("deferred delivery worker lifecycle", () => {
       if (seeded.kind !== "ok") throw new Error(seeded.error);
       expect(createDispatch(seeded.value, {
         dispatchId: "tmux-owner", state: "running", runtime: "tmux", childHost: "tmux",
-        tmuxSession: "session", tmuxSessionId: "session", tmuxPane: "%4", terminalId: "tmux:session:%4",
+        tmuxSession: sessionName, tmuxSessionId: sessionId, tmuxPane: "%4", terminalId: `tmux:${sessionName}:%4`,
         agent: "codex", agentPid: 4242,
+        ...(_scenario === "busy Codex queue" ? { agentThreadId: "child-thread" } : {}),
       }).kind).toBe("ok");
       const reply = appendParentReply(seeded.value, "tmux-owner", { from: "parent", type: "reply", text: "continue", sessionId: "parent" }, {
         supersede: false,
-        outbox: { id: "outbox-tmux-owner", targetKind: "child-delivery", target: "tmux:session:%4", payload: {
+        outbox: { id: "outbox-tmux-owner", targetKind: "child-delivery", target: `tmux:${sessionId}:%4`, payload: {
           dispatchId: "tmux-owner", sequence: 1, fullMessage: "continue",
-          meta: { runtime: "tmux", childHost: "tmux", tmuxSession: "session", tmuxSessionId: "session", tmuxPane: "%4", terminalId: "tmux:session:%4", agent: "codex", agentPid: 4242 },
+          meta: { runtime: "tmux", childHost: "tmux", tmuxSession: sessionName, tmuxSessionId: sessionId, tmuxPane: "%4", terminalId: `tmux:${sessionName}:%4`, agent: "codex", agentPid: 4242, ...(_scenario === "busy Codex queue" ? { agentThreadId: "child-thread" } : {}) },
         } },
       });
       expect(reply.kind).toBe("ok");
@@ -71,6 +78,10 @@ describe("deferred delivery worker lifecycle", () => {
       expect(result).toMatchObject({ kind: "ok", value: expectedResult });
       if (shouldDeliver) expect(pastedText).toContain(expectedText);
       else expect(pastedText).toBe("");
+      if (shouldDeliver && expectedTransport === "typed") {
+        expect(calls).toContainEqual(["tmux", "paste-buffer", "-p", "-d", "-b", expect.any(String), "-t", "%4"]);
+        expect(calls).toContainEqual(["tmux", "send-keys", "-t", "%4", "Enter"]);
+      }
       const observed = openDatabase({ HOME: root, MEGABRAIN_STATE_DIR: root });
       expect(observed.kind).toBe("ok");
       if (observed.kind === "ok") {
@@ -78,11 +89,12 @@ describe("deferred delivery worker lifecycle", () => {
         expect(observed.value.db.query<{ status: string }>("SELECT status FROM deliveries WHERE dispatch_id = ?").get("tmux-owner")).toMatchObject({ status: "outstanding" });
         const extra = observed.value.db.query<{ extra: string }>("SELECT extra FROM deliveries WHERE dispatch_id = ?").get("tmux-owner")?.extra ?? "";
         expect(extra).toContain(shouldDeliver ? `"transport":"${expectedTransport}"` : '"transport":"receiver-gone"');
+        if (_scenario === "busy Codex queue") expect(extra).toContain('"transportChannel":"codex-queue"');
         observed.value.close();
       }
 
       expect(calls).toContainEqual(["tmux", "display-message", "-p", "-t", "%4", "#{pane_pid}"]);
-      if (shouldDeliver) expect(calls).not.toContainEqual(["ps", "-ww", "-p", "4242", "-o", "pid=,pgid=,tpgid=,args="]);
+      if (shouldDeliver && _scenario !== "busy Codex queue") expect(calls).not.toContainEqual(["ps", "-ww", "-p", "4242", "-o", "pid=,pgid=,tpgid=,args="]);
     } finally {
       if (owner !== undefined) await stopStateOwner(owner);
       rmSync(root, { recursive: true, force: true });

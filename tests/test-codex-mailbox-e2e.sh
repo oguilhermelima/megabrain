@@ -12,6 +12,8 @@ source "$root/tests/support/state-db.bash"
 real_home="${HOME:?HOME must be set so Codex can use existing credentials}"
 work="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-codex-mailbox.XXXXXX")"
 state="$(mktemp -d "${TMPDIR:-/tmp}/megabrain-codex-state.XXXXXX")"
+fixture="$real_home/.cache/megabrain-e2e/codex-mailbox-repo"
+codex_config="${CODEX_HOME:-$real_home/.codex}/config.toml"
 server="mb-codex-mail-$RANDOM-$$"
 real_tmux="$(command -v tmux || true)"
 real_codex="$(command -v codex || true)"
@@ -20,6 +22,7 @@ real_git="$(command -v git)"
 cleanup() {
   tmux -L "$server" kill-server >/dev/null 2>&1 || true
   remove_test_dir "$state"
+  rm -rf "$fixture"
   remove_test_dir "$work"
 }
 trap cleanup EXIT
@@ -37,8 +40,13 @@ for name in $(compgen -e); do
 done
 export HOME="$real_home" MEGABRAIN_STATE_DIR="$state"
 
-mkdir -p "$work/repo" "$work/legacy/dispatches/codex-mailbox" "$work/bin"
-cd "$work/repo"
+printf 'Codex E2E will add one stable trust entry: %s\n' "$fixture"
+before_config="$(shasum -a 256 "$codex_config" 2>/dev/null | awk '{print $1}' || true)"
+before_config="${before_config:-missing}"
+mkdir -p "$(dirname "$fixture")" "$work/legacy/dispatches/codex-mailbox" "$work/bin"
+rm -rf "$fixture"
+mkdir -p "$fixture"
+cd "$fixture"
 "$real_git" init -q
 "$real_git" config user.name 'Megabrain E2E'
 "$real_git" config user.email 'megabrain-e2e@example.invalid'
@@ -46,23 +54,38 @@ printf 'temporary fixture\n' >README.md
 "$real_git" add README.md
 "$real_git" commit -qm 'test fixture'
 
+if ! HOME="$real_home" CODEX_HOME="${CODEX_HOME:-$real_home/.codex}" MEGABRAIN_ROOT="$root" bun --eval 'const { preflightWorktreeTrust } = await import(`${process.env.MEGABRAIN_ROOT}/src/agents/worktree-trust.ts`); const result = await preflightWorktreeTrust("codex", process.argv[1], process.env); if (result.kind !== "ok") { console.error(result.error); process.exit(1); }' "$fixture"; then
+  printf 'FAIL: megabrain Codex trust preflight could not trust the stable fixture\n' >&2
+  exit 1
+fi
+after_config="$(shasum -a 256 "$codex_config" 2>/dev/null | awk '{print $1}' || true)"
+after_config="${after_config:-missing}"
+if [ "$before_config" = "$after_config" ]; then
+  printf 'Codex config.toml changed: no (sha256 %s)\n' "$after_config"
+else
+  printf 'Codex config.toml changed: yes (before %s, after %s)\n' "$before_config" "$after_config"
+fi
+
 cat >"$work/bin/tmux" <<EOF
 #!/bin/sh
+printf '%s\n' "\$*" >> '$work/tmux.log'
+if [ "\$1" = -L ]; then shift 2; fi
 exec "$real_tmux" -L "$server" "\$@"
 EOF
 chmod +x "$work/bin/tmux"
 export PATH="$work/bin:$PATH"
 
 dispatch="codex-mailbox"
-codex_command="cd '$work/repo' && export MEGABRAIN_DISPATCH_ID='$dispatch' CODEX_HOME='$real_home/.codex' && exec '$real_codex' -c 'approval_policy=\"never\"' -c 'sandbox_mode=\"read-only\"' 'Run sleep 90 in the shell and wait for it to finish before responding. Then say TASK_FINISHED. Do not modify files.'"
+codex_command="cd '$fixture' && export MEGABRAIN_DISPATCH_ID='$dispatch' CODEX_HOME='${CODEX_HOME:-$real_home/.codex}' && exec '$real_codex' -c 'approval_policy=\"never\"' -c 'sandbox_mode=\"read-only\"' 'Run sleep 90 in the shell and wait for it to finish before responding. Then say TASK_FINISHED. Do not modify files.'"
 pane="$(tmux new-session -d -s test -P -F '#{pane_id}' "$codex_command")"
 session_id="$(tmux display-message -p -t "$pane" '#{session_id}')"
 pane_pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')"
 
 cat >"$work/legacy/dispatches/$dispatch/meta.json" <<EOF
-{"dispatchId":"$dispatch","parentHost":"local","parentSessionId":"parent-session","parentTerminalId":"parent-session","runtime":"tmux","childHost":"tmux","tmuxSession":"test","tmuxSessionId":"$session_id","tmuxPane":"$pane","agent":"codex","agentId":"codex","agentPid":$pane_pid,"state":"running","processState":"running","terminalState":"owned","worktreePath":"$work/repo","branch":"test-fixture","createdAt":"$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')","updatedAt":"$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')"}
+{"dispatchId":"$dispatch","parentHost":"local","parentSessionId":"parent-session","parentTerminalId":"parent-session","runtime":"tmux","childHost":"tmux","tmuxSession":"test","tmuxSessionId":"$session_id","tmuxPane":"$pane","agent":"codex","agentId":"codex","agentPid":$pane_pid,"state":"running","processState":"running","terminalState":"owned","worktreePath":"$fixture","branch":"test-fixture","createdAt":"$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')","updatedAt":"$(date -u '+%Y-%m-%dT%H:%M:%S.000Z')"}
 EOF
 state_db_import "$root/.build/megabrain" "$state" true "$work/legacy"
+printf 'fixture pane: %s; persisted session: %s; live panes: %s\n' "$pane" "$session_id" "$(tmux list-panes -a -F '#{pane_id}|#{session_id}')" >"$work/tmux-preflight.log"
 
 deadline=$((SECONDS + 90))
 busy=0
@@ -92,7 +115,15 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   [ "$transport" = pointer ] && break
   sleep 0.2
 done
-[ "$transport" = pointer ] || { printf 'FAIL: busy Codex did not receive a mailbox pointer (transport=%s)\n' "$transport" >&2; exit 1; }
+if [ "$transport" != pointer ]; then
+  printf 'FAIL: busy Codex did not receive a mailbox pointer (transport=%s)\n' "$transport" >&2
+  state_db_dispatch "$root/.build/megabrain" "$state" "$dispatch" | jq '{meta: {tmuxSessionId: .meta.tmuxSessionId, tmuxPane: .meta.tmuxPane, tmuxSession: .meta.tmuxSession}, delivery: [.deliveries[] | select(.recipient == "child")]}'
+  if [ -f "$state/delivery-decisions.jsonl" ]; then cat "$state/delivery-decisions.jsonl" >&2; fi
+  cat "$work/tmux-preflight.log" >&2
+  if [ -f "$work/tmux.log" ]; then cat "$work/tmux.log" >&2; fi
+  tmux capture-pane -p -t "$pane" 2>/dev/null || true
+  exit 1
+fi
 assert_unread="$(state_db_dispatch "$root/.build/megabrain" "$state" "$dispatch" | jq -r '.deliveries[] | select(.recipient == "child") | .status')"
 [ "$assert_unread" = outstanding ] || { printf 'FAIL: transport changed mailbox status to %s before child check\n' "$assert_unread" >&2; exit 1; }
 

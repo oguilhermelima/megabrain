@@ -83,6 +83,28 @@ describe("check delivery lifecycle", () => {
       expect(second.kind === "ok" ? JSON.parse(second.value).status : "").toBe("empty");
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+  test("does not label a verified Codex queue reply as already delivered to the model", async () => {
+    const root = await mkdtemp(join(tmpdir(), "megabrain-check-codex-queue-"));
+    try {
+      const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (opened.kind !== "ok") throw new Error(opened.error);
+      createDispatch(opened.value, { dispatchId: "codex-dispatch", state: "running", childHost: "local", terminalId: "child-session" });
+      const now = new Date().toISOString();
+      const appended = appendMessage(opened.value, "codex-dispatch", { from: "parent", type: "reply", text: "continue safely" }, { delivery: { id: "codex-delivery", recipient: "child", status: "outstanding", createdAt: now, updatedAt: now } });
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      setDeliveryTransport(opened.value, "codex-dispatch", appended.value.seq, "ack-verifying", "peer-socket-verified");
+      const extra = opened.value.db.query<{ extra: string }>("SELECT extra FROM deliveries WHERE id = ?").get("codex-delivery")?.extra ?? "{}";
+      opened.value.db.query("UPDATE deliveries SET extra = ? WHERE id = ?").run(JSON.stringify({ ...JSON.parse(extra), transportChannel: "codex-queue" }), "codex-delivery");
+      opened.value.close();
+
+      const result = await executeCheck(["--timeout", "0", "--json"], { MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "codex-dispatch", MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "child-session", MEGABRAIN_CONSUMER_ID: "codex-child" });
+      expect(result.kind).toBe("ok");
+      const parsed = result.kind === "ok" ? JSON.parse(result.value) as { messages: Array<Record<string, unknown>> } : { messages: [] };
+      expect(parsed.messages[0]).not.toHaveProperty("alreadyDeliveredThroughSocket");
+      expect(parsed.messages[0]?.text).toBe("continue safely");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });
 
 describe("deliveryStatus", () => {

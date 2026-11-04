@@ -20,7 +20,7 @@ import { deliverCodexQueue, findCodexProcessByThread } from "../../core/codex-de
 import { resolveStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
-import { getTmux } from "../../hosts/tmux.js";
+import { getTmux, resolveTmuxSessionId } from "../../hosts/tmux.js";
 import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
 import { startSupervisorWorker } from "./supervise.js";
 import { agentOwnsForegroundProcess } from "../../core/terminal-process.js";
@@ -115,12 +115,18 @@ async function sendTyped(
     },
     send: async (value, enter) => {
       if (meta.runtime === "tmux") {
+        let expectedSessionId = typeof meta.tmuxSessionId === "string" && meta.tmuxSessionId !== "" ? meta.tmuxSessionId : undefined;
+        if (expectedSessionId === undefined && typeof meta.tmuxSession === "string" && meta.tmuxSession !== "") {
+          const resolved = await resolveTmuxSessionId(String(meta.tmuxPane ?? ""), meta.tmuxSession, process);
+          if (resolved.kind !== "ok") return resolved.kind === "failed" ? resolved.error : resolved.reason;
+          expectedSessionId = resolved.value;
+        }
         if (value !== "") {
-          const pasted = await getTmux().pasteText(String(meta.tmuxPane ?? ""), value, process, String(meta.tmuxSession ?? meta.tmuxSessionId ?? "") || undefined);
+          const pasted = await getTmux().pasteText(String(meta.tmuxPane ?? ""), value, process, expectedSessionId);
           if (pasted.kind !== "ok") return pasted.error;
         }
         if (enter) {
-          const submitted = await getTmux().sendKey(String(meta.tmuxPane ?? ""), "Enter", process, String(meta.tmuxSession ?? meta.tmuxSessionId ?? "") || undefined);
+          const submitted = await getTmux().sendKey(String(meta.tmuxPane ?? ""), "Enter", process, expectedSessionId);
           if (submitted.kind !== "ok") return submitted.error;
         }
         return "ok";
@@ -419,12 +425,14 @@ export async function executeDeliveryWorker(args: readonly string[], environment
         }
         const queued = await deliverCodexQueue(threadId, found.pid, text, process);
         if (queued.kind !== "queued") { peer = { kind: "fallback", reason: queued.reason }; return false; }
+        peerChannel = "codex-queue";
         await queueVerification("codex-queue", outboxId, "unknown");
         outcome = "verifying"; transport = "ack-verifying"; return true;
       },
       typed,
     },
     recordChannel: async (channel: SessionSendChannel) => {
+      peerChannel = channel;
       if (channel === "typed") await recordChannelResultThroughOwner(root, { agent: String(meta.agent ?? "unknown"), channel, agentVersion: "unknown", ok: true });
     },
   });
@@ -441,7 +449,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const unavailable = outcome === "unavailable";
   const untypable = localParent && peer?.kind !== "delivered" && peer?.kind !== "accepted" && peer?.kind !== "read" && peer?.kind !== "aborted";
   const reason = receiverGone ? "receiver-gone: receiver is no longer the terminal's foreground agent process" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
-  await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined });
+  await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : transport === "ack-verifying" && peerChannel === "codex-queue" ? "codex-queue-accepted" : undefined, channel: peerChannel });
   const finished = targetKind === "parent-pointer"
     ? await callStateOwner(root, { operation: "finish-notification", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", event: { dispatchId: dispatch, pointer, outcome, reason } })
     : await callStateOwner(root, { operation: "finish-outbox", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", detail: reason });
@@ -534,7 +542,10 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
     });
     await recordChannelResultThroughOwner(root, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });
     finishOutboxPeerVerification(database.value, outboxId, "delivered");
-    await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: delivery.recipient === "child" ? "ack-verifying" : "acknowledged", ...(delivery.recipient === "child" ? { reason: "peer-socket-verified" } : {}) });
+    const transcriptSeen = saved.value.channel === "peer-socket" && saved.value.transcript !== undefined && saved.value.transcriptOffset !== undefined
+      ? (await scanTranscript(saved.value.transcript, saved.value.transcriptOffset, saved.value.messageId)).seen === "consumed"
+      : false;
+    await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: delivery.recipient === "child" ? "ack-verifying" : "acknowledged", ...(delivery.recipient === "child" ? { reason: transcriptSeen ? "peer-socket-verified" : `${saved.value.channel}-acknowledged`, channel: saved.value.channel } : {}) });
   }
   return ok(`peer verification ${result}\n`);
   } finally {
