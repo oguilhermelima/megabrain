@@ -13,6 +13,7 @@ import { getTmux, registerTmux, type TmuxProvider } from "../../src/hosts/tmux.j
 import { appendMessage, mutateDispatch, putTmuxSession } from "../../src/adapters/state-db.js";
 import { importDispatchFixture, importStateFixture, readDispatchFixture } from "./state-fixture.js";
 import { composerProcess, composerTmux, withComposer } from "./composer-tmux.js";
+import { finalPrompt, parseArgs } from "../../src/cli/commands/orchestrate-spawn-options.js";
 
 type Call = Readonly<{ command: string; args: readonly string[]; options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number; readonly scrubAgentEnvironment?: boolean } }>;
 
@@ -77,6 +78,20 @@ function environment(root: string, dispatchId: string): Record<string, string> {
 
 function options(resolved: SpawnWorktree): SpawnDependencies {
   return { resolveWorktree: async () => ok(resolved) };
+}
+
+function wrappedPrompt(prompt: string, dispatchId: string): string {
+  const parsed = parseArgs(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt]);
+  if (parsed.kind !== "ok") throw new Error(parsed.error);
+  return finalPrompt(parsed.value, dispatchId);
+}
+
+function promptBytes(prompt: string): number {
+  return new TextEncoder().encode(prompt).length;
+}
+
+function promptWrapperBytes(dispatchId: string): number {
+  return promptBytes(wrappedPrompt("x", dispatchId)) - 1;
 }
 
 function argsContain(args: readonly string[], value: string): boolean {
@@ -357,7 +372,7 @@ describe("executeSpawn", () => {
 
       expect(result.kind).toBe("ok");
       expect(readMeta(root, dispatchId)).toMatchObject({ chatName: expectedChatName });
-      expect(deliveredPrompt).toContain("For ask and done, start with one plain-language sentence a nontechnical person understands; use no filenames, commands, or counts.");
+      expect(deliveredPrompt).toContain("Start ask and done with one plain sentence a nontechnical person understands; no filenames, commands or counts.");
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -1753,24 +1768,18 @@ describe("executeSpawn", () => {
     }
   });
 
-  // The budget guards the payload actually transported — finalPrompt(options, id), which wraps
-  // the raw --prompt in a fixed "[megabrain dispatch: ...]" preamble plus the dispatch identity —
-  // not the raw --prompt value alone. Each wrapper-overhead figure below was measured once by
-  // encoding that exact fixed text (agent "codex", worktree "/work/tree", the dispatch id the
-  // test uses) with TextEncoder and is asserted here as a plain number so a change to the wrapper
-  // text or to a test's dispatch id shows up as a failing byte count instead of silently drifting:
-  // "dispatch-budget-tmux-exact" / "dispatch-budget-argv-exact" -> 479 bytes of fixed wrapper text
-  // "dispatch-budget-tmux-over" / "dispatch-budget-argv-over" / "dispatch-budget-multibyte" -> 478
-  // "dispatch-budget-wrapped-overflow" -> 485
+  // The budget guards the payload actually transported. Derive its wrapper size from the same
+  // prompt builder used by spawn so wording and dispatch identity changes do not stale these tests.
   describe("prompt byte budgets", () => {
     test("accepts a tmux prompt whose wrapped form is exactly at the 12000 byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-tmux-exact-`);
       const dispatchId = "dispatch-budget-tmux-exact";
-      const wrapperOverheadBytes = 479;
+      const wrapperOverheadBytes = promptWrapperBytes(dispatchId);
       const original = getTmux();
       registerTmux({ ...original, id: "tmux", ...composerTmux() });
       try {
         const prompt = "a".repeat(12000 - wrapperOverheadBytes);
+        expect(promptBytes(wrappedPrompt(prompt, dispatchId))).toBe(12000);
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], {
           ...environment(root, dispatchId),
         }, processFor([]), options(worktree("existing")));
@@ -1784,14 +1793,14 @@ describe("executeSpawn", () => {
     test("refuses a tmux prompt whose wrapped form is one byte over the 12000 byte budget without creating anything", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-tmux-over-`);
       const dispatchId = "dispatch-budget-tmux-over";
-      const wrapperOverheadBytes = 478;
       let resolveCalled = false;
-      const prompt = "a".repeat(12000 - wrapperOverheadBytes + 1);
+      const prompt = "a".repeat(12000 - promptWrapperBytes(dispatchId) + 1);
+      const expectedBytes = promptBytes(wrappedPrompt(prompt, dispatchId));
       try {
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
           resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
         });
-        expect(result).toEqual({ kind: "failed", error: "prompt is too large for tmux delivery: 12001 bytes (limit: 12000 bytes)", exitCode: 2 });
+        expect(result).toEqual({ kind: "failed", error: `prompt is too large for tmux delivery: ${expectedBytes} bytes (limit: 12000 bytes)`, exitCode: 2 });
         expect(resolveCalled).toBe(false);
         await expect(readdir(`${root}/dispatches`)).rejects.toThrow();
       } finally {
@@ -1802,12 +1811,13 @@ describe("executeSpawn", () => {
     test("accepts a host prompt whose wrapped form is exactly at the 262144 byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-argv-exact-`);
       const dispatchId = "dispatch-budget-argv-exact";
-      const wrapperOverheadBytes = 479;
+      const wrapperOverheadBytes = promptWrapperBytes(dispatchId);
       const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
         ? ok({ stdout: JSON.stringify({ handle: "child-terminal" }), stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
       try {
         const prompt = "a".repeat(262144 - wrapperOverheadBytes);
+        expect(promptBytes(wrappedPrompt(prompt, dispatchId))).toBe(262144);
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], {
           ...environment(root, dispatchId),
           MEGABRAIN_SESSION_HOST: "orca",
@@ -1821,14 +1831,14 @@ describe("executeSpawn", () => {
     test("refuses a host prompt whose wrapped form is one byte over the 262144 byte budget without creating anything", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-argv-over-`);
       const dispatchId = "dispatch-budget-argv-over";
-      const wrapperOverheadBytes = 478;
       let resolveCalled = false;
-      const prompt = "a".repeat(262144 - wrapperOverheadBytes + 1);
+      const prompt = "a".repeat(262144 - promptWrapperBytes(dispatchId) + 1);
+      const expectedBytes = promptBytes(wrappedPrompt(prompt, dispatchId));
       try {
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "false"], { ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca" }, processFor([]), {
           resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
         });
-        expect(result).toEqual({ kind: "failed", error: "prompt is too large for argv delivery: 262145 bytes (limit: 262144 bytes)", exitCode: 2 });
+        expect(result).toEqual({ kind: "failed", error: `prompt is too large for argv delivery: ${expectedBytes} bytes (limit: 262144 bytes)`, exitCode: 2 });
         expect(resolveCalled).toBe(false);
       } finally {
         await rm(root, { recursive: true, force: true });
@@ -1838,17 +1848,17 @@ describe("executeSpawn", () => {
     test("refuses a multibyte tmux prompt that is under the character count but over the byte budget", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-multibyte-`);
       const dispatchId = "dispatch-budget-multibyte";
-      const wrapperOverheadBytes = 478;
       let resolveCalled = false;
       const prompt = "é".repeat(7000);
+      const finalPromptBytes = promptBytes(wrappedPrompt(prompt, dispatchId));
       expect(prompt.length).toBeLessThan(12000);
-      expect(new TextEncoder().encode(prompt).length).toBeGreaterThan(12000);
+      expect(finalPromptBytes).toBeGreaterThan(12000);
       try {
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
           resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
         });
         expect(result.kind).toBe("failed");
-        if (result.kind === "failed") expect(result.error).toContain(`prompt is too large for tmux delivery: ${14000 + wrapperOverheadBytes} bytes (limit: 12000 bytes)`);
+        if (result.kind === "failed") expect(result.error).toContain(`prompt is too large for tmux delivery: ${finalPromptBytes} bytes (limit: 12000 bytes)`);
         expect(resolveCalled).toBe(false);
       } finally {
         await rm(root, { recursive: true, force: true });
@@ -1858,15 +1868,16 @@ describe("executeSpawn", () => {
     test("refuses a raw tmux prompt under the limit whose wrapped form exceeds it, without creating anything", async () => {
       const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-budget-wrapped-overflow-`);
       const dispatchId = "dispatch-budget-wrapped-overflow";
-      const wrapperOverheadBytes = 485;
       let resolveCalled = false;
       const prompt = "a".repeat(11900);
-      expect(new TextEncoder().encode(prompt).length).toBeLessThan(12000);
+      const finalPromptBytes = promptBytes(wrappedPrompt(prompt, dispatchId));
+      expect(promptBytes(prompt)).toBeLessThan(12000);
+      expect(finalPromptBytes).toBeGreaterThan(12000);
       try {
         const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", prompt, "--tmux", "true"], environment(root, dispatchId), processFor([]), {
           resolveWorktree: async () => { resolveCalled = true; return ok(worktree("existing")); },
         });
-        expect(result).toEqual({ kind: "failed", error: `prompt is too large for tmux delivery: ${11900 + wrapperOverheadBytes} bytes (limit: 12000 bytes)`, exitCode: 2 });
+        expect(result).toEqual({ kind: "failed", error: `prompt is too large for tmux delivery: ${finalPromptBytes} bytes (limit: 12000 bytes)`, exitCode: 2 });
         expect(resolveCalled).toBe(false);
         await expect(readdir(`${root}/dispatches`)).rejects.toThrow();
       } finally {
