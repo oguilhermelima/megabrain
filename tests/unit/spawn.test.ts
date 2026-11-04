@@ -1422,7 +1422,7 @@ describe("executeSpawn", () => {
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
       capturePane: async () => {
         captureCalls += 1;
-        return ok(captureCalls === 1 ? trust : idle);
+        return ok(captureCalls <= 3 ? trust : idle);
       },
     };
     registerTmux(fake);
@@ -1432,11 +1432,11 @@ describe("executeSpawn", () => {
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
       }, process, options(worktree("existing")));
 
-      expect(result.kind).toBe("failed");
-      if (result.kind === "failed") expect(result.error).toContain("workspace-trust-dialog");
-      expect(events.filter((event) => event.startsWith("text:") || event.startsWith("key:"))).toEqual([]);
+      expect(result.kind).toBe("ok");
+      expect(readMeta(root, dispatchId)).toMatchObject({ state: "running" });
+      expect(events.filter((event) => event === "key:y")).toEqual([]);
       expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
-      expect(captureCalls).toBe(1);
+      expect(captureCalls).toBeGreaterThanOrEqual(3);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -1536,7 +1536,7 @@ describe("executeSpawn", () => {
       sendKey: async (_pane, key) => { events.push(`key:${key}`); return ok(undefined); },
       capturePane: async () => {
         captureCalls += 1;
-        return ok(captureCalls === 1 ? trust : "╭──────╮\n│ ❯    │\n╰──────╯");
+        return ok(trust);
       },
     };
     registerTmux(fake);
@@ -1545,9 +1545,9 @@ describe("executeSpawn", () => {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
       }, process, options(worktree("existing")));
-      expect(result.kind).toBe("failed");
-      if (result.kind === "failed") expect(result.error).toContain("workspace-trust-dialog");
+      expect(result.kind).toBe("ok");
       expect(events).not.toContain("key:y");
+      expect(readMeta(root, dispatchId)).toMatchObject({ state: "spawning", readinessDialog: "workspace-trust-dialog" });
       expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
     } finally {
       registerTmux(original);
@@ -1578,9 +1578,9 @@ describe("executeSpawn", () => {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "3000",
       }, process, options(worktree("existing")));
-      expect(result.kind).toBe("failed");
-      if (result.kind === "failed") expect(result.error).toContain("workspace-trust-dialog");
+      expect(result.kind).toBe("ok");
       expect(events.some((event) => event.startsWith("key:") || event.startsWith("text:"))).toBe(false);
+      expect(readMeta(root, dispatchId)).toMatchObject({ state: "spawning", readinessDialog: "workspace-trust-dialog" });
       expect(readMeta(root, dispatchId)).not.toHaveProperty("trustAnswered");
     } finally {
       registerTmux(original);
@@ -1622,7 +1622,7 @@ describe("executeSpawn", () => {
   // Codex's composer can read idle for one poll and then have something else replace it (the
   // update-check modal from the earlier correction is one example, but the pane can show any
   // transient text) before the next poll. A single idle observation is not proof the composer is
-  test("fails fast when an update dialog replaces the composer", async () => {
+  test("waits until an update dialog is dismissed before sending the prompt", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-stability-`);
     const events: string[] = [];
     const dispatchId = "dispatch-tmux-readiness-stability";
@@ -1661,13 +1661,10 @@ describe("executeSpawn", () => {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "5000",
       }, process, options(worktree("existing")));
-      expect(result.kind).toBe("failed");
-      if (result.kind === "failed") {
-        expect(result.error).toContain("update-dialog");
-        expect(result.error).toContain("Update available!");
-      }
-      expect(events).not.toContain("text:prompt");
-      expect(captureCalls).toBe(6);
+      expect(result.kind).toBe("ok");
+      expect(events).toContain("text:prompt");
+      expect(readMeta(root, dispatchId)).toMatchObject({ state: "running" });
+      expect(captureCalls).toBeGreaterThanOrEqual(6);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -1701,11 +1698,10 @@ describe("executeSpawn", () => {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "400",
       }, process, options(worktree("existing")));
-      expect(result.kind).toBe("failed");
-      if (result.kind === "failed") expect(result.error).toContain("readiness-output-invalid");
+      expect(result.kind).toBe("ok");
       expect(events).not.toContain("text:prompt");
       const meta = readMeta(root, dispatchId);
-      expect(meta).toMatchObject({ state: "failed", reason: "readiness-output-invalid" });
+      expect(meta).toMatchObject({ state: "spawning", readinessState: "starting", promptTransport: "pending" });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
