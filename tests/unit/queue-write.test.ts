@@ -141,6 +141,56 @@ describe("findChild: tmux-runtime records", () => {
     });
   });
 
+  test("keeps identity for child verbs in every nonterminal dispatch state", async () => {
+    await withRoot(async (root) => {
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      await writeDispatch(root, "child-done", { state: "done", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      await writeDispatch(root, "child-starting", { state: "spawning", processState: "starting", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%15" });
+      await writeDispatch(root, "child-queued", { state: "queued", processState: "starting", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%16" });
+
+      // A done child still needs to consume a coordinator reply through `check`.
+      const reply = appendMessage(database.value, "child-done", {
+        from: "parent", type: "reply", text: "continue", createdAt: new Date().toISOString(), sessionId: "coordinator",
+      });
+      expect(reply.kind).toBe("ok");
+
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\\n" : "$1\\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+
+      for (const [pane, dispatch] of [["%14", "child-done"], ["%15", "child-starting"], ["%16", "child-queued"]] as const) {
+        const found = await findChild(root, { ...environment, TMUX_PANE: pane }, process);
+        expect("kind" in found).toBe(false);
+        if (!("kind" in found)) expect(found.dispatch).toBe(dispatch);
+      }
+      const checked = await executeCheck(["--timeout", "0", "--json"], environment, process);
+      expect(checked).toMatchObject({ kind: "ok" });
+      if (checked.kind === "ok") expect(checked.value).toContain("continue");
+    });
+  });
+
+  test("never resolves terminal or archived siblings that share the child's session", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "sibling-closed", { state: "closed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      await writeDispatch(root, "sibling-failed", { state: "failed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      await writeDispatch(root, "sibling-archived-flag", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      requireOk(archiveDispatch(database.value, "sibling-archived-flag"));
+      await writeDispatch(root, "live-child", { state: "running", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\\n" : "$1\\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const found = await findChild(root, environment, process);
+      expect("kind" in found).toBe(false);
+      if (!("kind" in found)) expect(found.dispatch).toBe("live-child");
+    });
+  });
+
   test("does not let MEGABRAIN_DISPATCH_ID select a closed dispatch", async () => {
     await withRoot(async (root) => {
       await writeDispatch(root, "closed-child", { state: "closed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
