@@ -45,7 +45,7 @@ describe("selectDelivery", () => {
 });
 
 describe("check delivery lifecycle", () => {
-  test.each(["failed", "queue", "typed", "socket"] as const)("returns a %s transported reply until the child checks it", async (transport) => {
+  test.each(["failed", "queue", "typed", "ack-verifying"] as const)("returns a %s transported reply until the child checks it", async (transport) => {
     const root = await mkdtemp(join(tmpdir(), "megabrain-check-mailbox-"));
     try {
       const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -54,7 +54,7 @@ describe("check delivery lifecycle", () => {
       const now = new Date().toISOString();
       const appended = appendMessage(opened.value, "reply-dispatch", { from: "parent", type: "reply", text: "continue safely" }, { delivery: { id: "reply-delivery", recipient: "child", status: "outstanding", createdAt: now, updatedAt: now } });
       if (appended.kind !== "ok") throw new Error(appended.error);
-      setDeliveryTransport(opened.value, "reply-dispatch", appended.value.seq, transport, "full-direction");
+      setDeliveryTransport(opened.value, "reply-dispatch", appended.value.seq, transport, transport === "ack-verifying" ? "peer-socket-verified" : "full-direction");
       opened.value.close();
 
       const env = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "reply-dispatch", MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "child-session", MEGABRAIN_CONSUMER_ID: "child" };
@@ -68,7 +68,7 @@ describe("check delivery lifecycle", () => {
         expect(parsed.messages[0]).toMatchObject({ alreadyTyped: true });
         expect(parsed.messages[0]?.alreadyTypedAt).toBeString();
       }
-      if (transport === "socket") {
+      if (transport === "ack-verifying") {
         const parsed = first.kind === "ok" ? JSON.parse(first.value) as { messages: Array<Record<string, unknown>> } : { messages: [] };
         expect(parsed.messages[0]).toMatchObject({ alreadyDeliveredThroughSocket: true });
         expect(parsed.messages[0]?.alreadyDeliveredAt).toBeString();
