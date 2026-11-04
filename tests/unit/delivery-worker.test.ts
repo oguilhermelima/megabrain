@@ -58,7 +58,7 @@ describe("deferred delivery worker lifecycle", () => {
       const reply = appendParentReply(seeded.value, "tmux-owner", { from: "parent", type: "reply", text: "continue", sessionId: "parent" }, {
         supersede: false,
         outbox: { id: "outbox-tmux-owner", targetKind: "child-delivery", target: "tmux:session:%4", payload: {
-          dispatchId: "tmux-owner", sequence: 1, fullMessage: "continue", fullDirection: true,
+          dispatchId: "tmux-owner", sequence: 1, fullMessage: "continue",
           meta: { runtime: "tmux", childHost: "tmux", tmuxSession: "session", tmuxSessionId: "session", tmuxPane: "%4", terminalId: "tmux:session:%4", agent: "codex", agentPid: 4242 },
         } },
       });

@@ -663,7 +663,13 @@ export async function executeHookTurnEnd(
     if (meta === undefined) return finish(defaultText);
     const state = typeof meta.state === "string" ? meta.state : "";
 
-    const checkResult = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--wait-mode", "poll", "--json"], environment, processAdapter, { acknowledge: false, excludedTransports: ["checked", "hook-notified"] });
+    const deliveries = listDeliveries(database.value, dispatchId);
+    const alreadyReceived = deliveries.kind === "ok" ? deliveries.value
+      .filter((delivery) => delivery.recipient === "child" && delivery.status === "outstanding"
+        && ((delivery.transport === "typed" && delivery.transportReason === "full-direction")
+          || (delivery.transport === "ack-verifying" && delivery.transportReason === "peer-socket-verified")))
+      .map((delivery) => delivery.id) : [];
+    const checkResult = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--wait-mode", "poll", "--json"], environment, processAdapter, { acknowledge: false, excludedTransports: ["checked", "hook-notified"], excludedDeliveryIds: alreadyReceived });
     let messageCount = 0;
     let messageSeqs: number[] = [];
     if (checkResult.kind === "ok") {

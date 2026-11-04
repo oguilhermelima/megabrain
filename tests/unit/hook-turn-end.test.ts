@@ -637,11 +637,16 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       }
       await appendMessage(root, "d1", "child", "done", "completed the new direction", "child-term", env, process);
 
-      const checked = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, process);
-      const fullCheck = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--full", "--json"], env, process);
       const result = await executeHookTurnEnd([], env, process, noStdin);
+      const afterHook = listDeliveries(db.value, "d1");
+      expect(afterHook).toMatchObject({ kind: "ok" });
+      if (afterHook.kind === "ok") expect(afterHook.value.find((delivery) => delivery.recipient === "child")).toMatchObject({ status: "outstanding", transport: "typed", transportReason: "full-direction" });
+      const checked = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, process);
+      const repeated = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, process);
+      const fullCheck = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--full", "--json"], env, process);
       expect(checked).toMatchObject({ kind: "ok" });
-      expect(JSON.parse(checked.kind === "ok" ? checked.value : "{}")).toMatchObject({ status: "empty", messages: [] });
+      expect(JSON.parse(checked.kind === "ok" ? checked.value : "{}")).toMatchObject({ status: "reply", text: "follow the new direction", messages: [{ alreadyTyped: true }] });
+      expect(JSON.parse(repeated.kind === "ok" ? repeated.value : "{}")).toMatchObject({ status: "empty", messages: [] });
       expect(fullCheck).toMatchObject({ kind: "ok" });
       expect(JSON.parse(fullCheck.kind === "ok" ? fullCheck.value : "{}")).toMatchObject({ status: "empty", messages: [] });
       const deliveries = listDeliveries(db.value, "d1");
@@ -676,7 +681,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     });
   });
 
-  test("a queued full change direction is returned once and then stays acknowledged", async () => {
+  test("a queued full change direction stays outstanding until check", async () => {
     await withRoot("queued-full-change-direction", async (root) => {
       await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
       const env = childEnv(root, { MEGABRAIN_CONSUMER_ID: "child-consumer" });
@@ -688,9 +693,6 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       if (delivery.kind !== "ok" || delivery.value[0] === undefined) throw new Error("reply delivery missing");
       const marked = setDeliveryTransport(db.value, "d1", Number(delivery.value[0].messageSeqs[0]), "queue", "full-direction");
       if (marked.kind !== "ok") throw new Error(marked.error);
-      const acknowledged = acknowledgeImplicitDelivery(db.value, "d1", delivery.value[0].id, "child", undefined, "child-consumer");
-      if (acknowledged.kind !== "ok") throw new Error(acknowledged.error);
-
       const first = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
       expect(first).toMatchObject({ kind: "ok" });
       expect(JSON.parse(first.kind === "ok" ? first.value : "{}")).toMatchObject({ status: "reply", text: "the complete new direction", messageSeqs: [1] });
@@ -719,6 +721,28 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       expect(firstHook).toEqual({ kind: "ok", value: '{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}\n' });
       expect(secondHook).toEqual({ kind: "ok", value: "{}\n" });
     });
+  });
+
+  test("excludes only verified peer-socket replies from the hook", async () => {
+    for (const verified of [true, false]) {
+      await withRoot(`peer-socket-${verified ? "verified" : "unverified"}`, async (root) => {
+        await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
+        const env = childEnv(root);
+        const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+        if (db.kind !== "ok") throw new Error(db.error);
+        const reply = appendDatabaseMessage(db.value, "d1", { from: "parent", type: "reply", text: "continue through the socket" }, {
+          delivery: { id: "peer-socket-delivery", recipient: "child", status: "outstanding" },
+        });
+        if (reply.kind !== "ok") throw new Error(reply.error);
+        const marked = setDeliveryTransport(db.value, "d1", reply.value.seq, "ack-verifying", verified ? "peer-socket-verified" : "peer-socket-pending");
+        if (marked.kind !== "ok") throw new Error(marked.error);
+
+        const result = await executeHookTurnEnd([], env, fakeProcess(), noStdin);
+        expect(result).toEqual({ kind: "ok", value: verified
+          ? "{}\n"
+          : '{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}\n' });
+      });
+    }
   });
 
   test("keeps queued and typed summaries unread until check shows them", async () => {
@@ -755,7 +779,7 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     }
   });
 
-  test("acknowledges a full typed change direction when the child reports", async () => {
+  test("a full typed change direction is acknowledged only after check shows it", async () => {
     await withRoot("full-change-direction", async (root) => {
       await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
       const env = childEnv(root);
@@ -771,7 +795,13 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       await appendMessage(root, "d1", "child", "done", "completed direction", "child-term", env, fp);
       const deliveries = listDeliveries(db.value, "d1");
       expect(deliveries).toMatchObject({ kind: "ok" });
-      if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "acknowledged" });
+      if (deliveries.kind === "ok") expect(deliveries.value[0]).toMatchObject({ status: "outstanding" });
+
+      const check = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
+      expect(JSON.parse(check.kind === "ok" ? check.value : "{}")).toMatchObject({ status: "reply", text: "the full direction", messageSeqs: [1], messages: [{ alreadyTyped: true }] });
+      const afterCheck = listDeliveries(db.value, "d1");
+      expect(afterCheck).toMatchObject({ kind: "ok" });
+      if (afterCheck.kind === "ok") expect(afterCheck.value.find((delivery) => delivery.recipient === "child")).toMatchObject({ status: "acknowledged" });
     });
   });
 
