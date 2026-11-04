@@ -154,14 +154,17 @@ async function waitForPreviousOwner(stateDir: string): Promise<void> {
   throw new Error(`previous state owner did not exit after losing its lock (pid ${previousPid})`);
 }
 
-export async function inspectStateOwner(stateDir: string): Promise<{ running: false; error?: string } | { running: true; pid: number }> {
+export async function inspectStateOwner(
+  stateDir: string,
+  sendRequest: (stateDir: string, request: StateOwnerRequest, timeoutMs: number) => Promise<unknown> = requestOnce,
+): Promise<{ running: false; error?: string } | { running: true; pid: number }> {
   if (!existsSync(ownerStateSocketForClient(stateDir))) return { running: false };
   try {
-    const value = await requestOnce(stateDir, { operation: "status" }, 1_000) as { pid?: unknown };
+    const value = await sendRequest(stateDir, { operation: "status" }, 1_000) as { pid?: unknown };
     return typeof value.pid === "number" ? { running: true, pid: value.pid } : { running: false, error: "state owner returned an invalid status" };
   } catch (cause: unknown) {
     const code = typeof cause === "object" && cause !== null && "code" in cause ? String((cause as { code?: unknown }).code) : "";
-    if (code === "ECONNREFUSED" || (cause instanceof Error && cause.message.includes("did not answer within"))) return { running: false };
+    if (code === "ENOENT" || code === "ECONNREFUSED" || (cause instanceof Error && cause.message.includes("did not answer within"))) return { running: false };
     return { running: false, error: cause instanceof Error ? cause.message : String(cause) };
   }
 }
