@@ -118,12 +118,13 @@ export function moduleChoices(context: MachineContext, tmux: "yes" | "no"): Modu
 
 // What an install would offer on this machine, for a program to present: the same detection,
 // choices and defaults as the terminal flow, without asking or changing anything.
-export async function machineInstallPlan(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>, processAdapter: ProcessAdapter): Promise<Result<string>> {
+export async function machineInstallPlan(environment: AgentEnvironment & Readonly<{ MEGABRAIN_STATE_DIR?: string }>, processAdapter: ProcessAdapter, moduleId?: string): Promise<Result<string>> {
   const context = await machineContext(environment, processAdapter);
   if (context === undefined) return failed("could not read valid megabrain install state");
   const { defaults, last } = context;
   const tmux = defaults.tmuxAvailable && defaultTmux(context) ? "yes" : "no";
-  const choices = moduleChoices(context, tmux);
+  const allChoices = moduleChoices(context, tmux);
+  const choices = moduleId === undefined ? allChoices : allChoices.filter((choice) => choice.module === moduleId);
   const defaultAgents = last.agents ?? context.availableAgents;
   const plan = {
     version: packageJson.version,

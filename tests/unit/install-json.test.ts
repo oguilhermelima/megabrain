@@ -141,6 +141,51 @@ describe("install --plan --json", () => {
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") expect(JSON.parse(result.value).hosts.tmux).toBe(true);
   });
+
+  test.each([
+    ["summaries-context", "--plan", "--json"],
+    ["summaries-context", "--json", "--plan"],
+    ["--plan", "--json", "summaries-context"],
+    ["--plan", "summaries-context", "--json"],
+  ])("plans one module through install with arguments %j", async (...args) => {
+    const result = await executeInstall(args, machine(), processAdapter());
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    const plan = JSON.parse(result.value);
+    expect(plan.modules.map((entry: Event) => entry.module)).toEqual(["summaries-context"]);
+  });
+
+  test("skips values for every install option while finding a planned module", async () => {
+    const result = await executeInstall(["--plan", "--json", "--browser", "firefox", "summaries-context"], machine(), processAdapter());
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(JSON.parse(result.value).modules.map((entry: Event) => entry.module)).toEqual(["summaries-context"]);
+  });
+
+  test.each([
+    ["summaries-context", "--browser", "firefox", "--plan", "--json"],
+    ["--browser", "firefox", "summaries-context", "--plan", "--json"],
+  ])("finds a module before or after an option value: %j", async (...args) => {
+    const result = await executeInstall(args, machine(), processAdapter());
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(JSON.parse(result.value).modules.map((entry: Event) => entry.module)).toEqual(["summaries-context"]);
+  });
+
+  test("refuses two module ids in plan mode", async () => {
+    const result = await executeInstall(["summaries-context", "worktree", "--plan", "--json"], machine(), processAdapter());
+    expect(result).toMatchObject({ kind: "failed", error: "install accepts at most one module id", exitCode: 2 });
+  });
+
+  test("refuses unknown options in plan mode", async () => {
+    const result = await executeInstall(["summaries-context", "--plan", "--json", "--unknown"], machine(), processAdapter());
+    expect(result).toMatchObject({ kind: "failed", error: "unknown install option: --unknown", exitCode: 2 });
+  });
+
+  test("refuses unknown module ids in plan mode", async () => {
+    const result = await executeInstall(["not-a-module", "--plan", "--json"], machine(), processAdapter());
+    expect(result).toMatchObject({ kind: "failed", error: "unknown module: not-a-module", exitCode: 2 });
+  });
 });
 
 describe("install --json", () => {
