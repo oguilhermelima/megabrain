@@ -36,12 +36,13 @@ describe("dispatch auto-close policy", () => {
     expect(mayAutoCloseDispatch(candidate({ state: "running" }))).toBe(false);
   });
 
-  test("treats every attached client as viewed and ignores pane output", () => {
+  test("uses focused state, post-done input, and attachment time to detect viewing", () => {
     const doneAt = "2026-11-03T12:00:00.000Z";
     expect(tmuxClientsViewedSinceDone("", doneAt)).toBe(false);
-    expect(tmuxClientsViewedSinceDone("1793707201|1793707201", doneAt)).toBe(true);
-    expect(tmuxClientsViewedSinceDone("1793707190|1793707201", doneAt)).toBe(true);
-    expect(tmuxClientsViewedSinceDone("1793707190|1793707199", doneAt)).toBe(true);
+    expect(tmuxClientsViewedSinceDone("/dev/ttys025|43715|1793707190|1793707199|attached,focused,UTF-8", doneAt)).toBe(true);
+    expect(tmuxClientsViewedSinceDone("/dev/ttys025|43715|1793707190|1793707201|attached,UTF-8", doneAt)).toBe(true);
+    expect(tmuxClientsViewedSinceDone("/dev/ttys026|43716|1793707201|1793707201|attached,UTF-8", doneAt)).toBe(true);
+    expect(tmuxClientsViewedSinceDone("/dev/ttys026|43716|1793707190|1793707199|attached,UTF-8", doneAt, [{ server: "default", tty: "/dev/ttys026", pid: 43716 }], "default")).toBe(false);
     expect(tmuxClientsViewedSinceDone("malformed", doneAt)).toBeUndefined();
   });
 });
