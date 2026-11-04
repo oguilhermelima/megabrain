@@ -79,8 +79,8 @@ export function writeCache(environment: Environment, key: string, fetchedAt: num
       if (candidate === path) continue;
       try {
         const entry = record(JSON.parse(readFileSync(candidate, "utf8")));
-        const expiresAfter = typeof entry?.ttl === "number" ? entry.ttl : CACHE_TTL;
-        if (typeof entry?.fetchedAt === "number" && entry.fetchedAt <= fetchedAt && fetchedAt - entry.fetchedAt >= expiresAfter) {
+        const entryTtl = typeof entry?.ttl === "number" ? entry.ttl : CACHE_TTL;
+        if (typeof entry?.fetchedAt === "number" && entry.fetchedAt <= fetchedAt && fetchedAt - entry.fetchedAt >= entryTtl) {
           rmSync(candidate, { force: true });
         }
       } catch { /* Unreadable cache entries are ignored and replaced when their key is requested. */ }

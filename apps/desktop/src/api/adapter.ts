@@ -211,7 +211,9 @@ export interface DesktopApi {
   /** GitHub Projects v2 boards linked to this repository or containing one of its items. */
   githubProjects(root: string): Promise<GithubProjects>
   /** One page of a GitHub Project v2 board's items. */
-  githubProject(root: string, number: number, owner?: string, after?: string | null): Promise<GithubProjectPage>
+  githubProject(root: string, number: number, owner?: string, after?: string | null, fields?: string[]): Promise<GithubProjectPage>
+  /** Full fields and content for one project item when its board card is opened. */
+  githubProjectItem(root: string, number: number, itemId: string, owner?: string): Promise<GithubProjectItem>
   /** GitHub login for the signed-in viewer, cached by the adapter. */
   githubViewerLogin(): Promise<string>
   /** Applies a stored GitHub view filter locally and reports unsupported qualifiers. */

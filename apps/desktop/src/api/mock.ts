@@ -385,6 +385,12 @@ export function createMockApi(): DesktopApi {
       const page = items.slice(offset, offset + 100)
       return { project: structuredClone(project), items: structuredClone(page), next: offset + page.length < items.length ? String(offset + page.length) : null }
     },
+    githubProjectItem: async (_root, number, itemId) => {
+      await wait(120)
+      const item = (githubProjectItems[number] ?? []).find((candidate) => candidate.id === itemId)
+      if (!item) throw new CliError(`GitHub project item ${itemId} was not found`, 1)
+      return structuredClone(item)
+    },
     githubProjectFilter: (project, items, filter, options) => filterGithubProjectItems(project, items, filter, options),
     githubProjectMove: async (_root, number, itemId, status, owner) => {
       const project = mockGithubProjects.find((candidate) => candidate.number === number && (owner === undefined || candidate.owner === owner))

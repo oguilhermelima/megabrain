@@ -25,7 +25,7 @@ export interface BoardCache {
   /** Each repository's projects, by its path. */
   projects: Readonly<Record<string, Cached<GithubProject[]>>>
   /** Each board's items, by boardKey. */
-  items: Readonly<Record<string, Cached<GithubProjectItem[]> & { totalCount?: number; fullAt?: number }>>
+  items: Readonly<Record<string, Cached<GithubProjectItem[]> & { totalCount?: number; fullAt?: number; next?: string | null }>>
 }
 
 export const emptyBoardCache: BoardCache = { projects: {}, items: {} }
@@ -54,7 +54,7 @@ export const boardKey = (board: Pick<GithubProject, 'owner' | 'number'>) => `${b
 const cachedSchema = <T extends z.ZodType>(value: T) => z.object({ value, at: z.number() })
 const storedSchema = z.object({
   projects: z.record(z.string(), cachedSchema(z.array(githubProjectSchema))),
-  items: z.record(z.string(), cachedSchema(z.array(githubProjectItemSchema)).extend({ totalCount: z.number().optional(), fullAt: z.number().optional() })),
+  items: z.record(z.string(), cachedSchema(z.array(githubProjectItemSchema)).extend({ totalCount: z.number().optional(), fullAt: z.number().optional(), next: z.string().nullable().optional() })),
 })
 
 export function readBoardCache(storage: () => WidthStorage): BoardCache {
@@ -100,9 +100,9 @@ export function createBoardMemory(storage: () => WidthStorage): { get: () => Boa
 
 export const withProjects = (cache: BoardCache, root: string, projects: GithubProject[], at: number): BoardCache => ({ ...cache, projects: { ...cache.projects, [root]: { value: projects, at } } })
 
-export const withItems = (cache: BoardCache, key: string, items: GithubProjectItem[], at: number, totalCount?: number, fullAt?: number): BoardCache => ({
+export const withItems = (cache: BoardCache, key: string, items: GithubProjectItem[], at: number, totalCount?: number, fullAt?: number, next?: string | null): BoardCache => ({
   ...cache,
-  items: { ...cache.items, [key]: { value: items, at, ...(totalCount === undefined ? {} : { totalCount }), ...(fullAt === undefined ? {} : { fullAt }) } },
+  items: { ...cache.items, [key]: { value: items, at, ...(totalCount === undefined ? {} : { totalCount }), ...(fullAt === undefined ? {} : { fullAt }), ...(next === undefined ? {} : { next }) } },
 })
 
 /** Items in order, each id once: the first one read wins, as a page boundary can shift mid-read and repeat one. */
@@ -128,42 +128,51 @@ export function mergedPages(read: readonly GithubProjectItem[], before: readonly
  * page (`last` on the final one). A read whose board is no longer the one shown (`current` false)
  * shows nothing more, asks for no more pages and answers null.
  */
-export async function readBoardPages({ read, maxPages, current, show, unchanged, onTotalCount, onFullRead, fullRead = false }: {
+export async function readBoardPages({ read, maxPages, current, show, unchanged, onTotalCount, onNextCursor, onFullRead, fullRead = false, after = null, initialItems = [] }: {
   read: (after: string | null) => Promise<{ items: GithubProjectItem[]; next: string | null; totalCount?: number }>
   maxPages: number
   current: () => boolean
   show: (items: GithubProjectItem[], last: boolean) => void
-  unchanged?: { items: GithubProjectItem[]; totalCount: number }
+  unchanged?: { items: GithubProjectItem[]; totalCount: number; next?: string | null }
   onTotalCount?: (totalCount: number | undefined) => void
+  onNextCursor?: (next: string | null) => void
   onFullRead?: () => void
   fullRead?: boolean
+  after?: string | null
+  initialItems?: GithubProjectItem[]
 }): Promise<GithubProjectItem[] | null> {
-  let all: GithubProjectItem[] = []
-  let after: string | null = null
-  for (let page = 0; page < maxPages; page++) {
-    const next = await read(after)
+  let all: GithubProjectItem[] = initialItems
+  let cursor: string | null = after
+  // Supplying the next cursor makes this a page-at-a-time board read; the caller exposes that
+  // cursor so the next page can be requested only when the user asks for it.
+  const pageLimit = onNextCursor === undefined ? maxPages : 1
+  for (let page = 0; page < pageLimit; page++) {
+    const next = await read(cursor)
     if (!current()) return null
     if (page === 0) onTotalCount?.(next.totalCount)
-    all = distinctItems([...all, ...next.items])
+    const firstPage = after === null && page === 0
+    all = distinctItems(firstPage ? next.next === null ? next.items : [...next.items, ...all] : [...all, ...next.items])
+    cursor = next.next
+    onNextCursor?.(cursor)
     if (
-      page === 0 &&
+      firstPage &&
       !fullRead &&
       unchanged !== undefined &&
       next.totalCount !== undefined &&
       next.totalCount === unchanged.totalCount &&
       sameItems(next.items, unchanged.items.slice(0, next.items.length))
     ) {
+      onNextCursor?.(unchanged.next === undefined ? cursor : unchanged.next)
       show(unchanged.items, true)
       return unchanged.items
     }
-    after = next.next
-    const last = after === null || page === maxPages - 1
+    const last = cursor === null || page === pageLimit - 1
     show(all, last)
     if (last) break
   }
-  onFullRead?.()
+  if (cursor === null) onFullRead?.()
   return all
 }
 
 const sameItems = (left: readonly GithubProjectItem[], right: readonly GithubProjectItem[]) =>
-  left.length === right.length && left.every((item, index) => item.id === right[index]?.id && item.updatedAt === right[index]?.updatedAt)
+  left.length === right.length && left.every((item, index) => JSON.stringify(item) === JSON.stringify(right[index]))

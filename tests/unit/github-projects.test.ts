@@ -11,7 +11,7 @@ type GhCall = readonly string[]
 let root = ''
 let env: Record<string, string>
 let calls: GhCall[] = []
-let answer: (args: GhCall) => Result<ProcessOutput> = () => failed('gh was not expected')
+let answer: (args: GhCall) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = () => failed('gh was not expected')
 const real = createProcessAdapter()
 const fakeGh: ProcessAdapter = {
   run: async (command, args, options) => {
@@ -60,6 +60,40 @@ describe('github projects', () => {
     expect(result.projects[0]?.number).toBe(7)
     expect(result.projects[0]?.statusField?.options[0]?.id).toBe('todo')
     expect(calls).toHaveLength(1)
+  })
+
+  test('caches the complete project discovery for ten minutes', async () => {
+    answer = () => stdout({ data: { repository: { projectsV2: { nodes: [base], pageInfo: { hasNextPage: false } }, owner: { __typename: 'User', login: 'operator', projectsV2: { nodes: [{ ...base, items: { nodes: [projectItem('I1')], pageInfo: { hasNextPage: false } } }], pageInfo: { hasNextPage: false } } } } } })
+    const first = await parsed<{ projects: unknown[] }>(['projects', root, '--json'])
+    const firstCallCount = calls.length
+    expect((await parsed(['projects', root, '--json']))).toEqual(first)
+    expect(calls).toHaveLength(firstCallCount)
+    const cacheDirectory = join(env.MEGABRAIN_STATE_DIR!, 'cache', 'github')
+    const cacheFile = (await import('node:fs')).readdirSync(cacheDirectory)[0]!
+    const cachePath = join(cacheDirectory, cacheFile)
+    const entry = JSON.parse((await import('node:fs')).readFileSync(cachePath, 'utf8')) as { fetchedAt: number }
+    expect(entry.fetchedAt).toBeGreaterThan(0)
+  })
+
+  test('runs independent owner project item probes concurrently, capped at five', async () => {
+    let active = 0
+    let maximum = 0
+    answer = async (args) => {
+      const gql = query(args)
+      if (!gql.includes('query projectsDiscovery') && gql.includes('projectV2(number: $number)')) {
+        active += 1
+        maximum = Math.max(maximum, active)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        active -= 1
+        return stdout({ data: { repositoryOwner: { projectV2: { ...base, number: Number(variables(args).number), items: { nodes: [projectItem(`I${variables(args).number}`)], pageInfo: { hasNextPage: false } } } } } })
+      }
+      const projects = Array.from({ length: 6 }, (_, index) => ({ ...base, id: `PVT_${index + 1}`, number: index + 1, items: { nodes: [], pageInfo: { hasNextPage: true, endCursor: `cursor-${index + 1}` } } }))
+      return stdout({ data: { repository: { projectsV2: { nodes: [], pageInfo: { hasNextPage: false } }, owner: { __typename: 'User', login: 'operator', projectsV2: { nodes: projects, pageInfo: { hasNextPage: false } } } } } })
+    }
+    const result = await parsed<{ projects: { number: number }[] }>(['projects', root, '--json'])
+    expect(result.projects).toHaveLength(6)
+    expect(maximum).toBeGreaterThan(1)
+    expect(maximum).toBeLessThanOrEqual(5)
   })
 
   test('continues owner project and membership scans through their cursors', async () => {
@@ -119,6 +153,31 @@ describe('github projects', () => {
     }
     const result = await parsed<{ next: string }>(['project', root, '7', '--after', 'cursor-one', '--json'])
     expect(result.next).toBe('cursor-two')
+  })
+
+  test('loads project metadata once and keeps card fields in lightweight item pages', async () => {
+    answer = (args) => {
+      const gql = query(args)
+      if (gql.includes('projectMetadata')) return stdout({ data: { repositoryOwner: { projectV2: { ...base, views: { nodes: [] } } } } })
+      return stdout({ data: { repositoryOwner: { projectV2: { ...base, items: { totalCount: 2, nodes: [projectItem('I1')], pageInfo: { hasNextPage: true, endCursor: 'cursor-two' } } } } } })
+    }
+    const first = await parsed<{ project: { number: number }; items: { id: string; status: string }[]; next: string }>(['project', root, '7', '--json'])
+    expect(first.project.number).toBe(7)
+    expect(first.items).toEqual([{ id: 'I1', type: 'ISSUE', number: 42, title: 'Add feature', url: 'https://github.com/operator/sample/issues/42', state: 'OPEN', repository: 'operator/sample', status: 'todo', assignees: [{ login: 'dev', avatarUrl: 'https://example.test/avatar.png' }], labels: [{ name: 'feature', color: 'aabbcc' }], updatedAt: '2026-10-01T12:00:00Z', isArchived: false, fieldValues: [], milestone: null, parentIssue: null, subIssuesProgress: null, body: null }])
+    expect(calls).toHaveLength(2)
+    const itemQuery = query(calls.find((call) => query(call).includes('items(first: 100')) ?? [])
+    expect(itemQuery).toContain('fieldValueByName(name: "Status")')
+    expect(itemQuery).not.toContain('fieldValues(first: 30)')
+    expect(itemQuery).toContain('labels(first: 100)')
+    expect(itemQuery).toContain('assignees(first: 100)')
+    expect(itemQuery).not.toContain('subIssuesSummary')
+    expect(itemQuery).not.toContain('milestone {')
+    expect(itemQuery).not.toContain('body')
+
+    calls = []
+    await parsed(['project', root, '7', '--after', 'cursor-two', '--json'])
+    expect(calls).toHaveLength(1)
+    expect(query(calls[0] ?? [])).not.toContain('views(first: 50)')
   })
 
   test('returns the total project item count with each page', async () => {

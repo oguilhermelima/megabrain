@@ -12,7 +12,7 @@ import { Empty, FilterSelect, IconButton, pillButton } from '@/github/page-parts
 import { OpenLink, SkeletonRows, openOnGithub } from '@/github/parts'
 import { pageDivider, pageX } from '@/lib/page'
 import { answeredItems, otherRepository } from '@/tasks/board-model'
-import { boardFullReadDue, boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
+import { boardKey, boardListReadDue, boardReadDue, createBoardMemory, mergedPages, readBoardPages, withItems, withProjects } from '@/tasks/board-cache'
 import { boardSheetFields } from '@/tasks/BoardFilterBar'
 import { Chips, ViewFilterBar, ViewTable, ViewTabs } from '@/tasks/BoardViews'
 import { ItemPanel, type FieldWrite } from '@/tasks/ItemPanel'
@@ -32,8 +32,8 @@ import { usePoll } from '@/lib/usePoll'
 // The board opens from its last read (board-cache.ts) and reads again behind it, a page at a time.
 // Its filters (board-filters.ts) narrow every column, whose counts are of what they show.
 
-/** A project's items come a page at a time; past this many pages the board shows what it has. */
-const maxPages = 20
+/** GitHub cursors are dependent, so a board read fetches one page and exposes the next for on-demand loading. */
+const maxPages = 1
 const dragThreshold = 4
 
 const browserStorage = () => localStorage
@@ -80,17 +80,22 @@ function useBoards(root: string) {
  * Every item of the board: the last read at once, read again when older than a minute and every
  * minute after while the window shows (usePoll); each page shows as it arrives, over the items shown before it.
  */
-function useBoardItems(root: string, board: GithubProject) {
+function useBoardItems(root: string, board: GithubProject, fields: string[]) {
   const key = boardKey(board)
   const [items, setItems] = useState<GithubProjectItem[] | null>(() => boardCache().items[key]?.value ?? null)
   const [error, setError] = useState<unknown>(null)
   const [loading, setLoading] = useState(false)
+  const [nextCursor, setNextCursor] = useState<string | null>(() => boardCache().items[key]?.next ?? null)
   const shown = useRef(items)
   shown.current = items
   // Refresh reads at once; a schedule or a reopened board reads only when the last read is a minute old.
   const asked = useRef(false)
+  const moreAsked = useRef(false)
   const previousKey = useRef<string | null>(null)
-  useEffect(() => setItems(boardCache().items[key]?.value ?? null), [key])
+  useEffect(() => {
+    setItems(boardCache().items[key]?.value ?? null)
+    setNextCursor(boardCache().items[key]?.next ?? null)
+  }, [key])
   // usePoll's `current` turns false once another board is shown, so an old board's pages never land.
   const poll = usePoll(
     boardItemsPolicy,
@@ -98,34 +103,45 @@ function useBoardItems(root: string, board: GithubProject) {
       const changedBoard = previousKey.current !== key
       previousKey.current = key
       const force = asked.current || changedBoard
+      const loadMore = moreAsked.current
       asked.current = false
-      if (!boardReadDue(boardCache().items[key]?.at, Date.now(), force)) return
+      moreAsked.current = false
+      const cached = boardCache().items[key]
+      if (loadMore ? cached?.next == null : !boardReadDue(cached?.at, Date.now(), force)) return
       setLoading(true)
       const before = shown.current ?? []
-      const cached = boardCache().items[key]
-      const fullRead = force || boardFullReadDue(cached?.fullAt, Date.now(), false)
       let completedFullRead = false
       let totalCount: number | undefined
+      let following: string | null = cached?.next ?? null
       try {
         const all = await readBoardPages({
-          read: (after) => api.githubProject(root, board.number, board.owner, after),
+          read: (after) => api.githubProject(root, board.number, board.owner, after, fields),
           maxPages,
           current,
           show: (read, last) => setItems(last ? read : mergedPages(read, before)),
-          ...(!force && cached?.totalCount !== undefined
-            ? { unchanged: { items: cached.value, totalCount: cached.totalCount } }
+          after: loadMore ? cached!.next! : null,
+          initialItems: before,
+          ...(!loadMore && !force && cached?.totalCount !== undefined
+            ? { unchanged: { items: before, totalCount: cached.totalCount, next: cached.next ?? (cached.fullAt === undefined ? undefined : null) } }
             : {}),
-          fullRead,
           onFullRead: () => {
             completedFullRead = true
+          },
+          onNextCursor: (cursor) => {
+            following = cursor
+            setNextCursor(cursor)
           },
           onTotalCount: (count) => {
             totalCount = count
           },
         })
         if (all === null) return
+        if (!loadMore && cached?.next === null && all === before) {
+          following = null
+          setNextCursor(null)
+        }
         const at = Date.now()
-        remember(withItems(boardCache(), key, all, at, totalCount, completedFullRead ? at : cached?.fullAt))
+        remember(withItems(boardCache(), key, all, at, totalCount ?? cached?.totalCount, completedFullRead ? at : cached?.fullAt, following))
         setError(null)
       } catch (cause: unknown) {
         if (current()) setError(cause)
@@ -133,18 +149,23 @@ function useBoardItems(root: string, board: GithubProject) {
         if (current()) setLoading(false)
       }
     },
-    [root, board.number, board.owner, key],
+    [root, board.number, board.owner, key, fields],
   )
   const read = useCallback(() => {
     asked.current = true
     poll()
   }, [poll])
+  const loadMore = useCallback(() => {
+    if (nextCursor === null || loading) return
+    moreAsked.current = true
+    poll()
+  }, [loading, nextCursor, poll])
   /** GitHub confirmed a move: the item it answers with replaces the one shown, and the one kept. */
   const answer = useCallback(
     (item: GithubProjectItem) => {
       setItems((current) => (current === null ? current : answeredItems(current, item)))
       const entry = boardCache().items[key]
-      if (entry !== undefined) remember(withItems(boardCache(), key, answeredItems(entry.value, item), entry.at, entry.totalCount, entry.fullAt))
+      if (entry !== undefined) remember(withItems(boardCache(), key, answeredItems(entry.value, item), entry.at, entry.totalCount, entry.fullAt, entry.next))
     },
     [key],
   )
@@ -163,13 +184,14 @@ function useBoardItems(root: string, board: GithubProject) {
             entry.at,
             entry.totalCount === undefined ? undefined : entry.totalCount + Number(isNew),
             entry.fullAt,
+            entry.next,
           ),
         )
       }
     },
     [key],
   )
-  return { items, answer, add, error, loading, reload: read }
+  return { items, answer, add, error, loading, nextCursor, loadMore, reload: read }
 }
 
 interface CardDrag {
@@ -413,7 +435,6 @@ export function TasksBoard({ root, repo, remembered, onPick, onOpenGithub }: { r
 }
 
 function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub }: { root: string; repo: string; board: GithubProject; boards: GithubProject[]; onReloadBoards: () => void; onPick: (number: number) => void; onOpenGithub: (kind: 'pr' | 'issue', number: number) => void }) {
-  const { items, answer, add, error, loading, reload } = useBoardItems(root, board)
   const [viewerLogin, setViewerLogin] = useState<string | undefined>()
   useEffect(() => { let active = true; void api.githubViewerLogin().then((login) => { if (active) setViewerLogin(login) }, () => {}); return () => { active = false } }, [])
   const [pending, setPending] = useState<PendingEdit[]>([])
@@ -439,6 +460,17 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   const views = useMemo(() => projectViews(board), [board])
   const [viewId, setViewId] = useState(() => shownView(views, readViewPrefs(browserStorage)[key])?.id ?? null)
   const view = views.find((entry) => entry.id === viewId) ?? views[0] ?? null
+  const fields = useMemo(() => {
+    const names = views.flatMap((saved) => [
+      ...saved.visibleFields.map((entry) => entry.name),
+      ...saved.groupByFields.map((entry) => entry.name),
+      ...saved.verticalGroupByFields.map((entry) => entry.name),
+      ...saved.sortByFields.map((entry) => entry.field.name),
+      ...(saved.filter.trim() ? board.fields.map((entry) => entry.name) : []),
+    ])
+    return [...new Set(names.filter((name) => name.toLowerCase() !== 'status'))]
+  }, [board, views])
+  const { items, answer, add, error, loading, nextCursor, loadMore, reload } = useBoardItems(root, board, fields)
   const [query, setQuery] = useState(view?.filter ?? '')
   const showView = (id: string) => {
     setViewId(id)
@@ -491,6 +523,23 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
   // A card opens the side panel; the click a drag ends with does not.
   const [selected, setSelected] = useState<string | null>(null)
   const [writing, setWriting] = useState(false)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  useEffect(() => {
+    if (selected === null) {
+      setDetailLoading(false)
+      setDetailError(null)
+      return
+    }
+    let current = true
+    setDetailLoading(true)
+    setDetailError(null)
+    void api.githubProjectItem(root, board.number, selected, board.owner).then(
+      (item) => { if (current) answer(item) },
+      (cause: unknown) => { if (current) setDetailError(cause instanceof Error ? cause.message : String(cause)) },
+    ).finally(() => { if (current) setDetailLoading(false) })
+    return () => { current = false }
+  }, [selected, root, board.number, board.owner, answer])
   const opener = (item: GithubProjectItem) => () => {
     if (!swallowClick()) setSelected(item.id)
   }
@@ -614,6 +663,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
             spinning={loading && items !== null}>
             <RefreshIcon size={15} />
           </IconButton>
+          {nextCursor !== null && <button type="button" disabled={loading} onClick={loadMore} className="rounded-full border border-white/[0.08] px-3 py-1.5 text-[12px] font-medium text-ink-300 hover:bg-white/[0.05] disabled:opacity-40">Load more items</button>}
           <FilterButton fields={sheetFields} sheet={sheet} place="row" />
           <OpenLink url={board.url} />
         </div>
@@ -670,7 +720,7 @@ function Board({ root, repo, board, boards, onReloadBoards, onPick, onOpenGithub
         )}
         <ContextMenu menu={menu} onClose={closeMenu} />
       </div>
-      {panelItem !== undefined && <ItemPanel key={panelItem.id} item={panelItem} project={board} busy={writing} onSet={(entry) => setField(panelItem, entry)} onClear={(entry) => clearField(panelItem, entry.name)} onEditDraft={(title, body) => editDraft(panelItem, title, body)} onArchive={() => archive(panelItem)} onOpenDetail={detailOf(panelItem)} onClose={() => setSelected(null)} />}
+      {panelItem !== undefined && <ItemPanel key={panelItem.id} item={panelItem} project={board} busy={writing || detailLoading || detailError !== null} detailLoading={detailLoading} detailError={detailError} onSet={(entry) => setField(panelItem, entry)} onClear={(entry) => clearField(panelItem, entry.name)} onEditDraft={(title, body) => editDraft(panelItem, title, body)} onArchive={() => archive(panelItem)} onOpenDetail={detailOf(panelItem)} onClose={() => setSelected(null)} />}
       <FilterPanel sheet={sheet} fields={sheetFields} />
       <Toast toast={toast} onClose={closeToast} />
     </div>

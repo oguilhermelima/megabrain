@@ -82,7 +82,7 @@ function FieldControl({ item, field, busy, onSet, onClear }: { item: GithubProje
   )
 }
 
-export function ItemPanel({ item, project, busy, onSet, onClear, onEditDraft, onArchive, onOpenDetail, onClose }: { item: GithubProjectItem; project: GithubProject; busy: boolean; onSet: (write: FieldWrite) => void; onClear: (field: GithubProjectField) => void; onEditDraft: (title: string, body: string) => void; onArchive: () => void; onOpenDetail: (() => void) | null; onClose: () => void }) {
+export function ItemPanel({ item, project, busy, detailLoading = false, detailError = null, onSet, onClear, onEditDraft, onArchive, onOpenDetail, onClose }: { item: GithubProjectItem; project: GithubProject; busy: boolean; detailLoading?: boolean; detailError?: string | null; onSet: (write: FieldWrite) => void; onClear: (field: GithubProjectField) => void; onEditDraft: (title: string, body: string) => void; onArchive: () => void; onOpenDetail: (() => void) | null; onClose: () => void }) {
   const fields = project.fields.filter((field) => editableType(field) !== null)
   const url = item.url
   const [title, setTitle] = useState(item.title)
@@ -104,6 +104,8 @@ export function ItemPanel({ item, project, busy, onSet, onClear, onEditDraft, on
         </button>
       </header>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 pb-5">
+        {detailLoading && <p role="status" className="text-[12.5px] text-ink-500">Loading item details…</p>}
+        {detailError !== null && <p role="alert" className="text-[12.5px] text-bad">Couldn’t load item details: {detailError}</p>}
         <div className="flex flex-wrap gap-2">
           {onOpenDetail !== null && (
             <button type="button" onClick={onOpenDetail} className={pillButton}>

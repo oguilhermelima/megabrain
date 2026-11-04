@@ -21,7 +21,7 @@ export const changesPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, re
 export const quickViewPolicy: PollPolicy = { visibleMs: 10_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
 // A simulator screenshot while a Maestro run goes on: one simctl capture, the screen's refresh rate in the Device tab.
 export const screenPolicy: PollPolicy = { visibleMs: 2_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
-// The Tasks board's items: up to 20 GitHub pages a read, so once a minute and only while the window shows.
+// The Tasks board's items: one GitHub page a read, once a minute and only while the window shows.
 export const boardItemsPolicy: PollPolicy = { visibleMs: 60_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
 // The Tasks page's list of a repository's GitHub Projects: rarely changes, so every five minutes and on focus.
 export const boardListPolicy: PollPolicy = { visibleMs: 300_000, hiddenMs: null, refreshOn: { action: false, focus: true } }
