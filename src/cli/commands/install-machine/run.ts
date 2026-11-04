@@ -10,6 +10,7 @@ export async function runMachineInstall(
   revertTmuxRuntime: () => Promise<Result<string>> = () => executeTmux(["wrapper", "--revert"], environment, processAdapter),
   createPrompter: () => MachinePrompter = createClackPrompter,
   write: (text: string) => void = (text) => { process.stdout.write(text); },
+  planModule?: string,
 ): Promise<Result<string>> {
   const plan = args.includes("--plan");
   const json = args.includes("--json");
@@ -18,7 +19,7 @@ export async function runMachineInstall(
   if ("kind" in parsed) return parsed;
   if (plan) {
     if (parsed.provided || parsed.yes) return failed("install --plan takes no selection flags", 2);
-    return machineInstallPlan(environment, processAdapter);
+    return machineInstallPlan(environment, processAdapter, planModule);
   }
   if (!interactive && !parsed.yes && !parsed.provided) {
     return failed("install setup requires a terminal, --yes, or explicit --agents, --skill, or --modules flags");

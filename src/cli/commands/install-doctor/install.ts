@@ -95,15 +95,31 @@ export async function executeInstall(args: readonly string[], environment: Envir
   if (args.includes("-h") || args.includes("--help")) return ok(usageText("install"));
   const first = args[0];
   const machineFlags = new Set(["--agents", "--skill", "--modules", "--tmux", "--yes", "--plan", "--json"]);
-  const machineSetup = args.length === 0 || (first !== undefined && first.startsWith("--") && args.some((arg) => machineFlags.has(arg)));
+  const machineSetup = args.includes("--plan") || args.length === 0 || (first !== undefined && first.startsWith("--") && args.some((arg) => machineFlags.has(arg)));
   if (machineSetup) {
+    const positional: string[] = [];
+    if (args.includes("--plan")) {
+      for (let index = 0; index < args.length; index += 1) {
+        const arg = args[index];
+        if (arg === "--agents" || arg === "--skill" || arg === "--modules" || arg === "--tmux") { index += 1; continue; }
+        if (arg === "--plan" || arg === "--json" || arg === "--yes" || arg.startsWith("-")) continue;
+        positional.push(arg);
+      }
+    }
+    if (positional.length > 1) return failed("install accepts at most one module id", 2);
+    const moduleId = positional[0];
+    const machineArgs = moduleId === undefined ? args : args.filter((arg) => arg !== moduleId);
+    if (moduleId !== undefined && !modules.includes(moduleId)) return failed(`unknown module: ${moduleId}`, 2);
     return runMachineInstall(
-      args,
+      machineArgs,
       environment,
       processAdapter,
       (module) => installOne(module, environment, processAdapter, { yes: true, browser: "both" }),
       undefined,
       () => executeTmux(["wrapper", "--revert"], environment, processAdapter),
+      undefined,
+      undefined,
+      moduleId,
     );
   }
   let module: string | undefined;
