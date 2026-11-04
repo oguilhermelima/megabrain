@@ -11,7 +11,7 @@ type GhCall = readonly string[]
 let root = ''
 let env: Record<string, string>
 let calls: GhCall[] = []
-let answer: (args: GhCall) => Result<ProcessOutput> = () => failed('gh was not expected')
+let answer: (args: GhCall) => Result<ProcessOutput> | Promise<Result<ProcessOutput>> = () => failed('gh was not expected')
 const real = createProcessAdapter()
 const fakeGh: ProcessAdapter = {
   run: async (command, args, options) => {
@@ -60,6 +60,40 @@ describe('github projects', () => {
     expect(result.projects[0]?.number).toBe(7)
     expect(result.projects[0]?.statusField?.options[0]?.id).toBe('todo')
     expect(calls).toHaveLength(1)
+  })
+
+  test('caches the complete project discovery for ten minutes', async () => {
+    answer = () => stdout({ data: { repository: { projectsV2: { nodes: [base], pageInfo: { hasNextPage: false } }, owner: { __typename: 'User', login: 'operator', projectsV2: { nodes: [{ ...base, items: { nodes: [projectItem('I1')], pageInfo: { hasNextPage: false } } }], pageInfo: { hasNextPage: false } } } } } })
+    const first = await parsed<{ projects: unknown[] }>(['projects', root, '--json'])
+    const firstCallCount = calls.length
+    expect((await parsed(['projects', root, '--json']))).toEqual(first)
+    expect(calls).toHaveLength(firstCallCount)
+    const cacheDirectory = join(env.MEGABRAIN_STATE_DIR!, 'cache', 'github')
+    const cacheFile = (await import('node:fs')).readdirSync(cacheDirectory)[0]!
+    const cachePath = join(cacheDirectory, cacheFile)
+    const entry = JSON.parse((await import('node:fs')).readFileSync(cachePath, 'utf8')) as { fetchedAt: number }
+    expect(entry.fetchedAt).toBeGreaterThan(0)
+  })
+
+  test('runs independent owner project item probes concurrently, capped at five', async () => {
+    let active = 0
+    let maximum = 0
+    answer = async (args) => {
+      const gql = query(args)
+      if (!gql.includes('query projectsDiscovery') && gql.includes('projectV2(number: $number)')) {
+        active += 1
+        maximum = Math.max(maximum, active)
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        active -= 1
+        return stdout({ data: { repositoryOwner: { projectV2: { ...base, number: Number(variables(args).number), items: { nodes: [projectItem(`I${variables(args).number}`)], pageInfo: { hasNextPage: false } } } } } })
+      }
+      const projects = Array.from({ length: 6 }, (_, index) => ({ ...base, id: `PVT_${index + 1}`, number: index + 1, items: { nodes: [], pageInfo: { hasNextPage: true, endCursor: `cursor-${index + 1}` } } }))
+      return stdout({ data: { repository: { projectsV2: { nodes: [], pageInfo: { hasNextPage: false } }, owner: { __typename: 'User', login: 'operator', projectsV2: { nodes: projects, pageInfo: { hasNextPage: false } } } } } })
+    }
+    const result = await parsed<{ projects: { number: number }[] }>(['projects', root, '--json'])
+    expect(result.projects).toHaveLength(6)
+    expect(maximum).toBeGreaterThan(1)
+    expect(maximum).toBeLessThanOrEqual(5)
   })
 
   test('continues owner project and membership scans through their cursors', async () => {
