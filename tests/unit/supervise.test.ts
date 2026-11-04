@@ -11,7 +11,7 @@ describe("supervision classification", () => {
   test("names the Codex update dialog and recommends updating outside the blocked prompt", () => {
     const frame = readFileSync(resolve(import.meta.dir, "../fixtures/supervise/codex-update-dialog.txt"), "utf8");
     const finding = classifySupervision({ frame, paneExists: true, processAlive: true, promptUnsubmitted: false });
-    expect(finding.cause).toBe("unknown");
+    expect(finding.cause).toBe("codex-update");
     expect(recommendationFor(finding)).toMatch(/update Codex/i);
     expect(classifyLiveness("codex", frame)).toMatchObject({ status: "blocked", reason: "codex update dialog" });
   });
