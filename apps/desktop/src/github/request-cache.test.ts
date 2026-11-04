@@ -25,7 +25,8 @@ describe('GitHub request cache', () => {
     expect(calls).toBe(1)
     pending.resolve({ counts: { open: 4 }, items: ['same visible row'] })
     const results = await Promise.all([overview, githubPage, counts])
-    expect(results).toEqual(Array(3).fill({ counts: { open: 4 }, items: ['same visible row'] }))
+    const visibleResult = { counts: { open: 4 }, items: ['same visible row'] }
+    expect(results).toEqual([visibleResult, visibleResult, visibleResult])
   })
 
   test('keeps fulfilled values only for their freshness window and separates exact queries', async () => {
