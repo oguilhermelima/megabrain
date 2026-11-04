@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { stateOwnerSocket } from "../../src/db/state-owner.js";
@@ -15,7 +15,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function launchOwner(leakHandle: boolean): { child: ChildProcess; root: string } {
+function launchOwner(leakHandle: boolean, executable?: string, idleMs = 60_000): { child: ChildProcess; root: string } {
   const root = mkdtempSync(join(tmpdir(), "mb-owner-exit-"));
   roots.push(root);
   const modulePath = resolve(import.meta.dir, "../../src/cli/router.ts");
@@ -28,7 +28,7 @@ function launchOwner(leakHandle: boolean): { child: ChildProcess; root: string }
   ].join("\n");
   const child = spawn(process.execPath, ["--eval", script], {
     cwd: resolve(import.meta.dir, "../.."),
-    env: { ...process.env, MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root, MEGABRAIN_STATE_OWNER_IDLE_MS: "100" },
+    env: { ...process.env, MEGABRAIN_STATE_OWNER_TEST_MODE: "", MEGABRAIN_STATE_DIR: root, MEGABRAIN_STATE_OWNER_DIR: root, MEGABRAIN_STATE_OWNER_IDLE_MS: String(idleMs), ...(executable === undefined ? {} : { MEGABRAIN_STATE_OWNER_EXECUTABLE: executable }) },
     stdio: "ignore",
   });
   children.push(child);
@@ -56,7 +56,7 @@ async function waitForReady(root: string, timeoutMs: number): Promise<void> {
 
 describe("state owner process exit", () => {
   test("exits after the owner logs stopped, even with a leaked handle", async () => {
-    const { child, root } = launchOwner(true);
+    const { child, root } = launchOwner(true, undefined, 100);
     const exited = await waitForExit(child, 3_000);
     const log = readFileSync(join(root, "logs", "state-owner.log"), "utf8");
     expect(log).toContain('"event":"stopped"');
@@ -64,7 +64,7 @@ describe("state owner process exit", () => {
   });
 
   test("exits after idle stop without a signal", async () => {
-    const { child, root } = launchOwner(false);
+    const { child, root } = launchOwner(true, undefined, 100);
     const exited = await waitForExit(child, 3_000);
     const log = readFileSync(join(root, "logs", "state-owner.log"), "utf8");
     expect(log).toContain('"event":"stopped"');
@@ -72,16 +72,26 @@ describe("state owner process exit", () => {
   });
 
   test("exits when its state directory is removed", async () => {
-    const { child, root } = launchOwner(false);
+    const { child, root } = launchOwner(true);
     await waitForReady(root, 3_000);
     rmSync(root, { recursive: true, force: true });
 
-    expect(await waitForExit(child, 3_000)).toBe(true);
-    expect(readFileSync(join(root, "logs", "state-owner.log"), "utf8")).toContain('"event":"stopped"');
+    expect(await waitForExit(child, 2_200)).toBe(true);
+  });
+
+  test("exits when its configured executable is removed", async () => {
+    const executable = join(mkdtempSync(join(tmpdir(), "mb-owner-executable-")), "megabrain");
+    roots.push(join(executable, ".."));
+    copyFileSync(process.execPath, executable);
+    const { child, root } = launchOwner(true, executable);
+    await waitForReady(root, 3_000);
+    rmSync(executable);
+
+    expect(await waitForExit(child, 2_200)).toBe(true);
   });
 
   test("exits when its socket is removed", async () => {
-    const { child, root } = launchOwner(false);
+    const { child, root } = launchOwner(true);
     await waitForReady(root, 3_000);
     rmSync(stateOwnerSocket(root), { force: true });
 
