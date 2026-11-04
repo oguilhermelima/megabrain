@@ -21,6 +21,7 @@ export GH_LOG="$work/gh.log"
 export GH_NATIVE=yes
 export GH_UNPUSHED=no
 export GH_REMOTE="$work/remote.git"
+export GH_MERGED_FILE="$work/merged"
 
 cat >"$work/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -36,15 +37,25 @@ case "${1:-} ${2:-} ${3:-}" in
       *"pulls/${GH_MERGE_FAIL:-}/merge"*) printf 'simulated merge failure\n' >&2; exit 1 ;;
       *"pulls/${GH_SHA_FAIL:-}/merge"*) printf 'Head sha does not match\n' >&2; exit 1 ;;
     esac
+    number="${*#*pulls/}"; number="${number%%/*}"
+    printf '%s\n' "$number" >>"$GH_MERGED_FILE"
     printf '{"sha":"merged"}\n'
     ;;
   "api --method PATCH"*) printf '{"number":12}\n' ;;
-  "api repos/owner/repo/pulls/12"*) printf '{"number":12,"title":"feat: add base behavior","body":"Base details","state":"open","mergeable":true,"head":{"ref":"stack/base","sha":"base-sha"},"base":{"ref":"main"}}\n' ;;
-  "api repos/owner/repo/pulls/13"*) printf '{"number":13,"title":"fix: add child behavior","body":"Child details","state":"open","mergeable":true,"head":{"ref":"stack/child","sha":"child-sha"},"base":{"ref":"stack/base"}}\n' ;;
+  "api repos/owner/repo/pulls/12"*)
+    if [ "${GH_CLOSED_UNMERGED:-}" = 12 ]; then printf '{"number":12,"title":"feat: add base behavior","body":"Base details","state":"closed","mergeable":true,"head":{"ref":"stack/base","sha":"base-sha"},"base":{"ref":"main"}}\n';
+    elif [ -n "${GH_SPECIAL_TEXT:-}" ]; then printf '{"number":12,"title":"%s","body":"%s","state":"open","mergeable":true,"head":{"ref":"stack/base","sha":"base-sha"},"base":{"ref":"main"}}\n' "$GH_SPECIAL_TEXT" "$GH_SPECIAL_BODY";
+    else printf '{"number":12,"title":"feat: add base behavior","body":"Base details","state":"open","mergeable":true,"head":{"ref":"stack/base","sha":"base-sha"},"base":{"ref":"main"}}\n'; fi ;;
+  "api repos/owner/repo/pulls/13"*)
+    if [ "${GH_MERGE_RETARGET:-}" = yes ]; then printf '{"number":13,"title":"fix: add child behavior","body":"Child details","state":"open","mergeable":true,"head":{"ref":"stack/child","sha":"child-sha"},"base":{"ref":"main"}}\n';
+    else printf '{"number":13,"title":"fix: add child behavior","body":"Child details","state":"open","mergeable":true,"head":{"ref":"stack/child","sha":"child-sha"},"base":{"ref":"stack/base"}}\n'; fi ;;
   "api repos/owner/repo/pulls/13/merge-async/merge-id"*) printf '{"status":"merged","details":{"sha":"abc"}}\n' ;;
   "pr list"*)
     if [ "${GH_LIST_MODE:-empty}" = open ]; then
-      printf '[{"number":12,"headRefName":"stack/base","baseRefName":"main","url":"https://github.com/owner/repo/pull/12","state":"OPEN","title":"feat: add base behavior","body":"Base details","headRefOid":"base-sha"},{"number":13,"headRefName":"stack/child","baseRefName":"stack/base","url":"https://github.com/owner/repo/pull/13","state":"OPEN","title":"fix: add child behavior","body":"Child details","headRefOid":"child-sha"}]\n'
+      state12=OPEN
+      if [ -f "$GH_MERGED_FILE" ] && grep -qx 12 "$GH_MERGED_FILE"; then state12=MERGED; fi
+      if [ "${GH_CLOSED_UNMERGED:-}" = 12 ]; then state12=CLOSED; fi
+      printf '[{"number":12,"headRefName":"stack/base","baseRefName":"main","url":"https://github.com/owner/repo/pull/12","state":"%s","title":"feat: add base behavior","body":"Base details","headRefOid":"base-sha"},{"number":13,"headRefName":"stack/child","baseRefName":"stack/base","url":"https://github.com/owner/repo/pull/13","state":"OPEN","title":"fix: add child behavior","body":"Child details","headRefOid":"child-sha"}]\n' "$state12"
     else printf '[]\n'; fi
     ;;
   "pr create"*)
@@ -110,7 +121,29 @@ contains "$log" 'commit_message=Child details'
 contains "$log" 'sha=base-sha'
 contains "$log" 'sha=child-sha'
 contains "$output" 'GitHub stack merged bottom-up'
+retarget_line="$(grep -n 'PATCH repos/owner/repo/pulls/13' "$GH_LOG" | head -1 | cut -d: -f1)"
+merge_line="$(grep -n 'PUT repos/owner/repo/pulls/13/merge' "$GH_LOG" | head -1 | cut -d: -f1)"
+[ "$retarget_line" -lt "$merge_line" ] || fail 'child PR merged before retarget'
+contains "$log" 'raw-field=base=main'
+contains "$log" 'raw-field=commit_title=fix: add child behavior (#13)'
+contains "$log" 'raw-field=commit_message=Child details'
 printf 'GitHub native stack merges every PR with its own title, body and checked head\n'
+
+# Scenario: reruns skip already merged PRs, but a closed unmerged PR stops the run.
+: >"$GH_MERGED_FILE"
+export GH_LIST_MODE=open GH_MERGED_FILE
+printf '12\n' >"$GH_MERGED_FILE"
+: >"$GH_LOG"
+output="$(run stack merge --yes)"
+contains "$output" 'already merged #12'
+not_contains "$(cat "$GH_LOG")" 'pulls/12/merge'
+contains "$(cat "$GH_LOG")" 'pulls/13/merge'
+export GH_CLOSED_UNMERGED=12
+: >"$GH_LOG"
+if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge accepted a closed unmerged PR'; fi
+contains "$output" 'closed, not open'
+not_contains "$(cat "$GH_LOG")" 'pulls/12/merge'
+unset GH_CLOSED_UNMERGED
 
 # Scenario: stop at the first failed PR and report the already merged prefix.
 export GH_MERGE_FAIL=13
