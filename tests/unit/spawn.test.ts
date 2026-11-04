@@ -1588,7 +1588,7 @@ describe("executeSpawn", () => {
     }
   });
 
-  test("fails with a tmux readiness timeout and sends no prompt", async () => {
+  test("keeps a tmux dispatch starting after readiness budget and sends no prompt", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-tmux-readiness-timeout-`);
     const events: string[] = [];
     const dispatchId = "dispatch-tmux-readiness-timeout";
@@ -1609,11 +1609,10 @@ describe("executeSpawn", () => {
         ...environment(root, dispatchId),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "0",
       }, process, options(worktree("existing")));
-      expect(result.kind).toBe("failed");
-      if (result.kind === "failed") expect(result.error).toContain("readiness-output-invalid");
+      expect(result.kind).toBe("ok");
       expect(events).not.toContain("text:prompt");
       const meta = readMeta(root, dispatchId);
-      expect(meta).toMatchObject({ state: "failed", reason: "readiness-output-invalid" });
+      expect(meta).toMatchObject({ state: "spawning", readinessState: "starting", promptTransport: "pending", promptChannel: "argv" });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
