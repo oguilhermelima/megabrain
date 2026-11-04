@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/api'
 import type { GithubDetail, GithubMergeMethod, GithubReview, GithubReviewEvent } from '@/api/schema'
+import { invalidateGithubRequests, issueDetail, pullRequestDetail } from '@/github/github-requests'
 import { ConfirmDialog, type PendingConfirm } from '@/components/ConfirmDialog'
 import { DetailSkeleton } from '@/components/Skeleton'
 import { ErrorNote, Segmented, Spinner } from '@/components/ui'
@@ -65,7 +66,7 @@ function useDetail(root: string, kind: 'pr' | 'issue', number: number) {
     const ask = ++asked.current
     setLoading(true)
     try {
-      const value = kind === 'pr' ? await api.githubPullRequest(root, number) : await api.githubIssue(root, number)
+      const value = kind === 'pr' ? await pullRequestDetail(root, number) : await issueDetail(root, number)
       if (ask !== asked.current) return
       setDetail(value)
       setError(null)
@@ -271,11 +272,13 @@ function ItemView({ root, kind, number }: { root: string; kind: 'pr' | 'issue'; 
   const addComment = (body: string) =>
     comment.run(async () => {
       await api.addComment(root, number, body)
+      invalidateGithubRequests(root, number)
       await reload()
     })
 
   const sendReview = async (submitted: GithubReview) => {
     await api.submitReview(root, number, submitted)
+    invalidateGithubRequests(root, number)
     setPending([])
     void reload()
     void reviewThreads.reload()
@@ -301,24 +304,28 @@ function ItemView({ root, kind, number }: { root: string; kind: 'pr' | 'issue'; 
   }
   const enableAutoMerge = async () => {
     await api.setAutoMerge(root, number, method)
+    invalidateGithubRequests(root, number)
     setAutoMergeOn(method)
     refreshReadiness()
   }
   const disableAutoMerge = () =>
     state.run(async () => {
       await api.setAutoMerge(root, number, null)
+      invalidateGithubRequests(root, number)
       setAutoMergeOn(null)
       refreshReadiness()
     })
   const markReady = () =>
     state.run(async () => {
       await api.setPrReady(root, number, true)
+      invalidateGithubRequests(root, number)
       await reload()
       void reviewers.reload()
     })
 
   const writePrState = (action: 'merge' | 'close' | 'reopen') => async () => {
     await api.setPrState(root, number, action, action === 'merge' ? { method } : undefined)
+    invalidateGithubRequests(root, number)
     setLocalState(action === 'merge' ? 'merged' : action === 'close' ? 'closed' : 'open')
     void reload()
   }
@@ -330,6 +337,7 @@ function ItemView({ root, kind, number }: { root: string; kind: 'pr' | 'issue'; 
     state.run(async () => {
       if (action.state === 'closed') await api.setIssueState(root, number, 'closed', action.reason)
       else await api.setIssueState(root, number, 'open')
+      invalidateGithubRequests(root, number)
       setLocalState(action.state)
       void reload()
     })
@@ -377,10 +385,12 @@ function ItemView({ root, kind, number }: { root: string; kind: 'pr' | 'issue'; 
     if (action === 'close') setConfirm({ title: `Close pull request #${number}?`, body: 'The pull request closes without merging. It can be reopened later.', action: 'Close pull request', run: confirmed('close') })
     else if (action === 'rerun-failed') boxWrite(action, () => state.run(async () => {
       await api.rerunChecks(root, number, true)
+      invalidateGithubRequests(root, number)
       refreshReadiness()
     }))
     else boxWrite(action, () => state.run(async () => {
       await api.setPrReady(root, number, false)
+      invalidateGithubRequests(root, number)
       refreshReadiness()
     }))
   }

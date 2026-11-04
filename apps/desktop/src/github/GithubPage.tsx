@@ -9,7 +9,7 @@ import { ErrorNote } from '@/components/ui'
 import { emptyPullRequestFilters, filterOptionsFrom, githubRepository, includesAuthor, otherPeople, type IssueFilters, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
 import { firstCursors, withNext } from '@/github/pager'
 import { CloseIcon, CommentIcon, MaximiseIcon, MilestoneIcon, RefreshIcon } from '@/github/icons'
-import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
+import { issueDetail, issuePage, pullRequestDetail, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
 import { Avatar, ChecksList, ConversationThread, OpenLink, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, ago, useNow } from '@/github/parts'
 import { BranchFlow, StatPill } from '@/github/ItemHero'
 import { ActionsPage } from '@/github/ActionsPage'
@@ -202,7 +202,7 @@ export function DetailPane({ project, kind, number, pullRequest, issue, onMaximi
     let stopped = false
     setDetail(null)
     setError(null)
-    const request = kind === 'prs' ? api.githubPullRequest(project.path, number) : api.githubIssue(project.path, number)
+    const request = kind === 'prs' ? pullRequestDetail(project.path, number) : issueDetail(project.path, number)
     request.then(
       (value) => !stopped && setDetail(value),
       (cause: unknown) => !stopped && setError(cause),

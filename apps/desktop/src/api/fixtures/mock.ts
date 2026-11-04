@@ -513,8 +513,8 @@ export const mockSettings: Settings = {
 }
 
 // One repository's pull requests and issues as `megabrain github prs|issues --state all --json` lists
-// them: every state, drafts and labels in GitHub colors. Reviews, failing, pending and passing checks
-// and line counts arrive with each pull request's detail, as `github pr --json` gives them.
+// them: every state, drafts and labels in GitHub colors. Review and check summaries are on pull
+// request rows; line counts and discussion arrive with each pull request's detail.
 const githubRef = { nameWithOwner: 'operator/megabrain', url: 'https://github.com/operator/megabrain', path: `${root}/megabrain` }
 const person = (login: string, name: string | null = null) => ({ login, name, isBot: login.startsWith('app/') })
 const label = (name: string, color: string, description = '') => ({ name, color, description })
