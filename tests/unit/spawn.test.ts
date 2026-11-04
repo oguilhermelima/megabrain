@@ -1143,7 +1143,7 @@ describe("executeSpawn", () => {
     }
   });
 
-  test("returns readiness-timeout after submitting the command and does not send the prompt", async () => {
+  test("keeps a slow host startup pending instead of failing on the readiness budget", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-timeout-`);
     const dispatchId = "dispatch-readiness-timeout";
     const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
@@ -1157,13 +1157,14 @@ describe("executeSpawn", () => {
         MEGABRAIN_SESSION_HOST: "orca",
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "1234",
       }, process, options(worktree("existing")));
-      expect(result).toEqual({ kind: "failed", error: "readiness-timeout: orca terminal child-terminal did not become ready within 1234ms", exitCode: 1 });
+      expect(result.kind).toBe("ok");
       const hostCalls = process.calls.filter((call) => call.command === "orca" && (call.args[1] === "send" || call.args[1] === "read"));
       expect(hostCalls[0]?.args[1]).toBe("send");
-      expect(hostCalls.filter((call) => call.args[1] === "read").length).toBeGreaterThan(1);
+      expect(hostCalls.filter((call) => call.args[1] === "read").length).toBeGreaterThan(0);
       expect(hostCalls.filter((call) => call.args[1] === "send")).toHaveLength(1);
       const meta = readMeta(root, dispatchId);
-      expect(meta.reason).toBe("readiness-timeout");
+      expect(meta.reason).toBe(null);
+      expect(meta.readinessState).toBe("starting");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

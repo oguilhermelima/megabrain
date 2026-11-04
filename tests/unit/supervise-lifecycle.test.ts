@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { executeSupervisorWorker, superviseOnce } from "../../src/cli/commands/supervise.js";
-import { appendMessage, createDelivery, createDispatch, enqueueOutbox, listDeliveries, listMessages, listOutbox } from "../../src/adapters/state-db.js";
+import { appendMessage, createDelivery, createDispatch, enqueueOutbox, getDispatch, listDeliveries, listMessages, listOutbox } from "../../src/adapters/state-db.js";
 import { failed, ok } from "../../src/core/result.js";
 import { openDatabase } from "../../src/db/db.js";
 import { listLeases } from "../../src/adapters/state-db.js";
@@ -53,6 +53,77 @@ function superviseMessages(database: Parameters<typeof listMessages>[0], dispatc
 }
 
 describe("supervisor lifecycle decisions", () => {
+  test("waits on a host startup dialog, then sends the prompt only after the composer is idle", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-host-readiness-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const dispatchId = "host-readiness";
+    const meta = {
+      dispatchId, state: "running", runtime: "host", childHost: "orca", workspaceId: null,
+      terminalId: "host-child", agent: "codex", agentPid: 123, parentHost: "unknown",
+      parentSessionId: "parent", readinessState: "starting", promptChannel: "paste",
+      promptReceipt: "pending", promptState: "awaiting-readiness", promptDelivery: "pending",
+    };
+    const created = createDispatch(opened.value, meta);
+    if (created.kind !== "ok") throw new Error(created.error);
+    const prompt = appendMessage(opened.value, dispatchId, { from: "parent", type: "prompt", text: "do the work", sessionId: "parent" });
+    if (prompt.kind !== "ok") throw new Error(prompt.error);
+    let screen = "Do you trust the contents of this project folder?";
+    const calls: string[] = [];
+    const process: ProcessAdapter = {
+      async run(command: string, args: readonly string[]) {
+        calls.push(`${command} ${args.join(" ")}`);
+        if (command === "ps" && args[0] === "-p") return ok({ stdout: "S\n", stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "list") return ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "host-child", pid: 123 }] } }), stderr: "", exitCode: 0 });
+        if (command === "orca" && args[1] === "read") return ok({ stdout: JSON.stringify({ result: { terminal: { tail: screen } } }), stderr: "", exitCode: 0 });
+        return ok({ stdout: "{}", stderr: "", exitCode: 0 });
+      },
+      async startDetached() { return ok({ pid: 123 }); },
+      invocationCount() { return calls.length; },
+    };
+    try {
+      await superviseOnce(directory, opened.value, environment, process, Date.now());
+      expect(calls.some((call) => call.includes("terminal send"))).toBe(false);
+      expect(getDispatch(opened.value, dispatchId)).toMatchObject({ kind: "ok", value: { readinessState: "starting", readinessDialog: "workspace-trust-dialog" } });
+      screen = "› Ask Codex to do anything";
+      await superviseOnce(directory, opened.value, environment, process, Date.now() + 2_000);
+      expect(calls.filter((call) => call.includes("terminal send"))).toHaveLength(1);
+      expect(getDispatch(opened.value, dispatchId)).toMatchObject({ kind: "ok", value: { readinessState: "running", state: "running" } });
+    } finally {
+      opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("fails a host startup when its recorded process identity is dead", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-host-dead-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const dispatchId = "host-dead-startup";
+    const created = createDispatch(opened.value, {
+      dispatchId, state: "running", runtime: "host", childHost: "orca", workspaceId: null,
+      terminalId: "host-child", agent: "codex", agentPid: 123, readinessState: "starting",
+    });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const process: ProcessAdapter = {
+      async run(command: string, args: readonly string[]) {
+        if (command === "ps" && args[0] === "-p") return ok({ stdout: "Z\n", stderr: "", exitCode: 0 });
+        throw new Error(`unexpected process invocation: ${command} ${args.join(" ")}`);
+      },
+      async startDetached() { return ok({ pid: 123 }); },
+      invocationCount() { return 1; },
+    };
+    try {
+      await superviseOnce(directory, opened.value, environment, process, Date.now());
+      expect(getDispatch(opened.value, dispatchId)).toMatchObject({ kind: "ok", value: { state: "failed", processState: "failed", readinessState: "failed" } });
+    } finally {
+      opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("notifies once for stable evidence, then again only when the finding changes or recurs", () => {
     const paneGone = { cause: "pane-gone" as const, paneId: "%7", worktreePath: "/repo", dirtyFiles: [] };
     const previousPaneGone = { ...paneGone, notifiedAt: 1_000 };

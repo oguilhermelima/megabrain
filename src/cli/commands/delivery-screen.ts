@@ -19,11 +19,11 @@ function normalizeInterruptedScreen(agent: string, output: string): string {
   return output;
 }
 
-function hostScreen(stdout: string): Result<string> {
+export function hostScreen(stdout: string): Result<string> {
   try {
     const root = recordValue(JSON.parse(stdout));
     const terminal = recordValue(recordValue(root?.result)?.terminal);
-    const tail = terminal?.tail;
+    const tail = terminal?.tail ?? root?.text ?? root?.output ?? root?.content ?? recordValue(root?.result)?.text ?? recordValue(root?.result)?.output;
     const output = typeof tail === "string" ? tail : Array.isArray(tail) && tail.every((line) => typeof line === "string") ? tail.join("\n") : undefined;
     if (output === undefined) return failed("terminal screen read did not include result.terminal.tail");
     const draft = typeof terminal?.draft === "string" ? terminal.draft : "";

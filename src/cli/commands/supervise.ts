@@ -14,6 +14,7 @@ import { resolveStateDirectory } from "../../core/state.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { APP_TMUX_SERVER, DISPATCH_TMUX_SERVER, getTmux, verifyTmuxPane } from "../../hosts/tmux.js";
+import { getHost, runHostSend } from "../../hosts/index.js";
 import { readDeliveryScreen } from "./delivery-screen.js";
 import { classifyPromptState, promptFinding, type PromptState } from "./prompt-state.js";
 import { collectResources } from "./resources.js";
@@ -471,9 +472,14 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const current = getDispatch(database, dispatch);
     if (current.kind !== "ok" || current.value === undefined) continue;
     const meta = current.value as RecordValue;
-    if (meta.readinessState === "starting" && meta.runtime === "tmux" && string(meta.tmuxPane) !== undefined) {
+    if (meta.readinessState === "starting" && (meta.runtime === "tmux" && string(meta.tmuxPane) !== undefined || meta.runtime === "host")) {
+      const alive = await processAlive(meta, process);
+      if (alive === false) {
+        await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: { state: "failed", processState: "failed", readinessState: "failed", reason: "agent process exited before readiness" } });
+        continue;
+      }
       const captured = await readDeliveryScreen(meta, process);
-      if (captured.kind === "ok" && await processAlive(meta, process) !== false) {
+      if (captured.kind === "ok") {
         const frame = captured.value;
         const dialog = startupDialogCause(string(meta.agent) ?? "", frame);
         let started = string(meta.promptReceipt) === "received";
@@ -484,9 +490,19 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
         } else if (!started && string(meta.promptChannel) === "paste" && dialog === undefined && classifyLiveness(string(meta.agent) ?? "", frame).status === "idle") {
           const prompt = await promptText(database, dispatch);
           if (prompt !== undefined) {
-            const result = await transportTmuxPrompt({ root, pane: String(meta.tmuxPane), agent: string(meta.agent) ?? "", prompt, environment, process }, () => string(meta.promptReceipt) === "received");
-            transport = result.status;
-            started = result.status === "delivered" || result.status === "turn-without-receipt";
+            if (meta.runtime === "tmux") {
+              const result = await transportTmuxPrompt({ root, pane: String(meta.tmuxPane), agent: string(meta.agent) ?? "", prompt, environment, process }, () => string(meta.promptReceipt) === "received");
+              transport = result.status;
+              started = result.status === "delivered" || result.status === "turn-without-receipt";
+            } else {
+              const provider = getHost(string(meta.childHost) ?? "");
+              const call = provider?.send({ workspaceId: string(meta.workspaceId) ?? null, terminalId: string(meta.terminalId) ?? "", text: prompt, enter: true });
+              const result = call?.kind === "ok" ? await runHostSend(string(meta.childHost) ?? "", process, call.value) : undefined;
+              if (result?.kind === "ok") {
+                transport = "delivered";
+                started = true;
+              }
+            }
           }
         }
         const noticeDue = typeof meta.readinessDueAt === "number" && now >= meta.readinessDueAt;

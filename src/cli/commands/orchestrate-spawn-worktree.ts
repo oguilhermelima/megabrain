@@ -118,6 +118,7 @@ export function failureForCall(call: HostCommand | undefined, result: Result<unk
 type HostTerminalCreation = Readonly<{
   readonly terminalId: string;
   readonly attempts: number;
+  readonly processId?: number;
 }>;
 
 function terminalCreateFailure(call: HostCommand, response: Result<unknown>, attempts: number, elapsedMs: number): Result<HostTerminalCreation> {
@@ -130,9 +131,15 @@ export async function createHostTerminal(host: Pick<HostProvider, "terminalIdent
   for (let attempts = 1; attempts <= TERMINAL_CREATE_MAX_ATTEMPTS; attempts += 1) {
     const response = await process.run(call.command, call.args, { timeoutMs: TERMINAL_CREATE_TIMEOUT_MS });
     if (response.kind === "ok") {
-      const terminalId = host.terminalIdentity(JSON.parse(response.value.stdout || "{}")) ?? "";
+      const payload: unknown = JSON.parse(response.value.stdout || "{}");
+      const terminalId = host.terminalIdentity(payload) ?? "";
       if (terminalId === "") return failed("terminal create returned no terminal identity");
-      return ok({ terminalId, attempts });
+      const root = typeof payload === "object" && payload !== null ? payload as Record<string, unknown> : {};
+      const result = typeof root.result === "object" && root.result !== null ? root.result as Record<string, unknown> : {};
+      const terminal = typeof result.terminal === "object" && result.terminal !== null ? result.terminal as Record<string, unknown> : {};
+      const processId = [terminal.rootPid, terminal.processRootPid, terminal.pid, result.rootPid, root.rootPid, root.pid]
+        .find((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0);
+      return ok({ terminalId, attempts, ...(processId === undefined ? {} : { processId }) });
     }
     const elapsed = Date.now() - started;
     if (attempts === TERMINAL_CREATE_MAX_ATTEMPTS || elapsed >= TERMINAL_CREATE_DEADLINE_MS) return terminalCreateFailure(call, response, attempts, elapsed);
