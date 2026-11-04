@@ -8,6 +8,7 @@ import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { createDispatch, getDispatch, listTmuxSessions } from "../../src/adapters/state-db.js";
 import { guardedStateDatabase } from "./state-db-guard.js";
 import { existingWorktree, processFor, spawnEnvironment } from "./spawn-harness.js";
+import { composerPane } from "./composer-tmux.js";
 
 const dependencies: SpawnDependencies = { resolveWorktree: async () => ok(existingWorktree) };
 const args = ["--worktree", "/work/tree", "--agent", "codex", "--prompt", "fail", "--tmux", "true"];
@@ -25,9 +26,19 @@ describe("a failed spawn leaves no ghost row", () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-ghost-`);
     const process = processFor();
     const original = getTmux();
-    registerTmux({ ...original, id: "tmux", sendText: async () => failed("launch failed"), sendKey: async () => ok(undefined) });
+    const composer = composerPane({ agent: "codex" });
+    let pasteCalls = 0;
+    registerTmux({
+      ...original,
+      id: "tmux",
+      capturePane: composer.provider.capturePane,
+      pasteText: async () => { pasteCalls += 1; return failed("paste failed"); },
+      sendText: async () => ok(undefined),
+      sendKey: async () => ok(undefined),
+    });
     try {
-      const result = await executeSpawn(args, spawnEnvironment(root, "dispatch-ghost-launch"), process, dependencies);
+      const result = await executeSpawn(args, spawnEnvironment(root, "dispatch-ghost-launch", { MEGABRAIN_AGENT_READY_TIMEOUT_MS: "1500" }), process, dependencies);
+      expect(pasteCalls).toBe(1);
       expect(result.kind).toBe("failed");
       expect(process.calls.some((call) => call.command === "tmux" && call.args[0] === "kill-session")).toBe(true);
       expect(registeredSessions(root)).not.toContain(tmuxWorktreeSessionName("/work/tree"));
