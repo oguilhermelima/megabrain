@@ -639,6 +639,7 @@ export const Sidebar = memo(function Sidebar({
   const stackRows = useMemo<StackRows>(() => ({ details: stackDetails, folded: collapsed, fold: toggle, busy: stackBusy }), [stackDetails, collapsed, toggle, stackBusy])
   const listedByPath = new Map(shownProjects.map((project) => [project.path, project]))
   const shownByPath = new Map(visible.map((project) => [project.path, project]))
+  const entries = sidebarEntries(layout, shownByPath, filtered)
   const renderProject = (project: Project) => (
     <ProjectSection
       key={project.path}
@@ -758,12 +759,12 @@ export const Sidebar = memo(function Sidebar({
             </button>
           </div>
         )}
-        {ready && sidebarEntries(layout, shownByPath, filtered).map((entry) =>
-          entry.kind === 'project' ? (
+        {ready && entries.map((entry, index) => (
+          <div key={entry.key} style={index < entries.length - 1 ? { marginBottom: 6 } : undefined}>
+          {entry.kind === 'project' ? (
             renderProject(entry.project)
           ) : (
             <FolderSection
-              key={entry.key}
               folder={entry.folder}
               count={entry.projects.length}
               renaming={renamingFolder === entry.key}
@@ -778,8 +779,9 @@ export const Sidebar = memo(function Sidebar({
             >
               {entry.projects.map(renderProject)}
             </FolderSection>
-          ),
-        )}
+          )}
+          </div>
+        ))}
         {filtered && visible.length === 0 && partition.visible.length > 0 && (
           <div className="mx-1 rounded-[18px] border border-dashed border-white/[0.12] px-4 py-5 text-center">
             <p className="text-[13.5px] text-ink-300">Nothing matches {activeFilterLabels(filters).join(' + ')}.</p>

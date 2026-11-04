@@ -140,7 +140,7 @@ export function FolderSection({
                 if (event.key === 'Escape') onRename(null)
               }}
               onBlur={(event) => onRename(event.currentTarget.value)}
-              className="min-w-0 flex-1 bg-transparent text-[15px] font-semibold tracking-[-0.01em] text-ink-100 outline-none"
+              className="min-w-0 flex-1 bg-transparent text-[14px] font-semibold tracking-[-0.01em] text-ink-100 outline-none"
             />
           </div>
         ) : (
@@ -156,7 +156,7 @@ export function FolderSection({
             className="flex h-9 min-w-0 flex-1 items-center gap-2.5 pl-2.5 text-left"
           >
             <FolderTile folder={folder} open={open} />
-            <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{folder.name}</h2>
+            <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-[-0.01em] text-ink-100">{folder.name}</h2>
             <span title={`${count} ${count === 1 ? 'project' : 'projects'}`} className="shrink-0 text-[11px] font-medium text-ink-400 tabular-nums">
               {count}
             </span>

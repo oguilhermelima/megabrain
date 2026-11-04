@@ -140,7 +140,7 @@ export const ProjectSection = memo(function ProjectSection({
       >
         {edge !== null && <DropLine edge={edge} />}
         <ProjectPicture project={project} />
-        <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink-400">{displayName(project)}</h2>
+        <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-ink-400">{displayName(project)}</h2>
         <span className="shrink-0 text-[11px] text-ink-400">folder missing</span>
         <RowActions gap="2.5">
           <MoreButton label={`Manage ${displayName(project)}`} onClick={(event) => onMenu(event, actions.project(project))} />
@@ -246,7 +246,7 @@ export const ProjectSection = memo(function ProjectSection({
               <Chevron open={!collapsed} />
             </span>
           </span>
-          <h2 className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-ink-100">{name}</h2>
+          <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold tracking-[-0.01em] text-ink-100">{name}</h2>
           {activity !== null && <ActivityDot state={activity} title={activity === 'working' ? 'A chat is working' : 'A chat is waiting for you'} />}
         </button>
         <RowActions gap="0.5">
