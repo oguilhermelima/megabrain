@@ -23,6 +23,7 @@ export function installAgentSkills(
 
 export const agents = ["claude", "codex", "agy", "grok"] as const;
 export const modules = ["orchestration", "orchestration-hooks", "resource-hooks", "summaries-context", "worktree", "simulator-web", "simulator-native", "simulator-tv", "simulator-maestro", "tv-adb", "tmux-runtime", "artifacts-diagram"] as const;
+export const INSTALL_VALUE_OPTIONS = ["--agents", "--skill", "--modules", "--tmux", "--browser"] as const;
 export type MachineSelection = Readonly<{
   readonly agents: readonly MachineAgent[];
   readonly skill: SkillMode;
@@ -74,7 +75,7 @@ export function parseMachineInstallArgs(args: readonly string[]): MachineArgumen
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--yes") { yes = true; continue; }
-    if (arg !== "--agents" && arg !== "--skill" && arg !== "--modules" && arg !== "--tmux") {
+    if (!(INSTALL_VALUE_OPTIONS as readonly string[]).includes(arg)) {
       return { kind: "failed", error: `unknown install option: ${arg}`, exitCode: 2 };
     }
     if (seen.has(arg)) return { kind: "failed", error: `${arg} may only be specified once`, exitCode: 2 };
@@ -83,7 +84,9 @@ export function parseMachineInstallArgs(args: readonly string[]): MachineArgumen
     const value = args[index + 1];
     if (value === undefined || value.startsWith("--")) return { kind: "failed", error: `${arg} requires a value`, exitCode: 2 };
     index += 1;
-    if (arg === "--agents") {
+    if (arg === "--browser") {
+      continue;
+    } else if (arg === "--agents") {
       const parsed = parseAgents(value);
       if ("kind" in parsed) return parsed;
       selectedAgents = parsed as readonly MachineAgent[];

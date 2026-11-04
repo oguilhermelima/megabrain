@@ -1,3 +1,4 @@
+import { INSTALL_VALUE_OPTIONS } from "../install-machine/selection.js";
 import { createInterface } from "node:readline";import { failed, ok, type Result } from "../../../core/result.js";import type { ProcessAdapter } from "../../../adapters/proc.js";import { installSkillSync } from "../../../core/skill.js";import { installArtifactsDiagram, revertArtifactsDiagram } from "../artifacts-diagram-install.js";import { executeTmux } from "../tmux.js";import { usageText } from "../../../core/usage.js";import { runMachineInstall } from "../install-machine.js";import { installMaestro, revertMaestro } from "../maestro-install.js";
 import { modules, hookCommandKind, hookConfig, legacyAgyHookConfig } from "./diagnostics.js";import type { Environment } from "./diagnostics.js";import { report, output } from "./doctor.js";import { isInteractiveTerminal, writeInstalledState } from "./install-state.js";import type { InstallOptions } from "./install-state.js";import { readHookInstallState } from "./hook-config.js";import { installOrchestrationHooks, revertOrchestrationHooks } from "./hook-revert.js";import { resourceEntryHook, summariesEntryHook, installEntryHooks, revertEntryHooks } from "./entry-hooks.js";import { installSimulatorNative, installTvAdb, installSimulatorWeb, installTmuxRuntime } from "./platform-install.js";
 // --- dispatch ----------------------------------------------------------------------------------
@@ -101,14 +102,19 @@ export async function executeInstall(args: readonly string[], environment: Envir
     if (args.includes("--plan")) {
       for (let index = 0; index < args.length; index += 1) {
         const arg = args[index];
-        if (arg === "--agents" || arg === "--skill" || arg === "--modules" || arg === "--tmux") { index += 1; continue; }
-        if (arg === "--plan" || arg === "--json" || arg === "--yes" || arg.startsWith("-")) continue;
+        if ((INSTALL_VALUE_OPTIONS as readonly string[]).includes(arg)) {
+          if (args[index + 1] === undefined || args[index + 1].startsWith("--")) return failed(`install option requires a value: ${arg}`, 2);
+          index += 1;
+          continue;
+        }
+        if (["--plan", "--json", "--yes", "--revert"].includes(arg)) continue;
+        if (arg.startsWith("-")) return failed(`unknown install option: ${arg}`, 2);
         positional.push(arg);
       }
     }
     if (positional.length > 1) return failed("install accepts at most one module id", 2);
     const moduleId = positional[0];
-    const machineArgs = moduleId === undefined ? args : args.filter((arg) => arg !== moduleId);
+    const machineArgs = (moduleId === undefined ? args : args.filter((arg) => arg !== moduleId)).filter((arg, index, values) => arg !== "--browser" && values[index - 1] !== "--browser");
     if (moduleId !== undefined && !modules.includes(moduleId)) return failed(`unknown module: ${moduleId}`, 2);
     return runMachineInstall(
       machineArgs,
