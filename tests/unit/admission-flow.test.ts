@@ -38,6 +38,20 @@ async function queuedSpawn(dispatchId: string, policy: { maxAgents?: number; max
 }
 
 describe("admission queue flow", () => {
+  test("continues without HOME and records a Codex trust preflight warning", async () => {
+    const context = await queuedSpawn("admission-flow-no-home", { maxAgents: 8 });
+    try {
+      expect(context.run.result.kind).toBe("ok");
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: context.root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const dispatch = getDispatch(database.value, context.run.dispatchId);
+      expect(dispatch.kind === "ok" ? dispatch.value?.trustPreflightWarning : undefined).toContain("without HOME");
+    } finally {
+      await cleanupRun(context.run);
+      await rm(context.root, { recursive: true, force: true });
+    }
+  });
+
   test("queues without creating a terminal and lets the parent cancel the recorded spawn", async () => {
     const context = await queuedSpawn("admission-flow-cancel", { maxAgents: 0 });
     try {
