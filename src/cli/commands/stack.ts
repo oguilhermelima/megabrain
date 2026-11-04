@@ -3,6 +3,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { openDatabaseReadOnly } from "../../db/db.js";
 import { listWorktrees } from "../../db/queries/worktrees.js";
+import { readPrDefaults } from "../../core/pr-defaults.js";
 import { executeWorktreeCreate } from "./worktree-write.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -142,10 +143,10 @@ export function linearStack(selection: StackSelection): Result<StackSelection> {
   return failed(`the stack forks at ${fork.parent} (${siblings.join(", ")} branch off it as well); pr, sync and merge need a stack without forks`);
 }
 
-function parseOptions(args: readonly string[]): Result<{ action: string; values: string[]; yes: boolean; draft: boolean; json: boolean; repo?: string; branch?: string; provider?: Provider }> {
+function parseOptions(args: readonly string[]): Result<{ action: string; values: string[]; yes: boolean; draft?: boolean; json: boolean; repo?: string; branch?: string; provider?: Provider }> {
   const values: string[] = [];
   let yes = false;
-  let draft = false;
+  let draft: boolean | undefined;
   let json = false;
   let repo: string | undefined;
   let branch: string | undefined;
@@ -153,7 +154,10 @@ function parseOptions(args: readonly string[]): Result<{ action: string; values:
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
     if (arg === "--yes") yes = true;
-    else if (arg === "--draft") draft = true;
+    else if (arg === "--draft" || arg === "--ready") {
+      if (draft !== undefined) return failed("--draft and --ready can only be given once", 2);
+      draft = arg === "--draft";
+    }
     else if (arg === "--json") json = true;
     else if (arg === "--repo" || arg === "--provider" || arg === "--branch") {
       const value = args[++i];
@@ -592,7 +596,7 @@ async function merge(process: ProcessAdapter, environment: Environment, repoOpti
 export async function executeStack(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
   const parsed = parseOptions(args);
   if (parsed.kind !== "ok") return parsed;
-  const { action, values, yes, draft, json, repo: repoOption, branch: member, provider } = parsed.value;
+  const { action, values, yes, draft: draftOption, json, repo: repoOption, branch: member, provider } = parsed.value;
   if (action === "create") {
     const branch = values[0];
     let parent: string | undefined;
@@ -606,7 +610,7 @@ export async function executeStack(args: readonly string[], environment: Environ
     return created;
   }
   if (action === "show") return show(process, environment, repoOption, member, json, provider);
-  if (action === "pr") return pr(process, environment, repoOption, member, draft, json, provider);
+  if (action === "pr") return pr(process, environment, repoOption, member, draftOption ?? (await readPrDefaults(environment)).draft, json, provider);
   if (action === "sync") return sync(process, environment, repoOption, member, yes, provider);
   if (action === "merge") return merge(process, environment, repoOption, member, yes, provider);
   return failed(`unknown stack action: ${action}`, 2);

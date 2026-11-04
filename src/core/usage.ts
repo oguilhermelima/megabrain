@@ -19,7 +19,7 @@ export const USAGE_LINES = {
   "session-release": "session release <agent:id> [--json]",
   "worktree": "worktree create|pr|finish|archive|archived|unarchive|list|adopt|prune|hide|unhide ...",
   "worktree-create": "worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json]",
-  "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json]",
+  "worktree-pr": "worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--draft|--ready] [--json]",
   "worktree-finish": "worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json]",
   "worktree-archive": "worktree archive <branch|path> [--repo <name|path>] [--force] [--json]",
   "worktree-archived": "worktree archived [--repo <name|path>] [--json]",
@@ -93,7 +93,7 @@ export const USAGE_LINES = {
   "github-pr-state": "github pr-state <repo name|path> <number> merge|close|reopen [--method merge|squash|rebase] [--json]",
   "code": "code open <root> [--json] | goto <root> <path> [--line N] [--json] | stop <root> [--json]",
   "app": "app open <target> [--split right|down] [--beside <pane>] [--focus] [--json] | split <right|down> [--target <pane target>] [--json] | join <pane> --with <pane> | close-pane <pane> | layout --json | status --json",
-  "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--branch <member>] [--provider github|gitlab]",
+  "stack": "stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft|--ready]|sync|merge [--yes] [--branch <member>] [--provider github|gitlab]",
   "terminal-create": "terminal create [--worktree <path>] [--command <cmd>] [--title <text>] [--port <port>] [--terminal <name>|auto|none] [--json]",
   "terminal-list": "terminal list [--worktree <path>] [--json] | --app [--server <tmux -L name>] [--json]",
   "terminal-open": "terminal open --session <tmux session> [--terminal <name>|auto|none] [--server <tmux -L name>] [--json]",
@@ -118,7 +118,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]",
   "supervise": "supervise [--status|--stop]",
-  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
+  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes|pr-defaults | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes|pr-defaults <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
   "chat": "chat list --json | start --agent <claude|codex|grok|agy> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json | send <id> --parts <json> [--fresh] [--json] | fork <id> --at <eventId> [--json] | edit-last <id> --parts <json> [--json] | queue list|add|edit|move|remove|clear|send-now|steer <id> [<item>] [--parts <json>] [--to <index>] --json | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | artifacts <chat-id> --json | artifact <chat-id> <artifact-id> --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | take-over <id> --json | terminal-command <id> --json | daemon status|retire|drain [--json] | rename <id> <title> [--json] | summarize <id> [--force] [--json] | summaries <id> --json | search <text> --json",
   "chat-artifacts": "chat artifacts <chat-id> --json",
   "chat-artifact": "chat artifact <chat-id> <artifact-id> [--revision <n>] --json",
@@ -311,6 +311,7 @@ Commands:
   settings get|set knowledge           Read or replace which projects are summarised, curated into topics, scanned and given as agent context
   settings get|set agents              Read or replace the desktop app's default agent and the agents turned off
   settings get|set agents-update       Read or replace automatic agent update policy
+  settings get|set pr-defaults         Read or replace the default draft state for pull requests
   settings get|set worktree-location   Read or replace where new worktrees are created (megabrain, repo or custom folder)
   settings get|set device-idle-minutes Read or replace the minutes before a simulator megabrain booted goes to sleep (0 = never)
   settings get|set shortcuts           Read or replace the desktop app's changed shortcut keys

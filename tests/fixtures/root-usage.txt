@@ -57,6 +57,7 @@ Commands:
   settings get|set knowledge           Read or replace which projects are summarised, curated into topics, scanned and given as agent context
   settings get|set agents              Read or replace the desktop app's default agent and the agents turned off
   settings get|set agents-update       Read or replace automatic agent update policy
+  settings get|set pr-defaults         Read or replace the default draft state for pull requests
   settings get|set worktree-location   Read or replace where new worktrees are created (megabrain, repo or custom folder)
   settings get|set device-idle-minutes Read or replace the minutes before a simulator megabrain booted goes to sleep (0 = never)
   settings get|set shortcuts           Read or replace the desktop app's changed shortcut keys

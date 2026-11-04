@@ -44,7 +44,7 @@ import { registerMegabrainRepository } from "../../core/project-registry.js";
 
 import { defaultBase, localBranchExists, parentBranch, pathFor, repositoryRoot, root, run, type Environment } from "./worktree-write-base.js";
 import { type Workspace, workspaceForTarget } from "./worktree-write-workspace.js";
-import { finishRefusal, folderGone, removalReason, removeFinishWorktree, resolveFinishBase } from "./worktree-write-support.js";
+import { changesAlreadyMerged, finishRefusal, folderGone, removalReason, removeFinishWorktree, resolveFinishBase } from "./worktree-write-support.js";
 export async function executeWorktreeFinish(
   args: readonly string[],
   environment: Environment,
@@ -106,7 +106,7 @@ export async function executeWorktreeFinish(
       "--merged",
       baseRef,
     ]);
-    if (
+    const notAncestor =
       merged.kind !== "ok" ||
       !merged.value.stdout.split("\n").some(
         (line) =>
@@ -114,8 +114,8 @@ export async function executeWorktreeFinish(
             .trim()
             .replace(/^[*+]\s*/, "")
             .trim() === branch,
-      )
-    ) {
+      );
+    if (notAncestor && !(await changesAlreadyMerged(process, repo.value, branch, baseRef))) {
       const message =
         "refusing to delete unmerged branch: " +
         branch +

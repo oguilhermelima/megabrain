@@ -20,6 +20,7 @@ import { defaultKnowledgeSettings, parseKnowledgeSettings, readKnowledgeSettings
 import { emptyModelSettings, modelEnabled, modelSettingsFile, parseModelSettings, type ModelSettings } from "../../core/model-settings.js";
 import { agentUpdateStatus, readAgentAutoUpdateSettings, writeAgentAutoUpdateSettings } from "../../core/agent-update.js";
 import { loadAndPersistModelRegistry, type Model } from "../../core/model.js";
+import { defaultPrDefaults, parsePrDefaults } from "../../core/pr-defaults.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -178,6 +179,7 @@ const desktopSettings = {
   "chat-summaries": desktopFileOf("chat-summaries.json", parseSummarySettings, defaultSummarySettings, (value) => `chat summaries: ${value.enabled ? `on, ${value.agent} ${value.model}` : "off"}`),
   "knowledge": desktopFileOf("knowledge-settings.json", parseKnowledgeSettings, defaultKnowledgeSettings, (value) => `knowledge: ${Object.keys(value.projects).length} project overrides`),
   "worktree-location": desktopFileOf("worktree-location.json", parseWorktreeLocation, defaultWorktreeLocation, (value) => `worktree location: ${value.mode}${value.layout === "nested" ? " (by project)" : ""}, ${Object.keys(value.projects).length} project overrides`),
+  "pr-defaults": desktopFileOf("pr-defaults.json", parsePrDefaults, defaultPrDefaults, (value) => `pull request default: ${value.draft ? "draft" : "ready"}`),
   "usage-order": desktopFileOf("usage-order.json", parseUsageOrder, emptyUsageOrder, (value) => `usage order: ${value.order.length} ordered, ${value.hidden.length} hidden`),
   "device-idle-minutes": desktopFileOf("device-idle.json", parseIdleSetting, defaultIdleSetting, (value) => `device idle: ${value.minutes === 0 ? "never sleeps" : `${value.minutes} min`}`),
   "agents": desktopFileOf(agentSettingsFile, parseAgentSettings, emptyAgentSettings, (value) => `agents: default ${value.default ?? "auto"}, ${value.disabled.length} disabled`),
@@ -368,7 +370,7 @@ export async function executeSettings(args: readonly string[], environment: Envi
   }
   if (args[0] === "get") {
     if (args[1] === "agents-update" && (args.length === 2 || args.length === 3 && args[2] === "--json")) return ok(`${JSON.stringify(await readAgentAutoUpdateSettings(environment))}\n`);
-    if ((args.length !== 2 && !(args.length === 3 && args[2] === "--json")) || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|models|worktree-location|device-idle-minutes|project-appearance [--json]", 2);
+    if ((args.length !== 2 && !(args.length === 3 && args[2] === "--json")) || !isDesktopSetting(args[1])) return failed("Usage: megabrain settings get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|models|worktree-location|device-idle-minutes|pr-defaults|project-appearance [--json]", 2);
     return ok(`${JSON.stringify(await readDesktopSetting(environment, args[1]))}\n`);
   }
   if (args[0] === "set" && isDesktopSetting(args[1])) {
