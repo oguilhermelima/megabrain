@@ -637,11 +637,16 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       }
       await appendMessage(root, "d1", "child", "done", "completed the new direction", "child-term", env, process);
 
-      const checked = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, process);
-      const fullCheck = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--full", "--json"], env, process);
       const result = await executeHookTurnEnd([], env, process, noStdin);
+      const afterHook = listDeliveries(db.value, "d1");
+      expect(afterHook).toMatchObject({ kind: "ok" });
+      if (afterHook.kind === "ok") expect(afterHook.value.find((delivery) => delivery.recipient === "child")).toMatchObject({ status: "outstanding", transport: "typed", transportReason: "full-direction" });
+      const checked = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, process);
+      const repeated = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, process);
+      const fullCheck = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--full", "--json"], env, process);
       expect(checked).toMatchObject({ kind: "ok" });
-      expect(JSON.parse(checked.kind === "ok" ? checked.value : "{}")).toMatchObject({ status: "empty", messages: [] });
+      expect(JSON.parse(checked.kind === "ok" ? checked.value : "{}")).toMatchObject({ status: "reply", text: "follow the new direction", messages: [{ alreadyTyped: true }] });
+      expect(JSON.parse(repeated.kind === "ok" ? repeated.value : "{}")).toMatchObject({ status: "empty", messages: [] });
       expect(fullCheck).toMatchObject({ kind: "ok" });
       expect(JSON.parse(fullCheck.kind === "ok" ? fullCheck.value : "{}")).toMatchObject({ status: "empty", messages: [] });
       const deliveries = listDeliveries(db.value, "d1");
