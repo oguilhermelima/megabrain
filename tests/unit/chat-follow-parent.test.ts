@@ -35,6 +35,15 @@ const alive = (pid: number): boolean => {
   }
 };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const hasReadyEvent = (outputFile: string): boolean =>
+  readFileSync(outputFile, "utf8").split("\n").some((line) => {
+    try {
+      const parsed = JSON.parse(line) as { event?: { text?: string } };
+      return parsed.event?.text === "ready";
+    } catch {
+      return false;
+    }
+  });
 
 test("a followed chat stream ends by itself when the process that started it goes away", async () => {
   const root = mkdtempSync(join(tmpdir(), "mb-follow-"));
@@ -85,9 +94,9 @@ test("a followed chat stream ends by itself when the process that started it goe
       stderr: "ignore",
     });
     const startDeadline = Date.now() + 10_000;
-    while ((!existsSync(pidFile) || !existsSync(outputFile) || readFileSync(outputFile, "utf8") === "") && Date.now() < startDeadline) await sleep(20);
+    while ((!existsSync(pidFile) || !existsSync(outputFile) || !hasReadyEvent(outputFile)) && Date.now() < startDeadline) await sleep(20);
     expect(existsSync(pidFile)).toBe(true);
-    expect(readFileSync(outputFile, "utf8")).toContain('"text":"ready"');
+    expect(hasReadyEvent(outputFile)).toBe(true);
     const follower = Number(readFileSync(pidFile, "utf8").trim());
     followers.push(follower);
     // Control: the follower has connected and received history while its parent is still alive.
