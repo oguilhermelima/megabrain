@@ -80,16 +80,14 @@ export type SpawnPlan = {
 const tmuxOnlySteps: readonly SpawnStep[] = [
   "transcript-start",
   "model-substitution-record",
-  "readiness-output-validation",
 ];
 
 const hostOnlySteps: readonly SpawnStep[] = [
-  "readiness-wait",
-  "metadata-read-before-command",
-  "metadata-read-after-readiness",
+  "readiness-output-validation",
 ];
 
 function stepBelongsToRuntime(runtime: SpawnRuntime, step: SpawnStep): boolean {
+  if (step === "readiness-output-validation") return true;
   if (tmuxOnlySteps.includes(step)) return runtime === "tmux";
   if (hostOnlySteps.includes(step)) return runtime === "host";
   return true;
@@ -117,18 +115,12 @@ function nextStep(runtime: SpawnRuntime, step: SpawnStep, status?: SpawnStepOutc
     case "transcript-start":
       return "prompt-publication";
     case "prompt-publication":
-      return runtime === "tmux" ? "command-submission" : "metadata-read-before-command";
-    case "metadata-read-before-command":
       return "command-submission";
     case "command-submission":
-      return runtime === "tmux" ? "model-substitution-record" : "readiness-wait";
+      return runtime === "tmux" ? "model-substitution-record" : "readiness-output-validation";
     case "model-substitution-record":
       return "readiness-output-validation";
     case "readiness-output-validation":
-      return "prompt-transport";
-    case "readiness-wait":
-      return "metadata-read-after-readiness";
-    case "metadata-read-after-readiness":
       return "prompt-transport";
     case "prompt-transport":
       if (status === "delivered" || status === "turn-without-receipt") return "prompt-confirmation";
@@ -138,6 +130,8 @@ function nextStep(runtime: SpawnRuntime, step: SpawnStep, status?: SpawnStepOutc
       return "state-persist";
     case "state-persist":
     case "prompt-state-persist":
+      return null;
+    default:
       return null;
   }
 }

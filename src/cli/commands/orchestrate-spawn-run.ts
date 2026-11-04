@@ -46,7 +46,7 @@ import { failureForCall } from "./orchestrate-spawn-worktree.js";
 import { READINESS_FRAME_MAX_LINES } from "./orchestrate-spawn-readiness.js";
 import { withNextOrchestrationStep } from "../../core/orchestration-next.js";
 import { type SpawnEnvironment, type SpawnDependencies, type SpawnOptions, type RecordValue, SPAWN_ENVIRONMENT_HELP, parseArgs, dispatchId, tmuxRuntimeInstalled, parentWorkspaceId, parentTmuxChannel, shellQuote, agyLogFile, finalPrompt, validatePromptBudget, writePromptFile, agentReadyTimeoutMs } from "./orchestrate-spawn-options.js";
-import { waitForTmuxReadiness, recordFrame, recordRejectedReadinessFrame } from "./orchestrate-spawn-readiness.js";
+import { waitForHostReadiness, waitForTmuxReadiness, recordFrame, recordRejectedReadinessFrame } from "./orchestrate-spawn-readiness.js";
 import { defaultResolveWorktree, defaultRemoveWorktree, createHostTerminal, existingTmuxSessionForWorktree, openWorktreeTmuxTarget, removeStaleStableSession, canonicalPath } from "./orchestrate-spawn-worktree.js";
 import { resultError, hasReceipt, settleHostReceipt, updateMeta, coordinatorChatName, markRunningIfSpawning, initialMeta, cleanup, failureResult, type SpawnTrace } from "./orchestrate-spawn-state.js";
 
@@ -220,6 +220,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   let sessionCreatedBySpawn = false;
   let hostTerminalId: string | null = null;
   let hostTerminalHost: string | null = null;
+  let hostProcessPid: number | undefined;
   let tmuxHostWarning: string | null = null;
   let readinessError: string | undefined;
   let readinessDeferred = false;
@@ -315,6 +316,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     if (createdTerminal.kind !== "ok") return createdTerminal;
     terminalId = createdTerminal.value.terminalId;
     terminalCreateAttempts = createdTerminal.value.attempts;
+    hostProcessPid = createdTerminal.value.processId;
   }
 
   // Neither agy nor Grok sets AI_AGENT in its tool shells; each sets its own marker (measured).
@@ -329,6 +331,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const parentAgentThreadId = queuedParent === undefined ? environment.CODEX_THREAD_ID : stringValue(queuedParent.parentAgentThreadId);
   const parentChatName = queuedParent === undefined ? await coordinatorChatName(environment, process) : stringValue(queuedParent.parentChatName) ?? await coordinatorChatName(environment, process);
   const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, parentAgentThreadId, queuedParent === undefined ? parentAgent : stringValue(queuedParent.parentAgent) ?? parentAgent, parentAgentSessionId, parentAgentPid);
+  if (hostProcessPid !== undefined) Object.assign(meta, { agentPid: hostProcessPid });
   if (trustPreflightWarning !== undefined) Object.assign(meta, { trustPreflightWarning });
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
@@ -372,17 +375,6 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     if (step === "prompt-publication") {
       const appended = await appendMessage(root, id, "parent", "prompt", prompt, parentContext.id, environment, process);
       outcome = appended.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: { call: "dispatch message append", detail: appended.error } };
-    } else if (step === "readiness-wait") {
-      const host = getHost(parentContext.host);
-      const waited = host?.readiness({ workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId }, process, readinessTimeoutMs, options.agent);
-      if (waited === undefined) {
-        readinessError = `${parentContext.host} terminal ${terminalId} did not become ready within ${readinessTimeoutMs}ms`;
-        outcome = { kind: "failed" };
-      } else {
-        const result = await waited;
-        if (result.kind !== "ok") readinessError = result.error;
-        outcome = result.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
-      }
     } else if (step === "command-submission") {
       if (runtime === "tmux") {
         const terminalHost = parentContext.host === "orca" || parentContext.host === "superset" ? `MEGABRAIN_TERMINAL_HOST=${shellQuote(parentContext.host)} ` : "";
@@ -406,9 +398,11 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       }
     } else if (step === "readiness-output-validation") {
       readinessStartedAt = Date.now();
-      const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process, promptFile !== undefined);
+      const waited = runtime === "tmux"
+        ? await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process, promptFile !== undefined)
+        : await waitForHostReadiness({ runtime, agent: options.agent, childHost: parentContext.host, workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId }, readinessTimeoutMs, process);
       readinessLastFrame = waited.lastFrame;
-      if (options.agent === "grok" && waited.result.kind === "ok" && pane !== null) {
+      if (runtime === "tmux" && options.agent === "grok" && waited.result.kind === "ok" && pane !== null) {
         const panePid = await getTmux().panePid(pane, process, sessionId ?? undefined);
         if (panePid.kind === "ok") {
           const grokHome = environment.GROK_HOME ?? join(environment.HOME ?? "", ".grok");
@@ -418,10 +412,16 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       }
       if (waited.result.kind !== "ok") {
         readinessError = waited.result.error;
-        await recordRejectedReadinessFrame(root, id, options.agent, readinessTimeoutMs, waited.lastFrame);
-        readinessDeferred = true;
+        if (runtime === "host" && "deadProcess" in waited && waited.deadProcess === true) {
+          outcome = { kind: "failed", failure: { call: "host process liveness", detail: waited.result.error } };
+        } else {
+          if (waited.lastFrame !== "") await recordRejectedReadinessFrame(root, id, options.agent, readinessTimeoutMs, waited.lastFrame);
+          readinessDeferred = true;
+          outcome = { kind: "succeeded" };
+        }
+      } else {
+        outcome = { kind: "succeeded" };
       }
-      outcome = { kind: "succeeded" };
     } else if (step === "prompt-transport") {
       if (runtime === "tmux") {
         if (readinessDeferred) {
@@ -450,6 +450,10 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
         }
         }
       } else {
+        if (readinessDeferred) {
+          promptChannel = "paste";
+          outcome = { kind: "prompt-transport", status: "awaiting-receipt" };
+        } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
         const host = getHost(childHost);
@@ -465,6 +469,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
         });
         if (!sent.delivered) outcome = { kind: "prompt-transport", status: "failed", failure: { call: `${childHost} terminal send`, detail: sent.detail ?? "session message was not delivered" } };
         else outcome = settleHostReceipt(root, id);
+        }
       }
     } else {
       outcome = { kind: "succeeded" };
@@ -502,7 +507,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       trace.reason = plan.reason ?? undefined;
       const cleanupFailures = await cleanup(root, id, worktree, plan, process, dependencies, terminalId, session, pane, sessionCreatedBySpawn);
       if (runtime === "tmux" && sessionCreatedBySpawn) trace.sessionCleanupAttempted = true;
-      return failureResult(plan, step === "readiness-wait" || step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
+      return failureResult(plan, step === "readiness-output-validation" ? readinessError : undefined, cleanupFailures);
     }
     if (plan.nextStep === null) {
       await startSupervisorWorker(root, environment, process);
