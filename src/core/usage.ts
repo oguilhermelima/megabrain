@@ -108,7 +108,7 @@ export const USAGE_LINES = {
   "orchestrate-prune": "orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json]",
   "orchestrate-reconcile": "orchestrate reconcile <dispatch-id-or-suffix> [--all] [--json]",
   "orchestrate-liveness": "orchestrate liveness <dispatch-id-or-suffix> [--json]",
-  "orchestrate-watch": "orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json]",
+  "orchestrate-watch": "orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--no-ack] [--json]",
   "orchestrate-read": "orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json]",
   "orchestrate-transcript": "orchestrate transcript <dispatch-id-or-suffix> [--since <cursor>] [--limit <n>] [--json] | --session <agent:id> [--since <cursor>] [--limit <n>] [--json]",
   "orchestrate-ack": "orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json]",

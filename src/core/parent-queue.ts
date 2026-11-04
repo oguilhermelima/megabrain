@@ -33,7 +33,9 @@ export function parseParentAckArgs(args: readonly string[], environmentGeneratio
 }
 
 export function ackCloseRefusal(dispatchId: string, state: string, json: boolean): Result<string> {
-  const message = `dispatch ${dispatchId} is ${state ?? "unknown"}; refusing to acknowledge delivery with --close; dispatch must be done or closed`;
+  const message = state === "waiting_for_reply"
+    ? `dispatch ${dispatchId} is waiting for a reply; reply to the question before acknowledging with --close`
+    : `dispatch ${dispatchId} is ${state ?? "unknown"}; refusing to acknowledge delivery with --close; dispatch must be done or closed`;
   if (json) return { kind: "ok", value: `${JSON.stringify({ refusal: { code: "dispatch-not-done", message } }, null, 2)}\n`, exitCode: 1, stderr: `dispatch-not-done: ${message}\n` };
   return failed(`dispatch-not-done: ${message}`);
 }

@@ -1,5 +1,6 @@
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveStateDirectory } from "../../core/state.js";
+import { unknownDeliveryReason } from "../../core/ack.js";
 import { resolveConsumerIdentity } from "../../core/identity.js";
 import { resolveCallerIdentity } from "../../core/context.js";
 import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.js";
@@ -8,10 +9,11 @@ import { loadDeliveries, loadMessages, migrateDeliveries, report } from "./check
 import { ackCloseRefusal, parseParentAckArgs } from "../../core/parent-queue.js";
 import { resolveCaller } from "./queue-write.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
-import { getDispatch, isDispatchArchived, listDeliveries, listMessages, nudgeCursor, readOnlyStateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
+import { getDispatch, isDispatchArchived, listDeliveries, listDispatchEntries, listMessages, nudgeCursor, readOnlyStateDatabase, type WaiterRecord } from "../../adapters/state-db.js";
 import { usageText } from "../../core/usage.js";
 import { resolveParentDispatchId } from "./parent-dispatch.js";
 import { callStateOwner } from "../../db/state-owner.js";
+import { withNextOrchestrationStep } from "../../core/orchestration-next.js";
 
 export type ParentQueueEnvironment = Readonly<Record<string, string | undefined>>;
 type JsonRecord = Record<string, unknown>;
@@ -27,10 +29,10 @@ async function requireParent(root: string, dispatch: string, caller: Awaited<Ret
   return ok({ ...meta, dispatchId: resolved.value });
 }
 
-function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): Result<{ readonly dispatch: string; readonly timeout: number; readonly pollInterval: number; readonly waitMode: "nudge" | "poll"; readonly consumer?: string; readonly generation: number; readonly full: boolean; readonly json: boolean }> {
+function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): Result<{ readonly dispatch: string; readonly timeout: number; readonly pollInterval: number; readonly waitMode: "nudge" | "poll"; readonly consumer?: string; readonly generation: number; readonly full: boolean; readonly acknowledge: boolean; readonly json: boolean }> {
   const dispatch = args[0] ?? "";
   if (dispatch === "") return failed(usageText("orchestrate-watch"), 2);
-  let timeout = 120; let pollInterval = 3; let waitMode: "nudge" | "poll" = "nudge"; let consumer: string | undefined; let generation = Number(environmentGeneration); let full = false; let json = false;
+  let timeout = 120; let pollInterval = 3; let waitMode: "nudge" | "poll" = "nudge"; let consumer: string | undefined; let generation = Number(environmentGeneration); let full = false; let acknowledge = true; let json = false;
   for (let index = 1; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--timeout") timeout = Number(args[++index]);
@@ -40,13 +42,14 @@ function parseWatchArgs(args: readonly string[], environmentGeneration = "1"): R
     else if (arg === "--consumer") consumer = args[++index];
     else if (arg === "--generation") generation = Number(args[++index]);
     else if (arg === "--full") full = true;
+    else if (arg === "--no-ack") acknowledge = false;
     else if (arg === "--json") json = true;
     else return failed(`unknown orchestrate watch option: ${arg}`, 2);
   }
   if (!Number.isInteger(timeout) || timeout < 0) return failed("--timeout must be a non-negative number of seconds", 2);
   if (!Number.isInteger(pollInterval) || pollInterval < 0) return failed("--poll-interval must be a non-negative number of seconds", 2);
   if (!Number.isInteger(generation) || generation < 1) return failed("--generation must be a positive number", 2);
-  return ok({ dispatch, timeout, pollInterval, waitMode, consumer, generation, full, json });
+  return ok({ dispatch, timeout, pollInterval, waitMode, consumer, generation, full, acknowledge, json });
 }
 
 function consumerSession(caller: Awaited<ReturnType<typeof resolveCallerIdentity>>): { readonly sessionHost?: string; readonly sessionId?: string } {
@@ -113,7 +116,19 @@ export async function executeOrchestrateWatch(args: readonly string[], environme
         try { claimed = await callStateOwner(root, { operation: "claim-delivery", id: selected.delivery.id, consumer: identity.value, generation: parsed.value.generation }); }
         catch (cause: unknown) { return failed(`state owner delivery claim failed: ${cause instanceof Error ? cause.message : String(cause)}`); }
         if (typeof claimed !== "object" || claimed === null || !("status" in claimed) || (claimed.status !== "outstanding" && claimed.status !== "superseded")) continue;
-        return ok(report(dispatchId, claimed as CheckDelivery, messages, selected.replayed, parsed.value.json));
+        let returned = claimed as CheckDelivery;
+        if (parsed.value.acknowledge) {
+          try {
+            await callStateOwner(root, { operation: "ack-delivery", id: returned.id, consumer: identity.value, generation: parsed.value.generation });
+          } catch (cause: unknown) {
+            return failed(`state owner delivery acknowledgement failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+          }
+          returned = { ...returned, status: "acknowledged" };
+        }
+        const output = report(dispatchId, returned, messages, selected.replayed, parsed.value.json, parsed.value.json);
+        if (!parsed.value.json) return ok(output);
+        const receipt = JSON.parse(output) as JsonRecord;
+        return ok(`${JSON.stringify(withNextOrchestrationStep("watch", receipt, receipt), null, 2)}\n`);
       }
       const elapsed = Date.now() - started;
       if (selected.kind === "unknown" || elapsed >= parsed.value.timeout * 1000) return ok(report(dispatchId, undefined, [], false, parsed.value.json));
@@ -158,7 +173,15 @@ export async function executeOrchestrateAck(args: readonly string[], environment
   if (identity.kind !== "known") return failed(identity.reason);
   const deliveries = listDeliveries(database.value, dispatchId); if (deliveries.kind !== "ok") return deliveries;
   let delivery = deliveries.value.find((item) => item.id === parsed.value.deliveryId);
-  if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);
+  if (delivery === undefined) {
+    const entries = listDispatchEntries(database.value, { includeArchived: true });
+    if (entries.kind !== "ok") return entries;
+    const records = entries.value.map((entry) => {
+      const all = listDeliveries(database.value, entry.record.dispatchId);
+      return { dispatchId: entry.record.dispatchId, archived: entry.archived, deliveryIds: all.kind === "ok" ? all.value.map((item) => item.id) : [] };
+    });
+    return failed(`delivery ${parsed.value.deliveryId} refused: ${unknownDeliveryReason(parsed.value.deliveryId, dispatchId, records)}`);
+  }
   // The command is printed inside the delivered message. Reaching it proves that this consumer
   // received the message, so an unclaimed delivery can be claimed here before it is acknowledged.
   if (delivery.consumer === null || delivery.consumer === undefined) {
@@ -181,7 +204,12 @@ export async function executeOrchestrateAck(args: readonly string[], environment
     ...(ack.duplicate && typeof delivery.consumer === "string" ? { acknowledgedBy: delivery.consumer } : {}),
   };
   if (parsed.value.close !== true) {
-    if (parsed.value.json) return ok(`${JSON.stringify(acknowledgment, null, 2)}\n`);
+    if (parsed.value.json) {
+      const messages = listMessages(database.value, dispatchId);
+      const message = messages.kind === "ok" ? messages.value.find((item) => messageSeqs.includes(item.seq)) : undefined;
+      const receipt = withNextOrchestrationStep("ack", { dispatchId, messageType: message?.type }, acknowledgment);
+      return ok(`${JSON.stringify(receipt, null, 2)}\n`);
+    }
     return ok(`acknowledged: ${parsed.value.deliveryId}\nduplicate: ${ack.duplicate}\n${ack.duplicate && typeof delivery.acknowledgedAt === "string" ? `acknowledged at: ${delivery.acknowledgedAt}\n` : ""}${ack.duplicate && typeof delivery.consumer === "string" ? `acknowledged by: ${delivery.consumer}\n` : ""}`);
   }
   const closed = await executeOrchestrateClose([dispatchId, ...(parsed.value.json ? ["--json"] : [])], environment, process);

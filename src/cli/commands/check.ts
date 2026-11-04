@@ -65,11 +65,22 @@ export async function migrateDeliveries(root: string, dispatch: string, messages
   }
 }
 
-export function report(dispatch: string, delivery: CheckDelivery | undefined, messages: CheckMessage[], replayed: boolean, json: boolean): string {
+export function report(dispatch: string, delivery: CheckDelivery | undefined, messages: CheckMessage[], replayed: boolean, json: boolean, includeDeliveryStatus = false): string {
   if (delivery === undefined) return json ? `${JSON.stringify({ dispatchId: dispatch, deliveryId: null, replayed: false, status: "empty", messageSeqs: [], messages: [], text: "" }, null, 2)}\n` : `dispatch: ${dispatch}\nstatus: empty\n`;
   const batch = orderMessages(messages.filter((message) => delivery.messageSeqs.includes(message.seq)));
-  const outputMessages = batch.map(({ path: _path, ...message }) => message);
-  const value = { dispatchId: dispatch, deliveryId: delivery.id, replayed, status: deliveryStatus(batch), messageSeqs: delivery.messageSeqs, messages: outputMessages, text: batch.map((message) => message.text ?? "").join("\n") };
+  const alreadyTyped = delivery.recipient === "child" && delivery.transport === "typed" && delivery.transportReason === "full-direction";
+  const alreadySocketDelivered = delivery.recipient === "child" && delivery.transport === "ack-verifying";
+  const outputMessages = batch.map(({ path: _path, ...message }) => ({
+    ...message,
+    ...(alreadyTyped && message.from === "parent" && message.type === "reply" ? { alreadyTyped: true, alreadyTypedAt: delivery.transportAt ?? delivery.updatedAt } : {}),
+    ...(alreadySocketDelivered && message.from === "parent" && message.type === "reply" ? {
+      alreadyDeliveredThroughSocket: true,
+      alreadyDeliveredAt: delivery.transportAt ?? delivery.updatedAt,
+      deliveredVia: "peer-socket",
+      verified: delivery.transportReason === "peer-socket-verified",
+    } : {}),
+  }));
+  const value = { dispatchId: dispatch, deliveryId: delivery.id, replayed, status: deliveryStatus(batch), ...(includeDeliveryStatus ? { deliveryStatus: delivery.status } : {}), messageSeqs: delivery.messageSeqs, messages: outputMessages, text: batch.map((message) => message.text ?? "").join("\n") };
   if (json) return `${JSON.stringify(value, null, 2)}\n`;
   return `delivery: ${delivery.id}\nreplayed: ${replayed}\nstatus: ${value.status}\n${batch.map((message) => `[${message.seq}] ${message.type || "message"}: ${message.text ?? ""}`).join("\n")}\n`;
 }

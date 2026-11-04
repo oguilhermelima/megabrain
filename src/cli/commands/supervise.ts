@@ -292,12 +292,14 @@ async function inspectDispatch(root: string, database: Parameters<typeof getDisp
   return blocked.cause === "dialog-waiting" ? blocked : { cause: "unknown" };
 }
 
-async function retryPendingChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
+const CHILD_DELIVERY_RETRY_INTERVAL_MS = 30_000;
+
+async function retryPendingChildReplies(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, screen: string | undefined, now: number): Promise<void> {
   const outbox = listOutboxForDispatch(database, dispatch);
   const deliveries = listDeliveries(database, dispatch);
   const messages = listMessages(database, dispatch);
   if (outbox.kind !== "ok" || deliveries.kind !== "ok" || messages.kind !== "ok") return;
-  const pendingReplies = outbox.value.filter((item) => item.targetKind === "child-delivery" && item.status === "pending");
+  const pendingReplies = outbox.value.filter((item) => item.targetKind === "child-delivery" && (item.status === "pending" || item.status === "failed"));
   for (const item of pendingReplies) {
     const payload = object(item.payload);
     const sequence = Number(payload?.sequence);
@@ -306,7 +308,24 @@ async function retryPendingChildReplies(root: string, database: Parameters<typeo
     if (message?.from !== "parent" || message.type !== "reply") continue;
     const delivery = deliveries.value.find((candidate) => Array.isArray(candidate.messageSeqs) && candidate.messageSeqs.includes(sequence));
     if (delivery?.status !== "outstanding") continue;
-    await callStateOwner(root, { operation: "resume-outbox", id: item.id }).catch(() => false);
+    if (item.status === "failed") {
+      const elapsed = now - Date.parse(item.updatedAt);
+      const payload = typeof item.payload === "object" && item.payload !== null ? item.payload as Record<string, unknown> : {};
+      const retryState = typeof payload.retryState === "object" && payload.retryState !== null ? payload.retryState as Record<string, unknown> : {};
+      const nextRetryAt = typeof retryState.nextRetryAt === "number" ? retryState.nextRetryAt : undefined;
+      const idleRetryUsed = retryState.idleRetryUsed === true;
+      const idleRetry = screen === "idle" && !idleRetryUsed;
+      const intervalRetry = nextRetryAt === undefined
+        ? Number.isFinite(elapsed) && elapsed >= CHILD_DELIVERY_RETRY_INTERVAL_MS
+        : now >= nextRetryAt;
+      if (!idleRetry && !intervalRetry) continue;
+      const reason = idleRetry
+        ? "pane idle after failed delivery"
+        : `bounded retry interval elapsed (${CHILD_DELIVERY_RETRY_INTERVAL_MS}ms; pane ${screen ?? "unknown"})`;
+      await callStateOwner(root, { operation: "retry-failed-child-outbox", id: item.id, reason }).catch(() => false);
+    } else {
+      await callStateOwner(root, { operation: "resume-outbox", id: item.id }).catch(() => false);
+    }
   }
 }
 
@@ -326,19 +345,6 @@ async function retryPendingParentPointers(root: string, database: Parameters<typ
     const delivery = deliveries.value.find((candidate) => candidate.recipient === "parent" && Array.isArray(candidate.messageSeqs) && candidate.messageSeqs.includes(sequence));
     if (delivery?.status !== "outstanding") continue;
     await callStateOwner(root, { operation: "resume-outbox", id: item.id }).catch(() => false);
-  }
-}
-
-async function settleImplicitChildReads(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string): Promise<void> {
-  const deliveries = listDeliveries(database, dispatch);
-  const messages = listMessages(database, dispatch);
-  if (deliveries.kind !== "ok" || messages.kind !== "ok") return;
-  for (const delivery of deliveries.value) {
-    if (delivery.recipient !== "child" || !Array.isArray(delivery.messageSeqs)) continue;
-    if (delivery.transport !== "checked" && delivery.transportReason !== "full-direction") continue;
-    const lastSequence = Math.max(0, ...delivery.messageSeqs);
-    if (!messages.value.some((message) => message.from === "child" && message.seq > lastSequence)) continue;
-    await callStateOwner(root, { operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: "child" });
   }
 }
 
@@ -392,12 +398,11 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const current = getDispatch(database, dispatch);
     if (current.kind !== "ok" || current.value === undefined) continue;
     const meta = current.value as RecordValue;
-    await settleImplicitChildReads(root, database, dispatch);
     await retryPendingParentPointers(root, database, dispatch);
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now, answeredDispatches);
-    const screen = finding.cause === "unknown" ? await readDeliveryScreen(meta, process) : undefined;
+    const screen = await readDeliveryScreen(meta, process);
     const running = screen?.kind === "ok" ? backgroundTasks(screen.value) : undefined;
-    if (screen?.kind === "ok") await retryPendingChildReplies(root, database, dispatch);
+    await retryPendingChildReplies(root, database, dispatch, screen?.kind === "ok" ? classifyLiveness(String(meta.agent ?? "unknown"), screen.value).status : undefined, now);
     const recordedPrevious = previousFinding(meta);
     const recovered = recordedPrevious !== undefined && await recoveredSince(database, dispatch, meta, environment, recordedPrevious.notifiedAt);
     const previous = recovered ? undefined : recordedPrevious;

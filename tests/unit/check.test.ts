@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { classifyMail, deliveryStatus, orderMessages, selectDelivery, type CheckDelivery, type CheckMessage } from "../../src/core/check.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { executeCheck, loadMessages, loadDeliveries } from "../../src/cli/commands/check.js";
+import { createDispatch, appendMessage, setDeliveryTransport, listDeliveries } from "../../src/adapters/state-db.js";
+import { guardedOpenDatabase, guardedStateDatabase } from "./state-db-guard.js";
 
 const message = (seq: number, from: string, type: string, text = type): CheckMessage => ({ seq, path: `message-${seq}.json`, from, type, text });
 const delivery = (id: string, messageSeqs: number[], status = "outstanding", consumer: string | null = null): CheckDelivery => ({ id, messageSeqs, status, consumer, consumerGeneration: consumer === null ? null : 1 });
@@ -26,12 +32,57 @@ describe("selectDelivery", () => {
     const reply = { ...delivery("reply", [3]), recipient: "child", transport };
     expect(selectDelivery("child", false, [reply], messages)).toMatchObject({ kind: "selected", delivery: reply });
   });
-  test("keeps a full typed change direction acknowledged", () => {
+  test("returns a typed full direction until the child checks it", () => {
     const change = { ...delivery("change", [4]), recipient: "child", transport: "typed", transportReason: "full-direction" };
-    expect(selectDelivery("child", false, [change], [...messages, message(4, "parent", "reply")])).toEqual({ kind: "none" });
+    expect(selectDelivery("child", false, [change], [...messages, message(4, "parent", "reply")])).toMatchObject({ kind: "selected", delivery: change });
+  });
+  test("does not return transport-acknowledged directions", () => {
+    const queuedChange = { ...delivery("queued-change", [4], "acknowledged", "child-consumer"), recipient: "child", transport: "queue", transportReason: "full-direction" };
+    expect(selectDelivery("child", false, [queuedChange], [...messages, message(4, "parent", "reply")], "child-consumer", 1)).toEqual({ kind: "none" });
   });
   test("replays a delivery owned by the same consumer and generation", () => { expect(selectDelivery("parent", false, [delivery("owned", [2], "outstanding", "consumer")], messages, "consumer", 1)).toEqual({ kind: "selected", delivery: delivery("owned", [2], "outstanding", "consumer"), replayed: true }); });
   test("returns unknown when no candidate has a valid first sequence", () => { expect(selectDelivery("parent", false, [{ ...delivery("bad", []), messageSeqs: [] }], messages)).toEqual({ kind: "unknown" }); });
+});
+
+describe("check delivery lifecycle", () => {
+  test.each(["failed", "queue", "typed", "ack-verifying"] as const)("returns a %s transported reply until the child checks it", async (transport) => {
+    const root = await mkdtemp(join(tmpdir(), "megabrain-check-mailbox-"));
+    try {
+      const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (opened.kind !== "ok") throw new Error(opened.error);
+      createDispatch(opened.value, { dispatchId: "reply-dispatch", state: "running", childHost: "local", terminalId: "child-session" });
+      const now = new Date().toISOString();
+      const appended = appendMessage(opened.value, "reply-dispatch", { from: "parent", type: "reply", text: "continue safely" }, { delivery: { id: "reply-delivery", recipient: "child", status: "outstanding", createdAt: now, updatedAt: now } });
+      if (appended.kind !== "ok") throw new Error(appended.error);
+      setDeliveryTransport(opened.value, "reply-dispatch", appended.value.seq, transport, transport === "ack-verifying" ? "peer-socket-verified" : "full-direction");
+      opened.value.close();
+
+      const env = { MEGABRAIN_STATE_DIR: root, MEGABRAIN_DISPATCH_STATE_DIR: root, MEGABRAIN_DISPATCH_ID: "reply-dispatch", MEGABRAIN_SESSION_HOST: "local", MEGABRAIN_SESSION_ID: "child-session", MEGABRAIN_CONSUMER_ID: "child" };
+      const loadedDeliveries = await loadDeliveries(root, "reply-dispatch"); const loadedMessages = await loadMessages(root, "reply-dispatch");
+      expect(selectDelivery("child", false, loadedDeliveries, loadedMessages, "child").kind).toBe("selected");
+      const first = await executeCheck(["--timeout", "0", "--json"], env);
+      expect(first.kind).toBe("ok");
+      expect(first.kind === "ok" ? JSON.parse(first.value).text : "").toBe("continue safely");
+      if (transport === "typed") {
+        const parsed = first.kind === "ok" ? JSON.parse(first.value) as { messages: Array<Record<string, unknown>> } : { messages: [] };
+        expect(parsed.messages[0]).toMatchObject({ alreadyTyped: true });
+        expect(parsed.messages[0]?.alreadyTypedAt).toBeString();
+      }
+      if (transport === "ack-verifying") {
+        const parsed = first.kind === "ok" ? JSON.parse(first.value) as { messages: Array<Record<string, unknown>> } : { messages: [] };
+        expect(parsed.messages[0]).toMatchObject({ alreadyDeliveredThroughSocket: true });
+        expect(parsed.messages[0]?.alreadyDeliveredAt).toBeString();
+      }
+      const afterRead = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (afterRead.kind !== "ok") throw new Error(afterRead.error);
+      const delivery = listDeliveries(afterRead.value, "reply-dispatch");
+      expect(delivery.kind === "ok" ? delivery.value[0]?.status : "").toBe("acknowledged");
+      afterRead.value.close();
+
+      const second = await executeCheck(["--timeout", "0", "--json"], env);
+      expect(second.kind === "ok" ? JSON.parse(second.value).status : "").toBe("empty");
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });
 
 describe("deliveryStatus", () => {

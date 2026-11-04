@@ -226,6 +226,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const ackInstruction = acknowledgment === "" ? "" : `\n${acknowledgment}`;
   const text = rawText;
   const typedText = `${rawText}${ackInstruction}`;
+  const childPointer = "You have 1 megabrain message; run megabrain check";
   const priorVerification = getOutboxPeerVerification(database.value, outboxId);
   const fallbackOnly = priorVerification.kind === "ok" && priorVerification.value?.state === "fallback-queued";
   const queueVerification = async (channel: string, messageId: string, agentVersion: string, transcript?: string, transcriptOffset?: number): Promise<void> => {
@@ -253,6 +254,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   let lastDecision: string | undefined;
   let sendError: string | undefined;
   let composerReadbackAfterSubmit: Readonly<{ region?: string; orcaDraft?: string }> | undefined;
+  let pointerSent = false;
   let screenDownSince: number | undefined;
   let screenError = "";
   const unavailableMs = Number(environment.MEGABRAIN_PROOF_UNAVAILABLE_MS);
@@ -277,8 +279,8 @@ export async function executeDeliveryWorker(args: readonly string[], environment
     if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
     if (localParent || text === "" || dispatch === "" || sequence < 1) return false;
     const terminal = targetKind === "parent-pointer"
-      ? { host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId, workspaceId: meta.parentWorkspaceId }
-      : { host: meta.childHost, terminalId: meta.terminalId, workspaceId: meta.workspaceId };
+      ? { host: meta.parentHost, terminalId: meta.parentTerminalId ?? meta.parentSessionId, workspaceId: meta.parentWorkspaceId, tmuxPane: meta.parentTmuxPane }
+      : { host: meta.childHost, terminalId: meta.terminalId, workspaceId: meta.workspaceId, tmuxPane: meta.tmuxPane };
     if (!(await agentOwnsForegroundProcess(String(meta.agent ?? ""), Number(meta.agentPid), process, terminal))) {
       receiverGone = true;
       outcome = "receiver-gone";
@@ -321,7 +323,14 @@ export async function executeDeliveryWorker(args: readonly string[], environment
           return screen.kind === "ok" ? deliveryComposer(String(meta.agent ?? ""), screen.value) : undefined;
         },
         clear: async () => clearOwnComposer(root, meta, process),
-        send: async () => sendTyped(meta, typedText, process, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; }),
+        send: async () => {
+          const currentScreen = await readDeliveryScreen(meta, process);
+          const currentStatus = currentScreen.kind === "ok"
+            ? deliveryStatus(classifyLiveness(String(meta.agent ?? ""), currentScreen.value).status)
+            : "unknown";
+          pointerSent = targetKind === "child-delivery" && currentStatus === "busy" && payload.fullDirection === true;
+          return sendTyped(meta, pointerSent ? childPointer : typedText, process, (reason) => { sendError = reason; }, (readback) => { composerReadbackAfterSubmit = readback; });
+        },
         sendError: () => sendError,
         isRead: async () => readWasPulled(root, dispatch, sequence),
         attempt: async (details) => {
@@ -341,7 +350,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       result = "failed";
     }
     outcome = result;
-    transport = result === "delivered" ? payload.pointerOnly === true ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
+    transport = result === "delivered" ? payload.pointerOnly === true || pointerSent ? "pointer" : "typed" : result === "cancelled" ? "checked" : "failed";
     if (fallbackOnly && result === "delivered") finishOutboxPeerVerification(database.value, outboxId, "fallback-delivered");
     return result === "delivered" ? true : result === "cancelled" ? { delivered: false, stop: true } : false;
   };
@@ -432,7 +441,7 @@ export async function executeDeliveryWorker(args: readonly string[], environment
   const unavailable = outcome === "unavailable";
   const untypable = localParent && peer?.kind !== "delivered" && peer?.kind !== "accepted" && peer?.kind !== "read" && peer?.kind !== "aborted";
   const reason = receiverGone ? "receiver-gone: receiver is no longer the terminal's foreground agent process" : untypable ? `local parent has no terminal to type into; the Stop hook and orchestrate watch surface it${peerFallback === undefined ? "" : ` (${peerFallback})`}` : unavailable ? `proof-unavailable: ${screenError}` : outcome === "failed" && lastDecision === "send-failed" && sendError !== undefined ? `send-failed: ${sendError}` : `deferred delivery ${outcome}`;
-  await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && !["failed", "deferred"].includes(transport) ? "full-direction" : undefined });
+  await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport, reason: receiverGone ? "receiver-gone" : unavailable ? "proof-unavailable" : payload.fullDirection === true && transport === "typed" ? "full-direction" : undefined });
   const finished = targetKind === "parent-pointer"
     ? await callStateOwner(root, { operation: "finish-notification", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", event: { dispatchId: dispatch, pointer, outcome, reason } })
     : await callStateOwner(root, { operation: "finish-outbox", id: outboxId, holder, status: transport === "failed" || receiverGone ? "failed" : transport === "deferred" ? "suppressed" : "sent", detail: reason });
@@ -519,13 +528,13 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
     return ok("peer verification lease lost\n");
   }
   if (result === "delivered") {
-    if (delivery.recipient === "child" || delivery.recipient === "parent") await callStateOwner(root, {
+    if (delivery.recipient === "parent") await callStateOwner(root, {
       operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: delivery.recipient,
       consumer: saved.value.channel === "peer-socket" ? "channel:claude-peer" : `channel:${saved.value.channel}`,
     });
     await recordChannelResultThroughOwner(root, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });
     finishOutboxPeerVerification(database.value, outboxId, "delivered");
-    await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: "acknowledged" });
+    await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: delivery.recipient === "child" ? "ack-verifying" : "acknowledged", ...(delivery.recipient === "child" ? { reason: "peer-socket-verified" } : {}) });
   }
   return ok(`peer verification ${result}\n`);
   } finally {

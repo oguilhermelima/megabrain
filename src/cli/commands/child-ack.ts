@@ -2,10 +2,10 @@ import { type ProcessAdapter } from "../../adapters/proc.js";
 import { appendMessage, findChild as sharedFindChild, resolveCaller, type QueueEnvironment } from "./queue-write.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { resolveChildStateDirectory } from "../../core/state.js";
-import { acknowledgeDelivery } from "../../core/ack.js";
+import { acknowledgeDelivery, unknownDeliveryReason } from "../../core/ack.js";
 import { hasCallerIdentity } from "../../core/context.js";
 import { usageText } from "../../core/usage.js";
-import { listDeliveries, listMessages, readOnlyStateDatabase } from "../../adapters/state-db.js";
+import { listDeliveries, listDispatchEntries, listMessages, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { callStateOwner } from "../../db/state-owner.js";
 
 type ChildArguments = Readonly<{ deliveryId: string; consumer?: string; generation: number; json: boolean }>;
@@ -67,7 +67,15 @@ export async function executeChildAck(args: readonly string[], environment: Queu
   const deliveries = listDeliveries(database.value, child.value.id);
   if (deliveries.kind !== "ok") return deliveries;
   const delivery = deliveries.value.find((item) => item.id === parsed.value.deliveryId);
-  if (delivery === undefined) return failed(`delivery ${parsed.value.deliveryId} refused: delivery is unknown`);
+  if (delivery === undefined) {
+    const entries = listDispatchEntries(database.value, { includeArchived: true });
+    if (entries.kind !== "ok") return entries;
+    const records = entries.value.map((entry) => {
+      const all = listDeliveries(database.value, entry.record.dispatchId);
+      return { dispatchId: entry.record.dispatchId, archived: entry.archived, deliveryIds: all.kind === "ok" ? all.value.map((item) => item.id) : [] };
+    });
+    return failed(`delivery ${parsed.value.deliveryId} refused: ${unknownDeliveryReason(parsed.value.deliveryId, child.value.id, records)}`);
+  }
   const messages = listMessages(database.value, child.value.id);
   if (messages.kind !== "ok") return messages;
   const seqs = Array.isArray(delivery.messageSeqs) ? delivery.messageSeqs.filter((value): value is number => typeof value === "number") : [];

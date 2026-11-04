@@ -83,6 +83,7 @@ async function hasPromptReceipt(root: string, dispatchId: string): Promise<boole
 // mtime, compared against MEGABRAIN_DISPATCH_LIVE_ACTIVITY_WINDOW_SECONDS (60, hardcoded in the
 // shell too — not an environment override).
 const LIVE_ACTIVITY_WINDOW_SECONDS = 60;
+const STALLED_NOTICE_COOLDOWN_MS = 5 * 60 * 1000;
 
 async function hasRecentChildActivity(root: string, dispatchId: string): Promise<boolean> {
   const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -106,6 +107,25 @@ async function stalledIsDue(root: string, dispatchId: string, meta: RecordValue,
   if (status === "missing") return true;
   if (await hasRecentChildActivity(root, dispatchId)) return false;
   return true;
+}
+
+function stalledNoticeIsSuppressed(root: string, dispatchId: string, text: string): boolean {
+  const database = readOnlyStateDatabase({ MEGABRAIN_STATE_DIR: root });
+  if (database.kind !== "ok") return false;
+  const messages = listMessages(database.value, dispatchId);
+  const deliveries = listDeliveries(database.value, dispatchId);
+  if (messages.kind !== "ok" || deliveries.kind !== "ok") return false;
+  const now = Date.now();
+  for (const message of messages.value) {
+    if (message.from !== "child" || message.type !== "stalled") continue;
+    const createdAt = Date.parse(message.createdAt);
+    if (Number.isFinite(createdAt) && now - createdAt < STALLED_NOTICE_COOLDOWN_MS) return true;
+    if (message.text === text && deliveries.value.some((delivery) => delivery.status === "outstanding"
+      && delivery.transport !== "hook-notified"
+      && Array.isArray(delivery.messageSeqs)
+      && delivery.messageSeqs.includes(message.seq))) return true;
+  }
+  return false;
 }
 
 async function readBackgroundTasks(meta: RecordValue, processAdapter: ProcessAdapter): Promise<number | undefined> {
@@ -682,6 +702,8 @@ export async function executeHookTurnEnd(
     let text = payloadText;
     if (text === "" && transcriptPath !== "") text = await tailTranscript(transcriptPath);
     if (text === "") text = "child turn ended without ask or done";
+
+    if (stalledNoticeIsSuppressed(root, dispatchId, text)) return finish(defaultText);
 
     await appendMessage(root, dispatchId, "child", "stalled", text, session.id, environment, processAdapter);
     return finish(defaultText);

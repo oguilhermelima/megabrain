@@ -19,7 +19,7 @@ import { formatDispatchMessage } from "../core/chat-message-format.js";
 import { randomUUID } from "node:crypto";
 import { schedulePeerVerificationResume as reservePeerVerificationResume } from "../adapters/state/mailbox.js";
 import { spawnSync } from "node:child_process";
-import { ackDelivery as claimAndAckDelivery, acknowledgeImplicitDelivery as acknowledgeMail, acknowledgeImplicitDeliveryInTransaction as acknowledgeMailInTransaction, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, listDeliveriesInTransaction as listMailDeliveries, putWaiter as putMailWaiter, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
+import { ackDelivery as claimAndAckDelivery, appendParentReply as appendMailParentReply, cancelQueuedMessage as cancelQueuedMail, claimDelivery as claimOutboxDelivery, claimOutbox as claimMailOutbox, createDelivery as createMailDelivery, deleteWaiter as deleteMailWaiter, fenceDelivery as fenceMailDelivery, finishNotification as finishMailNotification, finishOutbox as finishMailOutbox, listDeliveriesInTransaction as listMailDeliveries, putWaiter as putMailWaiter, setDeliveryTransport as setMailDeliveryTransport, transferLease as transferMailLease } from "../adapters/state/mailbox.js";
 import { createDispatch as createDispatchState, mutateDispatch as mutateDispatchState, noDispatchChange } from "../adapters/state/dispatches.js";
 import { putInstallModule as putInstallState, deleteInstallModule, mutateInstallModule, putTerminal, deleteTerminal, putTmuxSession, deleteTmuxSession, saveModels, type ModelRegistry } from "../adapters/state/machine.js";
 import { recordChannelResult as recordChannelState, type ChannelResult } from "../adapters/state/channels.js";
@@ -82,6 +82,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "finish-outbox"; id: string; holder?: string; status: "sent" | "failed" | "suppressed"; detail?: string | null }
   | { operation: "finish-notification"; id: string; holder: string; status: "sent" | "failed" | "suppressed"; event: Readonly<Record<string, unknown>> }
   | { operation: "resume-outbox"; id: string }
+  | { operation: "retry-failed-child-outbox"; id: string; reason: string }
   | { operation: "dispatch-patch"; dispatchId: string; patch: Readonly<Record<string, unknown>>; expectedState?: string | readonly string[] }
   | { operation: "dispatch-prune"; action: "archive" | "delete"; dispatchId: string; archivedAt?: string }
   | { operation: "dispatch-create"; dispatch: Readonly<Record<string, unknown>> }

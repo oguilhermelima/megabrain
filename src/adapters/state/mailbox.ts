@@ -87,15 +87,6 @@ export function appendMessage(handle: DatabaseHandle, dispatchId: string, messag
     if (inserted === undefined) throw new Error("appended message was not visible");
     return inserted;
   });
-  if (appended.kind === "ok" && message.from === "child") {
-    const deliveries = queryDeliveries(handle.db, dispatchId);
-    for (const delivery of deliveries) {
-      if (delivery.recipient !== "child" || !Array.isArray(delivery.messageSeqs) || !delivery.messageSeqs.some((sequence) => sequence < appended.value.seq)) continue;
-      const transport = String(delivery.transport ?? "");
-      if (transport !== "checked" && delivery.transportReason !== "full-direction") continue;
-      acknowledgeImplicitDelivery(handle, dispatchId, delivery.id, "child", String(appended.value.createdAt));
-    }
-  }
   return appended;
 }
 
@@ -232,7 +223,8 @@ export function setDeliveryTransport(handle: DatabaseHandle, dispatchId: string,
   return write(handle, ({ db }) => {
     const row = db.query<{ id: string; extra: string }>("SELECT id, extra FROM deliveries WHERE dispatch_id = ? AND message_seq = ?").get(dispatchId, sequence);
     if (row === null) return;
-    db.run("UPDATE deliveries SET extra = ? WHERE id = ?", [encode({ ...object(decode<unknown>(row.extra)), transport, ...(reason === undefined ? {} : { transportReason: reason }) }), row.id]);
+    const transportAt = new Date().toISOString();
+    db.run("UPDATE deliveries SET extra = ? WHERE id = ?", [encode({ ...object(decode<unknown>(row.extra)), transport, transportAt, ...(reason === undefined ? {} : { transportReason: reason }) }), row.id]);
   });
 }
 
@@ -611,6 +603,23 @@ export function requeueOutboxPeerFallback(handle: DatabaseHandle, id: string): R
       `${peerStatePrefix}${JSON.stringify({ ...current, state: "fallback-queued" })}`, now, id,
     ]);
     return true;
+  });
+}
+
+export function retryFailedChildOutbox(handle: DatabaseHandle, id: string, reason: string): Result<boolean> {
+  const now = new Date().toISOString();
+  const cleanReason = reason.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim() || "scheduled retry";
+  return write(handle, ({ db }) => {
+    const row = db.query<{ target_kind: string; status: string; detail: string | null; payload: string }>("SELECT target_kind, status, detail, payload FROM outbox WHERE id = ?").get(id);
+    if (row === null || row.target_kind !== "child-delivery" || row.status !== "failed") return false;
+    const detail = `retry reason: ${cleanReason}; previous failure: ${row.detail ?? "unspecified"}`;
+    const payload = object(decode<unknown>(row.payload));
+    const previousRetry = object(payload.retryState);
+    const retryState = {
+      nextRetryAt: Date.now() + 30_000,
+      idleRetryUsed: cleanReason.includes("pane idle") || previousRetry.idleRetryUsed === true,
+    };
+    return db.run("UPDATE outbox SET status = 'pending', detail = ?, payload = ?, lease_until = NULL, lease_holder = NULL, updated_at = ? WHERE id = ? AND status = 'failed'", [detail, encode({ ...payload, retryState }), now, id]).changes > 0;
   });
 }
 

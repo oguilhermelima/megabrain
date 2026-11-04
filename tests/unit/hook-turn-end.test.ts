@@ -11,7 +11,7 @@ import { appendMessage, waiterIsActive } from "../../src/cli/commands/queue-writ
 import { executeChainRun } from "../../src/cli/commands/chain-run.js";
 import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
-import { appendMessage as appendDatabaseMessage, claimOutbox, createDispatch, finishNotification, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport } from "../../src/adapters/state-db.js";
+import { acknowledgeImplicitDelivery, appendMessage as appendDatabaseMessage, claimOutbox, createDispatch, finishNotification, getDispatch, listDeliveries, listDispatches, listMessages, putWaiter, setDeliveryTransport, createDelivery } from "../../src/adapters/state-db.js";
 import { composerTmux } from "./composer-tmux.js";
 import { startStateOwner, stopStateOwner } from "../../src/db/state-owner.js";
 
@@ -676,6 +676,32 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     });
   });
 
+  test("a queued full change direction is returned once and then stays acknowledged", async () => {
+    await withRoot("queued-full-change-direction", async (root) => {
+      await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
+      const env = childEnv(root, { MEGABRAIN_CONSUMER_ID: "child-consumer" });
+      const fp = fakeProcess();
+      await appendMessage(root, "d1", "parent", "reply", "the complete new direction", "coord-term", env, fp);
+      const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const delivery = listDeliveries(db.value, "d1");
+      if (delivery.kind !== "ok" || delivery.value[0] === undefined) throw new Error("reply delivery missing");
+      const marked = setDeliveryTransport(db.value, "d1", Number(delivery.value[0].messageSeqs[0]), "queue", "full-direction");
+      if (marked.kind !== "ok") throw new Error(marked.error);
+      const acknowledged = acknowledgeImplicitDelivery(db.value, "d1", delivery.value[0].id, "child", undefined, "child-consumer");
+      if (acknowledged.kind !== "ok") throw new Error(acknowledged.error);
+
+      const first = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
+      expect(first).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(first.kind === "ok" ? first.value : "{}")).toMatchObject({ status: "reply", text: "the complete new direction", messageSeqs: [1] });
+      expect(listDeliveries(db.value, "d1")).toMatchObject({ kind: "ok", value: [expect.objectContaining({ status: "acknowledged", transport: "checked" })] });
+
+      const second = await executeCheck(["--timeout", "0", "--poll-interval", "0", "--json"], env, fp);
+      expect(second).toMatchObject({ kind: "ok" });
+      expect(JSON.parse(second.kind === "ok" ? second.value : "{}")).toMatchObject({ status: "empty", messages: [] });
+    });
+  });
+
   test("leaves never-shown mail outstanding and blocks its hook only once", async () => {
     await withRoot("unshown-reply", async (root) => {
       await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
@@ -822,6 +848,47 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
       await executeHookTurnEnd(["waiting"], environment(root, { TMUX: "t", TMUX_PANE: "%3" }), tmuxChildProcess("✻ Brewed for 9m 47s\n\n❯ \n"), noStdin);
       expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(1);
       expect((await readMeta(root, "d1")).backgroundTasks ?? null).toBeNull();
+    });
+  });
+
+  test("suppresses acknowledged stalled notices during cooldown and allows one after expiry", async () => {
+    await withRoot("stalled-cooldown-acknowledged", async (root) => {
+      await writeMeta(root, "d1", tmuxChild);
+      const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (db.kind !== "ok") throw new Error(db.error);
+      const oldTime = Date.now();
+      const previous = appendDatabaseMessage(db.value, "d1", { from: "child", type: "stalled", text: "waiting", sessionId: "work:%3", createdAt: new Date(oldTime).toISOString() });
+      if (previous.kind !== "ok") throw new Error(previous.error);
+      const delivery = createDelivery(db.value, { id: "old-stalled", dispatchId: "d1", recipient: "parent", messageSeqs: [previous.value.seq], status: "outstanding" });
+      if (delivery.kind !== "ok") throw new Error(delivery.error);
+      const acknowledged = acknowledgeImplicitDelivery(db.value, "d1", "old-stalled", "parent", new Date(oldTime).toISOString());
+      if (acknowledged.kind !== "ok" || !acknowledged.value) throw new Error("could not acknowledge fixture delivery");
+
+      const env = environment(root, { TMUX: "t", TMUX_PANE: "%3" });
+      const process = tmuxChildProcess("✻ Brewed for 9m 47s\n\n❯ \n");
+      const now = Date.now;
+      let clock = oldTime + 60_000;
+      Date.now = () => clock;
+      try {
+        await executeHookTurnEnd(["waiting"], env, process, noStdin);
+        expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(1);
+        clock = oldTime + 6 * 60 * 1000;
+        await executeHookTurnEnd(["waiting"], env, process, noStdin);
+        expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(2);
+      } finally {
+        Date.now = now;
+      }
+    });
+  });
+
+  test("does not append identical stalled notices repeatedly inside the cooldown", async () => {
+    await withRoot("stalled-cooldown", async (root) => {
+      await writeMeta(root, "d1", tmuxChild);
+      const env = environment(root, { TMUX: "t", TMUX_PANE: "%3" });
+      const process = tmuxChildProcess("✻ Brewed for 9m 47s\n\n❯ \n");
+      await executeHookTurnEnd(["waiting"], env, process, noStdin);
+      await executeHookTurnEnd(["waiting"], env, process, noStdin);
+      expect(readMessages(root, "d1").filter((message) => message.type === "stalled")).toHaveLength(1);
     });
   });
 
