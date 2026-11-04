@@ -140,7 +140,7 @@ megabrain orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>]
 chain selection and works with no chain configured. Explicit `--model` and `--effort` override
 those fields when the chain supplies the agent:
 
-Spawn checks Claude and Codex worktree trust before launch; this check is best-effort. Startup
+Spawn preflights Codex worktree trust before launch; this check is best-effort. Startup
 dialogs are never answered automatically; readiness waits for a person to resolve them.
 
 ```
