@@ -16,7 +16,7 @@ afterEach(async () => { database?.close(); database = undefined; if (directory !
 
 const doneAt = "2026-11-03T12:00:00.000Z";
 
-async function setup(deliveryStatus: string, acknowledgedAt: string | null) {
+async function setup(deliveryStatus: string, acknowledgedAt: string | null, viewerClients?: readonly Readonly<{ server: string; tty: string; pid: number }>[]) {
   directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-auto-close-`);
   const opened = openDatabase({ MEGABRAIN_STATE_DIR: directory, HOME: directory });
   if (opened.kind !== "ok") throw new Error(opened.error);
@@ -24,6 +24,7 @@ async function setup(deliveryStatus: string, acknowledgedAt: string | null) {
   const created = createDispatch(database, {
     dispatchId: "dispatch-auto-close", state: "done", runtime: "tmux", tmuxSession: "auto-close-session",
     tmuxPane: "%8", tmuxSessionOwned: true, terminalId: "%8", parentSessionId: "parent",
+    ...(viewerClients === undefined ? {} : { autoCloseViewerClients: viewerClients }),
   });
   if (created.kind !== "ok") throw new Error(created.error);
   const message = appendMessage(database, "dispatch-auto-close", {
@@ -71,28 +72,55 @@ describe("supervisor dispatch auto-close", () => {
     expect(started).toBe(1);
   });
 
-  test("holds the dispatch through grace and records a human client viewing it", async () => {
-    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
+  test("closes an idle megabrain viewer attached before done", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z", [{ server: "default", tty: "/dev/ttys025", pid: 43715 }]);
     let calls = 0;
     const process = adapter(async (_command, args) => {
       calls += 1;
-      if (args[0] === "-L" && args[1] === "default") return ok({ stdout: "1793707201|1793707201\n", stderr: "", exitCode: 0 });
+      if (args[0] === "-L" && args[1] === "default") return ok({ stdout: "/dev/ttys025|43715|1793707190|1793707199|attached,UTF-8\n", stderr: "", exitCode: 0 });
       return failed("unexpected command");
     });
     const result = await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
     expect(result.open).toBe(false);
     expect(calls).toBe(1);
-    expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
+    expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "closed" } });
   });
 
-  test("keeps an idle client attached before done open", async () => {
-    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z");
+  test("keeps the megabrain viewer open while its client is focused", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z", [{ server: "default", tty: "/dev/ttys025", pid: 43715 }]);
     const process = adapter(async (_command, args) => args[1] === "default"
-      ? ok({ stdout: "1793707190|1793707199\n", stderr: "", exitCode: 0 })
+      ? ok({ stdout: "/dev/ttys025|43715|1793707190|1793707199|attached,focused,UTF-8\n", stderr: "", exitCode: 0 })
       : failed("unexpected command"));
     const result = await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
     expect(result.open).toBe(false);
     expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
+  });
+
+  test("keeps the dispatch open after viewer input later than done", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z", [{ server: "default", tty: "/dev/ttys025", pid: 43715 }]);
+    const process = adapter(async (_command, args) => args[1] === "default"
+      ? ok({ stdout: "/dev/ttys025|43715|1793707190|1793707201|attached,UTF-8\n", stderr: "", exitCode: 0 })
+      : failed("unexpected command"));
+    await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
+    expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
+  });
+
+  test("keeps the dispatch open for a second client attached after done", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z", [{ server: "default", tty: "/dev/ttys025", pid: 43715 }]);
+    const process = adapter(async (_command, args) => args[1] === "default"
+      ? ok({ stdout: "/dev/ttys025|43715|1793707190|1793707199|attached,UTF-8\n/dev/ttys026|43716|1793707201|1793707201|attached,UTF-8\n", stderr: "", exitCode: 0 })
+      : failed("unexpected command"));
+    await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
+    expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
+  });
+
+  test("closes for an idle pre-done client that is not the viewer", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z", [{ server: "default", tty: "/dev/ttys025", pid: 43715 }]);
+    const process = adapter(async (_command, args) => args[1] === "default"
+      ? ok({ stdout: "/dev/ttys026|43716|1793707190|1793707199|attached,UTF-8\n", stderr: "", exitCode: 0 })
+      : failed("unexpected command"));
+    await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
+    expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "closed" } });
   });
 
   test("defers closing when tmux client listing fails unexpectedly", async () => {
