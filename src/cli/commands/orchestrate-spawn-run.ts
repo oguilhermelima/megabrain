@@ -5,7 +5,7 @@ import { createProcessAdapter, type ProcessAdapter } from "../../adapters/proc.j
 import { getAgent } from "../../agents/index.js";
 import { decideSpawnStep, resolveAutoSpawnRuntime, type SpawnDecisionInput, type SpawnFailure, type SpawnPlan, type SpawnRuntime, type SpawnState, type SpawnStep, type WorktreeOwnership } from "../../core/spawn-plan.js";
 import { checkDispatchTransition } from "../../core/dispatch-states.js";
-import { classifyLiveness, waitForStableIdle } from "../../core/liveness.js";
+import { classifyLiveness, startupDialogCause, waitForStableIdle } from "../../core/liveness.js";
 import { failed, ok, unknown, type Result } from "../../core/result.js";
 import type { DatabaseHandle } from "../../db/db.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -33,6 +33,7 @@ import { startSupervisorWorker } from "./supervise.js";
 import { notifyAdmissionStatus } from "./admission-notify.js";
 import { checkTerminalFlag, openViewer, viewerLine } from "./terminal-open.js";
 import { resolveGrokSessionId } from "../../core/context-meter.js";
+import { preflightWorktreeTrust } from "../../agents/worktree-trust.js";
 import { join } from "node:path";
 import { decideAdmission, DEFAULT_AGENT_COST_BYTES } from "../../core/admission.js";
 import { readAdmissionPolicy, estimateTypicalRssByAgent } from "../../adapters/state-db.js";
@@ -87,6 +88,8 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const worktreeResult = await (dependencies.resolveWorktree ?? defaultResolveWorktree)(options.worktree, options, environment, process);
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
+  const trust = await preflightWorktreeTrust(options.agent, worktree.path, environment);
+  if (trust.kind !== "ok") return trust;
   const registeredRepository = await registerMegabrainRepository(worktree.path, environment, process);
   if (registeredRepository.kind !== "ok" && !registeredRepository.error.startsWith("not a git repository:")) return registeredRepository;
   prompt = finalPrompt(options, id);
@@ -156,7 +159,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const promptFile = promptFlag === undefined ? undefined : await writePromptFile(root, id, prompt);
   if (promptFile !== undefined) trace.promptFile = promptFile;
   const launch = promptFile === undefined ? command : `${command} ${promptFlag} "$(cat ${shellQuote(promptFile)})"`;
-  const readinessTimeoutMs = agentReadyTimeoutMs(environment);
+  const readinessTimeoutMs = agentReadyTimeoutMs(environment, options.agent);
 
   // Admission runs after option/worktree validation but before any terminal or agent is created.
   // The fixed fallback is deliberately conservative and applies when resource history is off or
@@ -217,6 +220,9 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   let hostTerminalHost: string | null = null;
   let tmuxHostWarning: string | null = null;
   let readinessError: string | undefined;
+  let readinessDeferred = false;
+  let readinessLastFrame = "";
+  let readinessStartedAt: number | undefined;
   let terminalCreateAttempts: number | undefined;
 
   if (runtime === "tmux") {
@@ -396,8 +402,9 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
         outcome = sent.kind === "ok" ? { kind: "succeeded" } : { kind: "failed", failure: failureForCall(call?.kind === "ok" ? call.value : undefined, sent, `${childHost} terminal send`) };
       }
     } else if (step === "readiness-output-validation") {
+      readinessStartedAt = Date.now();
       const waited = await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process, promptFile !== undefined);
-      if (waited.trustAnswered) await updateMeta(root, id, { trustAnswered: true }, process);
+      readinessLastFrame = waited.lastFrame;
       if (options.agent === "grok" && waited.result.kind === "ok" && pane !== null) {
         const panePid = await getTmux().panePid(pane, process, sessionId ?? undefined);
         if (panePid.kind === "ok") {
@@ -409,10 +416,17 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       if (waited.result.kind !== "ok") {
         readinessError = waited.result.error;
         await recordRejectedReadinessFrame(root, id, options.agent, readinessTimeoutMs, waited.lastFrame);
+        readinessDeferred = true;
       }
-      outcome = waited.result.kind === "ok" ? { kind: "succeeded" } : { kind: "failed" };
+      outcome = { kind: "succeeded" };
     } else if (step === "prompt-transport") {
       if (runtime === "tmux") {
+        if (readinessDeferred) {
+          // Keep the brief in its durable dispatch message until a later supervisor pass proves
+          // the argv turn started or the paste composer is ready.
+          promptChannel = promptFile === undefined ? "paste" : "argv";
+          outcome = { kind: "prompt-transport", status: "awaiting-receipt" };
+        } else {
         // The readiness wait just proved the composer idle, so this is a normal submit, not a
         // queued one (submitKey(agent) is for queue-write.ts typing into a possibly busy
         // composer, where Codex's Tab queues instead of submitting). Every agent's composer
@@ -423,6 +437,15 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
         const fromArgv = promptFile === undefined ? undefined : await awaitArgvPrompt({ pane: pane ?? "", agent: options.agent, environment, process }, () => hasReceipt(root, id));
         promptChannel = fromArgv === undefined ? "paste" : "argv";
         outcome = fromArgv ?? await transportTmuxPrompt({ root, pane: pane ?? "", agent: options.agent, prompt, environment, process, rejectedFrame: (frame) => recordFrame(root, id, "composer-frame", `the ${options.agent} composer never showed the whole prompt; last frame:\n${frame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd()}`) }, () => hasReceipt(root, id));
+        if (outcome.status === "awaiting-receipt") {
+          const captured = await getTmux().capturePane(pane ?? "", 200, process);
+          if (captured.kind === "ok" && startupDialogCause(options.agent, captured.value) !== undefined) {
+            readinessDeferred = true;
+            readinessStartedAt ??= Date.now();
+            readinessLastFrame = captured.value;
+          }
+        }
+        }
       } else {
         const currentDispatch = getDispatch(database.value, id);
         const childHost = stringValue(currentDispatch.kind === "ok" ? currentDispatch.value?.childHost : "");
@@ -453,7 +476,16 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       Object.assign(metadataUpdate, { state: state.dispatch, processState: state.process, terminalState: state.terminal });
     }
     if (step === "prompt-publication" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptPublication: "published", promptState: "awaiting-transport" });
+    if ((step === "readiness-output-validation" || step === "prompt-transport") && readinessDeferred) Object.assign(metadataUpdate, {
+      readinessState: "starting",
+      readinessStartedAt,
+      readinessDueAt: (readinessStartedAt ?? Date.now()) + readinessTimeoutMs,
+      readinessDialog: startupDialogCause(options.agent, readinessLastFrame) ?? null,
+      readinessFrame: readinessLastFrame.split("\n").slice(-READINESS_FRAME_MAX_LINES).join("\n").trimEnd(),
+      lastReadinessNoticeAt: null,
+    });
     if (step === "prompt-transport" && outcome.kind === "prompt-transport") Object.assign(metadataUpdate, { ...(promptChannel === undefined ? {} : { promptChannel }), promptTransport: outcome.status === "failed" ? "not-transported" : "transported", promptReceipt: outcome.status === "delivered" ? "received" : outcome.status === "turn-without-receipt" ? "not-received" : "pending", promptState: outcome.status === "delivered" ? "confirmed" : "awaiting-receipt", ...(outcome.receiptMissing === undefined ? {} : { processState: "running", receiptMissing: { reason: outcome.receiptMissing, at: new Date().toISOString() } }) });
+    if (step === "prompt-transport" && readinessDeferred) Object.assign(metadataUpdate, { promptTransport: "pending", promptDelivery: "pending", promptState: "awaiting-readiness" });
     if (step === "prompt-confirmation" && outcome.kind === "succeeded") Object.assign(metadataUpdate, { promptDelivered: true, promptDelivery: "delivered", promptState: "confirmed" });
     if (plan.action === "fail") Object.assign(metadataUpdate, { state: plan.state.dispatch, processState: plan.state.process, terminalState: plan.state.terminal, reason: plan.reason, promptState: "failed" });
     if (outcome.kind === "prompt-transport" && outcome.receiptMissing !== undefined) receiptMissing = outcome.receiptMissing;

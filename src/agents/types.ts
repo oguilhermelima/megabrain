@@ -40,9 +40,6 @@ export type Agent = Readonly<{
   readonly classifyLiveness: (output: string) => Result<LivenessResult>;
   readonly contextSource?: "codex-rollout" | "claude-transcript" | "grok-session";
   readonly compactCommand?: string;
-  readonly firstRunDialog?: RegExp;
-  // Key that answers the first-run dialog; Enter when absent.
-  readonly firstRunDialogKey?: string;
   readonly flags?: AgentFlags;
   readonly commandLine?: (options: AgentCommandOptions) => Result<string>;
   // What precedes the initial interactive prompt on the command line, when the agent takes one.

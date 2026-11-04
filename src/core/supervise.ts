@@ -9,6 +9,7 @@ export type SupervisionCause =
   | "network"
   | "auth-required"
   | "dialog-waiting"
+  | "readiness-starting"
   | "codex-update"
   | "prompt-unsubmitted"
   | "prompt-lost"
@@ -272,6 +273,7 @@ export function recommendationFor(finding: SupervisionFinding, dispatchId = "<di
     case "network": return `Wait for the connection to recover, or continue the child with megabrain orchestrate change ${dispatchId} --text "continue"; last error: ${finding.errorCode ?? "network error"}.`;
     case "auth-required": return "Ask the operator to log in to the agent, then inspect the dispatch.";
     case "dialog-waiting": return "Please answer the dialog, or respawn this lane in the same worktree.";
+    case "readiness-starting": return "The agent is still starting; inspect the captured screen and leave it open while readiness is checked again.";
     case "codex-update": return "Update Codex with megabrain agent update codex; do not choose an option in the dialog because the choice may persist.";
     case "prompt-unsubmitted": return "The prompt was resubmitted automatically; inspect the dispatch to confirm it started.";
     case "prompt-lost": return `The prompt never reached the agent: it is idle at an empty composer with no receipt. Please resend the brief with megabrain orchestrate reply ${dispatchId} --text "<brief>".`;

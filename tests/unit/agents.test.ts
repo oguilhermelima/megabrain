@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { resolveParentContext } from "../../src/core/context.js";
-import { classifyLiveness, isFirstRunDialog } from "../../src/core/liveness.js";
+import { classifyLiveness, startupDialogCause } from "../../src/core/liveness.js";
 import { commandLine, getAgent, interruptKey, registerAgent, submitKey, unregisterAgent, type Agent } from "../../src/agents/index.js";
 import { ok, type Result } from "../../src/core/result.js";
+import { agentReadyTimeoutMs } from "../../src/cli/commands/orchestrate-spawn-options.js";
 
 const fourthAgent: Agent = {
   id: "fourth",
@@ -158,6 +159,31 @@ describe("agent registry", () => {
     expect(classifyLiveness("claude", "❯ Try \"fix typecheck errors\"\nWorking\nesc to interrupt").status).toBe("working");
   });
 
+  test("Claude fullscreen and classic captures both prove an idle composer", async () => {
+    const fullscreen = await readFile(new URL("../fixtures/claude-fullscreen-composer.txt", import.meta.url), "utf8");
+    const classicCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-claude-idle.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
+    expect(classifyLiveness("claude", fullscreen).status).toBe("idle");
+    expect(classifyLiveness("claude", classicCapture.result.terminal.tail.join("\n")).status).toBe("idle");
+  });
+
+  test("Codex is not ready while its header or MCP servers are still loading", async () => {
+    const loadingHeader = await readFile(new URL("../fixtures/codex-loading-header.txt", import.meta.url), "utf8");
+    const mcpStartup = await readFile(new URL("../fixtures/tmux-capture-codex-argv-brief.txt", import.meta.url), "utf8");
+    expect(classifyLiveness("codex", loadingHeader).status).not.toBe("idle");
+    expect(classifyLiveness("codex", mcpStartup).status).not.toBe("idle");
+  });
+
+  test("spawn readiness uses a bounded launch budget for each agent and keeps the override", () => {
+    // Claude's first fullscreen frame can exceed the old 10 s window; Codex follows Orca's
+    // 20 s composer budget including MCP startup. Grok's intro can animate for 10 s, and agy
+    // performs a first-launch workspace setup before painting its composer.
+    const expected = { claude: 30000, codex: 20000, grok: 20000, agy: 20000 } as const;
+    for (const [agent, timeout] of Object.entries(expected)) {
+      expect(agentReadyTimeoutMs({}, agent)).toBe(timeout);
+      expect(agentReadyTimeoutMs({ MEGABRAIN_AGENT_READY_TIMEOUT_MS: "2345" }, agent)).toBe(2345);
+    }
+  });
+
   test("agy classifies captured trust, idle, and working screens", async () => {
     const screen = async (name: string) => {
       const capture = JSON.parse(await readFile(new URL(`../fixtures/orca-terminal-screen-agy-${name}.json`, import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
@@ -165,7 +191,7 @@ describe("agent registry", () => {
     };
     const trust = await screen("trust");
     expect(classifyLiveness("agy", trust).status).toBe("unknown");
-    expect(isFirstRunDialog("agy", trust)).toBe(true);
+    expect(startupDialogCause("agy", trust)).toBe("workspace-trust-dialog");
     expect(classifyLiveness("agy", await screen("idle")).status).toBe("idle");
     for (const name of ["working-1", "working-2", "working-3"]) {
       const captured = await screen(name);
@@ -173,18 +199,18 @@ describe("agent registry", () => {
     }
   });
 
-  test("agy recognises the trust dialog in a real tmux capture and the Orca capture", async () => {
+  test("agy blocks trust in real tmux and Orca captures", async () => {
     const tmuxTrust = await readFile(new URL("../fixtures/tmux-capture-agy-trust.txt", import.meta.url), "utf8");
     const orcaCapture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
 
-    expect(isFirstRunDialog("agy", tmuxTrust)).toBe(true);
-    expect(isFirstRunDialog("agy", orcaCapture.result.terminal.tail.join("\n"))).toBe(true);
+    expect(startupDialogCause("agy", tmuxTrust)).toBe("workspace-trust-dialog");
+    expect(startupDialogCause("agy", orcaCapture.result.terminal.tail.join("\n"))).toBe("workspace-trust-dialog");
   });
 
-  test("agy only declares the exact preselected trust dialog", async () => {
+  test("agy trust detection does not require the exact preset wording", async () => {
     const capture = JSON.parse(await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8")) as { result: { terminal: { tail: string[] } } };
     const trust = capture.result.terminal.tail.join("\n");
-    expect(isFirstRunDialog("agy", trust.replace("> Yes, I trust this folder", "> No, exit"))).toBe(false);
-    expect(isFirstRunDialog("agy", "Do you trust the contents of this project?\n> Yes, I trust this folder")).toBe(false);
+    expect(startupDialogCause("agy", trust.replace("> Yes, I trust this folder", "> No, exit"))).toBe("workspace-trust-dialog");
+    expect(startupDialogCause("agy", "Do you trust the contents of this project?\n> Yes, I trust this folder")).toBe("workspace-trust-dialog");
   });
 });

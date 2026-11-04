@@ -1,7 +1,7 @@
 import type { ProcessAdapter } from "../../adapters/proc.js";
 import { createHash } from "node:crypto";
 import { composerHoldsText } from "../../core/composer-proof.js";
-import { classifyLiveness } from "../../core/liveness.js";
+import { classifyLiveness, startupDialogCause } from "../../core/liveness.js";
 import { sendSessionMessage } from "../../core/session-send.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import type { SpawnStepOutcome } from "../../core/spawn-plan.js";
@@ -87,6 +87,8 @@ export async function deliverPrompt(target: PromptTarget): Promise<Result<boolea
     caller: "spawn-fallback", messageId, target: { agent: target.agent, id: target.pane }, text: target.prompt,
     channels: { typed: async () => {
       const delivered = await withTmuxPaneLock(target.root, target.pane, target.environment, async () => {
+      const beforePaste = await readScreen(target);
+      if (beforePaste === undefined || startupDialogCause(target.agent, beforePaste) !== undefined || classifyLiveness(target.agent, beforePaste).status !== "idle") return ok(false);
       const pasted = await getTmux().pasteText(target.pane, target.prompt, target.process);
       if (pasted.kind !== "ok") return failed(pasted.error);
       const submitted = await getTmux().sendKey(target.pane, "Enter", target.process);

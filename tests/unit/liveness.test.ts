@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { classifyLiveness } from "../../src/core/liveness.js";
+import { classifyLiveness, startupDialogCause, waitForStableIdle } from "../../src/core/liveness.js";
 
 describe("classifyLiveness", () => {
   test("recognizes each Codex frame", () => {
@@ -29,9 +29,46 @@ describe("classifyLiveness", () => {
     expect(classifyLiveness("codex", codexIdle).status).toBe("idle");
     expect(classifyLiveness("codex", codexWorking).status).toBe("working");
   });
+  test("waits through a startup dialog until the user dismisses it", async () => {
+    const frames = ["Do you trust the files in this folder?\nTrust folder", "Do you trust the files in this folder?\nTrust folder", "❯"];
+    let reads = 0;
+    let keysSent = 0;
+    const result = await waitForStableIdle("claude", 2500, async () => {
+      const frame = frames[Math.min(reads++, frames.length - 1)] ?? "";
+      return { kind: "ok", value: frame };
+    }, "timeout", async () => { keysSent += 1; return { kind: "ok", value: undefined }; });
+    expect(result.kind).toBe("ok");
+    expect(reads).toBeGreaterThanOrEqual(3);
+    expect(keysSent).toBe(0);
+  });
+
   test("keeps absent, quoted, and unknown frames unknown", () => {
     expect(classifyLiveness("codex", "").status).toBe("unknown");
     expect(classifyLiveness("codex", "quoted: You've hit your usage limit for\nSwitch to another model now,").status).toBe("unknown");
     expect(classifyLiveness("other", "Working (1s)\nesc to interrupt").status).toBe("unknown");
+  });
+
+  test("blocks startup dialogs with their captured frame and never answers them", async () => {
+    const frames = [
+      ["claude", "Do you trust the files in this folder?\nTrust folder 1\nNo, exit"],
+      ["codex", "Hooks need review\nPress Enter to review hooks"],
+      ["codex", "Update available\nSkip until next version"],
+      ["claude", "Permission required\nAllow once\nAllow always\nReject"],
+      ["claude", "Would you like to continue?\n1. Yes\n2. No"],
+      ["claude", "What would you like to do?\n1. Continue\n2. Stop"],
+    ] as const;
+    for (const [agent, frame] of frames) {
+      expect(startupDialogCause(agent, frame)).not.toBeUndefined();
+      let answered = false;
+      const result = await waitForStableIdle(agent, 0, async () => ({ kind: "ok", value: frame }), "timeout", async () => {
+        answered = true;
+        return { kind: "ok", value: undefined };
+      });
+      expect(result.kind).toBe("failed");
+      if (result.kind === "failed") {
+        expect(result.error).toBe("timeout");
+      }
+      expect(answered).toBe(false);
+    }
   });
 });

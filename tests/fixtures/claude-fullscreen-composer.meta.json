@@ -1,0 +1,9 @@
+{
+  "capturedAt": "2026-11-03",
+  "platform": "darwin",
+  "command": ["claude", "--dangerously-skip-permissions"],
+  "capture": "tmux capture-pane -p",
+  "cols": 80,
+  "rows": 24,
+  "note": "Claude Code v2.1.318 from a fresh temporary cwd; no input was sent. Captured from the fullscreen renderer."
+}

@@ -275,13 +275,24 @@ export async function writePromptFile(root: string, id: string, prompt: string):
   }
 }
 
-export function agentReadyTimeoutMs(environment: SpawnEnvironment): number {
+const AGENT_READY_TIMEOUT_MS: Readonly<Record<string, number>> = {
+  // Issue 103 observed Claude's fullscreen composer painting after the former 10 s deadline.
+  claude: 30000,
+  // Orca's measured Codex composer budget is 20 s; it includes MCP initialization.
+  codex: 20000,
+  // Grok's animated introduction can continue for about 10 s after its composer appears.
+  grok: 20000,
+  // Antigravity's first workspace setup and composer paint need room beyond the old default.
+  agy: 20000,
+};
+
+export function agentReadyTimeoutMs(environment: SpawnEnvironment, agentId: string): number {
   const raw = environment.MEGABRAIN_AGENT_READY_TIMEOUT_MS;
   if (raw !== undefined && /^\d+$/.test(raw)) {
     const value = Number(raw);
     if (Number.isSafeInteger(value)) return value;
   }
-  return 10000;
+  return AGENT_READY_TIMEOUT_MS[agentId] ?? 10000;
 }
 
 // Reuses the same output classification `orchestrate liveness` uses (core/liveness.ts,

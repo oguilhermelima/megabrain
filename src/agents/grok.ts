@@ -11,8 +11,6 @@ const markers: readonly AgentMarker[] = [
   { status: "idle", first: /^[ \t]*│ ❯[ \t]*│[ \t]*$/m, reason: "terminal shows an empty Grok composer" },
 ];
 
-const trustDialog = /Do you trust the contents of this directory\?[\s\S]*Yes, proceed[ \t]+y\b[\s\S]*No, quit[ \t]+n\b/;
-
 export const grokFlags: AgentFlags = {
   executable: "grok",
   permission: ["--always-approve"],
@@ -27,8 +25,6 @@ export const grok: Agent = {
   matchesDescriptor: (descriptor) => descriptor === "grok" || descriptor === "grok-build" || /^grok_[0-9]+-[0-9]+-[0-9]+_agent$/.test(descriptor),
   classifyLiveness: (output) => classifyMarkers(markers, output),
   contextSource: "grok-session",
-  firstRunDialog: trustDialog,
-  firstRunDialogKey: "y",
   initialPromptFlag: "--",
   flags: grokFlags,
   commandLine: ({ model, effort, agentArgs }) => {
