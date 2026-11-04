@@ -96,7 +96,7 @@ describe("CLI router", () => {
 
     expect(result).toEqual({
       kind: "ok",
-      value: "Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]\n"
+      value: "Usage: megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--keep-open] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]\n"
         + "\nEnvironment:\n"
         + "  MEGABRAIN_PROMPT_ARGV_GRACE_MS      Milliseconds to wait for an agent to submit the brief on its command line before pasting it (default 30000).\n"
         + "  MEGABRAIN_PROMPT_VERIFY_TIMEOUT_MS  Milliseconds to wait for the pasted prompt to show whole in the composer (default 2000).\n"

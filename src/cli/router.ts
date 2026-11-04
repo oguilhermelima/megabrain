@@ -28,6 +28,7 @@ import { executeOrchestrateTranscript } from "./commands/orchestrate-transcript.
 import { executeOrchestrateGraph } from "./commands/orchestrate-graph.js";
 import { executeOrchestrateChange, executeOrchestrateReply } from "./commands/orchestrate-reply.js";
 import { executeOrchestrateClose } from "./commands/orchestrate-close.js";
+import { executeOrchestrateKeepOpen } from "./commands/orchestrate-keep-open.js";
 import { executeOrchestrateReconcile, executeOrchestrateStop } from "./commands/orchestrate-stop-reconcile.js";
 import { executeChain } from "./commands/chain.js";
 import { executeOrchestratePrune } from "./commands/orchestrate-prune.js";
@@ -299,6 +300,9 @@ async function routeCommand(
   }
   if (command === "orchestrate" && commandArgs[0] === "close") {
     return executeOrchestrateClose(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
+  }
+  if (command === "orchestrate" && commandArgs[0] === "keep-open") {
+    return executeOrchestrateKeepOpen(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);
   }
   if (command === "orchestrate" && commandArgs[0] === "stop") {
     return executeOrchestrateStop(commandArgs.slice(1), dependencies.environment, dependencies.processAdapter);

@@ -128,6 +128,7 @@ export async function initialMeta(id: string, options: SpawnOptions, worktree: S
     worktreePath: worktree.path,
     branch: worktree.branch,
     chatName: options.label ?? worktree.branch,
+    keepOpen: options.keepOpen === true,
     parentChatName,
     agent: options.agent,
     agentId: options.agent,

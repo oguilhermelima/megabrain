@@ -18,6 +18,7 @@ trap cleanup EXIT
 
 export MEGABRAIN_STATE_DIR="$state_dir/state"
 export HOME="$state_dir/home"
+unset MEGABRAIN_DISPATCH_ID
 mkdir -p "$HOME"
 
 fail() {
@@ -79,6 +80,7 @@ run_help orchestrate read --help
 run_help orchestrate ack --help
 run_help orchestrate reply --help
 run_help orchestrate close --help
+run_help orchestrate keep-open --help
 run_help ask --help
 run_help done --help
 run_help received --help
@@ -100,6 +102,7 @@ run_help model list --help
 run_help model add --help
 run_help model refresh --help
 run_help settings --help
+assert_contains "$($root/.build/megabrain --help)" 'Auto-close applies only to acknowledged, unviewed tmux dispatches after 120 seconds; Orca and Superset terminals keep their current behavior'
 run_help native appium --help
 run_help native appium start --help
 run_help native appium stop --help

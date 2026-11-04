@@ -97,6 +97,7 @@ export type SpawnOptions = Readonly<{
   readonly json: boolean;
   readonly contextPolicy?: ContextPolicy;
   readonly admission: "wait" | "fail";
+  readonly keepOpen?: boolean;
 }>;
 
 export type RecordValue = Record<string, unknown>;
@@ -133,10 +134,12 @@ export function parseArgs(args: readonly string[]): Result<SpawnOptions> {
   let loop: boolean | undefined;
   let maxIterations: number | undefined;
   let admission: "wait" | "fail" = "wait";
+  let keepOpen = false;
   const agentArgs: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") json = true;
+    else if (arg === "--keep-open") keepOpen = true;
     else if (arg === "--browser") browser = true;
     else if (arg === "--loop") loop = true;
     else if (arg === "--no-loop") loop = false;
@@ -184,7 +187,7 @@ export function parseArgs(args: readonly string[]): Result<SpawnOptions> {
       else agentArgs.push(value);
       index += 1;
     } else if (arg === "-h" || arg === "--help") {
-      return ok({ worktree: "", agent: "", model: null, effort: null, prompt: "", label: null, tmux: null, browser, agentArgs, json, admission });
+      return ok({ worktree: "", agent: "", model: null, effort: null, prompt: "", label: null, tmux: null, browser, agentArgs, json, admission, keepOpen });
     } else return failed(`unknown orchestrate spawn option: ${arg}`, 2);
   }
   if (worktree === undefined && (repo === undefined || branch === undefined)) {
@@ -198,7 +201,7 @@ export function parseArgs(args: readonly string[]): Result<SpawnOptions> {
     const valid = validateContextPolicy(contextPolicy);
     if (valid.kind !== "ok") return valid;
   }
-  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, terminal, browser, agentArgs, json, contextPolicy, admission });
+  return ok({ worktree, repo, branch, base, name, agent, model, effort, prompt, label, tmux, terminal, browser, agentArgs, json, contextPolicy, admission, keepOpen });
 }
 
 export function dispatchId(environment: SpawnEnvironment): string {
@@ -247,7 +250,7 @@ export function agyLogFile(stateRoot: string, dispatchId: string): string {
 
 export function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
-  return `[megabrain dispatch: ${label}]\n\nRun megabrain received before work. Ask coordinator with megabrain ask "question"; wait with megabrain check and confirm using megabrain ack <delivery-id>. Finish with megabrain done "short outcome summary". Do not print protocol markers or continue past unanswered question. For megabrain done and ask, start with one plain-language sentence a non-technical person understands: what changed, or what you need. Use no file names, commands, or test counts in that sentence; put technical detail after it.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
+  return `[megabrain dispatch: ${label}]\n\nREQUIRED: Run megabrain received first.\nREQUIRED: Ask with megabrain ask; poll megabrain check --timeout until answered. Never proceed on a default.\nREQUIRED: Finish with megabrain done, including outcome and evidence.\nCRITICAL: Never close your own dispatch.\nFor ask and done, start with one plain-language sentence a nontechnical person understands; use no filenames, commands, or counts.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
 }
 
 // Bytes, not characters: a prompt that fits the CLI's character limit can still overflow the

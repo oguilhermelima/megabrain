@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProcessAdapter } from "../../src/adapters/proc.js";
-import { executeTerminalDefault, executeTerminalOpen } from "../../src/cli/commands/terminal-open.js";
+import { executeTerminalDefault, executeTerminalOpen, openViewer } from "../../src/cli/commands/terminal-open.js";
 import { executeDoctor } from "../../src/cli/commands/install-doctor.js";
 import { failed, ok } from "../../src/core/result.js";
 
@@ -40,6 +40,29 @@ function state(): string {
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
 
 describe("terminal open", () => {
+  test("records the newly attached client as the dispatch viewer", async () => {
+    let listed = false;
+    let captured: readonly { server: string; tty: string; pid: number }[] | undefined;
+    const process: ProcessAdapter = {
+      async run(_command, args) {
+        if (args[0] === "-L" && args[1] === "megabrain-app") return failed("no server running");
+        if (args.includes("list-clients")) {
+          if (!listed) { listed = true; return ok({ stdout: "", stderr: "", exitCode: 0 }); }
+          return ok({ stdout: "/dev/ttys025|43715\n", stderr: "", exitCode: 0 });
+        }
+        return failed("unexpected command");
+      },
+      startDetached: async () => ok({ pid: 1 }),
+      invocationCount: () => 0,
+    };
+    const viewer = await openViewer({
+      session: "mb-session", automatic: true, env: { MEGABRAIN_TERMINAL: "alacritty" }, process,
+      onViewerClients: async (clients) => { captured = clients; },
+    });
+    expect(viewer).toMatchObject({ terminal: "alacritty", opened: true });
+    expect(captured).toEqual([{ server: "default", tty: "/dev/ttys025", pid: 43715 }]);
+  });
+
   test("opens the selected terminal attached to the session on a named server", async () => {
     const process = fake();
     const result = await executeTerminalOpen(["--session", "mb-session", "--server", "mb-x", "--terminal", "alacritty"], { MEGABRAIN_STATE_DIR: state() }, process);

@@ -100,7 +100,7 @@ export const USAGE_LINES = {
   "terminal-default": "terminal default [<name>|auto|none|--clear]",
   "terminal-restart": "terminal restart <selector> [--command <cmd>] [--wait-port <port>] [--timeout <seconds>] [--json]",
   "terminal-close": "terminal close <selector> [--json] | --app <id> [--server <tmux -L name>] [--json]",
-  "orchestrate-spawn": "orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]",
+  "orchestrate-spawn": "orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--keep-open] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json]",
   "orchestrate-policy": "orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json]",
   "orchestrate-adopt": "orchestrate adopt <dispatch-id-or-suffix> [--json]",
   "orchestrate-list": "orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--json]",
@@ -118,7 +118,7 @@ export const USAGE_LINES = {
   "orchestrate-stop": "orchestrate stop <dispatch-id-or-suffix> [--json]",
   "orchestrate-change": "orchestrate change <dispatch-id-or-suffix> --text <text> [--idle-timeout <seconds>] [--attempts <n>] [--json]",
   "supervise": "supervise [--status|--stop]",
-  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes|pr-defaults | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes|pr-defaults <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
+  "settings": "settings [--json [--only <keys>]] | set terminal-engine native|tmux | get auto-close | set auto-close on|off | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes|pr-defaults | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order|chat-summaries|knowledge|agents|agents-update|models|worktree-location|device-idle-minutes|pr-defaults <json> | get project-appearance [--json] | set project-appearance <repo path> [--name <text>|--no-name] [--color <#rrggbb>|--no-color] [--picture <image file>|--no-picture] [--json]",
   "chat": "chat list --json | start --agent <claude|codex|grok|agy> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json | send <id> --parts <json> [--fresh] [--json] | fork <id> --at <eventId> [--json] | edit-last <id> --parts <json> [--json] | queue list|add|edit|move|remove|clear|send-now|steer <id> [<item>] [--parts <json>] [--to <index>] --json | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | artifacts <chat-id> --json | artifact <chat-id> <artifact-id> --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | take-over <id> --json | terminal-command <id> --json | daemon status|retire|drain [--json] | rename <id> <title> [--json] | summarize <id> [--force] [--json] | summaries <id> --json | search <text> --json",
   "chat-artifacts": "chat artifacts <chat-id> --json",
   "chat-artifact": "chat artifact <chat-id> <artifact-id> [--revision <n>] --json",
@@ -143,6 +143,7 @@ export const USAGE_LINES = {
   "proc-restart": "proc restart <name> [--force]",
   "proc-logs": "proc logs <name> [--tail N] [--since 5m|ISO] [--grep <regex>] [--errors] [--full] [--follow] [--json]",
   "orchestrate-close": "orchestrate close <dispatch-id-or-suffix> [--force-release] [--json]",
+  "orchestrate-keep-open": "orchestrate keep-open <dispatch-id-or-suffix>",
   "ask": "ask \"question\" | megabrain ask --text \"question\"",
   "done": "done \"summary\" | megabrain done --text \"summary\"",
   "received": "received",
@@ -300,9 +301,12 @@ Commands:
   orchestrate stop <dispatch-id-or-suffix> ...   Interrupt a working child without closing its pane
   orchestrate change <dispatch-id-or-suffix> ... Replace queued direction and interrupt the child
   orchestrate close <dispatch-id-or-suffix> ...  Close a Superset dispatch terminal
+  orchestrate keep-open <dispatch-id-or-suffix>  Keep a dispatch terminal open after it finishes
+  Auto-close applies only to acknowledged, unviewed tmux dispatches after 120 seconds; Orca and Superset terminals keep their current behavior
   supervise [--status|--stop]           Inspect or stop the open-dispatch watcher
   settings [--json [--only <keys>]]    Read the settings shown in the desktop app, or only some keys
   settings set terminal-engine ...     Choose the embedded terminal engine
+  settings get|set auto-close ...      Read or change automatic dispatch closing (on or off)
   settings get|set sidebar-folders     Read or replace the desktop sidebar's project folders
   settings get|set sidebar-state       Read or replace what the desktop sidebar folded and its row order
   settings get|set hidden-sessions     Read or replace the sessions the desktop sidebar closed

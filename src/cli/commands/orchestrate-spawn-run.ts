@@ -472,7 +472,15 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     if (plan.nextStep === null) {
       await startSupervisorWorker(root, environment, process);
       // Last, so a spawn that failed above never leaves a window attached to a session it killed.
-      const viewer = session === null ? undefined : await openViewer({ session, flag: parsed.value.terminal, automatic: parentContext.host === "local" && !callerInTmux && sessionCreatedBySpawn, env: environment, process });
+      const viewer = session === null ? undefined : await openViewer({
+        session, flag: parsed.value.terminal, automatic: parentContext.host === "local" && !callerInTmux && sessionCreatedBySpawn,
+        env: environment, process,
+        onViewerClients: async (clients) => {
+          await updateMeta(root, id, clients === undefined
+            ? { autoCloseViewerIdentityUnknown: true }
+            : { autoCloseViewerClients: clients, autoCloseViewerIdentityUnknown: clients.length === 0 }, process);
+        },
+      });
       const output = { status: "spawned", reason: null, dispatchId: id, ...(parentContext.host === "local" ? { deliveryChannel: "hook-and-watch" } : {}), terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }), ...(viewer === undefined ? {} : { viewer }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
       const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;

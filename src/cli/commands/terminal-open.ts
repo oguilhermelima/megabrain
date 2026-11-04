@@ -7,6 +7,8 @@ import {
   type Environment, type OpenerName, type Platform,
 } from "../../core/terminal-openers.js";
 import { usageText } from "../../core/usage.js";
+import { APP_TMUX_SERVER, DISPATCH_TMUX_SERVER } from "../../hosts/tmux.js";
+import type { TmuxViewerClient } from "../../core/dispatch-auto-close.js";
 
 function currentPlatform(): Platform {
   return process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux";
@@ -61,6 +63,27 @@ export async function launchOpener(
 
 export type Viewer = Readonly<{ terminal: string; opened: boolean; attachCommand: string; error: string | null }>;
 
+const VIEWER_CLIENT_FORMAT = "#{client_tty}|#{client_pid}";
+
+async function clientsForSession(session: string, process: ProcessAdapter): Promise<readonly TmuxViewerClient[] | undefined> {
+  const clients: TmuxViewerClient[] = [];
+  for (const server of [DISPATCH_TMUX_SERVER, APP_TMUX_SERVER]) {
+    const result = await process.run("tmux", ["-L", server, "list-clients", "-t", session, "-F", VIEWER_CLIENT_FORMAT]);
+    if (result.kind !== "ok") {
+      const reason = result.kind === "failed" ? result.error : result.reason;
+      if (/no server running|can't find session|no such session|no current client/i.test(reason)) continue;
+      return undefined;
+    }
+    for (const line of result.value.stdout.split("\n").filter((row) => row !== "")) {
+      const [tty, pidRaw] = line.split("|");
+      const pid = Number(pidRaw);
+      if (tty === undefined || !Number.isSafeInteger(pid)) return undefined;
+      clients.push({ server, tty, pid });
+    }
+  }
+  return clients;
+}
+
 // A viewer is a window in the operator's own terminal attached to a tmux session the child already
 // runs in, so it never fails the command that asked for it: the child is up either way, and the
 // error plus the attach command tell the operator how to look at it by hand. `automatic` is true
@@ -73,6 +96,7 @@ export async function openViewer(input: Readonly<{
   env: Environment;
   process: ProcessAdapter;
   platform?: Platform;
+  onViewerClients?: (clients: readonly TmuxViewerClient[] | undefined) => Promise<void>;
 }>): Promise<Viewer | undefined> {
   const { session, flag, env, process } = input;
   if (!input.automatic && (flag === undefined || flag === "auto")) return undefined;
@@ -82,7 +106,22 @@ export async function openViewer(input: Readonly<{
   if (selection.kind !== "ok") return notOpened("none", selection.error);
   if (selection.value.kind === "none") return notOpened("none", null);
   const name = selection.value.name;
+  const existingClients = input.onViewerClients === undefined ? undefined : await clientsForSession(session, process);
   const started = await launchOpener(name, attachArgv(session), env, process, input.platform);
+  if (started.kind === "ok" && input.onViewerClients !== undefined) {
+    let openedClients: readonly TmuxViewerClient[] | undefined;
+    if (existingClients !== undefined) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const current = await clientsForSession(session, process);
+        if (current === undefined) break;
+        const existing = new Set(existingClients.map((client) => `${client.server}|${client.tty}|${client.pid}`));
+        const newlyAttached = current.filter((client) => !existing.has(`${client.server}|${client.tty}|${client.pid}`));
+        if (newlyAttached.length > 0) { openedClients = newlyAttached; break; }
+        await Bun.sleep(100);
+      }
+    }
+    await input.onViewerClients(openedClients);
+  }
   return started.kind === "ok" ? { terminal: name, opened: true, attachCommand, error: null } : notOpened(name, started.error);
 }
 
