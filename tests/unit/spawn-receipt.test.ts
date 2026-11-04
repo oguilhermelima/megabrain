@@ -6,6 +6,8 @@ import { executeSpawn } from "../../src/cli/commands/orchestrate-spawn.js";
 import { appendReceived, cleanupRun, dispatchMessages, existingWorktree, processFor, readMeta, runComposerSpawn, spawnEnvironment } from "./spawn-harness.js";
 import { composerPane } from "./composer-tmux.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
+import { stateDatabase } from "../../src/adapters/state-db.js";
+import { superviseOnce } from "../../src/cli/commands/supervise.js";
 
 // The variable no longer exists. Setting it proves a leftover export cannot bring a deadline back.
 const staleDeadline = { MEGABRAIN_PROMPT_RECEIPT_TIMEOUT_SECONDS: "0.4" };
@@ -138,17 +140,19 @@ describe("spawn --json", () => {
   test("a spawn that fails after its dispatch exists prints one JSON object with the dispatch id, status and reason", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-json-failure-`);
     const original = getTmux();
-    const pane = composerPane({ agent: "codex" });
+    const events: string[] = [];
+    const pane = composerPane({ agent: "codex", events });
     registerTmux({ ...original, id: "tmux", paneExists: async () => ok(true), sessionExists: async () => ok(true), panesForSession: async () => ok(["%9"]), ...pane.provider, capturePane: async () => ok("Update available! Press enter to continue") } as typeof original);
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "codex", "--prompt", "p", "--tmux", "true", "--json"], {
         ...spawnEnvironment(root, "dispatch-json-failure"),
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "300",
       }, processFor(), { resolveWorktree: async () => ok(existingWorktree) });
-      expect(result.kind).toBe("failed");
-      if (result.kind !== "failed") throw new Error("expected a failure");
-      expect(parse(result.stdout)).toMatchObject({ status: "failed", reason: "readiness-output-invalid", dispatchId: "dispatch-json-failure", tmuxPane: "%9" });
-      expect(result.error).toContain("readiness-output-invalid");
+      expect(result.kind).toBe("ok");
+      if (result.kind !== "ok") throw new Error("expected deferred readiness");
+      expect(parse(result.value)).toMatchObject({ status: "spawned", dispatchId: "dispatch-json-failure", tmuxPane: "%9" });
+      expect(readMeta(root, "dispatch-json-failure")).toMatchObject({ readinessState: "starting", readinessFrame: expect.stringContaining("Update available!") });
+      expect(events.filter((event) => event.startsWith("key:"))).toEqual([]);
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
@@ -207,24 +211,34 @@ describe("spawn --json", () => {
 });
 
 describe("spawn readiness", () => {
-  test("records the frame readiness rejected in the dispatch's messages", async () => {
+  test("keeps startup dialogs pending for supervision without answering them", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-frame-`);
     const original = getTmux();
-    const pane = composerPane({ agent: "claude" });
-    registerTmux({ ...original, id: "tmux", paneExists: async () => ok(true), sessionExists: async () => ok(true), panesForSession: async () => ok(["%9"]), ...pane.provider, capturePane: async () => ok("Welcome back\nChecking for updates...\nPress enter to continue") } as typeof original);
+    const events: string[] = [];
+    const pane = composerPane({ agent: "claude", events });
+    registerTmux({ ...original, id: "tmux", paneExists: async () => ok(true), sessionExists: async () => ok(true), panesForSession: async () => ok(["%9"]), panePid: async () => ok("123"), ...pane.provider, capturePane: async () => ok("Do you trust this workspace?\nPress enter to continue") } as typeof original);
     try {
+      const environment = spawnEnvironment(root, "dispatch-rejected-frame");
+      const process = processFor((command, args) => {
+        if (command === "ps" && args.includes("stat=")) return ok({ stdout: "R\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args.includes("tty=")) return ok({ stdout: "ttys001\n", stderr: "", exitCode: 0 });
+        if (command === "ps" && args.includes("pid=,ppid=,command=")) return ok({ stdout: "123 1 agent MEGABRAIN_DISPATCH_ID=dispatch-rejected-frame\n", stderr: "", exitCode: 0 });
+        return ok({ stdout: "", stderr: "", exitCode: 0 });
+      });
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "p", "--tmux", "true"], {
-        ...spawnEnvironment(root, "dispatch-rejected-frame"),
+        ...environment,
         MEGABRAIN_AGENT_READY_TIMEOUT_MS: "300",
-      }, processFor(), { resolveWorktree: async () => ok(existingWorktree) });
-      expect(result.kind).toBe("failed");
-      const frames = dispatchMessages(root, "dispatch-rejected-frame").filter((message) => message.type === "readiness-frame");
-      expect(frames).toHaveLength(1);
-      expect(frames[0]?.from).toBe("megabrain");
-      expect(frames[0]?.text).toContain("Checking for updates...");
-      expect(frames[0]?.text).toContain("claude");
-      // Logging the frame must not hand the child (or the coordinator) an actionable message.
-      expect(dispatchMessages(root, "dispatch-rejected-frame").filter((message) => message.from === "child")).toEqual([]);
+      }, process, { resolveWorktree: async () => ok(existingWorktree) });
+      expect(result.kind).toBe("ok");
+      expect(readMeta(root, "dispatch-rejected-frame")).toMatchObject({ readinessState: "starting", readinessFrame: expect.stringContaining("Do you trust this workspace?") });
+      expect(pane.pastes).toEqual([]);
+      expect(events.filter((event) => event.startsWith("key:"))).toEqual([]);
+      const database = stateDatabase(environment);
+      if (database.kind !== "ok") throw new Error(database.error);
+      await superviseOnce(root, database.value, environment, process, Date.now() + 1_000);
+      await superviseOnce(root, database.value, environment, process, Date.now() + 2_000);
+      expect(dispatchMessages(root, "dispatch-rejected-frame").filter((message) => message.type === "supervise")).toHaveLength(1);
+      expect(readMeta(root, "dispatch-rejected-frame")).toMatchObject({ readinessDialog: "workspace-trust-dialog", lastReadinessNoticeAt: expect.any(Number) });
     } finally {
       registerTmux(original);
       await rm(root, { recursive: true, force: true });
