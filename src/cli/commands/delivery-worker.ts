@@ -406,10 +406,6 @@ export async function executeDeliveryWorker(args: readonly string[], environment
       "codex-queue": async () => {
         if (!outboxLeaseActive()) return { delivered: false, stop: true, detail: "delivery lease was lost" };
         if (fallbackOnly || typeof threadId !== "string" || threadId === "" || text === "") return false;
-        if (targetKind === "child-delivery") {
-          peer = { kind: "fallback", reason: "child reads are acknowledged by check; use a busy-pane pointer" };
-          return false;
-        }
         const found = await findCodexProcessByThread(threadId, process);
         if (!("pid" in found)) { peer = { kind: "fallback", reason: found.reason }; return false; }
         if (targetKind === "child-delivery") {
@@ -532,13 +528,13 @@ export async function executeDeliveryVerificationWorker(args: readonly string[],
     return ok("peer verification lease lost\n");
   }
   if (result === "delivered") {
-    if (delivery.recipient === "child" || delivery.recipient === "parent") await callStateOwner(root, {
+    if (delivery.recipient === "parent") await callStateOwner(root, {
       operation: "ack-implicit-delivery", dispatchId: dispatch, deliveryId: delivery.id, recipient: delivery.recipient,
       consumer: saved.value.channel === "peer-socket" ? "channel:claude-peer" : `channel:${saved.value.channel}`,
     });
     await recordChannelResultThroughOwner(root, { agent: saved.value.agent, channel: saved.value.channel, agentVersion: saved.value.agentVersion, ok: true });
     finishOutboxPeerVerification(database.value, outboxId, "delivered");
-    await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: "acknowledged" });
+    await callStateOwner(root, { operation: "set-delivery-transport", dispatchId: dispatch, sequence, transport: delivery.recipient === "child" ? "ack-verifying" : "acknowledged", ...(delivery.recipient === "child" ? { reason: "peer-socket-verified" } : {}) });
   }
   return ok(`peer verification ${result}\n`);
   } finally {
