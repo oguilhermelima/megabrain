@@ -132,13 +132,16 @@ start empty, so add one with `megabrain chain add <name> ...` first. Use `chain 
 explicit chain runner when you want its ordered fallback across steps and usage-window checks.
 
 ```
-megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json] — recommended when you need to start a child agent on a new or existing worktree.
+megabrain orchestrate spawn --repo <name|path> --branch <branch> [--agent <id>] [--chain <name>] [--model <id>] [--base <ref>] [--name <slug>] [--effort <level>] [--prompt <text>] [--label <text>] [--worktree <path>] [--tmux true|false] [--terminal <name>|auto|none] [--admission wait|fail] [--keep-open] [--browser] [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop] [--max-iterations <n>] [--agent-arg <flag>] [--json] — recommended when you need to start a child agent on a new or existing worktree.
 megabrain orchestrate policy <dispatch-id-or-suffix> [--context-ceiling <N%|Nk>] [--compact-at <N%|Nk>] [--loop|--no-loop] [--max-iterations <n>] [--json] — recommended when you need to change context policies on an active dispatch.
 ```
 
 `--chain <name>` bypasses selector matching on both commands. An explicit `--agent` wins over
 chain selection and works with no chain configured. Explicit `--model` and `--effort` override
 those fields when the chain supplies the agent:
+
+Spawn checks Claude and Codex worktree trust before launch; this check is best-effort. Startup
+dialogs are never answered automatically; readiness waits for a person to resolve them.
 
 ```
 megabrain chain run [name] [--chain <name>] [--parent-agent <agent>] [--parent-model <model>] [--parent-effort <effort>] [--repo <name|path>] [--branch <branch>] [--base <ref>] [--name <slug>] [--worktree <path>] [--prompt <text>] [--label <text>] [--tmux true|false] [--browser] [--agent-arg <flag>] [--json] — recommended when you need to launch work through a named or automatically selected fallback chain.
@@ -152,6 +155,8 @@ list` shows the name, and `db show <dispatch-id-or-suffix>` includes `chatName`.
 `agent · name` and set `@megabrain_agent`, `@megabrain_name`, and `@megabrain_state`; Orca tabs use
 the same title, and Claude starts with `--name <chat name>`.
 
+Receipts include a `next` hint describing the next useful action.
+
 Typed and queued messages have three parts: `<icon> <agent> · <chat name> <status words>`, one
 plain-language summary sentence of at most 140 characters, and a details pointer. The status words
 are `finished`, `has a question`, `is stuck`, `reply`, and `new direction`, with icons ✅, ❓, ⚠️, 💬,
@@ -159,9 +164,10 @@ and 🔀. A parent-bound message points to `megabrain orchestrate watch <last-ei
 child-bound message uses the coordinator's agent and chat name and points to `megabrain check` for
 the full text. Orca receives all three parts on one line joined with ` — `.
 
-The spawn preamble tells children to start `megabrain done` and `megabrain ask` with one
-plain-language sentence: what changed or what they need. That sentence has no file names, commands,
-or test counts; technical detail follows it.
+The worker preamble says: ask only when the brief cannot settle a decision, then poll `megabrain
+check` and do not proceed on a default; send `megabrain done` only when finished or blocked.
+Start both messages with one plain sentence a nontechnical person understands, without filenames,
+commands or counts; follow it with the details.
 
 The watch, read, ack, reply, stop, change, and close commands accept a unique dispatch ID suffix of
 at least eight characters. They resolve across dispatches regardless of caller. An ambiguous
@@ -184,7 +190,7 @@ megabrain orchestrate list [--mine|--all|--orphans|--uncertain] [--archived] [--
 megabrain orchestrate graph (--chat <chat id> | --session <agent:id>) [--follow] --json — recommended when you need the coordinator and all lanes in its orchestration tree.
 megabrain orchestrate adopt <dispatch-id-or-suffix> [--json] — deprecated no-op for one release; dispatches now follow their terminal.
 megabrain orchestrate liveness <dispatch-id-or-suffix> [--json] — recommended when you need to check the child terminal execution state without waiting for a message.
-megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--json] — recommended when you need to wait for or retrieve a child message delivery that can be replayed until acknowledged.
+megabrain orchestrate watch <dispatch-id-or-suffix> [--timeout <seconds>] [--poll-interval <seconds>] [--wait-mode nudge|poll] [--consumer <id>] [--generation <number>] [--full] [--no-ack] [--json] — recommended when you need to wait for or retrieve a child message.
 megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> [--consumer <id>] [--generation <number>] [--close] [--json] — recommended when you need to mark a child message delivery as handled, optionally closing a finished dispatch.
 megabrain orchestrate queue [<dispatch-id-or-suffix>] [--json] — recommended when you need to list queued messages you own.
 megabrain orchestrate queue cancel <item-id> [--json] — recommended when you need to cancel a queued message.
@@ -202,6 +208,8 @@ megabrain supervise [--status|--stop] — recommended when you need to check, or
 megabrain status [--json] — recommended when you need to see the watcher, every open dispatch with its supervisor finding, the queue, managed processes, machine load and delivery channels in one call.
 megabrain settings [--json] — recommended when you need one read of the settings shown in the desktop app.
 megabrain settings [--json] | set terminal-engine native|tmux | get sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order | set sidebar-folders|sidebar-state|shortcuts|hidden-sessions|usage-order <json> — recommended when you need to read desktop settings, choose the embedded terminal engine, or read or replace the desktop sidebar's project folders, collapse state and row order, shortcut overrides and hidden sessions.
+megabrain settings get auto-close | set auto-close on|off — read or change automatic dispatch closing.
+megabrain settings get pr-defaults | set pr-defaults <json> — read or replace the default draft state for pull requests.
 megabrain chat list --json | start --agent <claude|codex|grok> --cwd <path> [--model <model>] [--effort <level>] [--approvals] [--parts <json>] --json | send <id> --parts <json> [--fresh] [--json] | fork <id> --at <eventId> [--json] | edit-last <id> --parts <json> [--json] | queue list|add|edit|move|remove|clear|send-now|steer <id> [<item>] [--parts <json>] [--to <index>] --json | interrupt <id> | approve <id> <approvalId> --decision allow|allow-session|deny | stop <id> | remove <id> [--json] | events <id> [--since <cursor>] [--follow] --json | artifacts <chat-id> --json | artifact <chat-id> <artifact-id> --json | model <id> <model> [--effort <level>] [--json] | mode <id> chat|terminal --json | take-over <id> --json | terminal-command <id> --json | daemon status|retire|drain [--json] | rename <id> <title> [--json] | summarize <id> [--json] | summaries <id> --json | search <text> --json. — recommended when you need to start or control a persistent Claude, Codex or Grok chat. agy remains unavailable until its native adapter lands.
 megabrain chat start --agent <claude|codex|grok> --cwd <path> [--model <model>] [--effort <level>] [--parts <json>] --json — start a persistent native chat in a project folder. agy is not available yet.
 megabrain chat send <id> --parts <json> [--json] — send ordered text and local image parts to a chat; while a turn runs the message waits in the chat's queue (--json prints {"queued": item|null}).
@@ -255,8 +263,10 @@ megabrain proc start|run|list|status|stop|restart|logs ... — recommended when 
 megabrain orchestrate prune [--older-than <days>] [--state <list>] [--archive|--delete] [--dry-run] [--json] — recommended when you need to archive or delete old terminal dispatch records.
 ```
 
-`watch` returns a delivery that **replays until acked**, so nothing is lost if you read it and
-do not act. Ack it once you have acted; acking twice is safe and reports `duplicate`.
+`watch` acknowledges the delivery it returns. Use `--no-ack` to leave it available for replay;
+explicit `ack` is safe to repeat and reports `duplicate`. `check` claims and implicitly acknowledges
+a direction as it returns it; `replayed` marks a repeat for the same reader, and replies already
+verified through a peer socket carry `alreadyDeliveredThroughSocket`.
 When no delivery is available, watch and check report status `empty`; a timeout is not implied.
 
 **Do not assume you will be told.** When a child runs `ask` or `done`, a live Codex parent receives
@@ -282,27 +292,27 @@ The same notice flags a dispatch in state `done` whose terminal is still retaine
 `megabrain orchestrate ack <dispatch-id-or-suffix> <delivery-id> --close` when appropriate: it acknowledges
 the delivery and releases the finished dispatch in one call.
 
-Nothing removes a finished dispatch on its own. `prune` archives terminal ones past an
-age threshold, and archives rather than deletes by default because a dispatch's message
-queue is the record of what actually happened. It never touches a dispatch that is still
-open, and a state it does not recognise counts as open.
+`prune` archives terminal dispatches past an age threshold, and archives rather than deletes by
+default because the message queue records what happened. It never touches an open dispatch, and
+unknown states count as open.
 
 Reading the dispatch record is not reading the message. A failure's `reason` field is the
 symptom; the child's own message in the queue is usually the cause. Look at the messages before
 concluding anything about a failed dispatch.
 
-**Closing a finished dispatch is your job, not the child's.** When a child reports `done`, read
-what it says, verify what you can, and then close it. Nothing closes it for you: the child cannot,
-because it would be killing the pane it is running in, and `close` refuses that unconditionally.
-A dispatch left open holds a pane and keeps appearing in `orchestrate list`.
+When a child reports `done`, read what it says and verify what you can. Tmux dispatches close
+automatically 120 seconds after the done delivery is acknowledged, unless auto-close is disabled,
+the pane was viewed after completion, or `--keep-open` was set. Orca and Superset terminals keep
+their existing behavior. Use `orchestrate keep-open <dispatch-id-or-suffix>` to retain a dispatch.
 
-Close after you have read the pane, not before. `orchestrate read` reads the terminal's own
-scrollback, and closing destroys it: the queue keeps every message, but the transcript that shows
-what the agent actually did is gone. A `done` is a claim, and the pane is where you check it.
+Read the pane before manually closing when you need its live scrollback. Tmux dispatches also keep
+a persisted transcript that `orchestrate read` can use after the pane is gone. A `done` is a claim;
+inspect the pane or transcript when you need to verify it.
 
 ```sh
 megabrain orchestrate read <dispatch-id-or-suffix> [--lines <count>] [--json] — recommended when you need to inspect the child terminal transcript or scrollback to see what it actually did.
 megabrain orchestrate close <dispatch-id-or-suffix> [--force-release] [--json] — recommended when you need to release a finished dispatch and its pane after reading the child output.
+megabrain orchestrate keep-open <dispatch-id-or-suffix> — keep a dispatch terminal open after it finishes.
 ```
 
 `close` refuses to close the pane it is running in, and `--force-release` does not override that.
@@ -326,11 +336,15 @@ composer is idle and stable (10 seconds per wait, up to three interrupts by defa
 only into an empty composer and clears a draft only when it matches the direction being sent. A
 foreign draft is preserved; if delivery cannot happen now, a detached deliverer retries for up to
 ten minutes. `--idle-timeout` changes each idle and confirmation wait, and `--attempts` sets a limit
-from one to three. If the direction exceeds the 12000-byte tmux limit, the child receives a pointer
-to `megabrain check`; the full text remains queued.
+from one to three. If the child is busy, it gets a short `megabrain check` pointer while the full
+direction is typed into its terminal and remains queued until read. Directions over the 12000-byte
+tmux limit also use this pointer instead of being typed in full.
 
 `megabrain supervise` is started by `orchestrate spawn` and watches every open dispatch from the
-agent's own session records, never from silence. It sends the parent one message of type supervise per
+agent's own session records, never from silence. Spawn waits for a readiness event on tmux and
+Orca/Superset hosts before sending the prompt. Startup dialogs are captured and left for a person;
+the parent is notified once, and a host that supplies no pid records `processIdentity: unknown`.
+It sends the parent one message of type supervise per
 finding (usage-limit, rate-limited, server-error, network, auth-required, dialog-waiting,
 prompt-unsubmitted, prompt-lost, process-exited, pane-gone) with a recommended action, and only
 auto-recovers an unsubmitted prompt. Spawn has no receipt deadline: the supervisor reads the first
@@ -396,7 +410,7 @@ the chain at the next step.
 
 ```
 megabrain worktree create --repo <name|path> --branch <branch> [--from <ref>] [--base <ref>] [--parent <branch:branch|path:path>] [--no-parent] [--issue <number>] [--linear-issue <identifier-or-url>] [--pr <number>] [--name <slug>] [--agent <id>] [--model <id>] [--effort <level>] [--prompt <text>] [--label <text>] [--tmux true|false] [--json] — recommended when you need to create and register a shared worktree for a task.
-megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--json] — recommended when you need to open a pull request for a worktree branch.
+megabrain worktree pr <branch|path|slug> [--base <ref>] [--title <text>] [--body <text>] [--draft|--ready] [--json] — recommended when you need to open a pull request for a worktree branch.
 megabrain stack create <branch> --on <parent> [--repo <path>] | show|pr [--draft]|sync|merge [--yes] [--branch <member>] [--provider github|gitlab] — recommended when you need to manage dependent branches and pull or merge requests.
 megabrain worktree finish <branch|path|slug> [--delete-branch] [--base <ref>] [--force] [--json] — recommended when you need to remove a completed worktree after its safety checks pass.
 megabrain worktree archive <branch|path> [--repo <name|path>] [--force] [--json] — recommended when you need to put a branch away: folder removed, branch kept.
@@ -425,16 +439,20 @@ lineage and Superset grouping were each set; a decoration failure does not undo 
 failing Orca update is reported in JSON without undoing the Git checkout. `--pr` is passed to
 Superset's workspace creation for review flows; verified PR-head checkout is a Superset capability,
 so an Orca-only or bare host cannot provide that part of the flow.
+GitHub reads are cached for 60 seconds by command and arguments; successful writes invalidate
+related cached reads.
 `worktree pr` uses the recorded Git stack parent as the base, otherwise the repository default, unless
 `--base` overrides it. Its default title is the branch name and its default body is empty. It refuses
 to call `gh pr create` when the branch has no commits ahead of its base, and distinguishes missing gh
-from unauthenticated gh. The command requires gh only when opening the PR.
+from unauthenticated gh. The command requires gh only when opening the PR. `--draft` and `--ready`
+override the default; `settings get|set pr-defaults` controls the default, ready unless configured.
 `stack create` registers a new dependent worktree and records its parent branch. `stack pr` uses
 GitHub's native stacked pull request API when available and falls back to chained PRs if it is not;
 GitLab uses chained merge requests with `glab`. `stack sync` and `stack merge` require `--yes`, show
 their plan, and refuse to merge branches with local commits that have not been pushed. `--branch <member>`
 selects the stack that member belongs to; a forked stack is shown with its `forks`, and `pr`, `sync` and
-`merge` refuse it.
+`merge` refuse it. GitHub merge processes PRs bottom-up, squashes each using its PR title, and can
+resume after already merged PRs; the non-native fallback retargets the next PR after each merge.
 Human `worktree list` prints the stack as a tree; `--flat` preserves the path/branch table and JSON
 remains flat with parent and optional pull-request fields. Pull-request state is best-effort and does
 not make listing depend on gh or Orca.
@@ -467,6 +485,10 @@ megabrain context [--json] — recommended when you need to identify the orchest
 megabrain doctor [module-id] [--json] — recommended when you need to check whether a module or the whole installation is healthy.
 megabrain install [module-id] [--agents claude,codex,agy,grok|none] [--skill none|global|project] [--modules list|all|none] [--tmux yes|no] [--yes] [--browser chromium|firefox|both] [--revert] [--plan] [--json] — recommended when you need to configure megabrain for an agent or install, update, or remove its modules and skills.
 ```
+
+`install --skill global` copies this skill to the configured agent skill folders, including
+`~/.claude/skills/megabrain/SKILL.md` and `~/.codex/skills/megabrain/SKILL.md`; project scope uses
+project-local skill folders.
 
 `doctor --json` is machine readable for every module; operator advice goes to stderr so it stays
 out of the JSON. Use the `simulator-native` and `simulator-tv` module ids to diagnose Apple
