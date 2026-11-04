@@ -152,7 +152,7 @@ contains "$(cat "$GH_LOG")" 'pulls/13/merge'
 export GH_CLOSED_UNMERGED=12
 : >"$GH_LOG"
 if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge accepted a closed unmerged PR'; fi
-contains "$output" 'closed, not open'
+contains "$output" 'closed without being merged'
 not_contains "$(cat "$GH_LOG")" 'pulls/12/merge'
 unset GH_CLOSED_UNMERGED
 
