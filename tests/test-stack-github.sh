@@ -31,11 +31,12 @@ case "${1:-} ${2:-} ${3:-}" in
     if [ "${GH_NATIVE:-yes}" = yes ]; then printf '[]\n'; else printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1; fi
     ;;
   "api --method POST"*) printf '{"number":12}\n' ;;
-  "api --method PUT"*) printf '{"status":"pending","details":{"uuid":"merge-id"}}\n' ;;
+  "api --method PUT"*) printf '{"sha":"merged"}\n' ;;
+  "api --method PATCH"*) printf '{"number":12}\n' ;;
   "api repos/owner/repo/pulls/13/merge-async/merge-id"*) printf '{"status":"merged","details":{"sha":"abc"}}\n' ;;
   "pr list"*)
     if [ "${GH_LIST_MODE:-empty}" = open ]; then
-      printf '[{"number":12,"headRefName":"stack/base","baseRefName":"main","url":"https://github.com/owner/repo/pull/12","state":"OPEN"},{"number":13,"headRefName":"stack/child","baseRefName":"stack/base","url":"https://github.com/owner/repo/pull/13","state":"OPEN"}]\n'
+      printf '[{"number":12,"headRefName":"stack/base","baseRefName":"main","url":"https://github.com/owner/repo/pull/12","state":"OPEN","title":"feat: add base behavior","body":"Base details","headRefOid":"base-sha"},{"number":13,"headRefName":"stack/child","baseRefName":"stack/base","url":"https://github.com/owner/repo/pull/13","state":"OPEN","title":"fix: add child behavior","body":"Child details","headRefOid":"child-sha"}]\n'
     else printf '[]\n'; fi
     ;;
   "pr create"*)
@@ -86,14 +87,21 @@ contains "$(cat "$GH_LOG")" 'POST repos/owner/repo/stacks'
 contains "$(cat "$GH_LOG")" 'pull_requests'
 printf 'GitHub creates native stacks after opening dependent pull requests\n'
 
-# Scenario: native GitHub stack merges use the asynchronous endpoint and wait for its result.
+# Scenario: native GitHub stack merges each PR bottom-up with its own title, body and head SHA.
 export GH_LIST_MODE=open
 : >"$GH_LOG"
 output="$(run stack merge --yes)"
-contains "$(cat "$GH_LOG")" 'PUT repos/owner/repo/pulls/13/merge-async'
-contains "$(cat "$GH_LOG")" 'repos/owner/repo/pulls/13/merge-async/merge-id'
-contains "$output" 'GitHub stack merge completed'
-printf 'GitHub native stack merge polls the asynchronous API to completion\n'
+log="$(cat "$GH_LOG")"
+contains "$log" 'PUT repos/owner/repo/pulls/12/merge'
+contains "$log" 'PUT repos/owner/repo/pulls/13/merge'
+contains "$log" 'commit_title=feat: add base behavior (#12)'
+contains "$log" 'commit_message=Base details'
+contains "$log" 'commit_title=fix: add child behavior (#13)'
+contains "$log" 'commit_message=Child details'
+contains "$log" 'sha=base-sha'
+contains "$log" 'sha=child-sha'
+contains "$output" 'Stack merged bottom-up'
+printf 'GitHub native stack merges every PR with its own title, body and checked head\n'
 
 # Scenario: unsupported stacks use chained PR bases and include their position in the body.
 export GH_NATIVE=no
