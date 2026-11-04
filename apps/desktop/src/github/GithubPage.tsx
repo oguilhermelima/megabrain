@@ -9,7 +9,7 @@ import { ErrorNote } from '@/components/ui'
 import { emptyPullRequestFilters, filterOptionsFrom, githubRepository, includesAuthor, otherPeople, type IssueFilters, type PullRequestFilters, type PullRequestTab } from '@/github/github-model'
 import { firstCursors, withNext } from '@/github/pager'
 import { CloseIcon, CommentIcon, MaximiseIcon, MilestoneIcon, RefreshIcon } from '@/github/icons'
-import { issuePage, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
+import { issueDetail, issuePage, pullRequestDetail, pullRequestPage, type IssueState, type PullRequestState } from '@/github/github-requests'
 import { Avatar, ChecksList, ConversationThread, OpenLink, IssueStateIcon, LabelChip, LineCounts, PullRequestStateIcon, ReviewChip, SkeletonRows, StatePill, ago, useNow } from '@/github/parts'
 import { BranchFlow, StatPill } from '@/github/ItemHero'
 import { ActionsPage } from '@/github/ActionsPage'
@@ -30,9 +30,9 @@ import { pageDivider, pageMx, pageX } from '@/lib/page'
 type Listing = { kind: 'prs'; page: GithubPullRequestList } | { kind: 'issues'; page: GithubIssueList }
 type ListRequest = { kind: 'prs'; state: PullRequestState; filters: PullRequestFilters } | { kind: 'issues'; state: IssueState; filters: IssueFilters }
 
-async function readPage(root: string, request: ListRequest, after: string | null): Promise<Listing> {
-  if (request.kind === 'prs') return { kind: 'prs', page: await pullRequestPage(root, request.state, after, request.filters) }
-  return { kind: 'issues', page: await issuePage(root, request.state, after, request.filters) }
+async function readPage(root: string, request: ListRequest, after: string | null, refresh = false): Promise<Listing> {
+  if (request.kind === 'prs') return { kind: 'prs', page: await pullRequestPage(root, request.state, after, request.filters, { refresh }) }
+  return { kind: 'issues', page: await issuePage(root, request.state, after, request.filters, { refresh }) }
 }
 
 /**
@@ -56,11 +56,11 @@ export function usePagedListing(root: string, request: ListRequest) {
   // again meanwhile) never replaces what a newer read shows.
   const fence = useRef(readFence())
 
-  const read = useCallback(async () => {
+  const read = useCallback(async (_current: () => boolean, refresh = false) => {
     const reading = fence.current.start()
     setLoading(true)
     try {
-      const listing = await readPage(root, asked.current, cursor)
+      const listing = await readPage(root, asked.current, cursor, refresh)
       if (!fence.current.newest(reading)) return
       setShown((loaded) => reuse(loaded, { key, index, listing }))
       setAt((now) => (now.key === key ? { ...now, cursors: withNext(now.cursors, index, listing.page.nextCursor) } : now))
@@ -202,7 +202,7 @@ export function DetailPane({ project, kind, number, pullRequest, issue, onMaximi
     let stopped = false
     setDetail(null)
     setError(null)
-    const request = kind === 'prs' ? api.githubPullRequest(project.path, number) : api.githubIssue(project.path, number)
+    const request = kind === 'prs' ? pullRequestDetail(project.path, number) : issueDetail(project.path, number)
     request.then(
       (value) => !stopped && setDetail(value),
       (cause: unknown) => !stopped && setError(cause),

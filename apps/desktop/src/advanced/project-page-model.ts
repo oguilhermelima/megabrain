@@ -181,9 +181,11 @@ export interface PullDetail {
 }
 
 /** A pull request's detail as its row shows it; one that could not be read is unavailable, never one without checks. */
-export function pullDetail(detail: Pick<GithubDetail, 'checks' | 'reviewDecision'> | null): PullDetail | 'unavailable' {
+export function pullDetail(detail: { checks?: GithubCheck[]; reviewDecision?: string | null } | null): PullDetail | 'unavailable' {
   if (detail === null) return 'unavailable'
-  return { checks: detail.checks ?? [], review: detail.reviewDecision ?? null }
+  const decision = detail.reviewDecision?.toLowerCase()
+  const review = decision === 'approved' || decision === 'changes_requested' || decision === 'review_required' ? decision : null
+  return { checks: detail.checks ?? [], review }
 }
 
 /** The Issues section's one line: how many are open once the count is known, or that it could not be read. */

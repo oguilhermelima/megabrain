@@ -17,7 +17,7 @@ const fixture = (name: string): string => readFileSync(new URL(`../fixtures/gith
 const PR_VIEW_FIELDS = "number,title,state,isDraft,url,author,createdAt,body,comments,reviewDecision,statusCheckRollup,additions,deletions,headRefName,baseRefName";
 const ISSUE_VIEW_FIELDS = "number,title,state,url,author,createdAt,body,comments";
 // What made GitHub's GraphQL time out on a whole listing: none of it belongs in a list query.
-const HEAVY_FIELDS = ["statusCheckRollup", "reviewDecision", "additions", "deletions", "commits", "reviews", "files"];
+const HEAVY_FIELDS = ["additions", "deletions", "commits", "reviews", "files"];
 
 type GhCall = readonly string[];
 type GhAnswer = (args: GhCall) => Result<ProcessOutput>;
@@ -97,6 +97,7 @@ type Label = { name: string; color: string; description: string };
 type PullRequest = {
   number: number; title: string; state: string; isDraft: boolean; author: Person | null; labels: Label[];
   createdAt: string; updatedAt: string; url: string; headRefName: string; baseRefName: string; comments: number;
+  reviewDecision?: string | null; checks?: { name: string; state: string }[];
 };
 type Issue = {
   number: number; title: string; state: string; author: Person | null; labels: Label[];
@@ -141,7 +142,7 @@ describe("github prs", () => {
     expect(listing.items.map((item) => item.number)).toEqual([14678, 14679, 14706, 14659]);
   });
 
-  test("the list query asks only for light fields; checks, reviews and line counts wait for the detail", async () => {
+  test("the list query keeps detail-only reviews and line counts out", async () => {
     const path = await repository("sample", "git@github.com:operator/sample.git");
     await github(["prs", path, "--state", "all", "--json"]);
     const text = query(calls[0] ?? []);
@@ -149,6 +150,25 @@ describe("github prs", () => {
     for (const field of HEAVY_FIELDS) expect(text).not.toContain(field);
     // A count is a number, not a list of every comment.
     expect(text).toMatch(/comments\s*\{\s*totalCount\s*\}/);
+  });
+
+  test("the list includes only the review and check fields shown on project overview rows", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const raw = JSON.parse(fixture("pr-list-graphql.json")) as { data: { repository: { items: { nodes: Record<string, unknown>[] } } } };
+    const captured = JSON.parse(fixture("pr-list.json")) as Record<string, unknown>[];
+    Object.assign(raw.data.repository.items.nodes[0] ?? {}, {
+      reviewDecision: captured[0]?.reviewDecision,
+      statusCheckRollup: captured[0]?.statusCheckRollup,
+    });
+    answer = () => stdout(JSON.stringify(raw));
+    const listing = parsed<Listing<PullRequest>>(await github(["prs", path, "--state", "open", "--json"]));
+    const text = query(calls[0] ?? []);
+    expect(text).toContain("reviewDecision");
+    expect(text).toContain("statusCheckRollup");
+    expect(listing.items[0]).toMatchObject({ reviewDecision: expect.any(String) });
+    const checks = listing.items[0]?.checks;
+    expect(Array.isArray(checks)).toBe(true);
+    expect(checks?.[0]).toEqual({ name: "label-external / label_issues", state: "success" });
   });
 
   test("normalizes states, drafts, bots, labels and comment counts", async () => {
@@ -167,6 +187,8 @@ describe("github prs", () => {
       headRefName: expect.any(String),
       baseRefName: "fake-maintainer/artifact-review-feedback",
       comments: 0,
+      reviewDecision: null,
+      checks: [],
     });
     expect(draft).toMatchObject({ number: 14679, state: "open", isDraft: true });
     expect(merged).toMatchObject({ state: "merged", author: { login: "app/dependabot", name: null, isBot: true } });

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { api } from '@/api'
+import { issueDetail, pullRequestDetail } from '@/github/github-requests'
 import type { Artifact, KnowledgeChat, KnowledgeKind, KnowledgeList, KnowledgeRef, KnowledgeStatus, KnowledgeTopic, KnowledgeTopicSummary, Project } from '@/api/schema'
 import { ArtifactStrip } from '@/advanced/ArtifactStrip'
 import { column, useRead } from '@/advanced/knowledge-parts'
@@ -177,9 +178,6 @@ function StatusChip({ status }: { status: KnowledgeStatus }) {
   )
 }
 
-/** Live GitHub states of a topic's issues and pull requests, read once per page and kept for the run. */
-const refStates = new Map<string, Promise<string | null>>()
-
 const refStateKey = (repo: string, ref: KnowledgeRef) => `${repo}\n${ref.kind}\n${refNumber(ref) ?? ''}`
 
 /** Each issue's and pull request's live state (draft for an open draft), else the state the topic recorded. */
@@ -194,15 +192,14 @@ function useRefStates(repo: string, refs: readonly KnowledgeRef[], listed: boole
       const number = refNumber(ref)
       if (number === null) continue
       const key = refStateKey(repo, ref)
-      let read = refStates.get(key)
-      if (read === undefined) {
-        read = (ref.kind === 'pr' ? api.githubPullRequest(repo, number) : api.githubIssue(repo, number)).then(
-          (detail) => (detail.isDraft === true && detail.state.toLowerCase() === 'open' ? 'draft' : detail.state.toLowerCase()),
-          () => null,
-        )
-        refStates.set(key, read)
-      }
-      read.then((value) => current && setStates((known) => new Map(known).set(key, value)))
+      const read = ref.kind === 'pr' ? pullRequestDetail(repo, number) : issueDetail(repo, number)
+      read.then(
+        (detail) => {
+          const value = detail.isDraft === true && detail.state.toLowerCase() === 'open' ? 'draft' : detail.state.toLowerCase()
+          if (current) setStates((known) => new Map(known).set(key, value))
+        },
+        () => current && setStates((known) => new Map(known).set(key, null)),
+      )
     }
     return () => {
       current = false

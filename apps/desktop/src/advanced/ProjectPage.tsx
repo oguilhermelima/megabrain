@@ -27,6 +27,7 @@ import { tildePath } from '@/import/parts'
 import { mapLimited } from '@/lib/poll-model'
 import { useRunControls, type RunControls } from '@/run-panel/run-context'
 import { pageX } from '@/lib/page'
+import { onAction } from '@/lib/app-events'
 
 // A project's page in a pane. A hero says who it is (picture, name, and one line with the remote, the
 // main checkout's branch and its path) and, on a row of its own under that, its actions: New chat as the
@@ -52,18 +53,24 @@ export interface ProjectPageActions {
 type Load<T> = SummaryLoad<T>
 
 /** One read per key; a key that changes starts over from loading. */
-function useLoad<T>(key: string | null, read: () => Promise<T>): Load<T> {
+function useLoad<T>(key: string | null, read: (refresh?: boolean) => Promise<T>, refreshOnAction = false): Load<T> {
   const [load, setLoad] = useState<{ key: string | null; value: Load<T> }>({ key, value: { state: 'loading' } })
   useEffect(() => {
     if (key === null) return
     let current = true
     setLoad({ key, value: { state: 'loading' } })
-    read().then(
-      (value) => current && setLoad({ key, value: { state: 'ready', value } }),
-      (error: unknown) => current && setLoad({ key, value: { state: 'failed', error } }),
-    )
+    const load = (refresh = false) => {
+      setLoad({ key, value: { state: 'loading' } })
+      read(refresh).then(
+        (value) => current && setLoad({ key, value: { state: 'ready', value } }),
+        (error: unknown) => current && setLoad({ key, value: { state: 'failed', error } }),
+      )
+    }
+    load()
+    const stop = refreshOnAction ? onAction(() => load(true)) : undefined
     return () => {
       current = false
+      stop?.()
     }
   }, [key])
   return load.key === key ? load.value : { state: 'loading' }
@@ -92,22 +99,12 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
   const runRow = rows.find((row) => row.action === 'run')
   const stacks = useStackDetails([project]).details[project.path] ?? {}
 
-  const pulls = useLoad(repository === null ? null : project.path, () => pullRequestPage(project.path, 'open', null))
-  const issues = useLoad(repository === null ? null : project.path, () => issuePage(project.path, 'open', null))
+  const pulls = useLoad(repository === null ? null : project.path, (refresh) => pullRequestPage(project.path, 'open', null, undefined, { refresh }), true)
+  const issues = useLoad(repository === null ? null : project.path, (refresh) => issuePage(project.path, 'open', null, undefined, { refresh }), true)
   // The latest runs, read again every 10 s while one runs; the worktree rows show their branch's newest.
   const runs = useRuns(repository === null ? null : project.path, noRunFilters, 30)
   const runsLoad: Load<{ items: GithubActionRun[] }> = runs.page !== null ? { state: 'ready', value: { items: runs.page.runs } } : runs.error !== null ? { state: 'failed', error: runs.error } : { state: 'loading' }
   const latestRuns = runs.page === null ? null : latestRunsByBranch(runs.page.runs)
-  const topPulls = pulls.state === 'ready' ? newestFirst(pulls.value.items, shownItems) : []
-  // Checks and the review decision come with one pull request's detail only, so just the few shown are read.
-  const details = useLoad(topPulls.length === 0 ? null : `${project.path}\n${topPulls.map((item) => item.number).join(',')}`, async () =>
-    Object.fromEntries(
-      await mapLimited(topPulls, 2, async (item) => {
-        const detail = await api.githubPullRequest(project.path, item.number).catch(() => null)
-        return [item.number, pullDetail(detail)] as const
-      }),
-    ),
-  )
   const worktreeKey = worktrees.map((worktree) => worktree.path).join('\n')
   const changed = useLoad(worktreeKey, async () => {
     const parents = new Map(project.worktrees.map((worktree) => [worktree.path, worktree.parent]))
@@ -249,7 +246,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
                 render={(items: GithubPullRequest[]) =>
                   newestFirst(items, shownItems).map((item) => (
                     <GithubRow key={item.number} icon={<PullRequestStateIcon item={item} size={15} />} title={item.title} labels={item.labels} number={item.number} author={item.author?.login ?? 'unknown'} at={ago(item.updatedAt, now)} comments={item.comments} onClick={() => actions.github(project, 'prs', item.number)}>
-                      <PullStatus detail={details.state === 'ready' ? details.value[item.number] : details.state === 'failed' ? 'unavailable' : undefined} />
+                      <PullStatus detail={pullDetail({ checks: item.checks ?? [], reviewDecision: item.reviewDecision ?? null })} />
                     </GithubRow>
                   ))
                 }
