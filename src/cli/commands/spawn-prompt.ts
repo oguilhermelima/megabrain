@@ -83,6 +83,7 @@ export async function paneShowsTurn(target: Pick<PromptTarget, "pane" | "agent" 
 // on a mismatch), submits, and confirms the agent started a turn. The result says whether it did.
 export async function deliverPrompt(target: PromptTarget): Promise<Result<boolean>> {
   const messageId = `spawn:${createHash("sha256").update(`${target.pane}\0${target.prompt}`).digest("hex")}`;
+  let pasteFailure: string | undefined;
   const sent = await sendSessionMessage({
     caller: "spawn-fallback", messageId, target: { agent: target.agent, id: target.pane }, text: target.prompt,
     channels: { typed: async () => {
@@ -90,7 +91,10 @@ export async function deliverPrompt(target: PromptTarget): Promise<Result<boolea
       const beforePaste = await readScreen(target);
       if (beforePaste === undefined || startupDialogCause(target.agent, beforePaste) !== undefined || classifyLiveness(target.agent, beforePaste).status !== "idle") return ok(false);
       const pasted = await getTmux().pasteText(target.pane, target.prompt, target.process);
-      if (pasted.kind !== "ok") return failed(pasted.error);
+      if (pasted.kind !== "ok") {
+        pasteFailure = pasted.error;
+        return failed(pasted.error);
+      }
       const submitted = await getTmux().sendKey(target.pane, "Enter", target.process);
       if (submitted.kind !== "ok") return failed(submitted.error);
       let screen = await readScreen(target);
@@ -115,7 +119,8 @@ export async function deliverPrompt(target: PromptTarget): Promise<Result<boolea
     } },
     recordChannel: async (channel) => { await recordChannelResultThroughOwner(target.root, { agent: target.agent, channel, agentVersion: "unknown", ok: true }); },
   });
-  return sent.delivered ? ok(true) : ok(false);
+  if (!sent.delivered && pasteFailure !== undefined) return failed(pasteFailure);
+  return ok(sent.delivered);
 }
 
 function transportFailure(target: PromptTarget, detail: string): PromptTransportOutcome {
