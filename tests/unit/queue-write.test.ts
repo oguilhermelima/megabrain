@@ -152,6 +152,47 @@ describe("findChild: tmux-runtime records", () => {
     });
   });
 
+  test("resolves each live child to its own pane in a shared tmux session", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "pane-four", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%4" });
+      await writeDispatch(root, "pane-fourteen", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      for (const [pane, dispatch] of [["%4", "pane-four"], ["%14", "pane-fourteen"]] as const) {
+        const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: pane, MEGABRAIN_DISPATCH_ID: dispatch };
+        expect(await executeQueueWrite("received", [], environment, process)).toMatchObject({ kind: "ok", value: "received sent: " + dispatch + "\n" });
+      }
+    });
+  });
+
+  test("reports same-pane live ambiguity with both dispatches and the pane", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "live-a", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      await writeDispatch(root, "live-b", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const result = await executeQueueWrite("received", [], environment, process);
+      expect(result).toMatchObject({ kind: "failed" });
+      if (result.kind === "failed") expect(result.error).toContain("live-a, live-b");
+      if (result.kind === "failed") expect(result.error).toContain("pane %14");
+    });
+  });
+
+  test("received and check refuse a legacy tmux record without a pane", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "legacy-no-pane", { runtime: "tmux", tmuxSession: "shared" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      expect(await executeQueueWrite("received", [], environment, process)).toMatchObject({ kind: "failed" });
+      expect(await executeCheck(["--timeout", "0", "--json"], environment, process)).toMatchObject({ kind: "failed" });
+    });
+  });
+
   test("ignores an archived sibling and reports live ambiguity with both panes", async () => {
     await withRoot(async (root) => {
       await writeDispatch(root, "archived-sibling", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
