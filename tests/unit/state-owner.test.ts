@@ -88,6 +88,19 @@ describe("single state owner", () => {
     }
   });
 
+  test("inspect treats a socket removed after its existence check as stopped", async () => {
+    owner = await startStateOwner(root);
+    const inspectWithInjectedRequest = inspectStateOwner as unknown as (
+      stateDir: string,
+      request: () => Promise<unknown>,
+    ) => ReturnType<typeof inspectStateOwner>;
+    const status = await inspectWithInjectedRequest(root, () => {
+      rmSync(stateOwnerSocket(root), { force: true });
+      return Promise.reject(Object.assign(new Error("state owner socket is not present"), { code: "ENOENT" }));
+    });
+    expect(status).toEqual({ running: false });
+  });
+
   test("status reports a stopped owner without starting it", async () => {
     const stopped = await inspectStateOwner(root);
     expect(stopped).toMatchObject({ running: false });
