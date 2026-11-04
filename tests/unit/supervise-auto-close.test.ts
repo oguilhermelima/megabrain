@@ -97,6 +97,17 @@ describe("supervisor dispatch auto-close", () => {
     expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
   });
 
+  test("applies the focused viewer rule on the desktop app tmux server", async () => {
+    const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z", [{ server: "megabrain-app", tty: "/dev/ttys025", pid: 43715 }]);
+    const process = adapter(async (_command, args) => args[1] === "default"
+      ? failed("no server running")
+      : args[1] === "megabrain-app"
+        ? ok({ stdout: "/dev/ttys025|43715|1793707190|1793707199|attached,focused,UTF-8\n", stderr: "", exitCode: 0 })
+        : failed("unexpected command"));
+    await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
+    expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "done", autoCloseViewedAt: "2026-11-03T12:03:00.000Z" } });
+  });
+
   test("keeps the dispatch open after viewer input later than done", async () => {
     const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z", [{ server: "default", tty: "/dev/ttys025", pid: 43715 }]);
     const process = adapter(async (_command, args) => args[1] === "default"
