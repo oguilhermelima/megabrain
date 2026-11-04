@@ -29,6 +29,19 @@ describe("classifyLiveness", () => {
     expect(classifyLiveness("codex", codexIdle).status).toBe("idle");
     expect(classifyLiveness("codex", codexWorking).status).toBe("working");
   });
+  test("waits through a startup dialog until the user dismisses it", async () => {
+    const frames = ["Do you trust the files in this folder?\nTrust folder", "Do you trust the files in this folder?\nTrust folder", "❯"];
+    let reads = 0;
+    let keysSent = 0;
+    const result = await waitForStableIdle("claude", 2500, async () => {
+      const frame = frames[Math.min(reads++, frames.length - 1)] ?? "";
+      return { kind: "ok", value: frame };
+    }, "timeout", async () => { keysSent += 1; return { kind: "ok", value: undefined }; });
+    expect(result.kind).toBe("ok");
+    expect(reads).toBeGreaterThanOrEqual(3);
+    expect(keysSent).toBe(0);
+  });
+
   test("keeps absent, quoted, and unknown frames unknown", () => {
     expect(classifyLiveness("codex", "").status).toBe("unknown");
     expect(classifyLiveness("codex", "quoted: You've hit your usage limit for\nSwitch to another model now,").status).toBe("unknown");
