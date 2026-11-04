@@ -88,7 +88,9 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   if (worktreeResult.kind !== "ok") return worktreeResult;
   const worktree = worktreeResult.value;
   const trust = await preflightWorktreeTrust(options.agent, worktree.path, environment);
-  if (trust.kind !== "ok") return trust;
+  // Trust preflight is best-effort. Readiness supervision reports a Codex trust dialog if
+  // the agent still needs one; an unavailable config must not prevent the dispatch from starting.
+  const trustPreflightWarning = trust.kind === "failed" ? trust.error : undefined;
   const registeredRepository = await registerMegabrainRepository(worktree.path, environment, process);
   if (registeredRepository.kind !== "ok" && !registeredRepository.error.startsWith("not a git repository:")) return registeredRepository;
   prompt = finalPrompt(options, id);
@@ -326,6 +328,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const parentAgentThreadId = queuedParent === undefined ? environment.CODEX_THREAD_ID : stringValue(queuedParent.parentAgentThreadId);
   const parentChatName = queuedParent === undefined ? await coordinatorChatName(environment, process) : stringValue(queuedParent.parentChatName) ?? await coordinatorChatName(environment, process);
   const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, parentAgentThreadId, queuedParent === undefined ? parentAgent : stringValue(queuedParent.parentAgent) ?? parentAgent, parentAgentSessionId, parentAgentPid);
+  if (trustPreflightWarning !== undefined) Object.assign(meta, { trustPreflightWarning });
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
   if (leaderSocket !== undefined) Object.assign(meta, { grokLeaderSocket: leaderSocket });
@@ -504,9 +507,10 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       await startSupervisorWorker(root, environment, process);
       // Last, so a spawn that failed above never leaves a window attached to a session it killed.
       const viewer = session === null ? undefined : await openViewer({ session, flag: parsed.value.terminal, automatic: parentContext.host === "local" && !callerInTmux && sessionCreatedBySpawn, env: environment, process });
-      const output = { status: "spawned", reason: null, dispatchId: id, ...(parentContext.host === "local" ? { deliveryChannel: "hook-and-watch" } : {}), terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...(tmuxHostWarning === null ? {} : { warning: tmuxHostWarning }), ...(viewer === undefined ? {} : { viewer }) };
+      const output = { status: "spawned", reason: null, dispatchId: id, ...(parentContext.host === "local" ? { deliveryChannel: "hook-and-watch" } : {}), terminalId, tmuxPane: pane, state: state.dispatch, promptState: "awaiting-receipt", reconcile: plan.reconcile?.instruction ?? null, ...(receiptMissing === null ? {} : { receiptMissing }), ...(terminalCreateAttempts === undefined ? {} : { terminalCreateAttempts }), ...([trustPreflightWarning, tmuxHostWarning].filter((warning): warning is string => warning !== undefined && warning !== null).length === 0 ? {} : { warning: [trustPreflightWarning, tmuxHostWarning].filter((warning): warning is string => warning !== undefined && warning !== null).join("; ") }), ...(viewer === undefined ? {} : { viewer }) };
       const attempts = terminalCreateAttempts !== undefined && terminalCreateAttempts > 1 ? `terminal-create-attempts: ${terminalCreateAttempts}\n` : "";
-      const warning = tmuxHostWarning === null ? "" : `warning: ${tmuxHostWarning}\n`;
+      const warningText = [trustPreflightWarning, tmuxHostWarning].filter((item): item is string => item !== undefined && item !== null).join("; ");
+      const warning = warningText === "" ? "" : `warning: ${warningText}\n`;
       return ok(parsed.value.json ? `${JSON.stringify(output)}\n` : `dispatch: ${id}\nstate: ${state.dispatch}\n${parentContext.host === "local" ? "delivery: hook-and-watch\n" : ""}${attempts}${warning}${viewer === undefined ? "" : viewerLine(viewer)}reconcile: ${plan.reconcile?.instruction ?? "none"}\n`, plan.exitCode);
     }
     step = plan.nextStep;
