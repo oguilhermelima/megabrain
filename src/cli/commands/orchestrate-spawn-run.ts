@@ -317,6 +317,21 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     terminalId = createdTerminal.value.terminalId;
     terminalCreateAttempts = createdTerminal.value.attempts;
     hostProcessPid = createdTerminal.value.processId;
+    if (host.id === "orca" && hostProcessPid === undefined) {
+      const listed = await process.run("orca", ["terminal", "list", "--json"]);
+      if (listed.kind === "ok") {
+        try {
+          const payload: unknown = JSON.parse(listed.value.stdout || "{}");
+          const root = typeof payload === "object" && payload !== null ? payload as Record<string, unknown> : {};
+          const result = typeof root.result === "object" && root.result !== null ? root.result as Record<string, unknown> : {};
+          const terminals = Array.isArray(result.terminals) ? result.terminals : [];
+          const terminal = terminals.find((item) => typeof item === "object" && item !== null && host.terminalIdentity(item) === terminalId) as Record<string, unknown> | undefined;
+          const candidate = terminal === undefined ? undefined : [terminal.rootPid, terminal.processRootPid, terminal.processId, terminal.pid]
+            .find((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0);
+          if (candidate !== undefined) hostProcessPid = candidate;
+        } catch { /* A malformed or unavailable identity remains explicitly unknown. */ }
+      }
+    }
   }
 
   // Neither agy nor Grok sets AI_AGENT in its tool shells; each sets its own marker (measured).
@@ -332,6 +347,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const parentChatName = queuedParent === undefined ? await coordinatorChatName(environment, process) : stringValue(queuedParent.parentChatName) ?? await coordinatorChatName(environment, process);
   const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, parentAgentThreadId, queuedParent === undefined ? parentAgent : stringValue(queuedParent.parentAgent) ?? parentAgent, parentAgentSessionId, parentAgentPid);
   if (hostProcessPid !== undefined) Object.assign(meta, { agentPid: hostProcessPid });
+  else if (runtime === "host") Object.assign(meta, { processIdentity: "unknown" });
   if (trustPreflightWarning !== undefined) Object.assign(meta, { trustPreflightWarning });
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
@@ -400,7 +416,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       readinessStartedAt = Date.now();
       const waited = runtime === "tmux"
         ? await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process, promptFile !== undefined)
-        : await waitForHostReadiness({ runtime, agent: options.agent, childHost: parentContext.host, workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId }, readinessTimeoutMs, process);
+        : await waitForHostReadiness({ runtime, agent: options.agent, childHost: parentContext.host, workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, ...(hostProcessPid === undefined ? {} : { agentPid: hostProcessPid }) }, readinessTimeoutMs, process);
       readinessLastFrame = waited.lastFrame;
       if (runtime === "tmux" && options.agent === "grok" && waited.result.kind === "ok" && pane !== null) {
         const panePid = await getTmux().panePid(pane, process, sessionId ?? undefined);
