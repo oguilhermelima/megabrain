@@ -307,7 +307,7 @@ function accept(owner: StateOwner, socket: Socket): void {
 
 function scheduleOwnerExit(owner: StateOwner): void {
   if (owner.stopped) return;
-  if (!existsSync(owner.stateDir)) { void stopStateOwner(owner); return; }
+  if (!existsSync(owner.stateDir)) { stopForLifecycle(owner); return; }
   if (owner.clients > 0 || owner.pendingDeliveries.size > 0 || owner.scheduledVerifications.size > 0 || owner.pendingVerifications.size > 0 || hasPendingOutbox(owner) || owner.idleTimer !== undefined) return;
   const testRunner = process.argv[1]?.endsWith(".test.ts") === true;
   const configuredIdle = Number(owner.environment.MEGABRAIN_STATE_OWNER_IDLE_MS);
@@ -315,8 +315,8 @@ function scheduleOwnerExit(owner: StateOwner): void {
   const idleMs = Number.isSafeInteger(configuredIdle) && configuredIdle > 0 ? configuredIdle : temporaryState ? testRunner ? 2_000 : 30_000 : 10 * 60_000;
   owner.idleTimer = setTimeout(() => {
     owner.idleTimer = undefined;
-    if (!existsSync(owner.stateDir)) { void stopStateOwner(owner); return; }
-    if (!owner.stopped && owner.clients === 0 && owner.pendingDeliveries.size === 0 && owner.scheduledVerifications.size === 0 && owner.pendingVerifications.size === 0 && !hasPendingOutbox(owner)) void stopStateOwner(owner);
+    if (!existsSync(owner.stateDir)) { stopForLifecycle(owner); return; }
+    if (!owner.stopped && owner.clients === 0 && owner.pendingDeliveries.size === 0 && owner.scheduledVerifications.size === 0 && owner.pendingVerifications.size === 0 && !hasPendingOutbox(owner)) stopForLifecycle(owner);
     else scheduleOwnerExit(owner);
   }, idleMs);
   owner.idleTimer.unref?.();
@@ -383,7 +383,7 @@ function scheduleOutboxSweep(owner: StateOwner, delay = 0): void {
 }
 
 function stopForLifecycle(owner: StateOwner): void {
-  if (owner.environment.MEGABRAIN_STATE_OWNER_TEST_MODE !== "1" || process.argv[1]?.endsWith(".test.ts") === true) {
+  if (process.argv[1]?.endsWith(".test.ts") === true) {
     void stopStateOwner(owner);
     return;
   }
