@@ -146,7 +146,7 @@ export GH_LIST_MODE=open GH_MERGED_FILE
 printf '12\n' >"$GH_MERGED_FILE"
 : >"$GH_LOG"
 output="$(run stack merge --yes)"
-contains "$output" 'already merged #12'
+contains "$output" 'Already merged: #12'
 not_contains "$(cat "$GH_LOG")" 'pulls/12/merge'
 contains "$(cat "$GH_LOG")" 'pulls/13/merge'
 export GH_CLOSED_UNMERGED=12
