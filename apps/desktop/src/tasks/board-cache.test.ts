@@ -189,6 +189,58 @@ describe('reading a board a page at a time', () => {
     }
   })
 
+  test('an initial board load reads one page and leaves the next cursor available on demand', async () => {
+    const asked: (string | null)[] = []
+    const cursors: (string | null)[] = []
+    const shown: string[][] = []
+    let calls = 0
+    const all = await readBoardPages({
+      read: async (after) => (calls += 1, asked.push(after), page([item(after === null ? 'a' : 'b')], after === null ? 'cursor-two' : null)),
+      maxPages: 20,
+      current: () => true,
+      show: (items) => shown.push(ids(items)),
+      fullRead: true,
+      onNextCursor: (cursor) => cursors.push(cursor),
+    })
+    expect(calls).toBe(1)
+    expect(asked).toEqual([null])
+    expect(cursors).toEqual(['cursor-two'])
+    expect(ids(all ?? [])).toEqual(['a'])
+
+    const loaded = await readBoardPages({
+      read: async (after) => (calls += 1, asked.push(after), page([item('b')], null)),
+      after: cursors[0],
+      initialItems: all ?? [],
+      maxPages: 20,
+      current: () => true,
+      show: (items) => shown.push(ids(items)),
+      onNextCursor: (cursor) => cursors.push(cursor),
+    })
+    expect(calls).toBe(2)
+    expect(asked).toEqual([null, 'cursor-two'])
+    expect(ids(loaded ?? [])).toEqual(['a', 'b'])
+    expect(shown).toEqual([['a'], ['a', 'b']])
+  })
+
+  test('a changed first page refreshes one page while preserving previously loaded items', async () => {
+    const cached = [item('a'), item('b'), item('c')]
+    const asked: (string | null)[] = []
+    let calls = 0
+    const all = await readBoardPages({
+      read: async (after) => (calls += 1, asked.push(after), page([{ ...item('a'), title: 'Updated' }], 'cursor-two', 3)),
+      maxPages: 20,
+      current: () => true,
+      show: () => {},
+      initialItems: cached,
+      unchanged: { items: cached, totalCount: 3 },
+      onNextCursor: () => {},
+    })
+    expect(calls).toBe(1)
+    expect(asked).toEqual([null])
+    expect(ids(all ?? [])).toEqual(['a', 'b', 'c'])
+    expect(all?.[0]?.title).toBe('Updated')
+  })
+
   test('a periodic refresh reads every page when a full read is due, even if the first page is unchanged', async () => {
     const cached = [item('a'), item('b')]
     const asked: (string | null)[] = []
