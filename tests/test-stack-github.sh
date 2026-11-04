@@ -33,6 +33,7 @@ case "${1:-} ${2:-} ${3:-}" in
     ;;
   "api --method POST"*) printf '{"number":12}\n' ;;
   "api --method PUT"*)
+    case "$*" in *'--field=commit_title=@'*|*'--field=commit_message=@'*) printf 'typed field would read a file\n' >&2; exit 1 ;; esac
     case "$*" in
       *"pulls/${GH_MERGE_FAIL:-}/merge"*) printf 'simulated merge failure\n' >&2; exit 1 ;;
       *"pulls/${GH_SHA_FAIL:-}/merge"*) printf 'Head sha does not match\n' >&2; exit 1 ;;
@@ -124,10 +125,20 @@ contains "$output" 'GitHub stack merged bottom-up'
 retarget_line="$(grep -n 'PATCH repos/owner/repo/pulls/13' "$GH_LOG" | head -1 | cut -d: -f1)"
 merge_line="$(grep -n 'PUT repos/owner/repo/pulls/13/merge' "$GH_LOG" | head -1 | cut -d: -f1)"
 [ "$retarget_line" -lt "$merge_line" ] || fail 'child PR merged before retarget'
+ready_line="$(grep -n 'api repos/owner/repo/pulls/13$' "$GH_LOG" | tail -1 | cut -d: -f1)"
+[ "$retarget_line" -lt "$ready_line" ] && [ "$ready_line" -lt "$merge_line" ] || fail 'child PR was not checked for mergeability after retarget'
 contains "$log" 'raw-field=base=main'
 contains "$log" 'raw-field=commit_title=fix: add child behavior (#13)'
 contains "$log" 'raw-field=commit_message=Child details'
 printf 'GitHub native stack merges every PR with its own title, body and checked head\n'
+
+# Scenario: raw fields preserve titles and bodies beginning with @.
+export GH_SPECIAL_TEXT='@title.txt' GH_SPECIAL_BODY='@body.txt'
+: >"$GH_LOG"
+run stack merge --yes >/dev/null
+contains "$(cat "$GH_LOG")" 'raw-field=commit_title=@title.txt (#12)'
+contains "$(cat "$GH_LOG")" 'raw-field=commit_message=@body.txt'
+unset GH_SPECIAL_TEXT GH_SPECIAL_BODY
 
 # Scenario: reruns skip already merged PRs, but a closed unmerged PR stops the run.
 : >"$GH_MERGED_FILE"
