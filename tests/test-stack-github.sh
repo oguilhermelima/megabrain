@@ -157,6 +157,7 @@ not_contains "$(cat "$GH_LOG")" 'pulls/12/merge'
 unset GH_CLOSED_UNMERGED
 
 # Scenario: stop at the first failed PR and report the already merged prefix.
+: >"$GH_MERGED_FILE"
 export GH_MERGE_FAIL=13
 : >"$GH_LOG"
 if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge continued after a failed PR'; fi
@@ -167,6 +168,7 @@ unset GH_MERGE_FAIL
 printf 'GitHub stack merge stops after a PR failure and reports completed PRs\n'
 
 # Scenario: GitHub refuses a merge if the checked head SHA moved.
+: >"$GH_MERGED_FILE"
 export GH_SHA_FAIL=12
 : >"$GH_LOG"
 if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge ignored a head SHA mismatch'; fi
