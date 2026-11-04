@@ -201,14 +201,15 @@ describe("code server", () => {
     expect(serverArgs.join(" ")).toContain(join(state, "code-server", "data"));
     expect(serverArgs).toContain("--config");
     const configPath = serverArgs[serverArgs.indexOf("--config") + 1];
-    expect(configPath?.startsWith(join(state, "code-server", "data"))).toBe(true);
+    const profile = join(state, "code-server", "data", createHash("sha256").update(path).digest("hex").slice(0, 20));
+    expect(configPath).toBe(join(profile, "config.yaml"));
     expect(configPath === undefined ? "missing config path" : readFileSync(configPath, "utf8")).toBe("");
     expect(configPath === undefined ? 0 : statSync(configPath).mode & 0o777).toBe(0o600);
+    expect(existsSync(join(env.HOME as string, ".config", "code-server", "config.yaml"))).toBe(false);
     const serverStart = fake.started.find((item) => item.args.includes("--socket"));
     const configHome = serverStart?.options.env?.XDG_CONFIG_HOME;
     expect(configHome?.startsWith(join(state, "code-server", "data"))).toBe(true);
     expect(fake.started).toHaveLength(2);
-    const profile = join(state, "code-server", "data", createHash("sha256").update(path).digest("hex").slice(0, 20));
     const settingsPath = join(profile, "User", "settings.json");
     expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toMatchObject({
       "security.workspace.trust.enabled": false,
