@@ -32,7 +32,7 @@ export const PR_QUERY = `query($owner: String!, $name: String!, $first: Int!, $a
     items: pullRequests(first: $first, after: $after, states: $states, orderBy: {field: UPDATED_AT, direction: DESC}) {
       totalCount
       pageInfo { hasNextPage endCursor }
-      nodes { number title state isDraft url createdAt updatedAt headRefName baseRefName ${AUTHOR} ${LABELS} comments { totalCount } }
+      nodes { number title state isDraft url createdAt updatedAt headRefName baseRefName reviewDecision statusCheckRollup { contexts(first: 100) { nodes { __typename ... on CheckRun { name status conclusion } ... on StatusContext { context state } } } } ${AUTHOR} ${LABELS} comments { totalCount } }
     }
   }
 }`;
@@ -134,6 +134,8 @@ export function milestone(value: unknown): { title: string; dueOn: string | null
 }
 
 export function pullRequest(entry: Record<string, unknown>) {
+  const rollup = entry.statusCheckRollup;
+  const listedChecks = Array.isArray(rollup) ? rollup : record(record(rollup)?.contexts)?.nodes;
   return {
     number: count(entry.number),
     title: text(entry.title),
@@ -147,6 +149,8 @@ export function pullRequest(entry: Record<string, unknown>) {
     headRefName: text(entry.headRefName),
     baseRefName: text(entry.baseRefName),
     comments: count(entry.comments),
+    reviewDecision: reviewDecision(entry.reviewDecision),
+    checks: checks(listedChecks),
   };
 }
 

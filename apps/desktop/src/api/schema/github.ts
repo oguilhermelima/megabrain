@@ -34,7 +34,8 @@ export const discoveredRepositorySchema = z.looseObject({
 
 // `megabrain github prs|issues|pr|issue <repo> --json`: a repository's pull requests and issues as
 // gh reports them, normalized by the CLI (lower-case states, one state per check, comment counts).
-// Lists are light pages; checks, review decision and line counts come with one pull request's detail.
+// Lists contain row fields plus the review/check summaries the project overview displays; full detail
+// adds the body, comments and line counts when a pull request or issue is opened.
 const githubPersonSchema = z.looseObject({ login: z.string(), name: z.string().nullable(), isBot: z.boolean() })
 const githubLabelSchema = z.looseObject({ name: z.string(), color: z.string(), description: z.string() })
 export const githubRepositoryLabelSchema = githubLabelSchema
@@ -58,6 +59,9 @@ export const githubPullRequestSchema = z.looseObject({
   headRefName: z.string(),
   baseRefName: z.string(),
   comments: z.number(),
+  /** Summary fields used by the project overview's pull request row. */
+  reviewDecision: z.string().nullable().optional(),
+  checks: z.array(githubCheckSchema).optional(),
 })
 
 export const githubIssueSchema = z.looseObject({

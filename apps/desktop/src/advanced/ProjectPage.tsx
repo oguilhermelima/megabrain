@@ -98,16 +98,6 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
   const runs = useRuns(repository === null ? null : project.path, noRunFilters, 30)
   const runsLoad: Load<{ items: GithubActionRun[] }> = runs.page !== null ? { state: 'ready', value: { items: runs.page.runs } } : runs.error !== null ? { state: 'failed', error: runs.error } : { state: 'loading' }
   const latestRuns = runs.page === null ? null : latestRunsByBranch(runs.page.runs)
-  const topPulls = pulls.state === 'ready' ? newestFirst(pulls.value.items, shownItems) : []
-  // Checks and the review decision come with one pull request's detail only, so just the few shown are read.
-  const details = useLoad(topPulls.length === 0 ? null : `${project.path}\n${topPulls.map((item) => item.number).join(',')}`, async () =>
-    Object.fromEntries(
-      await mapLimited(topPulls, 2, async (item) => {
-        const detail = await api.githubPullRequest(project.path, item.number).catch(() => null)
-        return [item.number, pullDetail(detail)] as const
-      }),
-    ),
-  )
   const worktreeKey = worktrees.map((worktree) => worktree.path).join('\n')
   const changed = useLoad(worktreeKey, async () => {
     const parents = new Map(project.worktrees.map((worktree) => [worktree.path, worktree.parent]))
@@ -249,7 +239,7 @@ export function ProjectPage({ project, chats, actions }: { project: Project; cha
                 render={(items: GithubPullRequest[]) =>
                   newestFirst(items, shownItems).map((item) => (
                     <GithubRow key={item.number} icon={<PullRequestStateIcon item={item} size={15} />} title={item.title} labels={item.labels} number={item.number} author={item.author?.login ?? 'unknown'} at={ago(item.updatedAt, now)} comments={item.comments} onClick={() => actions.github(project, 'prs', item.number)}>
-                      <PullStatus detail={details.state === 'ready' ? details.value[item.number] : details.state === 'failed' ? 'unavailable' : undefined} />
+                      <PullStatus detail={pullDetail({ checks: item.checks ?? [], reviewDecision: item.reviewDecision ?? null })} />
                     </GithubRow>
                   ))
                 }
