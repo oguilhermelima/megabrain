@@ -155,7 +155,7 @@ describe('github projects', () => {
     expect(result.next).toBe('cursor-two')
   })
 
-  test('loads project metadata once and keeps item pages lightweight', async () => {
+  test('loads project metadata once and keeps card fields in lightweight item pages', async () => {
     answer = (args) => {
       const gql = query(args)
       if (gql.includes('projectMetadata')) return stdout({ data: { repositoryOwner: { projectV2: { ...base, views: { nodes: [] } } } } })
@@ -163,13 +163,13 @@ describe('github projects', () => {
     }
     const first = await parsed<{ project: { number: number }; items: { id: string; status: string }[]; next: string }>(['project', root, '7', '--json'])
     expect(first.project.number).toBe(7)
-    expect(first.items).toEqual([{ id: 'I1', type: 'ISSUE', number: 42, title: 'Add feature', url: 'https://github.com/operator/sample/issues/42', state: 'OPEN', repository: 'operator/sample', status: 'todo', assignees: [], labels: [], updatedAt: '2026-10-01T12:00:00Z', isArchived: false, fieldValues: [], milestone: null, parentIssue: null, subIssuesProgress: null, body: null }])
+    expect(first.items).toEqual([{ id: 'I1', type: 'ISSUE', number: 42, title: 'Add feature', url: 'https://github.com/operator/sample/issues/42', state: 'OPEN', repository: 'operator/sample', status: 'todo', assignees: [{ login: 'dev', avatarUrl: 'https://example.test/avatar.png' }], labels: [{ name: 'feature', color: 'aabbcc' }], updatedAt: '2026-10-01T12:00:00Z', isArchived: false, fieldValues: [], milestone: null, parentIssue: null, subIssuesProgress: null, body: null }])
     expect(calls).toHaveLength(2)
     const itemQuery = query(calls.find((call) => query(call).includes('items(first: 100')) ?? [])
     expect(itemQuery).toContain('fieldValueByName(name: "Status")')
     expect(itemQuery).not.toContain('fieldValues(first: 30)')
-    expect(itemQuery).not.toContain('labels(first: 100)')
-    expect(itemQuery).not.toContain('assignees(first: 100)')
+    expect(itemQuery).toContain('labels(first: 100)')
+    expect(itemQuery).toContain('assignees(first: 100)')
     expect(itemQuery).not.toContain('subIssuesSummary')
     expect(itemQuery).not.toContain('milestone {')
     expect(itemQuery).not.toContain('body')
