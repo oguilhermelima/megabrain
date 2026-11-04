@@ -760,8 +760,7 @@ export const Sidebar = memo(function Sidebar({
           </div>
         )}
         {ready && entries.map((entry, index) => (
-          <div key={entry.key} style={index < entries.length - 1 ? { marginBottom: 6 } : undefined}>
-          {entry.kind === 'project' ? (
+          <div key={entry.key} style={index < entries.length - 1 ? { marginBottom: 6 } : undefined}>{entry.kind === 'project' ? (
             renderProject(entry.project)
           ) : (
             <FolderSection
@@ -780,8 +779,7 @@ export const Sidebar = memo(function Sidebar({
               {entry.projects.map(renderProject)}
             </FolderSection>
           )}
-          </div>
-        ))}
+          </div>))}
         {filtered && visible.length === 0 && partition.visible.length > 0 && (
           <div className="mx-1 rounded-[18px] border border-dashed border-white/[0.12] px-4 py-5 text-center">
             <p className="text-[13.5px] text-ink-300">Nothing matches {activeFilterLabels(filters).join(' + ')}.</p>
