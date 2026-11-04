@@ -58,15 +58,16 @@ export function cachePath(environment: Environment, key: string): string {
   return join(cacheDirectory(environment), `${createHash("sha256").update(key).digest("hex")}.json`);
 }
 
-export function readCache(environment: Environment, key: string, now: number): unknown {
+export function readCache(environment: Environment, key: string, now: number, ttl = CACHE_TTL): unknown {
   try {
     const entry = record(JSON.parse(readFileSync(cachePath(environment, key), "utf8")));
     if (entry === undefined || entry.key !== key || typeof entry.fetchedAt !== "number") return undefined;
-    return entry.fetchedAt <= now && now - entry.fetchedAt < CACHE_TTL ? entry.value : undefined;
+    const entryTtl = typeof entry.ttl === "number" && ttl === CACHE_TTL ? entry.ttl : ttl;
+    return entry.fetchedAt <= now && now - entry.fetchedAt < entryTtl ? entry.value : undefined;
   } catch { return undefined; }
 }
 
-export function writeCache(environment: Environment, key: string, fetchedAt: number, value: unknown): void {
+export function writeCache(environment: Environment, key: string, fetchedAt: number, value: unknown, ttl = CACHE_TTL): void {
   try {
     const directory = cacheDirectory(environment);
     mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -78,13 +79,14 @@ export function writeCache(environment: Environment, key: string, fetchedAt: num
       if (candidate === path) continue;
       try {
         const entry = record(JSON.parse(readFileSync(candidate, "utf8")));
-        if (typeof entry?.fetchedAt === "number" && entry.fetchedAt <= fetchedAt && fetchedAt - entry.fetchedAt >= CACHE_TTL) {
+        const entryTtl = typeof entry?.ttl === "number" ? entry.ttl : CACHE_TTL;
+        if (typeof entry?.fetchedAt === "number" && entry.fetchedAt <= fetchedAt && fetchedAt - entry.fetchedAt >= entryTtl) {
           rmSync(candidate, { force: true });
         }
       } catch { /* Unreadable cache entries are ignored and replaced when their key is requested. */ }
     }
     const temporary = `${path}.${globalThis.process.pid}.${fetchedAt}.tmp`;
-    writeFileSync(temporary, JSON.stringify({ key, fetchedAt, value }), { mode: 0o600 });
+    writeFileSync(temporary, JSON.stringify({ key, fetchedAt, ttl, value }), { mode: 0o600 });
     renameSync(temporary, path);
   } catch { /* The cache only saves a gh call; a write failure costs the next one. */ }
 }

@@ -1,6 +1,6 @@
 import { failed, ok, type Result } from '../../../core/result.js'
 import { usageMessage, usageText } from '../../../core/usage.js'
-import { graphqlCall, repositoryVariables, resolveRepository } from './client.js'
+import { graphqlCall, readCache, repositoryVariables, resolveRepository, writeCache } from './client.js'
 import type { ProcessAdapter } from '../../../adapters/proc.js'
 
 const record = (value: unknown): Record<string, any> | undefined => value !== null && typeof value === 'object' ? value as Record<string, any> : undefined
@@ -11,6 +11,8 @@ const nullableText = (value: unknown): string | null => typeof value === 'string
 export const PROJECT_VERBS = ['projects', 'project', 'project-move'] as const
 type ProjectVerb = typeof PROJECT_VERBS[number]
 type Environment = Readonly<Record<string, string | undefined>>
+const PROJECT_DISCOVERY_CACHE_TTL = 10 * 60_000
+const PROJECT_PROBE_CONCURRENCY = 5
 
 export type ProjectStatusOption = { id: string; name: string; color: string }
 export type ProjectField = { id: string; name: string; dataType: string; options: ProjectStatusOption[]; iterations: { id: string; title: string; startDate: string; duration: number }[] }
@@ -121,6 +123,13 @@ export const PROJECT_QUERY = `query($owner: String!, $name: String!, $number: In
   repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { ${PROJECT_FIELDS} ${VIEW_FIELDS} ${PROJECT_ITEMS} } } }
 }`
 
+const PROJECT_MEMBERSHIP_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) { owner { login } }
+  repositoryOwner(login: $owner) {
+    ... on ProjectV2Owner { projectV2(number: $number) { items(first: 100, after: $after) { nodes { content { ... on Issue { repository { nameWithOwner } } ... on PullRequest { repository { nameWithOwner } } } } pageInfo { hasNextPage endCursor } } } }
+  }
+}`
+
 function statusField(value: unknown): ProjectStatusField | null {
   const fields = list(record(value)?.nodes)
   const field = fields.find((candidate) => candidate.__typename === 'ProjectV2SingleSelectField' && candidate.name === 'Status')
@@ -197,10 +206,12 @@ async function ownerProjectContainsRepository(node: unknown, repository: string,
   if (cursorResult.kind !== 'ok') return cursorResult
   let cursor = cursorResult.value
   while (cursor !== null) {
-    const page = await projectQuery(repository, owner, project.number, cursor, process)
+    const repositoryName = repository.split('/')[1] ?? ''
+    const page = await graphqlCall(process, 'gh api graphql', PROJECT_MEMBERSHIP_QUERY, { owner, name: repositoryName, number: project.number, after: cursor })
     if (page.kind !== 'ok') return page
-    if (page.value.items.some((item) => item.repository === repository)) return ok(true)
-    cursorResult = nextConnectionCursor({ pageInfo: { hasNextPage: page.value.next !== null, endCursor: page.value.next } })
+    const items = connection(connection(record(page.value.data.repositoryOwner)?.projectV2).items)
+    if (containsRepository(items, repository)) return ok(true)
+    cursorResult = nextConnectionCursor(items)
     if (cursorResult.kind !== 'ok') return cursorResult
     cursor = cursorResult.value
   }
@@ -251,6 +262,10 @@ export async function executeProjects(verb: ProjectVerb, args: readonly string[]
   if (resolved.kind !== 'ok') return resolved
   const repositoryName = resolved.value.nameWithOwner
   if (verb === 'projects') {
+    const cacheKey = JSON.stringify(['projects-discovery', repositoryName])
+    const started = Date.now()
+    const cached = readCache(environment, cacheKey, started, PROJECT_DISCOVERY_CACHE_TTL)
+    if (cached !== undefined) return options.json ? ok(`${JSON.stringify(cached, null, 2)}\n`) : ok(list(record(cached)?.projects).map((item) => { const project = normalizeProject(item); return project ? `#${project.number}\t${project.title}\t${project.owner}\t${project.url}` : '' }).filter(Boolean).join('\n') + (list(record(cached)?.projects).length ? '\n' : ''))
     const repositoryVariablesValue = repositoryVariables(repositoryName)
     const initial = await graphqlCall(process, 'gh api graphql', PROJECTS_QUERY, repositoryVariablesValue)
     if (initial.kind !== 'ok') return initial
@@ -287,15 +302,22 @@ export async function executeProjects(verb: ProjectVerb, args: readonly string[]
     }
 
     const ownerProjects: Project[] = []
-    for (const node of ownerNodes) {
-      const found = normalizeProject(node)
-      if (found === null || found.closed) continue
-      const membership = await ownerProjectContainsRepository(node, repositoryName, ownerLogin, process)
-      if (membership.kind !== 'ok') return membership
-      if (membership.value) ownerProjects.push(found)
+    const candidates = ownerNodes.flatMap((node) => {
+      const project = normalizeProject(node)
+      return project === null || project.closed ? [] : [{ node, project }]
+    })
+    for (let start = 0; start < candidates.length; start += PROJECT_PROBE_CONCURRENCY) {
+      const batch = candidates.slice(start, start + PROJECT_PROBE_CONCURRENCY)
+      const memberships = await Promise.all(batch.map(({ node }) => ownerProjectContainsRepository(node, repositoryName, ownerLogin, process)))
+      for (let index = 0; index < batch.length; index += 1) {
+        const membership = memberships[index]!
+        if (membership.kind !== 'ok') return membership
+        if (membership.value) ownerProjects.push(batch[index]!.project)
+      }
     }
     const unique = new Map([...linked, ...ownerProjects].map((item) => [item.id, item]))
     const output = { projects: [...unique.values()] }
+    writeCache(environment, cacheKey, started, output, PROJECT_DISCOVERY_CACHE_TTL)
     return options.json ? ok(`${JSON.stringify(output, null, 2)}\n`) : ok(output.projects.map((item) => `#${item.number}\t${item.title}\t${item.owner}\t${item.url}`).join('\n') + (output.projects.length ? '\n' : ''))
   }
   const number = options.number!
