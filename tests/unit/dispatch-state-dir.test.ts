@@ -116,7 +116,7 @@ describe("a child's state directory is the dispatch's own", () => {
         HOME: real, MEGABRAIN_STATE_DIR: temporary, MEGABRAIN_DISPATCH_STATE_DIR: real,
         CODEX_THREAD_ID: "child-thread",
       }, processAdapter);
-      expect(result).toMatchObject({ kind: "failed", error: "delivery missing-delivery refused: delivery is unknown" });
+      expect(result).toMatchObject({ kind: "failed", error: "delivery missing-delivery refused: it was never recorded" });
     } finally {
       await rm(real, { recursive: true, force: true });
       await rm(temporary, { recursive: true, force: true });
