@@ -347,16 +347,17 @@ async function waitForPullMergeable(process: ProcessAdapter, environment: Enviro
 }
 
 async function mergeGitHubPull(process: ProcessAdapter, environment: Environment, data: StackData, pull: GitHubPull, merged: number[]): Promise<Result<null>> {
+  const branch = data.branches.find((item) => item.branch === pull.headRefName);
+  if (branch === undefined) return failed(`could not merge PR #${pull.number}: its head branch changed`);
+  if (pull.baseRefName !== data.defaultBranch) {
+    const retargeted = await gh(process, data.repo, ["api", "--method", "PATCH", `repos/${data.slug}/pulls/${pull.number}`, `--raw-field=base=${data.defaultBranch}`]);
+    if (retargeted.kind !== "ok") return failed(`PR #${pull.number} could not be retargeted after merging ${merged.map((number) => `#${number}`).join(", ") || "none"}: ${retargeted.error}`);
+  }
   const ready = await waitForPullMergeable(process, environment, data, pull.number);
   if (ready.kind !== "ok") return failed(`could not merge PR #${pull.number}${merged.length ? ` after merging ${merged.map((number) => `#${number}`).join(", ")}` : ""}: ${ready.error}`);
-  const branch = data.branches.find((item) => item.branch === pull.headRefName);
-  if (branch === undefined || ready.value.head.ref !== branch.branch) return failed(`could not merge PR #${pull.number}: its head branch changed`);
-  if (ready.value.base.ref !== data.defaultBranch) {
-    const retargeted = await gh(process, data.repo, ["api", "--method", "PATCH", `repos/${data.slug}/pulls/${pull.number}`, `--field=base=${data.defaultBranch}`]);
-    if (retargeted.kind !== "ok") return failed(`PR #${pull.number} is ready after merging ${merged.map((number) => `#${number}`).join(", ") || "none"}, but could not retarget it: ${retargeted.error}`);
-  }
+  if (ready.value.head.ref !== branch.branch) return failed(`could not merge PR #${pull.number}: its head branch changed`);
   const title = `${ready.value.title} (#${pull.number})`;
-  const args = ["api", "--method", "PUT", `repos/${data.slug}/pulls/${pull.number}/merge`, "--field=merge_method=squash", `--field=commit_title=${title}`, `--field=commit_message=${ready.value.body ?? ""}`, `--field=sha=${ready.value.head.sha}`];
+  const args = ["api", "--method", "PUT", `repos/${data.slug}/pulls/${pull.number}/merge`, "--field=merge_method=squash", `--raw-field=commit_title=${title}`, `--raw-field=commit_message=${ready.value.body ?? ""}`, `--field=sha=${ready.value.head.sha}`];
   const result = await gh(process, data.repo, args);
   if (result.kind !== "ok") return failed(`could not merge PR #${pull.number}${merged.length ? ` after merging ${merged.map((number) => `#${number}`).join(", ")}` : ""}: ${result.error}`);
   merged.push(pull.number);
@@ -615,13 +616,20 @@ async function merge(process: ProcessAdapter, environment: Environment, repoOpti
     return ok(`${shown.value}Stack merged bottom-up.\n`);
   }
   const merged: number[] = [];
+  const alreadyMerged: number[] = [];
   for (const branch of data.value.branches) {
     const current = pulls.value.find((item) => item.headRefName === branch.branch);
     if (current === undefined) return failed(`no pull request found for ${branch.branch}${merged.length ? ` after merging ${merged.map((number) => `#${number}`).join(", ")}` : ""}`);
+    if (current.state?.toUpperCase() === "MERGED") {
+      alreadyMerged.push(current.number);
+      continue;
+    }
+    if (current.state?.toUpperCase() === "CLOSED") return failed(`could not merge PR #${current.number}: it is closed without being merged${alreadyMerged.length ? ` (already merged: ${alreadyMerged.map((number) => `#${number}`).join(", ")})` : ""}`);
     const result = await mergeGitHubPull(process, environment, data.value, current, merged);
     if (result.kind !== "ok") return result;
   }
-  return ok(`${shown.value}GitHub stack merged bottom-up (${merged.map((number) => `#${number}`).join(", ")}).\n`);
+  const completed = [...alreadyMerged, ...merged];
+  return ok(`${shown.value}${alreadyMerged.length ? `Already merged: ${alreadyMerged.map((number) => `#${number}`).join(", ")}. ` : ""}GitHub stack merged bottom-up (${completed.map((number) => `#${number}`).join(", ")}).\n`);
 }
 
 export async function executeStack(args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
