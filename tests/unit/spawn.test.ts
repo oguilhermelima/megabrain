@@ -1250,10 +1250,13 @@ describe("executeSpawn", () => {
         .find((text) => text.includes("Dispatch identity:"));
       expect(delivered).toBeDefined();
       expect(delivered).toContain("REQUIRED: Run megabrain received first.");
+      expect(delivered).toContain("Ask only when a decision is genuinely ambiguous and you cannot settle it from the brief; then poll megabrain check --timeout until answered and never proceed on a default. Do not ask for permission to start or to follow the brief.");
+      expect(delivered).not.toContain("REQUIRED: Ask");
+      expect(delivered).toContain("REQUIRED: Send megabrain done only when the brief's work is finished or blocked; include outcome and evidence. Never send done to report work you have not done.");
       expect(delivered).toContain("CRITICAL: Never close your own dispatch.");
       const prompt = (delivered?.slice(delivered.indexOf("[megabrain dispatch:")) ?? "").replaceAll(" — ", "\n");
       const preamble = prompt.split("\n\nDispatch identity:")[0];
-      expect(new TextEncoder().encode(preamble).length).toBeLessThan(440);
+      expect(new TextEncoder().encode(preamble).length).toBeLessThanOrEqual(600);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
