@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../src/core/queue-write.js";
-import { findChild, updateMeta } from "../../src/cli/commands/queue-write.js";
+import { executeQueueWrite, findChild, updateMeta } from "../../src/cli/commands/queue-write.js";
+import { executeCheck } from "../../src/cli/commands/check.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { archiveDispatch, createDispatch, getDispatch, isDispatchArchived } from "../../src/adapters/state-db.js";
@@ -126,6 +127,47 @@ describe("findChild: tmux-runtime records", () => {
     const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
     if (created.kind !== "ok") throw new Error(created.error);
   }
+
+  test("received and check select the live pane when a closed sibling shares its session", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "closed-sibling", { state: "closed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%4" });
+      await writeDispatch(root, "live-child", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      expect(await executeQueueWrite("received", [], environment, process)).toMatchObject({ kind: "ok", value: "received sent: live-child\n" });
+      expect(await executeCheck(["--timeout", "0", "--json"], environment, process)).toMatchObject({ kind: "ok" });
+    });
+  });
+
+  test("does not let MEGABRAIN_DISPATCH_ID select a closed dispatch", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "closed-child", { state: "closed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14", MEGABRAIN_DISPATCH_ID: "closed-child" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      expect(await executeQueueWrite("received", [], environment, process)).toMatchObject({ kind: "failed" });
+    });
+  });
+
+  test("ignores an archived sibling and reports live ambiguity with both panes", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "archived-sibling", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      requireOk(archiveDispatch(database.value, "archived-sibling"));
+      await writeDispatch(root, "live-a", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      await writeDispatch(root, "live-b", { runtime: "tmux", tmuxPane: "%14", tmuxSessionId: "$1" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const result = await executeQueueWrite("received", [], environment, process);
+      expect(result.kind).toBe("failed");
+    });
+  });
 
   test("does not match a tmux dispatch by terminalId, even a legacy record carrying the parent's own id", async () => {
     await withRoot(async (root) => {
