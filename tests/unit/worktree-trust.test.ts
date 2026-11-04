@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { preflightWorktreeTrust } from "../../src/agents/worktree-trust.js";
 
 async function fixture() {
   const home = await mkdtemp(`${tmpdir()}/megabrain-trust-config-`);
-  const worktree = `${home}/repo`;
-  await mkdir(worktree);
+  const worktreeDirectory = `${home}/repo`;
+  await mkdir(worktreeDirectory);
+  const worktree = await realpath(worktreeDirectory);
   const config = `${home}/.codex/config.toml`;
   await mkdir(`${home}/.codex`);
   return { home, worktree, config, environment: { HOME: home } };
