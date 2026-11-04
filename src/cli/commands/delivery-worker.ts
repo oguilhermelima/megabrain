@@ -20,7 +20,7 @@ import { deliverCodexQueue, findCodexProcessByThread } from "../../core/codex-de
 import { resolveStateDirectory } from "../../core/state.js";
 import { failed, ok, type Result } from "../../core/result.js";
 import { getHost, runHostSend } from "../../hosts/index.js";
-import { getTmux } from "../../hosts/tmux.js";
+import { getTmux, resolveTmuxSessionId } from "../../hosts/tmux.js";
 import { deliveryComposer, readDeliveryScreen } from "./delivery-screen.js";
 import { startSupervisorWorker } from "./supervise.js";
 import { agentOwnsForegroundProcess } from "../../core/terminal-process.js";
@@ -115,12 +115,18 @@ async function sendTyped(
     },
     send: async (value, enter) => {
       if (meta.runtime === "tmux") {
+        let expectedSessionId = typeof meta.tmuxSessionId === "string" && meta.tmuxSessionId !== "" ? meta.tmuxSessionId : undefined;
+        if (expectedSessionId === undefined && typeof meta.tmuxSession === "string" && meta.tmuxSession !== "") {
+          const resolved = await resolveTmuxSessionId(String(meta.tmuxPane ?? ""), meta.tmuxSession, process);
+          if (resolved.kind !== "ok") return resolved.kind === "failed" ? resolved.error : resolved.reason;
+          expectedSessionId = resolved.value;
+        }
         if (value !== "") {
-          const pasted = await getTmux().pasteText(String(meta.tmuxPane ?? ""), value, process, String(meta.tmuxSession ?? meta.tmuxSessionId ?? "") || undefined);
+          const pasted = await getTmux().pasteText(String(meta.tmuxPane ?? ""), value, process, expectedSessionId);
           if (pasted.kind !== "ok") return pasted.error;
         }
         if (enter) {
-          const submitted = await getTmux().sendKey(String(meta.tmuxPane ?? ""), "Enter", process, String(meta.tmuxSession ?? meta.tmuxSessionId ?? "") || undefined);
+          const submitted = await getTmux().sendKey(String(meta.tmuxPane ?? ""), "Enter", process, expectedSessionId);
           if (submitted.kind !== "ok") return submitted.error;
         }
         return "ok";
