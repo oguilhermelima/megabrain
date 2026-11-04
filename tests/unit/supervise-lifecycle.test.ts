@@ -96,6 +96,34 @@ describe("supervisor lifecycle decisions", () => {
     }
   });
 
+  test("fails a host startup when its recorded process identity is dead", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-host-dead-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const dispatchId = "host-dead-startup";
+    const created = createDispatch(opened.value, {
+      dispatchId, state: "running", runtime: "host", childHost: "orca", workspaceId: null,
+      terminalId: "host-child", agent: "codex", agentPid: 123, readinessState: "starting",
+    });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const process: ProcessAdapter = {
+      async run(command: string, args: readonly string[]) {
+        if (command === "ps" && args[0] === "-p") return ok({ stdout: "Z\n", stderr: "", exitCode: 0 });
+        throw new Error(`unexpected process invocation: ${command} ${args.join(" ")}`);
+      },
+      async startDetached() { return ok({ pid: 123 }); },
+      invocationCount() { return 1; },
+    };
+    try {
+      await superviseOnce(directory, opened.value, environment, process, Date.now());
+      expect(getDispatch(opened.value, dispatchId)).toMatchObject({ kind: "ok", value: { state: "failed", processState: "failed", readinessState: "failed" } });
+    } finally {
+      opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("notifies once for stable evidence, then again only when the finding changes or recurs", () => {
     const paneGone = { cause: "pane-gone" as const, paneId: "%7", worktreePath: "/repo", dirtyFiles: [] };
     const previousPaneGone = { ...paneGone, notifiedAt: 1_000 };
