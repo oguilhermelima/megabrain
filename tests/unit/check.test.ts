@@ -45,7 +45,7 @@ describe("selectDelivery", () => {
 });
 
 describe("check delivery lifecycle", () => {
-  test.each(["failed", "queue", "typed"] as const)("returns a %s transported reply until the child checks it", async (transport) => {
+  test.each(["failed", "queue", "typed", "socket"] as const)("returns a %s transported reply until the child checks it", async (transport) => {
     const root = await mkdtemp(join(tmpdir(), "megabrain-check-mailbox-"));
     try {
       const opened = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
@@ -67,6 +67,11 @@ describe("check delivery lifecycle", () => {
         const parsed = first.kind === "ok" ? JSON.parse(first.value) as { messages: Array<Record<string, unknown>> } : { messages: [] };
         expect(parsed.messages[0]).toMatchObject({ alreadyTyped: true });
         expect(parsed.messages[0]?.alreadyTypedAt).toBeString();
+      }
+      if (transport === "socket") {
+        const parsed = first.kind === "ok" ? JSON.parse(first.value) as { messages: Array<Record<string, unknown>> } : { messages: [] };
+        expect(parsed.messages[0]).toMatchObject({ alreadyDeliveredThroughSocket: true });
+        expect(parsed.messages[0]?.alreadyDeliveredAt).toBeString();
       }
       const afterRead = guardedOpenDatabase({ MEGABRAIN_STATE_DIR: root });
       if (afterRead.kind !== "ok") throw new Error(afterRead.error);
