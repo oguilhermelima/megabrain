@@ -14,6 +14,7 @@ import { appendMessage, mutateDispatch, putTmuxSession } from "../../src/adapter
 import { importDispatchFixture, importStateFixture, readDispatchFixture } from "./state-fixture.js";
 import { composerProcess, composerTmux, withComposer } from "./composer-tmux.js";
 import { finalPrompt, parseArgs } from "../../src/cli/commands/orchestrate-spawn-options.js";
+import { executeStatus } from "../../src/cli/commands/status.js";
 
 type Call = Readonly<{ command: string; args: readonly string[]; options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number; readonly scrubAgentEnvironment?: boolean } }>;
 
@@ -1180,6 +1181,45 @@ describe("executeSpawn", () => {
       const meta = readMeta(root, dispatchId);
       expect(meta.reason).toBe(null);
       expect(meta.readinessState).toBe("starting");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("fails the spawn when the host process exits during readiness", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-dead-`);
+    const dispatchId = "dispatch-host-dead-readiness";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-terminal", pid: 4242 } } }), stderr: "", exitCode: 0 })
+      : command === "ps" && args[0] === "-p"
+        ? failed("process not found", 1)
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "dead", "--tmux", "false"], {
+        ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      expect(process.calls.some((call) => call.command === "ps" && call.args[1] === "4242")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("records an unresolved host process identity explicitly", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-unknown-pid-`);
+    const dispatchId = "dispatch-host-unknown-pid";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-terminal" } } }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "unknown", "--tmux", "false"], {
+        ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(readMeta(root, dispatchId)).toMatchObject({ processIdentity: "unknown" });
+      expect(process.calls.filter((call) => call.command === "orca" && call.args[1] === "list")).toHaveLength(0);
+      const status = await executeStatus(["--json"], { MEGABRAIN_STATE_DIR: root, HOME: root }, process);
+      expect(status.kind).toBe("ok");
+      if (status.kind === "ok") expect(JSON.parse(status.value).dispatches).toContainEqual(expect.objectContaining({ dispatchId, processIdentity: "unknown" }));
     } finally {
       await rm(root, { recursive: true, force: true });
     }

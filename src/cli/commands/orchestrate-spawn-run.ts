@@ -332,6 +332,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
   const parentChatName = queuedParent === undefined ? await coordinatorChatName(environment, process) : stringValue(queuedParent.parentChatName) ?? await coordinatorChatName(environment, process);
   const meta = await initialMeta(id, options, worktree, parentContext, parentWorkspace, parentTmux, runtime, terminalId, session, sessionId, pane, parentChatName, parentAgentThreadId, queuedParent === undefined ? parentAgent : stringValue(queuedParent.parentAgent) ?? parentAgent, parentAgentSessionId, parentAgentPid);
   if (hostProcessPid !== undefined) Object.assign(meta, { agentPid: hostProcessPid });
+  else if (runtime === "host") Object.assign(meta, { processIdentity: "unknown" });
   if (trustPreflightWarning !== undefined) Object.assign(meta, { trustPreflightWarning });
   if (runtime === "tmux") Object.assign(meta, { tmuxSessionOwned: sessionOwned, tmuxHostTerminalId: hostTerminalId, tmuxHostTerminalHost: hostTerminalHost });
   if (options.agent === "agy") Object.assign(meta, { agyLogFile: agyLogFile(root, id) });
@@ -400,7 +401,7 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
       readinessStartedAt = Date.now();
       const waited = runtime === "tmux"
         ? await waitForTmuxReadiness(options.agent, pane ?? "", readinessTimeoutMs, process, promptFile !== undefined)
-        : await waitForHostReadiness({ runtime, agent: options.agent, childHost: parentContext.host, workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId }, readinessTimeoutMs, process);
+        : await waitForHostReadiness({ runtime, agent: options.agent, childHost: parentContext.host, workspaceId: worktree.workspaceId ?? parentWorkspace, terminalId, ...(hostProcessPid === undefined ? {} : { agentPid: hostProcessPid }) }, readinessTimeoutMs, process);
       readinessLastFrame = waited.lastFrame;
       if (runtime === "tmux" && options.agent === "grok" && waited.result.kind === "ok" && pane !== null) {
         const panePid = await getTmux().panePid(pane, process, sessionId ?? undefined);
