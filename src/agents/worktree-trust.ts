@@ -9,7 +9,7 @@ const LOCK_STALE_MS = 60_000;
 
 /** Pre-seed only the exact workspace keys Claude Code and Codex use for their trust prompt. */
 export async function preflightWorktreeTrust(agent: string, worktreePath: string, environment: TrustEnvironment): Promise<Result<void>> {
-  if (agent !== "claude" && agent !== "codex") return ok(undefined);
+  if (agent !== "codex") return ok(undefined);
   try {
     let canonicalPath: string;
     try {
