@@ -25,11 +25,12 @@ export function useGithubCounts(projects: Project[]): GithubCounts {
   const key = paths.join('\n')
 
   usePoll(
-    githubCountsPolicy,
-    async (current) => {
+    { ...githubCountsPolicy, refreshOn: { ...githubCountsPolicy.refreshOn, action: true } },
+    async (current, refresh) => {
       if (paths.length === 0) return
       const entries = await mapLimited(paths, concurrentProjects, async (path) => {
-        const [prs, issues] = await Promise.allSettled([pullRequestPage(path, 'open', null), issuePage(path, 'open', null)])
+        const options = { refresh }
+        const [prs, issues] = await Promise.allSettled([pullRequestPage(path, 'open', null, undefined, options), issuePage(path, 'open', null, undefined, options)])
         return [path, { prs: prs.status === 'fulfilled' ? (prs.value.counts.open ?? null) : null, issues: issues.status === 'fulfilled' ? (issues.value.counts.open ?? null) : null }] as const
       })
       if (current()) setCounts((previous) => reuse(previous, Object.fromEntries(entries)))

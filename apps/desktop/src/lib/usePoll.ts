@@ -8,7 +8,7 @@ import { planPoll, pollInterval, retryDelay, type PollPolicy, type PollTrigger }
  * left, so a late answer is dropped. A read that throws is tried again sooner (see retryDelay).
  * Returns a function that reads again now.
  */
-export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Promise<void>, deps: DependencyList): () => void {
+export function usePoll(policy: PollPolicy, read: (current: () => boolean, refresh?: boolean) => Promise<void>, deps: DependencyList): () => void {
   const latest = useRef(read)
   latest.current = read
   const now = useRef<() => void>(() => {})
@@ -28,7 +28,7 @@ export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Pr
       timer = ms === null ? undefined : setTimeout(() => trigger(kind), ms)
     }
 
-    const trigger = (kind: PollTrigger) => {
+    const trigger = (kind: PollTrigger, refresh = false) => {
       if (stopped) return
       const plan = planPoll(policy, kind, { visible: windowShows(), now: Date.now(), lastRunAt })
       if (!plan.run) {
@@ -42,7 +42,7 @@ export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Pr
       running = true
       clearTimeout(timer)
       lastRunAt = Date.now()
-      latest.current(current)
+      latest.current(current, refresh)
         .then(
           () => {
             failures = 0
@@ -66,7 +66,7 @@ export function usePoll(policy: PollPolicy, read: (current: () => boolean) => Pr
     }
 
     const stops = [onVisibility(() => trigger('visibility')), onFocus(() => trigger('focus')), onAction(() => trigger('action'))]
-    now.current = () => trigger('start')
+    now.current = () => trigger('start', true)
     trigger('start')
     return () => {
       stopped = true

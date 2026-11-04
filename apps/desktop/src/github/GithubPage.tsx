@@ -30,9 +30,9 @@ import { pageDivider, pageMx, pageX } from '@/lib/page'
 type Listing = { kind: 'prs'; page: GithubPullRequestList } | { kind: 'issues'; page: GithubIssueList }
 type ListRequest = { kind: 'prs'; state: PullRequestState; filters: PullRequestFilters } | { kind: 'issues'; state: IssueState; filters: IssueFilters }
 
-async function readPage(root: string, request: ListRequest, after: string | null): Promise<Listing> {
-  if (request.kind === 'prs') return { kind: 'prs', page: await pullRequestPage(root, request.state, after, request.filters) }
-  return { kind: 'issues', page: await issuePage(root, request.state, after, request.filters) }
+async function readPage(root: string, request: ListRequest, after: string | null, refresh = false): Promise<Listing> {
+  if (request.kind === 'prs') return { kind: 'prs', page: await pullRequestPage(root, request.state, after, request.filters, { refresh }) }
+  return { kind: 'issues', page: await issuePage(root, request.state, after, request.filters, { refresh }) }
 }
 
 /**
@@ -56,11 +56,11 @@ export function usePagedListing(root: string, request: ListRequest) {
   // again meanwhile) never replaces what a newer read shows.
   const fence = useRef(readFence())
 
-  const read = useCallback(async () => {
+  const read = useCallback(async (_current: () => boolean, refresh = false) => {
     const reading = fence.current.start()
     setLoading(true)
     try {
-      const listing = await readPage(root, asked.current, cursor)
+      const listing = await readPage(root, asked.current, cursor, refresh)
       if (!fence.current.newest(reading)) return
       setShown((loaded) => reuse(loaded, { key, index, listing }))
       setAt((now) => (now.key === key ? { ...now, cursors: withNext(now.cursors, index, listing.page.nextCursor) } : now))

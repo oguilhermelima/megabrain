@@ -2,25 +2,28 @@ import { api } from '@/api'
 import type { GithubIssueList, GithubPullRequestList } from '@/api/schema'
 import { emptyIssueFilters, emptyPullRequestFilters, issueSearch, pageSize, pullRequestSearch, type IssueFilters, type PullRequestFilters } from '@/github/github-model'
 import { createRequestCache } from '@/github/request-cache'
+import { githubCountsPolicy, githubListingPolicy } from '@/lib/poll-model'
 
-// Counts, overview rows and GitHub pages share the exact CLI query, as do opened details and
-// knowledge references. Expiry follows the CLI's 60 s GitHub read cache and visible list cadence.
+// Counts, overview rows and GitHub pages share exact queries; the brief reuse window only joins
+// nearby surfaces and expires well before either list can poll again.
 const requests = createRequestCache()
-const requestAgeMs = 60_000
+const requestAgeMs = Math.min(githubListingPolicy.visibleMs, githubCountsPolicy.visibleMs) / 12
+
+type RequestOptions = { refresh?: boolean }
 
 export type PullRequestState = 'open' | 'closed' | 'merged' | 'all'
 export type IssueState = 'open' | 'closed' | 'all'
 
-export function pullRequestPage(root: string, state: PullRequestState, after: string | null, filters: PullRequestFilters = emptyPullRequestFilters): Promise<GithubPullRequestList> {
+export function pullRequestPage(root: string, state: PullRequestState, after: string | null, filters: PullRequestFilters = emptyPullRequestFilters, options: RequestOptions = {}): Promise<GithubPullRequestList> {
   const query = pullRequestSearch(filters)
   const key = JSON.stringify(['githubPullRequests', root, state, pageSize, after, query])
-  return requests.request(key, requestAgeMs, () => api.githubPullRequests(root, state, pageSize, after, query))
+  return requests.request(key, requestAgeMs, () => api.githubPullRequests(root, state, pageSize, after, query), options)
 }
 
-export function issuePage(root: string, state: IssueState, after: string | null, filters: IssueFilters = emptyIssueFilters): Promise<GithubIssueList> {
+export function issuePage(root: string, state: IssueState, after: string | null, filters: IssueFilters = emptyIssueFilters, options: RequestOptions = {}): Promise<GithubIssueList> {
   const query = issueSearch(filters)
   const key = JSON.stringify(['githubIssues', root, state, pageSize, after, query])
-  return requests.request(key, requestAgeMs, () => api.githubIssues(root, state, pageSize, after, query))
+  return requests.request(key, requestAgeMs, () => api.githubIssues(root, state, pageSize, after, query), options)
 }
 
 export function pullRequestDetail(root: string, number: number) {
