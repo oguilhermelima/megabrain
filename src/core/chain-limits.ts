@@ -36,10 +36,12 @@ export type LimitReading =
   | Readonly<{ readonly status: "current"; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "disk" | "cache" | "live"; readonly result: LimitResult; readonly fetchedAt: number }>
   // The provider could not be asked just now (rate limited, timed out, in backoff); this is its last
   // good snapshot, `fetchedAt` old, and `retryAt` (unix seconds) is the earliest the next live call may go out.
-  | Readonly<{ readonly status: "stale"; readonly stale: true; readonly staleReason: string; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "cache"; readonly result: LimitResult; readonly fetchedAt: number; readonly retryAt?: number }>
+  | Readonly<{ readonly status: "stale"; readonly stale: true; readonly staleReason: string; readonly ageSeconds?: number; readonly usedPercent: number; readonly resetsAt: string; readonly bucket: string; readonly reason: string; readonly source: "cache" | "disk"; readonly result: LimitResult; readonly fetchedAt: number; readonly retryAt?: number }>
   | Readonly<{ readonly status: "unknown"; readonly reason: string; readonly transient?: Readonly<{ readonly retryAfterSeconds?: number }> }>;
 
 export type ChainLimitEnvironment = Readonly<Record<string, string | undefined>>;
+
+export const CODEX_SNAPSHOT_STALE_AFTER_SECONDS = 15 * 60;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -111,6 +113,11 @@ function resolveCodexSnapshot(snapshot: JsonRecord, window: LimitWindowName, now
     return unknownReading("codex", window, `recorded window has already reset at ${resetsAt} and carries no information about the current window`);
   }
   const result = buildCodexResult(snapshot, fetchedAt);
+  const ageSeconds = Math.max(0, now - fetchedAt);
+  if (ageSeconds > CODEX_SNAPSHOT_STALE_AFTER_SECONDS) {
+    const staleReason = `Codex rollout snapshot is ${Math.floor(ageSeconds / 60)} minutes old`;
+    return { status: "stale", stale: true, staleReason, ageSeconds, usedPercent: value.used_percent, resetsAt: String(resetsAt), bucket: "default", reason: staleReason, source: "disk", result, fetchedAt };
+  }
   return { status: "current", usedPercent: value.used_percent, resetsAt: String(resetsAt), bucket: "default", reason: `codex ${actualWindow} window at ${percentText(value.used_percent)} percent`, source: "disk", result, fetchedAt };
 }
 

@@ -13,7 +13,7 @@ describe("resource admission", () => {
     const policy: AdmissionPolicy = { maxPressure: "normal" };
     expect(decideAdmission(request, policy, {
       machine: { ...machine, pressure: "elevated" }, runningAgents: 1, runningContainerSuites: 0,
-    })).toEqual({ status: "queued", reason: "memory pressure elevated" });
+    })).toEqual({ status: "queued", reason: "memory pressure elevated; spawn costs ~2048 MiB" });
   });
 
   test("queues when the agent limit is reached", () => {
@@ -34,5 +34,11 @@ describe("resource admission", () => {
     expect(decideAdmission({ ...request, estimatedCostBytes: machine.totalMemoryBytes + 1 }, {}, {
       machine, runningAgents: 0, runningContainerSuites: 0,
     })).toMatchObject({ status: "refused", reason: expect.stringContaining("total memory") });
+  });
+
+  test("explains the estimated spawn cost in the memory refusal", () => {
+    expect(decideAdmission(request, { minAvailableMiB: 1024 }, {
+      machine: { ...machine, availableMemoryBytes: 2669 * 1024 ** 2 }, runningAgents: 0, runningContainerSuites: 0,
+    })).toMatchObject({ status: "queued", reason: "2669 MiB available, spawn costs ~2048 MiB, must leave 1024 MiB free" });
   });
 });

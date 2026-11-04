@@ -6,6 +6,7 @@ import { ok } from "../../src/core/result.js";
 import { getDispatch, listMessages, stateDatabase, writeAdmissionPolicy } from "../../src/adapters/state-db.js";
 import { executeOrchestrateQueue } from "../../src/cli/commands/orchestrate-queue.js";
 import { superviseOnce } from "../../src/cli/commands/supervise.js";
+import { notifyAdmissionStatus } from "../../src/cli/commands/admission-notify.js";
 import { getTmux, registerTmux } from "../../src/hosts/tmux.js";
 import { cleanupRun, existingWorktree, runComposerSpawn } from "./spawn-harness.js";
 
@@ -61,6 +62,7 @@ describe("admission queue flow", () => {
 
   test("starts the same queued dispatch when admission opens and records one notice for each transition", async () => {
     const context = await queuedSpawn("admission-flow-start", { maxPressure: "normal" });
+    expect(context.run.result.kind === "ok" ? JSON.parse(context.run.result.value).reason : "").toContain("spawn costs ~");
     const original = getTmux();
     registerTmux({
       ...original, id: "tmux", paneExists: async () => ok(true), sessionExists: async () => ok(true), panesForSession: async () => ok(["%9"]),
@@ -90,6 +92,22 @@ describe("admission queue flow", () => {
       ]);
     } finally {
       registerTmux(original);
+      await cleanupRun(context.run);
+      await rm(context.root, { recursive: true, force: true });
+    }
+  });
+
+  test("retries a queued notice without colliding on its idempotency key", async () => {
+    const context = await queuedSpawn("admission-flow-repeat-queued", { maxAgents: 0 });
+    try {
+      const database = stateDatabase({ MEGABRAIN_STATE_DIR: context.root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      const dispatch = getDispatch(database.value, context.run.dispatchId);
+      if (dispatch.kind !== "ok" || dispatch.value === undefined) throw new Error("queued dispatch missing");
+      await notifyAdmissionStatus(context.root, database.value, context.run.dispatchId, dispatch.value, "queued", "resource limit", context.run.process, 1);
+      const messages = listMessages(database.value, context.run.dispatchId);
+      expect(messages.kind === "ok" ? messages.value.filter((item) => item.type === "admission" && item.text.includes("queued")).length : -1).toBe(1);
+    } finally {
       await cleanupRun(context.run);
       await rm(context.root, { recursive: true, force: true });
     }
