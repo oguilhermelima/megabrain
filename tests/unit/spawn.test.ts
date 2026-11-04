@@ -1185,6 +1185,64 @@ describe("executeSpawn", () => {
     }
   });
 
+  test("fails the spawn when the host process exits during readiness", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-dead-`);
+    const dispatchId = "dispatch-host-dead-readiness";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-terminal", pid: 4242 } } }), stderr: "", exitCode: 0 })
+      : command === "ps" && args[0] === "-p"
+        ? failed("process not found", 1)
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "dead", "--tmux", "false"], {
+        ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("failed");
+      expect(process.calls.some((call) => call.command === "ps" && call.args[1] === "4242")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves a missing host pid once from the Orca terminal list", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-resolve-pid-`);
+    const dispatchId = "dispatch-host-resolve-pid";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-terminal" } } }), stderr: "", exitCode: 0 })
+      : command === "orca" && args[1] === "list"
+        ? ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal", pid: 4243 }] } }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "resolve", "--tmux", "false"], {
+        ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(result.kind).toBe("ok");
+      expect(readMeta(root, dispatchId)).toMatchObject({ agentPid: 4243 });
+      expect(process.calls.filter((call) => call.command === "orca" && call.args[1] === "list")).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("records an unresolved host process identity explicitly", async () => {
+    const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-host-unknown-pid-`);
+    const dispatchId = "dispatch-host-unknown-pid";
+    const process = processFor([], (command, args) => command === "orca" && args[1] === "create"
+      ? ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-terminal" } } }), stderr: "", exitCode: 0 })
+      : command === "orca" && args[1] === "list"
+        ? ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal" }] } }), stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+    try {
+      await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "unknown", "--tmux", "false"], {
+        ...environment(root, dispatchId), MEGABRAIN_SESSION_HOST: "orca",
+      }, process, options(worktree("existing")));
+      expect(readMeta(root, dispatchId)).toMatchObject({ processIdentity: "unknown" });
+      expect(process.calls.filter((call) => call.command === "orca" && call.args[1] === "list")).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("submits the host command, waits for readiness, and then sends the prompt", async () => {
     const root = await mkdtemp(`${tmpdir()}/megabrain-spawn-readiness-order-`);
     const dispatchId = "dispatch-readiness-order";
