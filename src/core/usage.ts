@@ -52,7 +52,7 @@ export const USAGE_LINES = {
   "github": "github viewer|projects|project|project-move|project-field|project-clear|project-add|project-draft|project-draft-edit|project-archive|project-unarchive|project-status|project-status-create|project-workflows|prs|issues|labels|pr|issue|runs|run|run-log|run-action|workflow-dispatch|pr-files|pr-file|review|comment|issue-state|pr-state|threads|thread-reply|thread-resolve|reviewers|request-review|pr-ready|auto-merge|rerun-checks|file-viewed|assignable|image ...",
   "github-viewer": "github viewer [--json]",
   "github-projects": "github projects <repo name|path> [--json]",
-  "github-project": "github project <repo name|path> <project number> [--owner <login>] [--after <cursor>] [--json]",
+  "github-project": "github project <repo name|path> <project number> [--owner <login>] [--after <cursor>] [--item <id>] [--json]",
   "github-project-move": "github project-move <repo name|path> <project number> <item id> --status <option id> [--owner <login>] [--json]",
   "github-project-field": "github project-field <repo> <project number> <item id> --field <name> --type <single-select|number|date|text|iteration> --value <value> [--owner <login>] [--json]",
   "github-project-clear": "github project-clear <repo> <project number> <item id> --field <name> [--owner <login>] [--json]",

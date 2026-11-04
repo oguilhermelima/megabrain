@@ -60,7 +60,9 @@ export function normalizeProjectViews(value: unknown): ProjectView[] {
 }
 
 function normalizeFieldValues(value: unknown): ProjectItem['fieldValues'] {
-  return list(record(value)?.nodes).flatMap((raw) => {
+  const recordValue = record(value)
+  const entries = Array.isArray(recordValue?.nodes) ? recordValue.nodes : Object.values(recordValue ?? {}).filter((entry) => record(entry)?.__typename !== undefined)
+  return list(entries).flatMap((raw) => {
     const entry = record(raw)
     if (!entry || typeof entry.__typename !== 'string') return []
     const suffix = entry.__typename.replace('ProjectV2ItemField', '').replace('Value', '').replace('ProjectV2Item', '').replace('Field', '')
@@ -94,7 +96,7 @@ export const CONTENT_FIELDS = `
 `
 const ITEM_FIELD_VALUES = `fieldValues(first: 30) { nodes { __typename ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title startDate duration field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldLabelValue { field { ... on ProjectV2FieldCommon { name } } labels(first: 20) { nodes { name color } } } ... on ProjectV2ItemFieldMilestoneValue { field { ... on ProjectV2FieldCommon { name } } milestone { title dueOn } } ... on ProjectV2ItemFieldUserValue { users(first: 20) { nodes { login } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldRepositoryValue { repository { nameWithOwner } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldPullRequestValue { pullRequests(first: 20) { nodes { number title url } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldReviewerValue { field { ... on ProjectV2FieldCommon { name } } reviewers(first: 20) { nodes { __typename ... on User { login } ... on Team { name } } } } ... on ProjectV2ItemIssueFieldValue { field { ... on ProjectV2FieldCommon { name } } issueFieldValue { __typename ... on IssueFieldDateValue { value } ... on IssueFieldNumberValue { value } ... on IssueFieldTextValue { value } ... on IssueFieldSingleSelectValue { name optionId } } } } }`
 export const PROJECT_ITEM_FIELD_VALUES = ITEM_FIELD_VALUES
-const PROJECT_ITEMS = `items(first: 100, after: $after) { totalCount nodes { id isArchived updatedAt ${ITEM_FIELD_VALUES} fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CONTENT_FIELDS} } } pageInfo { hasNextPage endCursor } }`
+const CARD_CONTENT_FIELDS = `__typename ... on Issue { number title url state updatedAt repository { nameWithOwner } assignees(first: 100) { nodes { login avatarUrl } } labels(first: 100) { nodes { name color } } } ... on PullRequest { number title url state updatedAt repository { nameWithOwner } assignees(first: 100) { nodes { login avatarUrl } } labels(first: 100) { nodes { name color } } } ... on DraftIssue { title }`
 
 export const PROJECTS_QUERY = `query projectsDiscovery($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
@@ -118,9 +120,23 @@ export const OWNER_PROJECTS_PAGE_QUERY = `query ownerProjects($owner: String!, $
   }
 }`
 
-export const PROJECT_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
+const projectPageQuery = (fieldNames: readonly string[] = []) => {
+  const declarations = fieldNames.map((_, index) => `$field${index}: String!`).join(', ')
+  const values = fieldNames.map((_, index) => `field${index}: fieldValueByName(name: $field${index}) { __typename ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldIterationValue { title startDate duration field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldLabelValue { field { ... on ProjectV2FieldCommon { name } } labels(first: 20) { nodes { name color } } } ... on ProjectV2ItemFieldMilestoneValue { field { ... on ProjectV2FieldCommon { name } } milestone { title dueOn } } ... on ProjectV2ItemFieldUserValue { users(first: 20) { nodes { login } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldRepositoryValue { repository { nameWithOwner } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldPullRequestValue { pullRequests(first: 20) { nodes { number title url } } field { ... on ProjectV2FieldCommon { name } } } ... on ProjectV2ItemFieldReviewerValue { field { ... on ProjectV2FieldCommon { name } } reviewers(first: 20) { nodes { __typename ... on User { login } ... on Team { name } } } } ... on ProjectV2ItemIssueFieldValue { field { ... on ProjectV2FieldCommon { name } } issueFieldValue { __typename ... on IssueFieldDateValue { value } ... on IssueFieldNumberValue { value } ... on IssueFieldTextValue { value } ... on IssueFieldSingleSelectValue { name optionId } } } }`).join('\n')
+  return `query($owner: String!, $name: String!, $number: Int!, $after: String${declarations ? `, ${declarations}` : ''}) {
   repository(owner: $owner, name: $name) { owner { login } }
-  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { ${PROJECT_FIELDS} ${VIEW_FIELDS} ${PROJECT_ITEMS} } } }
+  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { items(first: 100, after: $after) { totalCount nodes { id isArchived updatedAt ${values} fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CARD_CONTENT_FIELDS} } } pageInfo { hasNextPage endCursor } } } } }
+}`
+}
+export const PROJECT_QUERY = projectPageQuery()
+
+export const PROJECT_METADATA_QUERY = `query projectMetadata($owner: String!, $name: String!, $number: Int!, $after: String) {
+  repository(owner: $owner, name: $name) { owner { login } }
+  repositoryOwner(login: $owner) { ... on ProjectV2Owner { projectV2(number: $number) { id number title url closed owner { ... on User { login } ... on Organization { login } } ${VIEW_FIELDS} items(first: 1, after: $after) { totalCount } } } }
+}`
+
+export const PROJECT_ITEM_QUERY = `query projectItemDetail($itemId: ID!) {
+  node(id: $itemId) { ... on ProjectV2Item { id isArchived updatedAt ${ITEM_FIELD_VALUES} fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { optionId } } content { ${CONTENT_FIELDS} } } }
 }`
 
 const PROJECT_MEMBERSHIP_QUERY = `query($owner: String!, $name: String!, $number: Int!, $after: String) {
@@ -218,7 +234,7 @@ async function ownerProjectContainsRepository(node: unknown, repository: string,
   return ok(false)
 }
 
-type Parsed = { selector: string; number?: number; owner?: string; after?: string | null; json: boolean }
+type Parsed = { selector: string; number?: number; owner?: string; after?: string | null; itemId?: string; fields?: string[]; json: boolean }
 function parse(verb: ProjectVerb, args: readonly string[]): Result<Parsed> {
   const positionals = verb === 'projects' ? 1 : 2
   const selector = args[0]
@@ -226,31 +242,62 @@ function parse(verb: ProjectVerb, args: readonly string[]): Result<Parsed> {
   const flags = args.slice(positionals)
   if (selector === undefined || (verb !== 'projects' && (numberText === undefined || !/^\d+$/.test(numberText) || Number(numberText) < 1))) return failed(usageMessage(`github-${verb}`), 2)
   const values: Record<string, string> = {}
+  const fields: string[] = []
   let json = false
   for (let i = 0; i < flags.length; i += 1) {
     const flag = flags[i]
     if (flag === '--json') { json = true; continue }
-    if ((flag === '--owner' || flag === '--after') && flags[i + 1] !== undefined && !flags[i + 1]!.startsWith('--')) {
+    if (flag === '--field' && flags[i + 1] !== undefined && !flags[i + 1]!.startsWith('--')) {
+      const field = flags[++i]!
+      if (field.trim() === '' || field.length > 200 || fields.length >= 100) return failed('--field must be non-empty and supplied at most 100 times', 2)
+      fields.push(field)
+      continue
+    }
+    if ((flag === '--owner' || flag === '--after' || flag === '--item') && flags[i + 1] !== undefined && !flags[i + 1]!.startsWith('--')) {
       if (values[flag] !== undefined) return failed(`${flag} may only be supplied once`, 2)
       values[flag] = flags[++i]!
       continue
     }
     return failed(usageMessage(`github-${verb}`), 2)
   }
-  return ok({ selector, ...(numberText === undefined ? {} : { number: Number(numberText) }), ...(values['--owner'] === undefined ? {} : { owner: values['--owner'] }), ...(values['--after'] === undefined ? {} : { after: values['--after'] }), json })
+  return ok({ selector, ...(numberText === undefined ? {} : { number: Number(numberText) }), ...(values['--owner'] === undefined ? {} : { owner: values['--owner'] }), ...(values['--after'] === undefined ? {} : { after: values['--after'] }), ...(values['--item'] === undefined ? {} : { itemId: values['--item'] }), ...(fields.length === 0 ? {} : { fields: [...new Set(fields)] }), json })
 }
 
-async function projectQuery(repositoryName: string, owner: string, number: number, after: string | null, process: ProcessAdapter) {
-  const variables = { ...repositoryVariables(repositoryName), owner, number, ...(after === null ? {} : { after }) }
-  const answer = await graphqlCall(process, 'gh api graphql', PROJECT_QUERY, variables)
-  if (answer.kind !== 'ok') return answer
-  const ownerValue = record(answer.value.data.repositoryOwner)?.projectV2
-  const projectValue = normalizeProject(ownerValue)
+async function projectQuery(repositoryName: string, owner: string, number: number, after: string | null, fields: readonly string[], environment: Environment, process: ProcessAdapter) {
+  const variables = { ...repositoryVariables(repositoryName), owner, number, ...(after === null ? {} : { after }), ...Object.fromEntries(fields.map((field, index) => [`field${index}`, field])) }
+  const cacheKey = JSON.stringify(['github-project-metadata', owner, number])
+  const cachedProject = readCache(environment, cacheKey, Date.now(), 10 * 60_000)
+  const pagePromise = graphqlCall(process, 'gh api graphql', projectPageQuery(fields), variables)
+  let projectValue = cachedProject === undefined ? null : normalizeProject(cachedProject)
+  let pageAnswer: Awaited<typeof pagePromise>
+  if (projectValue === null) {
+    const [metadata, answer] = await Promise.all([
+      graphqlCall(process, 'gh api graphql', PROJECT_METADATA_QUERY, { ...repositoryVariables(repositoryName), owner, number, ...(after === null ? {} : { after }) }),
+      pagePromise,
+    ])
+    if (metadata.kind !== 'ok') return metadata
+    if (answer.kind !== 'ok') return answer
+    pageAnswer = answer
+    const rawMetadata = record(metadata.value.data.repositoryOwner)?.projectV2
+    projectValue = normalizeProject(rawMetadata)
+    if (projectValue !== null) writeCache(environment, cacheKey, Date.now(), rawMetadata, 10 * 60_000)
+  } else {
+    pageAnswer = await pagePromise
+    if (pageAnswer.kind !== 'ok') return pageAnswer
+  }
   if (projectValue === null) return failed(`GitHub project ${number} was not found for ${owner}`)
+  const ownerValue = record(pageAnswer.value.data.repositoryOwner)?.projectV2
   const items = record(ownerValue)?.items
   const pageInfo = record(record(items)?.pageInfo)
   const totalCount = record(items)?.totalCount
   return ok({ project: projectValue, items: list(record(items)?.nodes).flatMap((node) => { const normalized = normalizeProjectItem(node); return normalized === null ? [] : [normalized] }), ...(typeof totalCount === 'number' ? { totalCount } : {}), next: pageInfo?.hasNextPage === true ? nullableText(pageInfo.endCursor) : null })
+}
+
+async function projectItemQuery(itemId: string, process: ProcessAdapter) {
+  const answer = await graphqlCall(process, 'gh api graphql', PROJECT_ITEM_QUERY, { itemId })
+  if (answer.kind !== 'ok') return answer
+  const item = normalizeProjectItem(answer.value.data.node)
+  return item === null ? failed(`GitHub project item ${itemId} was not found`) : ok({ item })
 }
 
 export async function executeProjects(verb: ProjectVerb, args: readonly string[], environment: Environment, process: ProcessAdapter): Promise<Result<string>> {
@@ -321,8 +368,13 @@ export async function executeProjects(verb: ProjectVerb, args: readonly string[]
     return options.json ? ok(`${JSON.stringify(output, null, 2)}\n`) : ok(output.projects.map((item) => `#${item.number}\t${item.title}\t${item.owner}\t${item.url}`).join('\n') + (output.projects.length ? '\n' : ''))
   }
   const number = options.number!
+  if (options.itemId !== undefined) {
+    const item = await projectItemQuery(options.itemId, process)
+    if (item.kind !== 'ok') return item
+    return options.json ? ok(`${JSON.stringify(item.value, null, 2)}\n`) : ok(`${item.value.item.title}\n`)
+  }
   const owner = options.owner ?? repositoryName.split('/')[0] ?? ''
-  const page = await projectQuery(repositoryName, owner, number, options.after ?? null, process)
+  const page = await projectQuery(repositoryName, owner, number, options.after ?? null, options.fields ?? [], environment, process)
   if (page.kind !== 'ok') return page
   return options.json ? ok(`${JSON.stringify(page.value, null, 2)}\n`) : ok(page.value.items.map((item) => `${item.status ?? '-'}\t${item.type}\t${item.number ?? '-'}\t${item.title}`).join('\n') + (page.value.items.length ? '\n' : ''))
 }
