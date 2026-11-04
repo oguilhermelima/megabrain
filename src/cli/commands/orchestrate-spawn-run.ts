@@ -317,21 +317,6 @@ export async function runSpawn(args: readonly string[], rawEnvironment: SpawnEnv
     terminalId = createdTerminal.value.terminalId;
     terminalCreateAttempts = createdTerminal.value.attempts;
     hostProcessPid = createdTerminal.value.processId;
-    if (host.id === "orca" && hostProcessPid === undefined) {
-      const listed = await process.run("orca", ["terminal", "list", "--json"]);
-      if (listed.kind === "ok") {
-        try {
-          const payload: unknown = JSON.parse(listed.value.stdout || "{}");
-          const root = typeof payload === "object" && payload !== null ? payload as Record<string, unknown> : {};
-          const result = typeof root.result === "object" && root.result !== null ? root.result as Record<string, unknown> : {};
-          const terminals = Array.isArray(result.terminals) ? result.terminals : [];
-          const terminal = terminals.find((item) => typeof item === "object" && item !== null && host.terminalIdentity(item) === terminalId) as Record<string, unknown> | undefined;
-          const candidate = terminal === undefined ? undefined : [terminal.rootPid, terminal.processRootPid, terminal.processId, terminal.pid]
-            .find((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0);
-          if (candidate !== undefined) hostProcessPid = candidate;
-        } catch { /* A malformed or unavailable identity remains explicitly unknown. */ }
-      }
-    }
   }
 
   // Neither agy nor Grok sets AI_AGENT in its tool shells; each sets its own marker (measured).
