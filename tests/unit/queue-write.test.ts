@@ -157,7 +157,7 @@ describe("findChild: tmux-runtime records", () => {
 
       const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
       const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
-        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\\n" : "$1\\n", stderr: "", exitCode: 0 })
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
 
       for (const [pane, dispatch] of [["%14", "child-done"], ["%15", "child-starting"], ["%16", "child-queued"]] as const) {
@@ -183,7 +183,7 @@ describe("findChild: tmux-runtime records", () => {
 
       const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
       const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
-        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\\n" : "$1\\n", stderr: "", exitCode: 0 })
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
       const found = await findChild(root, environment, process);
       expect("kind" in found).toBe(false);
