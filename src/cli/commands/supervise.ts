@@ -7,7 +7,7 @@ import type { ProcessAdapter } from "../../adapters/proc.js";
 import { ownedGrokLeaders, sweepGrokLeaders } from "../../agents/grok-leader.js";
 import { getDispatch, listDispatches, listLeases, listMessages, listOutboxForDispatch, listDeliveries, listPendingOutboxPeerVerifications, listChildAnsweredDispatches, resourceHistoryEnabled, readOnlyStateDatabase } from "../../adapters/state-db.js";
 import { findClaudeTranscript, findCodexRollout } from "../../core/context-meter.js";
-import { classifyLiveness } from "../../core/liveness.js";
+import { classifyLiveness, startupDialogCause } from "../../core/liveness.js";
 import { agyLogRecord, backgroundTasks, claudeActiveWork, classifyRecordedError, classifySupervision, hasOpenDispatches, isLiveProcessState, mayAutoRecover, recommendationFor, shouldNotifyFinding, type PreviousFinding, type SupervisionFinding } from "../../core/supervise.js";
 import { usageMessage, usageText } from "../../core/usage.js";
 import { resolveStateDirectory } from "../../core/state.js";
@@ -21,6 +21,7 @@ import { notifyAdmissionStatus } from "./admission-notify.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { classifyQueueMail } from "../../core/queue-write.js";
 import { callStateOwner } from "../../db/state-owner.js";
+import { argvBriefStarted, transportTmuxPrompt } from "./spawn-prompt.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 type RecordValue = Record<string, unknown>;
@@ -238,12 +239,12 @@ async function recoverPrompt(database: Parameters<typeof getDispatch>[0], meta: 
   return confirmed ? "prompt submission confirmed" : "Enter was sent; submission is not yet confirmed";
 }
 
-async function notifyParent(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, finding: SupervisionFinding, process: ProcessAdapter, now: number, recovery?: string): Promise<void> {
+async function notifyParent(root: string, database: Parameters<typeof getDispatch>[0], dispatch: string, meta: RecordValue, finding: SupervisionFinding, process: ProcessAdapter, now: number, recovery?: string, frame?: string): Promise<void> {
   const recommendation = recommendationFor(finding, dispatch);
   if (recommendation === undefined) return;
   const agent = string(meta.agent) ?? "unknown";
   const chat = string(meta.chatName) ?? string(meta.branch) ?? dispatch;
-  const text = `${findingSentence(finding)}. ${recovery === undefined ? "" : `Automatic recovery: ${recovery}. `}Recommended: ${recommendation}`;
+  const text = `${findingSentence(finding)}. ${recovery === undefined ? "" : `Automatic recovery: ${recovery}. `}Recommended: ${recommendation}${frame === undefined ? "" : `\nCurrent screen:\n${frame.split("\n").slice(-60).join("\n")}`}`;
   const fullMessage = formatDispatchMessage({ dispatchId: dispatch, chatName: chat, agent, type: "supervise", text, direction: "parent-bound" });
   const createdAt = new Date(now).toISOString();
   const idempotencyKey = `${dispatch}:supervise:${finding.cause}:${now}`;
@@ -392,6 +393,39 @@ export async function superviseOnce(root: string, database: Parameters<typeof ge
     const current = getDispatch(database, dispatch);
     if (current.kind !== "ok" || current.value === undefined) continue;
     const meta = current.value as RecordValue;
+    if (meta.readinessState === "starting" && meta.runtime === "tmux" && string(meta.tmuxPane) !== undefined) {
+      const captured = await readDeliveryScreen(meta, process);
+      if (captured.kind === "ok" && await processAlive(meta, process) !== false) {
+        const frame = captured.value;
+        const dialog = startupDialogCause(string(meta.agent) ?? "", frame);
+        let started = string(meta.promptReceipt) === "received";
+        let transport: "delivered" | "turn-without-receipt" | "awaiting-receipt" | "failed" | undefined;
+        if (!started && string(meta.promptChannel) === "argv" && argvBriefStarted(string(meta.agent) ?? "", frame)) {
+          transport = "turn-without-receipt";
+          started = true;
+        } else if (!started && string(meta.promptChannel) === "paste" && dialog === undefined && classifyLiveness(string(meta.agent) ?? "", frame).status === "idle") {
+          const prompt = await promptText(database, dispatch);
+          if (prompt !== undefined) {
+            const result = await transportTmuxPrompt({ root, pane: String(meta.tmuxPane), agent: string(meta.agent) ?? "", prompt, environment, process }, () => string(meta.promptReceipt) === "received");
+            transport = result.status;
+            started = result.status === "delivered" || result.status === "turn-without-receipt";
+          }
+        }
+        const noticeDue = typeof meta.readinessDueAt === "number" && now >= meta.readinessDueAt;
+        const shouldNotice = meta.lastReadinessNoticeAt == null && (dialog !== undefined || noticeDue);
+        if (shouldNotice) {
+          await notifyParent(root, database, dispatch, meta, { cause: dialog === undefined ? "readiness-starting" : "dialog-waiting" }, process, now, undefined, frame);
+        }
+        await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, patch: {
+          ...(shouldNotice ? { lastReadinessNoticeAt: now } : {}),
+          ...(started ? { readinessState: "running", state: "running", processState: "running", promptTransport: "transported", promptDelivery: transport === "delivered" || meta.promptReceipt === "received" ? "delivered" : "pending", promptState: "awaiting-receipt" } : {}),
+          ...(transport === undefined ? {} : { promptChannel: "paste", promptTransport: transport === "delivered" || transport === "turn-without-receipt" ? "transported" : "pending" }),
+          readinessFrame: frame.split("\n").slice(-60).join("\n").trimEnd(),
+          readinessDialog: dialog ?? null,
+        } });
+        continue;
+      }
+    }
     await settleImplicitChildReads(root, database, dispatch);
     await retryPendingParentPointers(root, database, dispatch);
     const finding = await inspectDispatch(root, database, dispatch, meta, environment, process, now, answeredDispatches);
@@ -460,7 +494,6 @@ export async function executeSupervisorWorker(args: readonly string[], environme
     await logSupervisorExit(root, "lease was taken by another worker");
     return ok("supervisor lease was taken by another worker\n");
   }
-  const delay = intervalSeconds(environment) * 1000;
   let running = true;
   let exitReason = "worker exited without a recorded reason";
   const stop = (signal: NodeJS.Signals): void => { exitReason = `received ${signal}`; running = false; };
@@ -478,6 +511,9 @@ export async function executeSupervisorWorker(args: readonly string[], environme
       }
       const status = await superviseOnce(root, database.value, environment, process);
       if (!status.open) { exitReason = "no work remains"; break; }
+      const dispatches = listDispatches(database.value);
+      const readinessPending = dispatches.kind === "ok" && dispatches.value.some((item) => item.readinessState === "starting");
+      const delay = readinessPending ? 1000 : intervalSeconds(environment) * 1000;
       for (let elapsed = 0; running && elapsed < delay; elapsed += 250) await new Promise((resolve) => setTimeout(resolve, Math.min(250, delay - elapsed)));
     }
   } finally {

@@ -6,6 +6,7 @@ import { failed, ok, type Result } from "../core/result.js";
 type TrustEnvironment = Readonly<Record<string, string | undefined>>;
 const LOCK_WAIT_MS = 10_000;
 const LOCK_STALE_MS = 60_000;
+const CONFIG_WRITE_ATTEMPTS = 3;
 
 /** Pre-seed only the exact workspace keys Claude Code and Codex use for their trust prompt. */
 export async function preflightWorktreeTrust(agent: string, worktreePath: string, environment: TrustEnvironment): Promise<Result<void>> {
@@ -57,18 +58,31 @@ async function updateConfig(path: string, change: (raw: string) => string): Prom
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const target = await existingTarget(path);
   await withFileLock(target, async () => {
-    let raw = "";
-    let mode = 0o600;
-    try {
-      raw = await readFile(target, "utf8");
-      mode = (await stat(target)).mode & 0o777;
-    } catch (cause) {
-      if (!isMissing(cause)) throw cause;
+    for (let attempt = 0; attempt < CONFIG_WRITE_ATTEMPTS; attempt += 1) {
+      const before = await readConfigSnapshot(target);
+      const next = change(before.raw);
+      if (next === before.raw) return;
+      const written = await atomicWrite(target, next, before.mode, async () => sameSnapshot(before, await readConfigSnapshot(target)));
+      if (written) return;
     }
-    const next = change(raw);
-    if (next === raw) return;
-    await atomicWrite(target, next, mode);
+    throw new Error(`trust config changed repeatedly while being updated: ${basename(target)}`);
   });
+}
+
+type ConfigSnapshot = Readonly<{ raw: string; mode: number; size: number; mtimeMs: number; exists: boolean }>;
+
+async function readConfigSnapshot(path: string): Promise<ConfigSnapshot> {
+  try {
+    const [raw, info] = await Promise.all([readFile(path, "utf8"), stat(path)]);
+    return { raw, mode: info.mode & 0o777, size: info.size, mtimeMs: info.mtimeMs, exists: true };
+  } catch (cause) {
+    if (!isMissing(cause)) throw cause;
+    return { raw: "", mode: 0o600, size: 0, mtimeMs: 0, exists: false };
+  }
+}
+
+function sameSnapshot(left: ConfigSnapshot, right: ConfigSnapshot): boolean {
+  return left.exists === right.exists && left.raw === right.raw && left.size === right.size && left.mtimeMs === right.mtimeMs;
 }
 
 async function existingTarget(path: string): Promise<string> {
@@ -109,7 +123,7 @@ async function withFileLock<T>(path: string, run: () => Promise<T>): Promise<T> 
   }
 }
 
-async function atomicWrite(path: string, content: string, mode: number): Promise<void> {
+async function atomicWrite(path: string, content: string, mode: number, stillCurrent: () => Promise<boolean>): Promise<boolean> {
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   const handle = await open(temporary, "wx", mode);
   try {
@@ -121,12 +135,17 @@ async function atomicWrite(path: string, content: string, mode: number): Promise
     throw cause;
   }
   await handle.close();
+  if (!await stillCurrent()) {
+    await rm(temporary, { force: true });
+    return false;
+  }
   try {
     await rename(temporary, path);
   } catch (cause) {
     await rm(temporary, { force: true });
     throw cause;
   }
+  return true;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

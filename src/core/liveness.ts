@@ -25,7 +25,8 @@ export function hasLivenessClassifier(agent: string): boolean {
 }
 
 /** Startup dialogs block readiness until a person resolves them. */
-export function startupDialogCause(_agentId: string, output: string): string | undefined {
+export function startupDialogCause(agentId: string, output: string): string | undefined {
+  if (agentId === "codex" && /(?:update available[\s\S]{0,300}(?:skip|install|update)|codex just got an upgrade)/i.test(output)) return "codex-update";
   const checks: readonly [RegExp, string][] = [
     [/do you trust[\s\S]{0,500}(?:workspace|folder|directory|project|repo)|trust this (?:workspace|folder|directory|project|repo)|trusted workspace/i, "workspace-trust-dialog"],
     [/(?:hooks need review|review (?:the )?hooks?|hooks? (?:require|need) approval)/i, "hook-review-dialog"],
@@ -49,8 +50,8 @@ export async function waitForStableIdle(
   let stableSince: number | null = null;
   while (true) {
     const captured = await read();
-    const dialog = captured.kind === "ok" ? startupDialogCause(agentId, captured.value) : undefined;
-    if (captured.kind === "ok" && dialog !== undefined) return failed(`startup ${dialog} blocks readiness; captured frame:\n${captured.value}`);
+    // Dialogs belong to the person at the terminal. Keep observing; a dismissed dialog can
+    // transition directly to the agent composer without any input from this process.
     if (captured.kind === "ok" && turnStarted?.(captured.value) === true) return ok(undefined);
     const idle = captured.kind === "ok" && classifyLiveness(agentId, captured.value).status === "idle";
     if (idle) {
