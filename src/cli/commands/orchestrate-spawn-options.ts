@@ -250,7 +250,7 @@ export function agyLogFile(stateRoot: string, dispatchId: string): string {
 
 export function finalPrompt(options: SpawnOptions, id: string): string {
   const label = options.label ?? `${options.agent} ${options.worktree}`;
-  return `[megabrain dispatch: ${label}]\n\nREQUIRED: Run megabrain received first.\nREQUIRED: Ask with megabrain ask; poll megabrain check --timeout until answered. Never proceed on a default.\nREQUIRED: Finish with megabrain done, including outcome and evidence.\nCRITICAL: Never close your own dispatch.\nFor ask and done, start with one plain-language sentence a nontechnical person understands; use no filenames, commands, or counts.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
+  return `[megabrain dispatch: ${label}]\n\nREQUIRED: Run megabrain received first.\nAsk only when the brief cannot settle a decision: megabrain ask, then poll megabrain check --timeout; never proceed on a default. Never ask permission to start. Never ask permission to follow the brief.\nREQUIRED: Send megabrain done only when the work is finished or blocked, with outcome and evidence. Never send done for unfinished work.\nCRITICAL: Never close your own dispatch.\nStart ask and done with one plain sentence a nontechnical person understands; no filenames, commands or counts.\n\nDispatch identity: ${id}\n\n${options.prompt}`;
 }
 
 // Bytes, not characters: a prompt that fits the CLI's character limit can still overflow the
