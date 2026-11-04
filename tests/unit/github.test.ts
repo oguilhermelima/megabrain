@@ -165,8 +165,10 @@ describe("github prs", () => {
     const text = query(calls[0] ?? []);
     expect(text).toContain("reviewDecision");
     expect(text).toContain("statusCheckRollup");
-    expect(listing.items[0]).toMatchObject({ reviewDecision: expect.any(String), checks: expect.any(Array) });
-    expect(listing.items[0]?.checks).toContainEqual({ name: "label-external / label_issues", state: "success" });
+    expect(listing.items[0]).toMatchObject({ reviewDecision: expect.any(String) });
+    const checks = listing.items[0]?.checks;
+    expect(Array.isArray(checks)).toBe(true);
+    expect(checks?.[0]).toEqual({ name: "label-external / label_issues", state: "success" });
   });
 
   test("normalizes states, drafts, bots, labels and comment counts", async () => {
