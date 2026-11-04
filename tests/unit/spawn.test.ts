@@ -766,9 +766,10 @@ describe("executeSpawn", () => {
 
       const claudeValue = JSON.parse(await readFile(claudeConfig, "utf8")) as { retained: { value: number }; projects: Record<string, { hasTrustDialogAccepted?: boolean; allowedTools?: string[] }> };
       expect(claudeValue.retained.value).toBe(42);
-      expect(claudeValue.projects[canonicalWorktrees.claude]?.hasTrustDialogAccepted).toBe(true);
+      expect(claudeValue.projects[canonicalWorktrees.claude]).toBeUndefined();
       expect(claudeValue.projects[parentPath]?.hasTrustDialogAccepted).toBe(true);
       expect(claudeValue.projects["/keep-me"]?.allowedTools).toEqual(["Read"]);
+      expect(await readFile(claudeConfig, "utf8")).toBe(`${JSON.stringify({ retained: { value: 42 }, projects: { [parentPath]: { hasTrustDialogAccepted: true }, "/keep-me": { allowedTools: ["Read"] } } }, null, 2)}\n`);
       expect((await stat(claudeConfig)).mode & 0o777).toBe(0o600);
     } finally {
       registerTmux(original);
