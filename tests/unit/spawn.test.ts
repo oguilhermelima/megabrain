@@ -1211,6 +1211,8 @@ describe("executeSpawn", () => {
       ? ok({ stdout: JSON.stringify({ result: { terminal: { handle: "child-terminal" } } }), stderr: "", exitCode: 0 })
       : command === "orca" && args[1] === "list"
         ? ok({ stdout: JSON.stringify({ result: { terminals: [{ handle: "child-terminal", pid: 4243 }] } }), stderr: "", exitCode: 0 })
+        : command === "ps" && args[0] === "-p" && args[1] === "4243"
+          ? ok({ stdout: "S\n", stderr: "", exitCode: 0 })
         : ok({ stdout: "", stderr: "", exitCode: 0 }));
     try {
       const result = await executeSpawn(["--worktree", "/work/tree", "--agent", "claude", "--prompt", "resolve", "--tmux", "false"], {
