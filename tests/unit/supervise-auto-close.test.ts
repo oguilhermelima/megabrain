@@ -78,6 +78,7 @@ describe("supervisor dispatch auto-close", () => {
     const process = adapter(async (_command, args) => {
       calls += 1;
       if (args[0] === "-L" && args[1] === "default") return ok({ stdout: "/dev/ttys025|43715|1793707190|1793707199|attached,UTF-8\n", stderr: "", exitCode: 0 });
+      if (args[0] === "-L" && args[1] === "megabrain-app") return failed("no server running");
       return failed("unexpected command");
     });
     const result = await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
@@ -118,7 +119,7 @@ describe("supervisor dispatch auto-close", () => {
     const db = await setup("acknowledged", "2026-11-03T12:00:10.000Z", [{ server: "default", tty: "/dev/ttys025", pid: 43715 }]);
     const process = adapter(async (_command, args) => args[1] === "default"
       ? ok({ stdout: "/dev/ttys026|43716|1793707190|1793707199|attached,UTF-8\n", stderr: "", exitCode: 0 })
-      : failed("unexpected command"));
+      : args[1] === "megabrain-app" ? failed("no server running") : failed("unexpected command"));
     await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
     expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "closed" } });
   });
