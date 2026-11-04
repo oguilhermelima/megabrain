@@ -69,7 +69,7 @@ export type StateOwnerRequest = Readonly<
   | { operation: "ack-delivery"; id: string; consumer: string; generation: number }
   | { operation: "create-delivery"; delivery: Readonly<Record<string, unknown>> }
   | { operation: "ack-implicit-delivery"; dispatchId: string; deliveryId: string; recipient: "child" | "parent"; now?: string; consumer?: string }
-  | { operation: "set-delivery-transport"; dispatchId: string; sequence: number; transport: string; reason?: string }
+  | { operation: "set-delivery-transport"; dispatchId: string; sequence: number; transport: string; reason?: string; channel?: string }
   | { operation: "append-parent-reply"; dispatchId: string; message: Readonly<Record<string, unknown>>; options: Readonly<{ supersede: boolean; outbox?: Readonly<{ id: string; dispatchId?: string | null; targetKind: string; target: string; payload: unknown }> }> }
   | { operation: "cancel-queued-message"; dispatchId: string; itemId: string; reason: string; actor: string }
   | { operation: "put-waiter"; waiter: Readonly<{ dispatchId: string; pid: number; parentSessionId: string | null; parentHost: string | null; createdAt: string }> }

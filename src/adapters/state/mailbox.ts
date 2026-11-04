@@ -219,12 +219,13 @@ export function cancelQueuedMessage(handle: DatabaseHandle, dispatchId: string, 
   return result.value.kind === "cancelled" ? ok(undefined) : failed(result.value.message);
 }
 
-export function setDeliveryTransport(handle: DatabaseHandle, dispatchId: string, sequence: number, transport: string, reason?: string): Result<void> {
+export function setDeliveryTransport(handle: DatabaseHandle, dispatchId: string, sequence: number, transport: string, reason?: string, channel?: string): Result<void> {
   return write(handle, ({ db }) => {
     const row = db.query<{ id: string; extra: string }>("SELECT id, extra FROM deliveries WHERE dispatch_id = ? AND message_seq = ?").get(dispatchId, sequence);
     if (row === null) return;
     const transportAt = new Date().toISOString();
-    db.run("UPDATE deliveries SET extra = ? WHERE id = ?", [encode({ ...object(decode<unknown>(row.extra)), transport, transportAt, ...(reason === undefined ? {} : { transportReason: reason }) }), row.id]);
+    const transportChannel = channel ?? (reason === "peer-socket-verified" || reason === "peer-socket-pending" ? "peer-socket" : undefined);
+    db.run("UPDATE deliveries SET extra = ? WHERE id = ?", [encode({ ...object(decode<unknown>(row.extra)), transport, transportAt, ...(reason === undefined ? {} : { transportReason: reason }), ...(transportChannel === undefined ? {} : { transportChannel }) }), row.id]);
   });
 }
 
