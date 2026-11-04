@@ -254,7 +254,7 @@ describe("single state owner", () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
       status = await inspectStateOwner(root);
     }
-    expect(status).toMatchObject({ running: false });
+    expect(status).toEqual({ running: false });
   });
 
   test("a test owner exits when its parent runner has gone away", async () => {
