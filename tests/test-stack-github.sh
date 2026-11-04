@@ -21,6 +21,7 @@ export GH_LOG="$work/gh.log"
 export GH_NATIVE=yes
 export GH_UNPUSHED=no
 export GH_REMOTE="$work/remote.git"
+export GH_MERGED_FILE="$work/merged"
 
 cat >"$work/bin/gh" <<'EOF'
 #!/usr/bin/env bash
@@ -31,11 +32,31 @@ case "${1:-} ${2:-} ${3:-}" in
     if [ "${GH_NATIVE:-yes}" = yes ]; then printf '[]\n'; else printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1; fi
     ;;
   "api --method POST"*) printf '{"number":12}\n' ;;
-  "api --method PUT"*) printf '{"status":"pending","details":{"uuid":"merge-id"}}\n' ;;
+  "api --method PUT"*)
+    case "$*" in *'--field=commit_title=@'*|*'--field=commit_message=@'*) printf 'typed field would read a file\n' >&2; exit 1 ;; esac
+    case "$*" in
+      *"pulls/${GH_MERGE_FAIL:-}/merge"*) printf 'simulated merge failure\n' >&2; exit 1 ;;
+      *"pulls/${GH_SHA_FAIL:-}/merge"*) printf 'Head sha does not match\n' >&2; exit 1 ;;
+    esac
+    number="${*#*pulls/}"; number="${number%%/*}"
+    printf '%s\n' "$number" >>"$GH_MERGED_FILE"
+    printf '{"sha":"merged"}\n'
+    ;;
+  "api --method PATCH"*) printf '{"number":12}\n' ;;
+  "api repos/owner/repo/pulls/12"*)
+    if [ "${GH_CLOSED_UNMERGED:-}" = 12 ]; then printf '{"number":12,"title":"feat: add base behavior","body":"Base details","state":"closed","mergeable":true,"head":{"ref":"stack/base","sha":"base-sha"},"base":{"ref":"main"}}\n';
+    elif [ -n "${GH_SPECIAL_TEXT:-}" ]; then printf '{"number":12,"title":"%s","body":"%s","state":"open","mergeable":true,"head":{"ref":"stack/base","sha":"base-sha"},"base":{"ref":"main"}}\n' "$GH_SPECIAL_TEXT" "$GH_SPECIAL_BODY";
+    else printf '{"number":12,"title":"feat: add base behavior","body":"Base details","state":"open","mergeable":true,"head":{"ref":"stack/base","sha":"base-sha"},"base":{"ref":"main"}}\n'; fi ;;
+  "api repos/owner/repo/pulls/13"*)
+    if [ "${GH_MERGE_RETARGET:-}" = yes ]; then printf '{"number":13,"title":"fix: add child behavior","body":"Child details","state":"open","mergeable":true,"head":{"ref":"stack/child","sha":"child-sha"},"base":{"ref":"main"}}\n';
+    else printf '{"number":13,"title":"fix: add child behavior","body":"Child details","state":"open","mergeable":true,"head":{"ref":"stack/child","sha":"child-sha"},"base":{"ref":"stack/base"}}\n'; fi ;;
   "api repos/owner/repo/pulls/13/merge-async/merge-id"*) printf '{"status":"merged","details":{"sha":"abc"}}\n' ;;
   "pr list"*)
     if [ "${GH_LIST_MODE:-empty}" = open ]; then
-      printf '[{"number":12,"headRefName":"stack/base","baseRefName":"main","url":"https://github.com/owner/repo/pull/12","state":"OPEN"},{"number":13,"headRefName":"stack/child","baseRefName":"stack/base","url":"https://github.com/owner/repo/pull/13","state":"OPEN"}]\n'
+      state12=OPEN
+      if [ -f "$GH_MERGED_FILE" ] && grep -qx 12 "$GH_MERGED_FILE"; then state12=MERGED; fi
+      if [ "${GH_CLOSED_UNMERGED:-}" = 12 ]; then state12=CLOSED; fi
+      printf '[{"number":12,"headRefName":"stack/base","baseRefName":"main","url":"https://github.com/owner/repo/pull/12","state":"%s","title":"feat: add base behavior","body":"Base details","headRefOid":"base-sha"},{"number":13,"headRefName":"stack/child","baseRefName":"stack/base","url":"https://github.com/owner/repo/pull/13","state":"OPEN","title":"fix: add child behavior","body":"Child details","headRefOid":"child-sha"}]\n' "$state12"
     else printf '[]\n'; fi
     ;;
   "pr create"*)
@@ -86,14 +107,75 @@ contains "$(cat "$GH_LOG")" 'POST repos/owner/repo/stacks'
 contains "$(cat "$GH_LOG")" 'pull_requests'
 printf 'GitHub creates native stacks after opening dependent pull requests\n'
 
-# Scenario: native GitHub stack merges use the asynchronous endpoint and wait for its result.
+# Scenario: native GitHub stack merges each PR bottom-up with its own title, body and head SHA.
 export GH_LIST_MODE=open
 : >"$GH_LOG"
 output="$(run stack merge --yes)"
-contains "$(cat "$GH_LOG")" 'PUT repos/owner/repo/pulls/13/merge-async'
-contains "$(cat "$GH_LOG")" 'repos/owner/repo/pulls/13/merge-async/merge-id'
-contains "$output" 'GitHub stack merge completed'
-printf 'GitHub native stack merge polls the asynchronous API to completion\n'
+log="$(cat "$GH_LOG")"
+contains "$log" 'PUT repos/owner/repo/pulls/12/merge'
+contains "$log" 'PUT repos/owner/repo/pulls/13/merge'
+contains "$log" 'PATCH repos/owner/repo/pulls/13'
+contains "$log" 'commit_title=feat: add base behavior (#12)'
+contains "$log" 'commit_message=Base details'
+contains "$log" 'commit_title=fix: add child behavior (#13)'
+contains "$log" 'commit_message=Child details'
+contains "$log" 'sha=base-sha'
+contains "$log" 'sha=child-sha'
+contains "$output" 'GitHub stack merged bottom-up'
+retarget_line="$(grep -n 'PATCH repos/owner/repo/pulls/13' "$GH_LOG" | head -1 | cut -d: -f1)"
+merge_line="$(grep -n 'PUT repos/owner/repo/pulls/13/merge' "$GH_LOG" | head -1 | cut -d: -f1)"
+[ "$retarget_line" -lt "$merge_line" ] || fail 'child PR merged before retarget'
+ready_line="$(grep -n 'api repos/owner/repo/pulls/13$' "$GH_LOG" | tail -1 | cut -d: -f1)"
+[ "$retarget_line" -lt "$ready_line" ] && [ "$ready_line" -lt "$merge_line" ] || fail 'child PR was not checked for mergeability after retarget'
+contains "$log" 'raw-field=base=main'
+contains "$log" 'raw-field=commit_title=fix: add child behavior (#13)'
+contains "$log" 'raw-field=commit_message=Child details'
+printf 'GitHub native stack merges every PR with its own title, body and checked head\n'
+
+# Scenario: raw fields preserve titles and bodies beginning with @.
+export GH_SPECIAL_TEXT='@title.txt' GH_SPECIAL_BODY='@body.txt'
+: >"$GH_LOG"
+run stack merge --yes >/dev/null
+contains "$(cat "$GH_LOG")" 'raw-field=commit_title=@title.txt (#12)'
+contains "$(cat "$GH_LOG")" 'raw-field=commit_message=@body.txt'
+unset GH_SPECIAL_TEXT GH_SPECIAL_BODY
+
+# Scenario: reruns skip already merged PRs, but a closed unmerged PR stops the run.
+: >"$GH_MERGED_FILE"
+export GH_LIST_MODE=open GH_MERGED_FILE
+printf '12\n' >"$GH_MERGED_FILE"
+: >"$GH_LOG"
+output="$(run stack merge --yes)"
+contains "$output" 'Already merged: #12'
+not_contains "$(cat "$GH_LOG")" 'pulls/12/merge'
+contains "$(cat "$GH_LOG")" 'pulls/13/merge'
+export GH_CLOSED_UNMERGED=12
+: >"$GH_LOG"
+if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge accepted a closed unmerged PR'; fi
+contains "$output" 'closed without being merged'
+not_contains "$(cat "$GH_LOG")" 'pulls/12/merge'
+unset GH_CLOSED_UNMERGED
+
+# Scenario: stop at the first failed PR and report the already merged prefix.
+: >"$GH_MERGED_FILE"
+export GH_MERGE_FAIL=13
+: >"$GH_LOG"
+if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge continued after a failed PR'; fi
+contains "$output" 'after merging #12'
+contains "$(cat "$GH_LOG")" 'pulls/12/merge'
+not_contains "$(cat "$GH_LOG")" 'pulls/13/merge-async'
+unset GH_MERGE_FAIL
+printf 'GitHub stack merge stops after a PR failure and reports completed PRs\n'
+
+# Scenario: GitHub refuses a merge if the checked head SHA moved.
+: >"$GH_MERGED_FILE"
+export GH_SHA_FAIL=12
+: >"$GH_LOG"
+if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge ignored a head SHA mismatch'; fi
+contains "$output" 'Head sha does not match'
+not_contains "$(cat "$GH_LOG")" 'pulls/13/merge'
+unset GH_SHA_FAIL
+printf 'GitHub stack merge binds each merge to the checked head SHA\n'
 
 # Scenario: unsupported stacks use chained PR bases and include their position in the body.
 export GH_NATIVE=no
