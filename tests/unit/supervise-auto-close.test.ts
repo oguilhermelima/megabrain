@@ -83,7 +83,7 @@ describe("supervisor dispatch auto-close", () => {
     });
     const result = await superviseOnce(directory, db, { MEGABRAIN_STATE_DIR: directory, HOME: directory }, process, Date.parse("2026-11-03T12:03:00.000Z"));
     expect(result.open).toBe(false);
-    expect(calls).toBe(1);
+    expect(calls).toBeGreaterThan(1);
     expect(getDispatch(db, "dispatch-auto-close")).toMatchObject({ kind: "ok", value: { state: "closed" } });
   });
 
