@@ -161,7 +161,7 @@ export async function inspectStateOwner(stateDir: string): Promise<{ running: fa
     return typeof value.pid === "number" ? { running: true, pid: value.pid } : { running: false, error: "state owner returned an invalid status" };
   } catch (cause: unknown) {
     const code = typeof cause === "object" && cause !== null && "code" in cause ? String((cause as { code?: unknown }).code) : "";
-    if (code === "ECONNREFUSED" || (cause instanceof Error && cause.message.includes("did not answer within"))) return { running: false };
+    if (code === "ENOENT" || code === "ECONNREFUSED" || (cause instanceof Error && cause.message.includes("did not answer within"))) return { running: false };
     return { running: false, error: cause instanceof Error ? cause.message : String(cause) };
   }
 }
