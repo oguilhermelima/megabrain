@@ -187,7 +187,10 @@ function hasRecordedChildIdentity(meta: JsonRecord | undefined): boolean {
 }
 
 function isLiveDispatch(meta: JsonRecord | undefined): boolean {
-  return meta?.state === "running" || meta?.state === "waiting_for_reply" || meta?.state === "spawning";
+  if (meta === undefined) return false;
+  // Child verbs remain valid after a done report (including a later reply), and while a
+  // dispatch is queued or starting. Only states that cannot still have a live child are out.
+  return !["closed", "failed", "cancelled", "exited", "killed", "archived"].includes(String(meta.state));
 }
 
 function dispatchIsActive(database: DatabaseHandle, dispatch: string, meta: JsonRecord | undefined): Result<boolean> {
