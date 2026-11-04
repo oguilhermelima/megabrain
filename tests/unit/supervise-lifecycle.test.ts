@@ -124,6 +124,36 @@ describe("supervisor lifecycle decisions", () => {
     }
   });
 
+  test("keeps an unknown host process identity unproven during supervision", async () => {
+    const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-host-unknown-pid-`);
+    const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };
+    const opened = openDatabase(environment);
+    if (opened.kind !== "ok") throw new Error(opened.error);
+    const dispatchId = "host-unknown-pid";
+    const created = createDispatch(opened.value, {
+      dispatchId, state: "running", runtime: "host", childHost: "orca", terminalId: "host-child",
+      agent: "codex", processIdentity: "unknown", readinessState: "starting",
+    });
+    if (created.kind !== "ok") throw new Error(created.error);
+    const calls: string[] = [];
+    const process: ProcessAdapter = {
+      async run(command: string, args: string[]) {
+        calls.push(`${command} ${args.join(" ")}`);
+        return failed("host process identity and screen unavailable");
+      },
+      async startDetached() { return failed("not used"); },
+      invocationCount() { return calls.length; },
+    };
+    try {
+      await superviseOnce(directory, opened.value, environment, process, Date.now());
+      expect(calls.some((call) => call.startsWith("ps -p"))).toBe(false);
+      expect(getDispatch(opened.value, dispatchId)).toMatchObject({ kind: "ok", value: { processIdentity: "unknown", state: "running" } });
+    } finally {
+      opened.value.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("recovers a persisted starting dispatch after a supervisor restart and notices readiness once", async () => {
     const directory = await mkdtemp(`${tmpdir()}/megabrain-supervise-readiness-restart-`);
     const environment = { MEGABRAIN_STATE_DIR: directory, HOME: directory };

@@ -14,6 +14,7 @@ import { appendMessage, mutateDispatch, putTmuxSession } from "../../src/adapter
 import { importDispatchFixture, importStateFixture, readDispatchFixture } from "./state-fixture.js";
 import { composerProcess, composerTmux, withComposer } from "./composer-tmux.js";
 import { finalPrompt, parseArgs } from "../../src/cli/commands/orchestrate-spawn-options.js";
+import { executeStatus } from "../../src/cli/commands/status.js";
 
 type Call = Readonly<{ command: string; args: readonly string[]; options?: { readonly cwd?: string; readonly env?: Readonly<Record<string, string>>; readonly timeoutMs?: number; readonly scrubAgentEnvironment?: boolean } }>;
 
@@ -1240,6 +1241,9 @@ describe("executeSpawn", () => {
       }, process, options(worktree("existing")));
       expect(readMeta(root, dispatchId)).toMatchObject({ processIdentity: "unknown" });
       expect(process.calls.filter((call) => call.command === "orca" && call.args[1] === "list")).toHaveLength(1);
+      const status = await executeStatus(["--json"], { MEGABRAIN_STATE_DIR: root, HOME: root }, process);
+      expect(status.kind).toBe("ok");
+      if (status.kind === "ok") expect(JSON.parse(status.value).dispatches).toContainEqual(expect.objectContaining({ dispatchId, processIdentity: "unknown" }));
     } finally {
       await rm(root, { recursive: true, force: true });
     }
