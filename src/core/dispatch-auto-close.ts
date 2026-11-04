@@ -69,8 +69,9 @@ export function tmuxClientsViewedSinceDone(
     const created = createdRaw === undefined ? undefined : timestamp(createdRaw);
     const activity = activityRaw === undefined ? undefined : timestamp(activityRaw);
     if (tty === undefined || !Number.isSafeInteger(pid) || created === undefined || activity === undefined || flags === undefined) return undefined;
-    if (flags.split(",").includes("focused") || activity > done || created > done) return true;
-    if (!viewerClients.some((viewer) => viewer.server === server && viewer.tty === tty && viewer.pid === pid)) {
+    const isMegabrainViewer = viewerClients.some((viewer) => viewer.server === server && viewer.tty === tty && viewer.pid === pid);
+    if ((flags.split(",").includes("focused") && !isMegabrainViewer) || activity > done || created > done) return true;
+    if (!isMegabrainViewer) {
       // An idle client attached before done is not evidence that anyone read the result.
       continue;
     }
