@@ -11,9 +11,10 @@ import { hasCallerIdentity, resolveCallerIdentity, type CallerEnvironment, type 
 import { getTmux } from "../../hosts/tmux.js";
 import { formatDispatchMessage } from "../../core/chat-message-format.js";
 import { setTmuxChatPane } from "../../core/chat-pane.js";
-import { claimOutbox, finishNotification, getDispatch, listDispatches, readOnlyStateDatabase, getWaiter, setDeliveryTransport } from "../../adapters/state-db.js";
+import { claimOutbox, finishNotification, getDispatch, isDispatchArchived, listDispatches, readOnlyStateDatabase, getWaiter, setDeliveryTransport } from "../../adapters/state-db.js";
 import { callStateOwner, recordChannelResultThroughOwner } from "../../db/state-owner.js";
 import { processStartTime } from "../../db/state-owner-runtime.js";
+import type { DatabaseHandle } from "../../db/db.js";
 import { deliverCodexQueue, findCodexProcess } from "../../core/codex-delivery.js";
 import { sendSessionMessage } from "../../core/session-send.js";
 import { startDeliveryWorker } from "./delivery-worker.js";
@@ -185,6 +186,20 @@ function hasRecordedChildIdentity(meta: JsonRecord | undefined): boolean {
     || typeof meta?.tmuxPane === "string";
 }
 
+function isLiveDispatch(meta: JsonRecord | undefined): boolean {
+  if (meta === undefined) return false;
+  // Child verbs remain valid after a done report (including a later reply), and while a
+  // dispatch is queued or starting. Only states that cannot still have a live child are out.
+  return !["closed", "failed", "cancelled", "exited", "killed", "archived"].includes(String(meta.state));
+}
+
+function dispatchIsActive(database: DatabaseHandle, dispatch: string, meta: JsonRecord | undefined): Result<boolean> {
+  if (!isLiveDispatch(meta)) return ok(false);
+  const archived = isDispatchArchived(database, dispatch);
+  if (archived.kind !== "ok") return archived;
+  return ok(!archived.value);
+}
+
 export async function findChild(root: string, environment: QueueEnvironment, processAdapter: ProcessAdapter): Promise<{ dispatch: string; session: Session } | Result<never>> {
   const current = await session(environment, processAdapter);
   if (current === undefined) return failed("this command cannot tell who is running it: no agent session and no shell were found; set MEGABRAIN_SESSION_ID to name this caller");
@@ -196,10 +211,12 @@ export async function findChild(root: string, environment: QueueEnvironment, pro
   // A dispatch id supplied by spawn is authoritative when its record has no child identity
   // to contradict it. If the record carries a different child identity, or the id is stale,
   // use the session scan so an inherited id cannot route mail to another child.
-  const directDispatch = direct !== undefined && directMeta?.dispatchId === direct
-    && (!hasRecordedChildIdentity(directMeta) || callerOwnsDispatch(directMeta, current))
-    ? direct
-    : undefined;
+  let directDispatch: string | undefined;
+  if (direct !== undefined && directMeta?.dispatchId === direct) {
+    const active = dispatchIsActive(database.value, direct, directMeta);
+    if (active.kind !== "ok") return active;
+    if (active.value && (!hasRecordedChildIdentity(directMeta) || callerOwnsDispatch(directMeta, current))) directDispatch = direct;
+  }
   if (directDispatch !== undefined) return { dispatch: directDispatch, session: current };
   const listed = listDispatches(database.value);
   if (listed.kind !== "ok") return listed;
@@ -208,9 +225,12 @@ export async function findChild(root: string, environment: QueueEnvironment, pro
   for (const dispatch of dispatches) {
     const record = getDispatch(database.value, dispatch);
     const meta = record.kind === "ok" ? record.value : undefined;
-    if (meta?.dispatchId === dispatch && callerOwnsDispatch(meta, current)) matches.push(dispatch);
+    if (meta?.dispatchId !== dispatch) continue;
+    const active = dispatchIsActive(database.value, dispatch, meta);
+    if (active.kind !== "ok") return active;
+    if (active.value && callerOwnsDispatch(meta, current)) matches.push(dispatch);
   }
-  if (matches.length > 1) return failed(`terminal identity matches multiple dispatches for ${current.host}/${current.id}: ${matches[0]}, ${matches[1]}`);
+  if (matches.length > 1) return failed(`terminal identity matches multiple dispatches for ${current.host}/${current.id}${current.tmuxPane === undefined ? "" : ` pane ${current.tmuxPane}`}: ${matches[0]}, ${matches[1]}`);
   if (matches.length === 0) {
     if (current.host === "tmux") return failed(`no managed dispatch belongs to tmux session ${current.id ? current.id.split(":")[0] : "unknown"} pane ${environment.TMUX_PANE ?? "unknown"}`);
     return failed(`no managed dispatch belongs to ${current.host}/${current.id}`);

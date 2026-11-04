@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { classifyQueueMail, nextMessageSequence, parseChildMessage, recipientForQueueMessage } from "../../src/core/queue-write.js";
-import { findChild, updateMeta } from "../../src/cli/commands/queue-write.js";
+import { executeQueueWrite, findChild, updateMeta } from "../../src/cli/commands/queue-write.js";
+import { executeCheck } from "../../src/cli/commands/check.js";
 import { failed, ok, type Result } from "../../src/core/result.js";
 import type { ProcessAdapter, ProcessOutput } from "../../src/adapters/proc.js";
 import { archiveDispatch, createDispatch, getDispatch, isDispatchArchived } from "../../src/adapters/state-db.js";
@@ -126,6 +127,138 @@ describe("findChild: tmux-runtime records", () => {
     const created = createDispatch(database.value, { dispatchId, state: "running", ...meta });
     if (created.kind !== "ok") throw new Error(created.error);
   }
+
+  test("received and check select the live pane when a closed sibling shares its session", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "closed-sibling", { state: "closed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%4" });
+      await writeDispatch(root, "live-child", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      expect(await executeQueueWrite("received", [], environment, process)).toMatchObject({ kind: "ok", value: "received sent: live-child\n" });
+      expect(await executeCheck(["--timeout", "0", "--json"], environment, process)).toMatchObject({ kind: "ok" });
+    });
+  });
+
+  test("keeps identity for child verbs in every nonterminal dispatch state", async () => {
+    await withRoot(async (root) => {
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      await writeDispatch(root, "child-done", { state: "done", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      await writeDispatch(root, "child-starting", { state: "spawning", processState: "starting", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%15" });
+      await writeDispatch(root, "child-queued", { state: "queued", processState: "starting", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%16" });
+
+      // A done child still needs to consume a coordinator reply through `check`.
+      const reply = appendMessage(database.value, "child-done", {
+        from: "parent", type: "reply", text: "continue", createdAt: new Date().toISOString(), sessionId: "coordinator",
+      });
+      expect(reply.kind).toBe("ok");
+
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+
+      for (const [pane, dispatch] of [["%14", "child-done"], ["%15", "child-starting"], ["%16", "child-queued"]] as const) {
+        const found = await findChild(root, { ...environment, TMUX_PANE: pane }, process);
+        expect("kind" in found).toBe(false);
+        if (!("kind" in found)) expect(found.dispatch).toBe(dispatch);
+      }
+      const checked = await executeCheck(["--timeout", "0", "--json"], environment, process);
+      expect(checked).toMatchObject({ kind: "ok" });
+      if (checked.kind === "ok") expect(checked.value).toContain("continue");
+    });
+  });
+
+  test("never resolves terminal or archived siblings that share the child's session", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "sibling-closed", { state: "closed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      await writeDispatch(root, "sibling-failed", { state: "failed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      await writeDispatch(root, "sibling-archived-flag", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      requireOk(archiveDispatch(database.value, "sibling-archived-flag"));
+      await writeDispatch(root, "live-child", { state: "running", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const found = await findChild(root, environment, process);
+      expect("kind" in found).toBe(false);
+      if (!("kind" in found)) expect(found.dispatch).toBe("live-child");
+    });
+  });
+
+  test("does not let MEGABRAIN_DISPATCH_ID select a closed dispatch", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "closed-child", { state: "closed", runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14", MEGABRAIN_DISPATCH_ID: "closed-child" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      expect(await executeQueueWrite("received", [], environment, process)).toMatchObject({ kind: "failed" });
+    });
+  });
+
+  test("resolves each live child to its own pane in a shared tmux session", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "pane-four", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%4" });
+      await writeDispatch(root, "pane-fourteen", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      for (const [pane, dispatch] of [["%4", "pane-four"], ["%14", "pane-fourteen"]] as const) {
+        const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: pane, MEGABRAIN_DISPATCH_ID: dispatch };
+        expect(await executeQueueWrite("received", [], environment, process)).toMatchObject({ kind: "ok", value: "received sent: " + dispatch + "\n" });
+      }
+    });
+  });
+
+  test("reports same-pane live ambiguity with both dispatches and the pane", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "live-a", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      await writeDispatch(root, "live-b", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const result = await executeQueueWrite("received", [], environment, process);
+      expect(result).toMatchObject({ kind: "failed" });
+      if (result.kind === "failed") expect(result.error).toContain("live-a, live-b");
+      if (result.kind === "failed") expect(result.error).toContain("pane %14");
+    });
+  });
+
+  test("received and check refuse a legacy tmux record without a pane", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "legacy-no-pane", { runtime: "tmux", tmuxSession: "shared" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      expect(await executeQueueWrite("received", [], environment, process)).toMatchObject({ kind: "failed" });
+      expect(await executeCheck(["--timeout", "0", "--json"], environment, process)).toMatchObject({ kind: "failed" });
+    });
+  });
+
+  test("ignores an archived sibling and reports live ambiguity with both panes", async () => {
+    await withRoot(async (root) => {
+      await writeDispatch(root, "archived-sibling", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      const database = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+      if (database.kind !== "ok") throw new Error(database.error);
+      requireOk(archiveDispatch(database.value, "archived-sibling"));
+      await writeDispatch(root, "live-a", { runtime: "tmux", tmuxSession: "shared", tmuxPane: "%14" });
+      await writeDispatch(root, "live-b", { runtime: "tmux", tmuxPane: "%14", tmuxSessionId: "$1" });
+      const environment = { HOME: root, MEGABRAIN_STATE_DIR: root, TMUX: "server", TMUX_PANE: "%14" };
+      const process = fakeProcess((command, args) => command === "tmux" && args[0] === "display-message"
+        ? ok({ stdout: args.at(-1) === "#{session_name}" ? "shared\n" : "$1\n", stderr: "", exitCode: 0 })
+        : ok({ stdout: "", stderr: "", exitCode: 0 }));
+      const result = await executeQueueWrite("received", [], environment, process);
+      expect(result.kind).toBe("failed");
+    });
+  });
 
   test("does not match a tmux dispatch by terminalId, even a legacy record carrying the parent's own id", async () => {
     await withRoot(async (root) => {
