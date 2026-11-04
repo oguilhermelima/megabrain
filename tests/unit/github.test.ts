@@ -1350,6 +1350,29 @@ describe("github Actions", () => {
     expect(calls.map((call) => call[1])).toEqual(["repos/operator/sample/actions/workflows?per_page=100", "repos/operator/sample/contents/.github/workflows/ci.yml", "repos/operator/sample/actions/runs?per_page=5&page=1&workflow_id=3"]);
   });
 
+  test("reuses workflow metadata across pages and invalidates it when the list changes", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    let updatedAt = "2026-10-01T00:00:00Z";
+    answer = (args) => {
+      const endpoint = args[1] ?? "";
+      if (endpoint.includes("actions/workflows?")) return stdout(JSON.stringify({ total_count: 1, workflows: [{ id: 3, name: "CI", path: ".github/workflows/ci.yml", state: "active", updated_at: updatedAt }] }));
+      if (endpoint.endsWith("/contents/.github/workflows/ci.yml")) return stdout(JSON.stringify({ encoding: "base64", content: Buffer.from("on: workflow_dispatch").toString("base64") }));
+      if (endpoint.includes("actions/runs?")) return stdout(fixture("actions-runs.json"));
+      return failed(`unexpected gh ${args.join(" ")}`);
+    };
+
+    const first = parsed<{ runs: unknown[]; workflows: unknown[]; next: string | null }>(await github(["runs", path, "--limit", "5", "--json"]));
+    const second = parsed<{ runs: unknown[]; workflows: unknown[]; next: string | null }>(await github(["runs", path, "--limit", "5", "--after", Buffer.from("actions-runs:2").toString("base64url"), "--json"]));
+    expect(second.workflows).toEqual(first.workflows);
+    expect(calls.filter((call) => call[1]?.includes("/contents/")).length).toBe(1);
+    expect(calls.filter((call) => call[1]?.includes("actions/workflows?")).length).toBe(2);
+
+    updatedAt = "2026-11-01T00:00:00Z";
+    const changed = parsed<{ runs: unknown[]; workflows: unknown[]; next: string | null }>(await github(["runs", path, "--limit", "5", "--json"]));
+    expect(changed.workflows).toEqual(first.workflows);
+    expect(calls.filter((call) => call[1]?.includes("/contents/")).length).toBe(2);
+  });
+
   test("returns a run with jobs and steps and cleans ANSI from logs", async () => {
     const path = await repository("sample", "git@github.com:operator/sample.git");
     answer = (args) => args[1]?.endsWith("/jobs?per_page=100") ? stdout(fixture("actions-jobs.json"))

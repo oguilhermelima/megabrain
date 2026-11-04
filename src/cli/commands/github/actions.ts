@@ -2,7 +2,7 @@ import type { ProcessAdapter } from "../../../adapters/proc.js";
 import { failed, ok, type Result } from "../../../core/result.js";
 import { usageMessage } from "../../../core/usage.js";
 import { parse as parseYaml } from "yaml";
-import { gh, ghText, resolveRepository } from "./client.js";
+import { gh, ghText, readCache, resolveRepository, writeCache } from "./client.js";
 import type { Environment } from "./index.js";
 
 type Row = Record<string, unknown>;
@@ -14,6 +14,7 @@ const usage = (verb: string): Result<never> => failed(usageMessage(`github-${ver
 const RUN_STATUSES = new Set(["queued", "in_progress", "completed", "waiting", "requested", "pending"]);
 const CONCLUSIONS = new Set(["success", "failure", "cancelled", "skipped", "timed_out", "action_required", "neutral", "stale"]);
 const RUN_CURSOR_PREFIX = "actions-runs:";
+const WORKFLOW_METADATA_TTL = 7 * 24 * 60 * 60 * 1000;
 
 function runCursor(page: number): string {
   return Buffer.from(`${RUN_CURSOR_PREFIX}${page}`).toString("base64url");
@@ -81,12 +82,12 @@ function workflow(value: unknown, metadata: { dispatchable: boolean; inputs: Wor
 
 const unavailableWorkflowMetadata = (): { dispatchable: boolean; inputs: WorkflowInput[] } => ({ dispatchable: false, inputs: [] });
 
-async function workflowMetadata(process: ProcessAdapter, repo: string, value: unknown): Promise<{ dispatchable: boolean; inputs: WorkflowInput[] }> {
+async function workflowMetadata(process: ProcessAdapter, repo: string, value: unknown): Promise<{ dispatchable: boolean; inputs: WorkflowInput[] } | null> {
   const path = str(row(value).path);
   if (path === "" || path.startsWith("dynamic/")) return unavailableWorkflowMetadata();
   const endpoint = `repos/${repo}/contents/${path.split("/").map(encodeURIComponent).join("/")}`;
   const fetched = await gh(process, ["api", endpoint], { name: "gh api workflow contents" });
-  if (fetched.kind !== "ok") return unavailableWorkflowMetadata();
+  if (fetched.kind !== "ok") return null;
   const content = row(fetched.value);
   if (content.encoding !== "base64" || typeof content.content !== "string") return unavailableWorkflowMetadata();
   const source = Buffer.from(content.content.replace(/\s/g, ""), "base64").toString("utf8");
@@ -140,14 +141,49 @@ export async function executeActions(verb: string, args: readonly string[], envi
     const workflows = await gh(process, ["api", `repos/${repo}/actions/workflows?per_page=100`], { name: "gh api actions workflows" });
     if (workflows.kind !== "ok") return workflows;
     const workflowRows = Array.isArray(row(workflows.value).workflows) ? row(workflows.value).workflows as unknown[] : [];
+    const fingerprint = JSON.stringify(workflowRows.map((item) => {
+      const value = row(item);
+      return { id: value.id, updated_at: value.updated_at, path: value.path };
+    }).sort((left, right) => String(left.id).localeCompare(String(right.id))));
+    const metadataCacheKey = JSON.stringify(["actions-workflow-metadata", repo]);
+    const cacheNow = Date.now();
+    const cached = row(readCache(environment, metadataCacheKey, cacheNow));
+    const cachedMetadata = cached.fingerprint === fingerprint ? row(cached.metadata) : {};
+    const metadataById: Record<string, { dispatchable: boolean; inputs: WorkflowInput[] }> = {};
+    for (const [key, value] of Object.entries(cachedMetadata)) {
+      const metadata = row(value);
+      if (typeof metadata.dispatchable === "boolean" && Array.isArray(metadata.inputs)) {
+        metadataById[key] = metadata as unknown as { dispatchable: boolean; inputs: WorkflowInput[] };
+      }
+    }
     const requestedWorkflow = parsed.flags["--workflow"];
     const matchedWorkflow = requestedWorkflow === undefined ? undefined
       : workflowRows.find((item) => str(row(item).name) === requestedWorkflow || String(row(item).id) === requestedWorkflow);
     const metadataRows = requestedWorkflow === undefined ? workflowRows : matchedWorkflow === undefined ? [] : [matchedWorkflow];
     const metadataResults: { dispatchable: boolean; inputs: WorkflowInput[] }[] = [];
+    let metadataChanged = false;
     for (let offset = 0; offset < metadataRows.length; offset += 5) {
-      const batch = await Promise.all(metadataRows.slice(offset, offset + 5).map((item) => workflowMetadata(process, repo, item)));
-      metadataResults.push(...batch);
+      const batchRows = metadataRows.slice(offset, offset + 5);
+      const batch = await Promise.all(batchRows.map((item) => {
+        const id = String(row(item).id);
+        const existing = metadataById[id];
+        return existing === undefined ? workflowMetadata(process, repo, item) : Promise.resolve(existing);
+      }));
+      batch.forEach((metadata, index) => {
+        const id = String(row(batchRows[index]).id);
+        if (metadata === null) {
+          metadataResults.push(unavailableWorkflowMetadata());
+        } else {
+          metadataResults.push(metadata);
+          if (metadataById[id] === undefined) {
+            metadataById[id] = metadata;
+            metadataChanged = true;
+          }
+        }
+      });
+    }
+    if (metadataChanged || cached.fingerprint !== fingerprint) {
+      writeCache(environment, metadataCacheKey, cacheNow, { fingerprint, metadata: metadataById }, WORKFLOW_METADATA_TTL);
     }
     const workflowRowsWithMetadata = workflowRows.map((item, index) => {
       const metadata = requestedWorkflow === undefined
