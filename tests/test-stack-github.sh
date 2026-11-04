@@ -31,8 +31,16 @@ case "${1:-} ${2:-} ${3:-}" in
     if [ "${GH_NATIVE:-yes}" = yes ]; then printf '[]\n'; else printf 'gh: Not Found (HTTP 404)\n' >&2; exit 1; fi
     ;;
   "api --method POST"*) printf '{"number":12}\n' ;;
-  "api --method PUT"*) printf '{"sha":"merged"}\n' ;;
+  "api --method PUT"*)
+    case "$*" in
+      *"pulls/${GH_MERGE_FAIL:-}/merge"*) printf 'simulated merge failure\n' >&2; exit 1 ;;
+      *"pulls/${GH_SHA_FAIL:-}/merge"*) printf 'Head sha does not match\n' >&2; exit 1 ;;
+    esac
+    printf '{"sha":"merged"}\n'
+    ;;
   "api --method PATCH"*) printf '{"number":12}\n' ;;
+  "api repos/owner/repo/pulls/12"*) printf '{"number":12,"title":"feat: add base behavior","body":"Base details","state":"open","mergeable":true,"head":{"ref":"stack/base","sha":"base-sha"},"base":{"ref":"main"}}\n' ;;
+  "api repos/owner/repo/pulls/13"*) printf '{"number":13,"title":"fix: add child behavior","body":"Child details","state":"open","mergeable":true,"head":{"ref":"stack/child","sha":"child-sha"},"base":{"ref":"stack/base"}}\n' ;;
   "api repos/owner/repo/pulls/13/merge-async/merge-id"*) printf '{"status":"merged","details":{"sha":"abc"}}\n' ;;
   "pr list"*)
     if [ "${GH_LIST_MODE:-empty}" = open ]; then
@@ -94,14 +102,34 @@ output="$(run stack merge --yes)"
 log="$(cat "$GH_LOG")"
 contains "$log" 'PUT repos/owner/repo/pulls/12/merge'
 contains "$log" 'PUT repos/owner/repo/pulls/13/merge'
+contains "$log" 'PATCH repos/owner/repo/pulls/13'
 contains "$log" 'commit_title=feat: add base behavior (#12)'
 contains "$log" 'commit_message=Base details'
 contains "$log" 'commit_title=fix: add child behavior (#13)'
 contains "$log" 'commit_message=Child details'
 contains "$log" 'sha=base-sha'
 contains "$log" 'sha=child-sha'
-contains "$output" 'Stack merged bottom-up'
+contains "$output" 'GitHub stack merged bottom-up'
 printf 'GitHub native stack merges every PR with its own title, body and checked head\n'
+
+# Scenario: stop at the first failed PR and report the already merged prefix.
+export GH_MERGE_FAIL=13
+: >"$GH_LOG"
+if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge continued after a failed PR'; fi
+contains "$output" 'after merging #12'
+contains "$(cat "$GH_LOG")" 'pulls/12/merge'
+not_contains "$(cat "$GH_LOG")" 'pulls/13/merge-async'
+unset GH_MERGE_FAIL
+printf 'GitHub stack merge stops after a PR failure and reports completed PRs\n'
+
+# Scenario: GitHub refuses a merge if the checked head SHA moved.
+export GH_SHA_FAIL=12
+: >"$GH_LOG"
+if output="$(run stack merge --yes 2>&1)"; then fail 'stack merge ignored a head SHA mismatch'; fi
+contains "$output" 'Head sha does not match'
+not_contains "$(cat "$GH_LOG")" 'pulls/13/merge'
+unset GH_SHA_FAIL
+printf 'GitHub stack merge binds each merge to the checked head SHA\n'
 
 # Scenario: unsupported stacks use chained PR bases and include their position in the body.
 export GH_NATIVE=no
