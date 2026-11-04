@@ -21,7 +21,7 @@ import { notifyAdmissionStatus } from "./admission-notify.js";
 import { selfInvocation } from "../../core/self-invocation.js";
 import { classifyQueueMail } from "../../core/queue-write.js";
 import { callStateOwner } from "../../db/state-owner.js";
-import { dispatchAutoCloseEnabled, mayAutoCloseDispatch, tmuxClientsViewedSinceDone } from "../../core/dispatch-auto-close.js";
+import { dispatchAutoCloseEnabled, mayAutoCloseDispatch, tmuxClientsViewedSinceDone, type TmuxViewerClient } from "../../core/dispatch-auto-close.js";
 import { executeOrchestrateClose } from "./orchestrate-close.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -31,7 +31,7 @@ const DEFAULT_INTERVAL_SECONDS = 60;
 const LEASE_PADDING_SECONDS = 15;
 const PASTE_END_MARKER = "\u001b[201~";
 const AUTO_CLOSE_TMUX_SERVERS = [DISPATCH_TMUX_SERVER, APP_TMUX_SERVER] as const;
-const AUTO_CLOSE_CLIENT_FORMAT = "#{client_created}|#{client_activity}";
+const AUTO_CLOSE_CLIENT_FORMAT = "#{client_tty}|#{client_pid}|#{client_created}|#{client_activity}|#{client_flags}";
 
 function object(value: unknown): RecordValue | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? value as RecordValue : undefined;
@@ -350,7 +350,7 @@ function clientListUnavailable(reason: string): boolean {
   return /no server running|can't find session|no such session|no current client/i.test(reason);
 }
 
-async function tmuxClientViewedSinceDone(session: string, doneAt: string, process: ProcessAdapter): Promise<boolean | undefined> {
+async function tmuxClientViewedSinceDone(session: string, doneAt: string, viewerClients: readonly TmuxViewerClient[], process: ProcessAdapter): Promise<boolean | undefined> {
   for (const server of AUTO_CLOSE_TMUX_SERVERS) {
     const result = await process.run("tmux", ["-L", server, "list-clients", "-t", session, "-F", AUTO_CLOSE_CLIENT_FORMAT]);
     if (result.kind !== "ok") {
@@ -358,7 +358,7 @@ async function tmuxClientViewedSinceDone(session: string, doneAt: string, proces
       if (clientListUnavailable(reason)) continue;
       return undefined;
     }
-    const viewed = tmuxClientsViewedSinceDone(result.value.stdout, doneAt);
+    const viewed = tmuxClientsViewedSinceDone(result.value.stdout, doneAt, viewerClients, server);
     if (viewed !== false) return viewed;
   }
   return false;
@@ -378,6 +378,7 @@ async function closeUnviewedDoneTmuxDispatches(
     const dispatch = string(raw.dispatchId);
     const session = string(raw.tmuxSession);
     if (dispatch === undefined || session === undefined || raw.state !== "done" || raw.runtime !== "tmux" || raw.keepOpen === true || raw.autoCloseViewedAt !== undefined) continue;
+    if (raw.autoCloseViewerIdentityUnknown === true) { pending = true; continue; }
     const messages = listMessages(database, dispatch);
     const deliveries = listDeliveries(database, dispatch);
     if (messages.kind !== "ok" || deliveries.kind !== "ok") { pending = true; continue; }
@@ -388,7 +389,14 @@ async function closeUnviewedDoneTmuxDispatches(
     const doneTime = Date.parse(doneMessage.createdAt);
     const acknowledgedTime = Date.parse(delivery.acknowledgedAt);
     if (!Number.isFinite(doneTime) || !Number.isFinite(acknowledgedTime) || acknowledgedTime < doneTime) { pending = true; continue; }
-    const viewed = await tmuxClientViewedSinceDone(session, doneMessage.createdAt, process);
+    const viewerClients = Array.isArray(raw.autoCloseViewerClients)
+      ? raw.autoCloseViewerClients.filter((client): client is TmuxViewerClient => {
+        if (typeof client !== "object" || client === null) return false;
+        const identity = client as Record<string, unknown>;
+        return typeof identity.server === "string" && typeof identity.tty === "string" && Number.isSafeInteger(identity.pid);
+      })
+      : [];
+    const viewed = await tmuxClientViewedSinceDone(session, doneMessage.createdAt, viewerClients, process);
     if (viewed === undefined) { pending = true; continue; }
     if (viewed) {
       await callStateOwner(root, { operation: "dispatch-patch", dispatchId: dispatch, expectedState: "done", patch: { autoCloseViewedAt: new Date(now).toISOString() } }).catch(() => undefined);

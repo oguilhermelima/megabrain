@@ -52,18 +52,28 @@ function timestamp(value: string): number | undefined {
   return parsed < 1_000_000_000_000 ? parsed * 1000 : parsed;
 }
 
-/** Rows are tmux client_created|client_activity values; pane output is deliberately ignored. */
-export function tmuxClientsViewedSinceDone(output: string, doneAt: string): boolean | undefined {
+export type TmuxViewerClient = Readonly<{ server: string; tty: string; pid: number }>;
+
+/** Rows are tmux client_tty|client_pid|client_created|client_activity|client_flags values. */
+export function tmuxClientsViewedSinceDone(
+  output: string,
+  doneAt: string,
+  viewerClients: readonly TmuxViewerClient[] = [],
+  server = "default",
+): boolean | undefined {
   const done = Date.parse(doneAt);
   if (!Number.isFinite(done)) return undefined;
   for (const line of output.split("\n").filter((row) => row !== "")) {
-    const [createdRaw, activityRaw] = line.split("|");
+    const [tty, pidRaw, createdRaw, activityRaw, flags] = line.split("|");
+    const pid = Number(pidRaw);
     const created = createdRaw === undefined ? undefined : timestamp(createdRaw);
     const activity = activityRaw === undefined ? undefined : timestamp(activityRaw);
-    if (created === undefined || activity === undefined) return undefined;
-    // A client attached to this session is viewing the dispatch even if it has been idle
-    // since before the done message. Timestamps only matter for clients that attach later.
-    if (created >= 0 && activity >= 0) return true;
+    if (tty === undefined || !Number.isSafeInteger(pid) || created === undefined || activity === undefined || flags === undefined) return undefined;
+    if (flags.split(",").includes("focused") || activity > done || created > done) return true;
+    if (!viewerClients.some((viewer) => viewer.server === server && viewer.tty === tty && viewer.pid === pid)) {
+      // An idle client attached before done is not evidence that anyone read the result.
+      continue;
+    }
   }
   return false;
 }
