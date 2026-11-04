@@ -83,7 +83,7 @@ describe("host providers", () => {
     expect(process.calls.every((call) => call.args.includes("--screen"))).toBe(true);
   });
 
-  test("orca readiness answers the captured agy trust dialog once, then waits for idle", async () => {
+  test("orca readiness leaves the agy trust dialog untouched, then waits for idle", async () => {
     const trust = await readFile(new URL("../fixtures/orca-terminal-screen-agy-trust.json", import.meta.url), "utf8");
     const idle = await readFile(new URL("../fixtures/orca-terminal-screen-agy-idle.json", import.meta.url), "utf8");
     const calls: Call[] = [];
@@ -104,9 +104,7 @@ describe("host providers", () => {
     const result = await getHost("orca")?.readiness({ workspaceId: null, terminalId: "terminal-child" }, fakeHost, 1300, "agy");
 
     expect(result).toEqual({ kind: "ok", value: undefined });
-    expect(calls.filter((call) => call.args[0] === "terminal" && call.args[1] === "send")).toEqual([
-      { command: "orca", args: ["terminal", "send", "--terminal", "terminal-child", "--text", "", "--enter", "--json"] },
-    ]);
+    expect(calls.filter((call) => call.args[0] === "terminal" && call.args[1] === "send")).toEqual([]);
     expect(reads).toBeGreaterThan(1);
   });
 
