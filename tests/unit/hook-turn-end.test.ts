@@ -723,6 +723,28 @@ describe("executeHookTurnEnd: this session is itself a dispatch child", () => {
     });
   });
 
+  test("excludes only verified peer-socket replies from the hook", async () => {
+    for (const verified of [true, false]) {
+      await withRoot(`peer-socket-${verified ? "verified" : "unverified"}`, async (root) => {
+        await writeMeta(root, "d1", { ...childBase, state: "running", processState: "running" });
+        const env = childEnv(root);
+        const db = guardedStateDatabase({ MEGABRAIN_STATE_DIR: root });
+        if (db.kind !== "ok") throw new Error(db.error);
+        const reply = appendDatabaseMessage(db.value, "d1", { from: "parent", type: "reply", text: "continue through the socket" }, {
+          delivery: { id: "peer-socket-delivery", recipient: "child", status: "outstanding" },
+        });
+        if (reply.kind !== "ok") throw new Error(reply.error);
+        const marked = setDeliveryTransport(db.value, "d1", reply.value.seq, "ack-verifying", verified ? "peer-socket-verified" : "peer-socket-pending");
+        if (marked.kind !== "ok") throw new Error(marked.error);
+
+        const result = await executeHookTurnEnd([], env, fakeProcess(), noStdin);
+        expect(result).toEqual({ kind: "ok", value: verified
+          ? "{}\n"
+          : '{"decision":"block","reason":"megabrain reply available; run megabrain check and act on it"}\n' });
+      });
+    }
+  });
+
   test("keeps queued and typed summaries unread until check shows them", async () => {
     for (const transport of ["queue", "typed"]) {
       await withRoot(`summary-${transport}`, async (root) => {
