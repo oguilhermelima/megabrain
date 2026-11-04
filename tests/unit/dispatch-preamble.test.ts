@@ -11,9 +11,10 @@ describe("dispatch worker preamble", () => {
     for (const agent of ["claude", "codex", "grok", "agy"]) {
       const preamble = finalPrompt(options(agent), "dispatch-preamble-test").split("\n\nDispatch identity:")[0];
       expect(preamble).toContain("REQUIRED: Run megabrain received first.");
-      expect(preamble).toContain("Ask only when a decision is genuinely ambiguous and you cannot settle it from the brief; then poll megabrain check --timeout until answered and never proceed on a default. Do not ask for permission to start or to follow the brief.");
+      expect(preamble).toContain("Ask only when the brief cannot settle a decision: megabrain ask, then poll megabrain check --timeout; never proceed on a default. Never ask permission to start.");
       expect(preamble).not.toContain("REQUIRED: Ask");
-      expect(preamble).toContain("REQUIRED: Send megabrain done only when the brief's work is finished or blocked; include outcome and evidence. Never send done to report work you have not done.");
+      expect(preamble).toContain("REQUIRED: Send megabrain done only when the work is finished or blocked, with outcome and evidence. Never send done for unfinished work.");
+      expect(preamble).toContain("Start ask and done with one plain sentence a nontechnical person understands; no filenames, commands or counts.");
       expect(preamble).toContain("CRITICAL: Never close your own dispatch.");
       expect(Buffer.byteLength(preamble)).toBeLessThanOrEqual(600);
     }

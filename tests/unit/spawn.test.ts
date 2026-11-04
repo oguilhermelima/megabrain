@@ -1250,9 +1250,10 @@ describe("executeSpawn", () => {
         .find((text) => text.includes("Dispatch identity:"));
       expect(delivered).toBeDefined();
       expect(delivered).toContain("REQUIRED: Run megabrain received first.");
-      expect(delivered).toContain("Ask only when a decision is genuinely ambiguous and you cannot settle it from the brief; then poll megabrain check --timeout until answered and never proceed on a default. Do not ask for permission to start or to follow the brief.");
+      expect(delivered).toContain("Ask only when the brief cannot settle a decision: megabrain ask, then poll megabrain check --timeout; never proceed on a default. Never ask permission to start.");
       expect(delivered).not.toContain("REQUIRED: Ask");
-      expect(delivered).toContain("REQUIRED: Send megabrain done only when the brief's work is finished or blocked; include outcome and evidence. Never send done to report work you have not done.");
+      expect(delivered).toContain("REQUIRED: Send megabrain done only when the work is finished or blocked, with outcome and evidence. Never send done for unfinished work.");
+      expect(delivered).toContain("Start ask and done with one plain sentence a nontechnical person understands; no filenames, commands or counts.");
       expect(delivered).toContain("CRITICAL: Never close your own dispatch.");
       const prompt = (delivered?.slice(delivered.indexOf("[megabrain dispatch:")) ?? "").replaceAll(" — ", "\n");
       const preamble = prompt.split("\n\nDispatch identity:")[0];
