@@ -70,8 +70,8 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   screen="$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)"
   if printf '%s\n' "$screen" | grep -Eiq 'Working|Thinking|sleep 90'; then busy=1; break; fi
   if printf '%s\n' "$screen" | grep -Eiq 'Trust this folder\?'; then
-    printf 'SKIP: Codex requested folder trust; the test left the dialog unanswered\n'
-    exit 0
+    printf 'FAIL-UNVERIFIED: Codex requested folder trust; no supported trust mechanism reached the mailbox assertions\n' >&2
+    exit 1
   fi
   if printf '%s\n' "$screen" | grep -Eiq 'log in|authentication required|not authenticated'; then
     printf 'SKIP: Codex requires authentication; the test left the dialog unanswered\n'
