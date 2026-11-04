@@ -17,7 +17,7 @@ const fixture = (name: string): string => readFileSync(new URL(`../fixtures/gith
 const PR_VIEW_FIELDS = "number,title,state,isDraft,url,author,createdAt,body,comments,reviewDecision,statusCheckRollup,additions,deletions,headRefName,baseRefName";
 const ISSUE_VIEW_FIELDS = "number,title,state,url,author,createdAt,body,comments";
 // What made GitHub's GraphQL time out on a whole listing: none of it belongs in a list query.
-const HEAVY_FIELDS = ["statusCheckRollup", "reviewDecision", "additions", "deletions", "commits", "reviews", "files"];
+const HEAVY_FIELDS = ["additions", "deletions", "commits", "reviews", "files"];
 
 type GhCall = readonly string[];
 type GhAnswer = (args: GhCall) => Result<ProcessOutput>;
@@ -149,6 +149,16 @@ describe("github prs", () => {
     for (const field of HEAVY_FIELDS) expect(text).not.toContain(field);
     // A count is a number, not a list of every comment.
     expect(text).toMatch(/comments\s*\{\s*totalCount\s*\}/);
+  });
+
+  test("the list includes only the review and check fields shown on project overview rows", async () => {
+    const path = await repository("sample", "git@github.com:operator/sample.git");
+    const listing = parsed<Listing<PullRequest>>(await github(["prs", path, "--state", "open", "--json"]));
+    const text = query(calls[0] ?? []);
+    expect(text).toContain("reviewDecision");
+    expect(text).toContain("statusCheckRollup");
+    expect(listing.items[0]).toMatchObject({ reviewDecision: expect.any(String), checks: expect.any(Array) });
+    expect(listing.items[0]?.checks).toContainEqual({ name: "ci/legacy", state: "pending" });
   });
 
   test("normalizes states, drafts, bots, labels and comment counts", async () => {
