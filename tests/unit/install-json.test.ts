@@ -155,6 +155,23 @@ describe("install --plan --json", () => {
     expect(plan.modules.map((entry: Event) => entry.module)).toEqual(["summaries-context"]);
   });
 
+  test("skips values for every install option while finding a planned module", async () => {
+    const result = await executeInstall(["--plan", "--json", "--browser", "firefox", "summaries-context"], machine(), processAdapter());
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(JSON.parse(result.value).modules.map((entry: Event) => entry.module)).toEqual(["summaries-context"]);
+  });
+
+  test.each([
+    ["summaries-context", "--browser", "firefox", "--plan", "--json"],
+    ["--browser", "firefox", "summaries-context", "--plan", "--json"],
+  ])("finds a module before or after an option value: %j", async (...args) => {
+    const result = await executeInstall(args, machine(), processAdapter());
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(JSON.parse(result.value).modules.map((entry: Event) => entry.module)).toEqual(["summaries-context"]);
+  });
+
   test("refuses two module ids in plan mode", async () => {
     const result = await executeInstall(["summaries-context", "worktree", "--plan", "--json"], machine(), processAdapter());
     expect(result).toMatchObject({ kind: "failed", error: "install accepts at most one module id", exitCode: 2 });
