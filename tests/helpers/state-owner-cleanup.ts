@@ -28,15 +28,19 @@ export function trackStateOwnerCleanup(stateDirectory: string): void {
   if (Number.isSafeInteger(pid) && pid > 0) startedOwnerPids.add(pid);
 }
 
-export async function cleanupTrackedStateOwners(stateDirectories: Iterable<string>): Promise<void> {
+export async function cleanupTrackedStateOwners(stateDirectories: Iterable<string>, ownerPids: Iterable<number> = []): Promise<void> {
   for (const stateDirectory of stateDirectories) {
     const candidate = resolve(stateDirectory);
     const temporaryRoot = resolve(tmpdir());
-    if (!candidate.startsWith(`${temporaryRoot}/`) && !candidate.startsWith("/tmp/") && !candidate.startsWith("/private/tmp/")) {
+    if (!candidate.startsWith(`${temporaryRoot}/`) && !candidate.startsWith("/tmp/") && !candidate.startsWith("/private/tmp/") && !candidate.startsWith("/private/var/folders/")) {
       throw new Error(`refusing to clean non-temporary state directory: ${candidate}`);
     }
     trackStateOwnerCleanup(stateDirectory);
     rmSync(stateDirectory, { recursive: true, force: true });
+  }
+
+  for (const pid of ownerPids) {
+    if (Number.isSafeInteger(pid) && pid > 0 && pid !== process.pid) startedOwnerPids.add(pid);
   }
 
   for (const pid of startedOwnerPids) {
